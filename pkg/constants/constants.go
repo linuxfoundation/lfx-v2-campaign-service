@@ -289,6 +289,14 @@ const (
 	// Turn it on per environment, in lfx-v2-argocd, once the probe in the field's docs passes.
 	EnvGoogleAdsDemographicTargetingEnabled = "GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED"
 
+	// EnvLinkedInAdsConversionsEnabled opts a deployment IN to linkedInConfig.conversions (#552):
+	// conversion rule ids associated with the campaign through Campaign Conversions once it exists.
+	// Only the exact value "true" enables it; unset or any other value fails closed, and a create
+	// naming conversions is refused before a job exists. It keeps an UNVERIFIED request (the
+	// campaignConversions PUT) off the live ad account until the probe in the field's docs passes.
+	// The ids also require global_marketing_ops on the project (service.LinkedInMarketingOpsInputs).
+	EnvLinkedInAdsConversionsEnabled = "LINKEDIN_ADS_CONVERSIONS_ENABLED"
+
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,
 	// so every campaign authenticates as the marketing-ops account regardless of any
