@@ -1005,3 +1005,17 @@ handled: a group whose start is after the new campaign's start is still refused 
 Pinned by `TestEnsureCampaignGroupCoversEnd` (and its `_WriteFailureIsAnError`,
 `_ReWidensAfterAConcurrentShortening` and `_ConcurrentCallersKeepTheLaterEnd` siblings) and
 `TestCreateCampaign_ReusedGroupScheduleCoversCampaign`.
+
+## Picker lookups (`lookups.go`, #552)
+
+`ListAdSegments` and `ListConversionRules` read the ad segments and conversion rules on the
+client's account for the create-form pickers. Both go through `offsetWalk`, which pages a finder
+by `start`/`count` (100) and NEVER truncates: a page whose first id was already seen (a finder
+ignoring `start`), a duplicate id, an id that is not a positive long, an element whose `account`
+names another ad account (only when the optional `account` field is present; an absent one is accepted, and the request's account filter is then the only scoping), or more than `MaxLookupRows` (1000) entries fails the read
+(`ErrLookupTooLarge` for the last). The `accounts=List(urn%3Ali%3A…)` value is a Rest.li literal,
+so `accounts` joins `preEncodedParams`. A segment's `facet` is the `linkedInConfig.targeting` key
+it goes under, from its type (RETARGETING → `dynamicSegments`; BULK, MARKET_AUTOMATION and
+BUSINESS_OBJECTIVE_BASED_AUDIENCE → `audienceMatchingSegments`; anything else unclassified).
+EXPIRED and FAILED segments are dropped; ARCHIVED stays, since LinkedIn documents it as usable
+until it expires. The offset parameters are LinkedIn's documented ones but not verified live.
