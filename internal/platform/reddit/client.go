@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -500,6 +501,13 @@ type CampaignInput struct {
 	// describe, so one of the two must be non-empty or CreateCampaign refuses before any
 	// upstream call. It is never ignored.
 	ConversionPixelID string
+	// ConversionEvent is the pixel event a CONVERSIONS campaign optimizes toward (#549): sent as
+	// the campaign's and the ad group's optimization_goal, which campaign budget optimization
+	// requires to match. Empty keeps the default, PURCHASE. Accepted values are the web-pixel
+	// members of Reddit's optimization-goal enum (ConversionEvents), case-insensitive; any other
+	// value, or any value on an objective other than conversions, is refused before the first
+	// upstream call (ResolveConversionEvent).
+	ConversionEvent string
 	// VideoGoal is the concrete video optimization goal, REQUIRED when the resolved
 	// objective is "video_views". Accepted values: VIDEO_VIEW_6S, VIDEO_VIEW_15S.
 	// Reddit has no bare "VIDEO_VIEWS" optimization goal, so a concrete goal must
@@ -636,6 +644,46 @@ var redditObjectiveParams = map[string]objectiveParams{
 	// input's VideoGoal (one of validVideoGoals) and written into the request
 	// below rather than baked into this table.
 	"video_views": {redditObjective: "VIDEO_VIEWABLE_IMPRESSIONS", bidType: "CPM"},
+}
+
+// conversionEvents is the set of pixel events a conversions campaign may optimize toward
+// (CampaignInput.ConversionEvent, #549): the web-pixel members of Reddit's optimization-goal
+// enum (components_enums_optimization_goal in the Ads API v3 OpenAPI document). CLICKS, the
+// VIDEO_VIEW_* goals, the MOBILE_CONVERSION_* app events, LANDING_PAGE_VISIT and UNKNOWN are
+// deliberately absent: the first two belong to other objectives, this service creates no app
+// campaigns, and the last two are not events a pixel fires.
+var conversionEvents = []string{"PURCHASE", "SIGN_UP", "LEAD", "PAGE_VISIT", "VIEW_CONTENT", "ADD_TO_CART", "ADD_TO_WISHLIST", "SEARCH"}
+
+// ConversionEvents returns the accepted CampaignInput.ConversionEvent values, in a fixed order.
+func ConversionEvents() []string { return slices.Clone(conversionEvents) }
+
+// ResolveConversionEvent validates a conversion event against the objective it would be created
+// with (resolved like CreateCampaign: empty is the default, conversions) and returns the value to
+// send. An empty event returns "" and no error: the objective's own goal stands. Its errors are
+// service-authored sentences; a caller value appears only through domain.CallerValue.
+func ResolveConversionEvent(objective, event string) (string, error) {
+	event = strings.TrimSpace(event)
+	if event == "" {
+		return "", nil
+	}
+	if objective == "" {
+		objective = defaultRedditObjective
+	}
+	canonical := strings.ToUpper(event)
+	if !slices.Contains(conversionEvents, canonical) {
+		return "", fmt.Errorf("conversionEvent %s is not one of %s", domain.CallerValue(event), strings.Join(conversionEvents, ", "))
+	}
+	// Objectives are matched exactly (redditObjectiveParams is keyed in lower case and nothing
+	// normalizes them), so "Conversions" is not one. It is refused HERE, in the objective
+	// check's own words, so the dispatcher's synchronous preflight refuses it too rather than
+	// admitting a job that fails later; saying "Conversions takes its own goal" would misname it.
+	if _, known := redditObjectiveParams[objective]; !known {
+		return "", fmt.Errorf("unsupported Reddit objective: %s", domain.CallerValue(objective))
+	}
+	if objective != "conversions" {
+		return "", fmt.Errorf("conversionEvent is the event a conversions campaign optimizes toward; objective %s takes its own goal, so omit conversionEvent or use objective \"conversions\"", domain.CallerValue(objective))
+	}
+	return canonical, nil
 }
 
 // validVideoGoals is the set of concrete Reddit video optimization goals accepted
@@ -1723,6 +1771,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return nil, domain.PreflightRefusalf("invalid video goal %s for objective video_views: must be one of VIDEO_VIEW_6S, VIDEO_VIEW_15S", domain.CallerValue(in.VideoGoal))
 		}
 		optimizationGoal = videoGoal
+	}
+
+	// The conversion event replaces the conversions objective's default goal (PURCHASE) on both the
+	// campaign and the ad group — they share optimizationGoal, which CBO requires to match.
+	// Validated before any mutating call, so a wrong event orphans nothing.
+	if event, err := ResolveConversionEvent(objective, in.ConversionEvent); err != nil {
+		return nil, domain.WrapPreflightRefusal(err)
+	} else if event != "" {
+		optimizationGoal = event
 	}
 
 	// The manual bid, validated before any mutating call: only a CPC objective can carry it,

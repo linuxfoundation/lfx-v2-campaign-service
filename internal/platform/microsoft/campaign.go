@@ -281,8 +281,14 @@ type CampaignResult struct {
 	// already had is skipped, and the Steps entry says so.
 	SitelinkAdExtensionIDs []string `json:"sitelinkAdExtensionIds,omitempty"`
 	CalloutAdExtensionIDs  []string `json:"calloutAdExtensionIds,omitempty"`
-	MicrosoftAdsURL        string   `json:"microsoftAdsUrl"`
-	Steps                  []string `json:"steps"`
+	// NegativeKeywords is the positional outcome of the create-time campaign negatives
+	// (microsoftConfig.negativeKeywords, #563), one entry per requested keyword in request
+	// order. Like the image ids it is set by the DISPATCHER after AddCampaignNegativeKeywords —
+	// CreateCampaign never sets it — and it is empty when none were requested or the call
+	// failed as a whole (the Steps entry then says why).
+	NegativeKeywords []NegativeKeywordOutcome `json:"negativeKeywords,omitempty"`
+	MicrosoftAdsURL  string                   `json:"microsoftAdsUrl"`
+	Steps            []string                 `json:"steps"`
 }
 
 // msCampaign is one Campaign in the POST CampaignManagement/v13/Campaigns body. Only
