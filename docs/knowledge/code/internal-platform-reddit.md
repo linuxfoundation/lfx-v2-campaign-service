@@ -965,3 +965,18 @@ looks a campaign up by name, so a second campaign is never bound to the first. P
 `TestBuildRedditCampaignName_LabelTokens` and
 `TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest`; see the dispatch concept for the
 dispatcher side.
+
+## Custom audiences (`custom_audiences.go`, #549)
+
+`CampaignInput.CustomAudienceIDs` / `ExcludedCustomAudienceIDs` go into `baseTargeting` as
+`custom_audience_ids` / `excluded_custom_audience_ids`, so the communities/interests fallback
+retry keeps them, and the "Targeting:" step counts them. `ValidateCustomAudienceIDs` (ids of the
+account-id charset, at most 64 characters, at most 100 per list, no repeats, none in both lists)
+runs before the account-verify GET. `ListCustomAudiences` reads
+`GET /ad_accounts/{id}/custom_audiences` through `walkPagesCapped` with a 10-page cap; reaching
+the cap returns what was read with `truncated` true rather than failing, unlike account
+discovery, because the picker says so. A missing or non-list `data`, an unusable or repeated id,
+or more than 5000 audiences is `ErrCustomAudiencesMalformed`. Both shapes come from Reddit's
+public v3 OpenAPI document and are unverified live; the dispatcher gates them on
+`REDDIT_CUSTOM_AUDIENCES_ENABLED`. See
+[Reddit Custom Audiences](../architecture/reddit-custom-audiences.md).

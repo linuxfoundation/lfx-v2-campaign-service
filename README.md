@@ -236,6 +236,19 @@ openssl rand -base64 32
   exercised against a live ad account. The read
   (`GET .../keyword-targeting`) is not gated. The chart sets it to
   `"false"`.
+- `REDDIT_CUSTOM_AUDIENCES_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to Reddit custom audiences (#549): the create inputs
+  `redditConfig.customAudienceIds` / `excludedCustomAudienceIds` (the ad
+  group's `targeting.custom_audience_ids` / `excluded_custom_audience_ids`)
+  and the picker read `GET /projects/{project_id}/reddit-ads/custom-audiences`.
+  Only the exact value `true` enables them; anything else fails closed: a
+  create setting either list is refused with 400 before any job exists, and
+  the read answers 400. Off by default because both shapes come from Reddit's
+  public v3 OpenAPI document and have not been exercised against a live ad
+  account. The audiences live on the ad account every foundation shares, so
+  the create inputs also need `global_marketing_ops` on the project (403
+  otherwise) and the read is gated on it at the gateway. The chart sets it to
+  `"false"`.
 - `REDDIT_TARGETING_EXCLUSIONS_ENABLED` (default unset, i.e. OFF) — opts
   a deployment IN to `redditConfig.excludedSubreddits` and
   `redditConfig.excludedGeoTargets` (#549), sent at create time as the ad

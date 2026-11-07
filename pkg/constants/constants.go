@@ -135,6 +135,22 @@ const (
 	// flips and this constant goes away.
 	EnvRedditKeywordTargetingWritesEnabled = "REDDIT_KEYWORD_TARGETING_WRITES_ENABLED"
 
+	// EnvRedditCustomAudiencesEnabled opts a deployment IN to Reddit custom audiences (#549): the
+	// create inputs redditConfig.customAudienceIds / excludedCustomAudienceIds (sent as the ad
+	// group's targeting.custom_audience_ids / excluded_custom_audience_ids) and the picker read
+	// list-reddit-ads-custom-audiences (GET /ad_accounts/{id}/custom_audiences). Only the exact
+	// value "true" enables them; unset or any other value fails closed: a create that sets either
+	// list is refused with 400 before any job exists, and the read answers 400 "not supported",
+	// the shape the gates above use.
+	//
+	// Both shapes come from Reddit's public v3 OpenAPI document and have NOT been exercised against
+	// a live ad account. Turn it on in lfx-v2-argocd only after a live create confirms Reddit
+	// accepts the targeting members and the list answers in the documented envelope. Independent
+	// of it, an audience names a resource of the LF ad account every foundation shares, so the
+	// create inputs also require global_marketing_ops (service.RedditMarketingOpsInputs) and the
+	// read sits in the gateway's marketing-ops-api rule.
+	EnvRedditCustomAudiencesEnabled = "REDDIT_CUSTOM_AUDIENCES_ENABLED"
+
 	// EnvRedditTargetingExclusionsEnabled opts a deployment IN to redditConfig.excludedSubreddits and
 	// redditConfig.excludedGeoTargets (#549), sent at create time as the ad group's
 	// excluded_communities and excluded_geolocations. Only the exact value "true" enables them; unset
