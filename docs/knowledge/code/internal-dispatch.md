@@ -2440,7 +2440,7 @@ fake Microsoft, plus a check that a malformed report fails rather than returning
 best-effort decode, so these are a synchronous 400 (`ErrCreateConfigInvalid`) before the create
 job exists: `geoTargets` naming any EU or EEA country without BOTH `dsaBeneficiary` and `dsaPayor`; a
 one-sided pair; a disclosure over 256 runes or with a control, line-separator or bidi character; a non-numeric
-`instagramUserId`; and any of the three present with a non-string JSON type (`checkMetaIdentityShape`,
+`instagramUserId`; and any of the three present with a non-string JSON type (`checkMetaStringFieldShape`,
 run before the best-effort decode, which would otherwise read `true` or `1` as absent). The rules
 are `meta.CheckPublishIdentity`'s, so the 400 and the client agree;
 `Dispatch` runs them again before the client exists, as `notCreated`, and the client a third time.
@@ -4599,6 +4599,37 @@ here; the operator remedy is to pause the keyword again after activating.
 (`MICROSOFT_METRICS_ENABLED`) gates only the unverified Reporting reads, and no Microsoft WRITE —
 create, toggle, budget — is gated. Both levers follow the writes.
 
+## Microsoft negative keywords at create (`microsoft_negative_keywords.go`, #563)
+
+`microsoftConfig.negativeKeywords` attaches campaign-level negatives to a Microsoft campaign the
+dispatch just created, through the client call the lever above makes
+(`AddCampaignNegativeKeywords`), so the rules are held once, in
+`microsoft.ValidateNegativeKeywords`.
+
+- **Gate first.** `MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED` must be exactly `"true"`; off, a
+  non-empty list is refused naming the flag, whatever its values. An absent, empty or `null`
+  list is not "set".
+- **Synchronous 400.** `PreflightCreate` runs `checkMicrosoftNegativeKeywordsShape` (a value that
+  is not an array of `{text, matchType}` objects, under any key casing encoding/json would match)
+  and then `checkMicrosoftNegativeKeywords` on the best-effort decode, so an unrelated mistyped
+  field cannot turn a gated or invalid list into an accepted job. Both refusals are
+  `ErrCreateConfigInvalid` wrapped as a `PreflightRefusal`, worded
+  `microsoftConfig.negativeKeywords: …` without the client's `microsoft-ads:` prefix. `Dispatch`
+  re-checks before any Microsoft call (`notCreated`, claim released).
+- **After a CONFIRMED create only**, after the image extension. An UNCONFIRMED create skips it.
+  `applyMicrosoftNegativeKeywords` records the positional outcomes on
+  `CampaignResult.NegativeKeywords` and a count step. Any FAILED or UNCONFIRMED keyword, or a
+  failed call ("NOT attached" / "UNCONFIRMED", status-only error text), degrades the campaign to
+  `created_degraded`; it never fails the job, for the reason `attachMicrosoftImage` gives.
+  Repeating the create does not re-run it: the orchestrator returns a `created` or
+  `created_degraded` campaign as it is, so a shortfall is fixed with `add-negative-keywords`
+  (the steps say so). Only a dispatch that reuses a campaign by name — one whose earlier
+  attempt was never confirmed — re-sends the list, and gets `ALREADY_PRESENT` (4335) for the
+  ones already there, which is not a shortfall.
+- **Snapshot.** Dispatch replaces the list with the validated one before the snapshot is built,
+  so it records what was sent (`jobs`/`Phrase`, not `  jobs `/`PHRASE`). That text cannot carry a
+  link (no `:` or `/` passes validation), so it needs no `sanitizeSnapshotText`.
+
 ## Google Ads negative keywords (`googleads_negative_keywords.go`, LFXV2-2665)
 
 `GoogleAdsDispatcher` implements `service.NegativeKeywordAdder`, attaching CAMPAIGN-level
@@ -5565,3 +5596,11 @@ sent; a real Meta 4xx/5xx whose body carries a secret query; a real Reddit token
 refused there with `ErrConnectionNotUsable` before any request (so it is not recorded as an
 upstream call); a credential defect is the connection's (`linkedInLookupError`); anything else is
 the platform's.
+
+**LinkedIn conversions (#552).** `linkedinConfig.Conversions` is gated by
+`linkedinConversionsEnabled` (`LINKEDIN_ADS_CONVERSIONS_ENABLED`, off by default) and validated by
+`linkedin.ValidateConversions` in `linkedinConversions`, which `PreflightCreate` (synchronous 400)
+and `Dispatch` (not-created refusal) both run, after `checkConversionsShape` refuses entries that
+are not JSON strings (encoding/json would decode a number to `""`); `Dispatch` keeps the de-duplicated copy for the
+client and the snapshot. `campaignFromLinkedIn` reports a result with `ConversionsFailed` as
+`created_degraded`.

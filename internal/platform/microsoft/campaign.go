@@ -150,6 +150,13 @@ type CampaignInput struct {
 	// the minimum, not rejected. Leave both slices empty to auto-compose entirely.
 	Headlines    []string
 	Descriptions []string
+	// Path1 and Path2 are the OPTIONAL display-URL path segments of the responsive search ad
+	// (#563), appended to the final URL's domain in the shown URL. At most 15 characters each (7
+	// with a double-width character), one segment each (no "/"), Path2 only with Path1, and the
+	// domain plus "/Path1/Path2" at most 67 characters (33 with a double-width character) — see
+	// validatePaths and displayURL. Empty sends neither, the ad this client always created.
+	Path1 string
+	Path2 string
 	// Keywords are the positive Search keywords attached to the created ad group (MS-4).
 	// WITHOUT AT LEAST ONE, THE CAMPAIGN CAN NEVER SERVE: a Search ad group with no keywords
 	// has nothing to match a query against, so the tree is structurally complete and
@@ -273,10 +280,22 @@ type CampaignResult struct {
 	// MediaID is "" when nothing was uploaded (no image requested, or an extension was
 	// already associated), and either may be set alongside a degraded outcome so a
 	// partially-built extension can be found.
-	ImageMediaID       string   `json:"imageMediaId,omitempty"`
-	ImageAdExtensionID string   `json:"imageAdExtensionId,omitempty"`
-	MicrosoftAdsURL    string   `json:"microsoftAdsUrl"`
-	Steps              []string `json:"steps"`
+	ImageMediaID       string `json:"imageMediaId,omitempty"`
+	ImageAdExtensionID string `json:"imageAdExtensionId,omitempty"`
+	// SitelinkAdExtensionIDs / CalloutAdExtensionIDs are the sitelink and callout extensions
+	// THIS RUN created and associated with the campaign (#563), set by the DISPATCHER after
+	// AttachCampaignTextExtensions. Empty does not mean the campaign has none: a type it
+	// already had is skipped, and the Steps entry says so.
+	SitelinkAdExtensionIDs []string `json:"sitelinkAdExtensionIds,omitempty"`
+	CalloutAdExtensionIDs  []string `json:"calloutAdExtensionIds,omitempty"`
+	// NegativeKeywords is the positional outcome of the create-time campaign negatives
+	// (microsoftConfig.negativeKeywords, #563), one entry per requested keyword in request
+	// order. Like the image ids it is set by the DISPATCHER after AddCampaignNegativeKeywords —
+	// CreateCampaign never sets it — and it is empty when none were requested or the call
+	// failed as a whole (the Steps entry then says why).
+	NegativeKeywords []NegativeKeywordOutcome `json:"negativeKeywords,omitempty"`
+	MicrosoftAdsURL  string                   `json:"microsoftAdsUrl"`
+	Steps            []string                 `json:"steps"`
 }
 
 // msCampaign is one Campaign in the POST CampaignManagement/v13/Campaigns body. Only
@@ -536,6 +555,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// near-impossibility (validateAdURL already accepted the raw URL and buildAdFinalURL only
 	// re-encoded the query), but fail CLOSED rather than silently skip the display-domain cap:
 	// a skipped check is the exact orphan-after-AddAds risk this block exists to prevent.
+	// The display paths are checked before the display domain, which they extend.
+	path1, path2, err := validatePaths(in.Path1, in.Path2)
+	if err != nil {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("microsoft-ads campaign ad copy invalid: %w", err))
+	}
+	in.Path1, in.Path2 = path1, path2
 	u, perr := url.Parse(finalURL)
 	if perr != nil {
 		return nil, fmt.Errorf("microsoft-ads could not parse the composed ad final URL to validate its display domain: %w", perr)
@@ -574,6 +599,22 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		if n := utf8.RuneCountInString(authority); n > limit {
 			return nil, fmt.Errorf("microsoft-ads ad display domain %q is %d characters, exceeding the %d limit (use a shorter registration URL host)", truncate(authority, maxErrorBodyChars), n, limit)
+		}
+		// The display paths (#563) share the same budget: Microsoft measures the domain WITH
+		// "/Path1/Path2", so a host that fits alone can still overflow once paths are added and
+		// be refused only at AddAds, after the campaign and ad group exist.
+		if path1 != "" {
+			shown := displayURL(authority, path1, path2)
+			pathLimit := maxDisplayDomainRunes
+			if hasDoubleWidth(shown) {
+				pathLimit = maxDisplayDomainRunesWide
+			}
+			if n := utf8.RuneCountInString(shown); n > pathLimit {
+				// The host is caller-supplied, so it is quoted only through domain.CallerValue: this
+				// sentence reaches the job result verbatim, and a host label can carry a token.
+				return nil, domain.PreflightRefusalf("microsoft-ads ad display URL (domain %s plus path1/path2) is %d characters, exceeding the %d limit; shorten path1/path2",
+					domain.CallerValue(authority), n, pathLimit)
+			}
 		}
 	}
 	// Validate caller-supplied ad copy up front too (over-count / over-long headlines or

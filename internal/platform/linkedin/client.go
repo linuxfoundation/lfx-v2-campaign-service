@@ -280,6 +280,10 @@ type CampaignInput struct {
 	StageToken string
 	Tactic     string
 	SlotToken  string
+	// Conversions are conversion rule ids (#552) associated with the campaign once it exists,
+	// through Campaign Conversions (conversions.go). CreateCampaign runs ValidateConversions on
+	// them before any request. A failed association does not stop the create.
+	Conversions []string
 }
 
 // CampaignResult is the outcome of CreateCampaign. Mirrors
@@ -311,6 +315,11 @@ type CampaignResult struct {
 	// (LFXV2-2665). A campaign reused by name keeps its existing bidding, so the dispatcher records
 	// the strategy and starting bid only when this is true. Set only on the successful result.
 	BidApplied bool `json:"bidApplied,omitempty"`
+	// ConversionsAssociated and ConversionsFailed split CampaignInput.Conversions (#552) by
+	// whether this run's Campaign Conversions PUT succeeded. Omitted when none were requested.
+	// A non-empty ConversionsFailed makes the dispatcher report the campaign created_degraded.
+	ConversionsAssociated []string `json:"conversionsAssociated,omitempty"`
+	ConversionsFailed     []string `json:"conversionsFailed,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -449,7 +458,11 @@ type responseElement struct {
 // so a percent-encoded segment (e.g. a creative URN key `urn%3Ali%3AsponsoredCreative%3A123`,
 // which LinkedIn requires for single-entity URN keys) passes; the encoding itself is produced
 // only by encodeURNForPath from validated URN input, never from arbitrary caller strings.
-var pathValidRE = regexp.MustCompile(`^[a-zA-Z0-9/_:%?=&.-]*$`)
+//
+// `(`, `)` and `,` are admitted for one Rest.li compound key, the Campaign Conversions record
+// `campaignConversions/(campaign:<urn>,conversion:<urn>)` (#552), built only by
+// associateConversion from two digit-only ids.
+var pathValidRE = regexp.MustCompile(`^[a-zA-Z0-9/_:%?=&.(),-]*$`)
 
 // apiError is a non-2xx HTTP response from the LinkedIn API. It carries the
 // status code, method, and path so an error message names exactly which call
@@ -1088,7 +1101,10 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 	// A caller that must SEND ONCE (the bid write, withSendOnce) opts out: a 429 then comes
 	// back as itself, which createOutcomeAmbiguous classifies UNCONFIRMED, rather than a
 	// retry's definite answer standing in for the first attempt's unknown one.
-	idempotent := (method == http.MethodGet || method == http.MethodHead ||
+	// A PUT is idempotent by definition: the one PUT sent through here is the Campaign
+	// Conversions association (#552), which writes the same record on its compound key however
+	// often it is repeated, so its 429 is retried like a GET's.
+	idempotent := (method == http.MethodGet || method == http.MethodHead || method == http.MethodPut ||
 		strings.EqualFold(headers["X-Restli-Method"], "PARTIAL_UPDATE")) && !sendOnce(ctx)
 	for attempt := 0; attempt <= retryMax; attempt++ {
 		var reqBody *bytes.Reader
@@ -2697,6 +2713,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, domain.WrapPreflightRefusal(err)
 	}
 
+	// Conversion rule ids (#552), checked before any POST like the bid.
+	conversions, err := ValidateConversions(in.Conversions)
+	if err != nil {
+		return nil, domain.WrapPreflightRefusal(err)
+	}
+
 	// Refuse to create a campaign with no creatives: LinkedIn campaign-group and
 	// campaign creation are permanent side effects, so an empty variant set would
 	// leave an orphaned, un-adorned campaign upstream.
@@ -2928,6 +2950,21 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Warning: bid NOT applied to reused campaign %s; its existing bidding is unchanged — verify its bidding in Campaign Manager", campaignID))
 	}
 
+	// Conversions (#552) are associated as soon as the campaign exists, on a reused campaign too
+	// (the PUT is idempotent). withConversions records the split on every result from here on;
+	// a failure does not stop the create (see associateConversions).
+	var convAssociated, convFailed []string
+	if len(conversions) > 0 {
+		var convSteps []string
+		convAssociated, convFailed, convSteps = c.associateConversions(ctx, campaignID, conversions, campaignReused)
+		steps = append(steps, convSteps...)
+	}
+	withConversions := func(r *CampaignResult) *CampaignResult {
+		r.ConversionsAssociated = convAssociated
+		r.ConversionsFailed = convFailed
+		return r
+	}
+
 	// Stored images are uploaded once each, after the campaign exists and before the first
 	// dark post (see uploadVariantImages for why that window). withImages records the minted
 	// URNs on every result returned from here on.
@@ -2937,7 +2974,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if len(imageURNs) > 0 {
 			r.ImageURNs = imageURNs
 		}
-		return r
+		return withConversions(r)
 	}
 	if err != nil {
 		return withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps)),
