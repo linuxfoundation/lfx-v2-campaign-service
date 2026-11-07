@@ -268,6 +268,16 @@ openssl rand -base64 32
   off the shared ad account. The chart sets it to `"false"`
   (`app.environment.REDDIT_TARGETING_EXCLUSIONS_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once a live create confirms it.
+- `TWITTER_CREATE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `twitterConfig.geoTargets` and `twitterConfig.languages`
+  (#564), country and language targeting criteria added to the line item
+  an X create makes. Only the exact value `true` enables them; anything
+  else fails closed, and a create naming either is refused with a 400
+  before any job exists. It names no account resource; it keeps a shape no
+  live create has sent off the shared ad account. The chart sets it to
+  `"false"` (`app.environment.TWITTER_CREATE_TARGETING_ENABLED.value`);
+  enable it per-environment in the ArgoCD overlay once a live create
+  confirms it.
 - `MICROSOFT_AD_EXTENSIONS_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `microsoftConfig.sitelinks` and `microsoftConfig.callouts`
   (#563), created at create time as `SitelinkAdExtension` and
