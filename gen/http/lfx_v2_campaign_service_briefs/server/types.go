@@ -5483,8 +5483,11 @@ type CampaignCreateInputRequestBody struct {
 	// audience ids (list-twitter-ads-custom-audiences offers them) to target and
 	// to exclude, sent as CUSTOM_AUDIENCE targeting criteria on the new line item
 	// with operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
-	// given; at most 100 per list; no id twice and none in both lists. Before
-	// anything is created every id is read with GET
+	// given; at most 60 per list; no id twice and none in both lists. geoTargets,
+	// languages, customAudienceIds and excludedCustomAudienceIds together may name
+	// at most 60 criteria per create, since each is a separate X write paced at
+	// one per second inside the two-minute dispatch budget; more is refused with
+	// the same 400. Before anything is created every id is read with GET
 	// accounts/:account_id/custom_audiences and must be live and targetable; a
 	// missing, deleted or non-targetable audience fails the job with nothing
 	// created. The exclusions are posted first of all the criteria and the

@@ -235,3 +235,36 @@ func TestTwitterCustomAudiences_ListGateAndRead(t *testing.T) {
 		t.Fatalf("res = %+v", res)
 	}
 }
+
+// All the targeting lists together are held to twitter.MaxCreateTargetingCriteria, synchronously,
+// and again at Dispatch before any X call: each criterion is a paced write inside the dispatch
+// budget. Countries are counted after de-duplication.
+func TestTwitterCustomAudiences_TotalCriteriaAreCapped(t *testing.T) {
+	t.Setenv(constants.EnvTwitterCustomAudiencesEnabled, "true")
+	t.Setenv(constants.EnvTwitterCreateTargetingEnabled, "true")
+	d, _, calls := twitterCustomAudienceServer(t)
+	quoted := func(prefix string, n int) string {
+		ids := make([]string, 0, n)
+		for i := range n {
+			ids = append(ids, `"`+prefix+strconv.Itoa(i)+`"`)
+		}
+		return strings.Join(ids, ",")
+	}
+	over := `,"geoTargets":["US","us"],"languages":["en"],"customAudienceIds":[` + quoted("a", twitter.MaxCreateTargetingCriteria-3) +
+		`],"excludedCustomAudienceIds":[` + quoted("x", 2) + `]`
+	err := d.PreflightCreate(context.Background(), "cncf", model.ProviderTwitterAds, twitterTargetingCfg(over))
+	requireConfigInvalid(t, err, "twitterConfig: geoTargets, languages, customAudienceIds and excludedCustomAudienceIds together name 61 targeting criteria; at most 60")
+	_, err = d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds, twitterTargetingCfg(over))
+	requirePreCreate(t, err)
+	if !strings.Contains(err.Error(), "together name 61 targeting criteria") {
+		t.Errorf("Dispatch refusal = %v", err)
+	}
+	if n := calls.Load(); n != 0 {
+		t.Errorf("%d X calls; want 0", n)
+	}
+	atCap := `,"geoTargets":["US","us"],"languages":["en"],"customAudienceIds":[` + quoted("a", twitter.MaxCreateTargetingCriteria-3) +
+		`],"excludedCustomAudienceIds":[` + quoted("x", 1) + `]`
+	if err := d.PreflightCreate(context.Background(), "cncf", model.ProviderTwitterAds, twitterTargetingCfg(atCap)); !errors.Is(err, domain.ErrPreflightNotApplicable) {
+		t.Errorf("at the cap: PreflightCreate = %v, want not applicable", err)
+	}
+}

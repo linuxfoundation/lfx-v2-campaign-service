@@ -126,10 +126,14 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 	if _, err := twitterBidPlan(cfg); err != nil {
 		return err
 	}
-	if _, _, err := checkTwitterCreateTargeting(cfg); err != nil {
+	geoTargets, languages, err := checkTwitterCreateTargeting(cfg)
+	if err != nil {
 		return err
 	}
 	if err := checkTwitterCustomAudiences(cfg); err != nil {
+		return err
+	}
+	if err := checkTwitterCreateCriteriaCount(geoTargets, languages, cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -300,6 +304,9 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// Likewise the custom audience gate and id rules (#564 gap 3). The role check ran before the
 	// job existed (service.TwitterMarketingOpsInputs) and is not repeated here.
 	if err := checkTwitterCustomAudiences(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	if err := checkTwitterCreateCriteriaCount(geoTargets, languages, cfg); err != nil {
 		return nil, notCreated(err)
 	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that

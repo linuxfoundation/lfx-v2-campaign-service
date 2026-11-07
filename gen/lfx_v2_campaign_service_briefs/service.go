@@ -163,10 +163,11 @@ type Service interface {
 	// list is also refused synchronously with 400 "invalid campaign config:
 	// twitterConfig.<field>: ..." when it is not an array of strings, when an id
 	// is not 1-32 letters or digits, repeats, or is in both lists, when a list
-	// holds more than 100 ids, and when TWITTER_CUSTOM_AUDIENCES_ENABLED is not
-	// "true" on this deployment. When both platforms' inputs are refused, the 403
-	// names each platform's fields in its own sentence. A Reddit custom audience
-	// list is also refused synchronously with 400 "invalid campaign config:
+	// holds more than 60 ids or the X targeting lists together name more than 60
+	// criteria, and when TWITTER_CUSTOM_AUDIENCES_ENABLED is not "true" on this
+	// deployment. When both platforms' inputs are refused, the 403 names each
+	// platform's fields in its own sentence. A Reddit custom audience list is also
+	// refused synchronously with 400 "invalid campaign config:
 	// redditConfig.<field>: ..." when it is not an array of strings, when an id is
 	// not 1-64 letters, digits or underscores, repeats, or is in both lists, when
 	// a list holds more than 100 ids, and when REDDIT_CUSTOM_AUDIENCES_ENABLED is
@@ -1270,8 +1271,11 @@ type CampaignCreateInput struct {
 	// audience ids (list-twitter-ads-custom-audiences offers them) to target and
 	// to exclude, sent as CUSTOM_AUDIENCE targeting criteria on the new line item
 	// with operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
-	// given; at most 100 per list; no id twice and none in both lists. Before
-	// anything is created every id is read with GET
+	// given; at most 60 per list; no id twice and none in both lists. geoTargets,
+	// languages, customAudienceIds and excludedCustomAudienceIds together may name
+	// at most 60 criteria per create, since each is a separate X write paced at
+	// one per second inside the two-minute dispatch budget; more is refused with
+	// the same 400. Before anything is created every id is read with GET
 	// accounts/:account_id/custom_audiences and must be live and targetable; a
 	// missing, deleted or non-targetable audience fails the job with nothing
 	// created. The exclusions are posted first of all the criteria and the

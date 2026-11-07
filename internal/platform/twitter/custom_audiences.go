@@ -40,9 +40,11 @@ const (
 	FieldCustomAudienceIDs         = "customAudienceIds"
 	FieldExcludedCustomAudienceIDs = "excludedCustomAudienceIds"
 
-	// MaxCustomAudienceIDs caps each create list (X allows 100 custom audience criteria per line
-	// item).
-	MaxCustomAudienceIDs = 100
+	// MaxCustomAudienceIDs caps each create list. X allows 100 custom audience criteria per line
+	// item, but every criterion is a separate write paced at one per second inside the dispatch's
+	// two-minute budget, so a create is held to MaxCreateTargetingCriteria criteria in total and
+	// one list can never usefully exceed that.
+	MaxCustomAudienceIDs = MaxCreateTargetingCriteria
 
 	// TargetingCustomAudience is X's targeting_type for a custom audience criterion.
 	TargetingCustomAudience = "CUSTOM_AUDIENCE"
@@ -292,11 +294,13 @@ func (c *Client) ListCustomAudiences(ctx context.Context) (audiences []CustomAud
 			}
 			return nil, false, fmt.Errorf("list x custom audiences: %w: a full page came back with no usable cursor", ErrCustomAudiencesMalformed)
 		}
-		if page >= customAudienceMaxPages {
-			return out, true, nil
-		}
+		// A repeated cursor is checked BEFORE the page cap, so a looping answer on the last
+		// allowed page is still refused rather than reported as a truncated list.
 		if _, again := seenCursors[resp.NextCursor]; again {
 			return nil, false, fmt.Errorf("list x custom audiences: %w: the list repeated a page cursor", ErrCustomAudiencesMalformed)
+		}
+		if page >= customAudienceMaxPages {
+			return out, true, nil
 		}
 		seenCursors[resp.NextCursor] = struct{}{}
 		cursor = resp.NextCursor

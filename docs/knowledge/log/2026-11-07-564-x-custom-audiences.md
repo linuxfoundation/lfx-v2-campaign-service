@@ -7,7 +7,10 @@ X create makes, as `CUSTOM_AUDIENCE` criteria with `operator_type` `EQ` and `NE`
 lists the ad account's audiences for a picker.
 
 - The rules live once in `twitter.ValidateCustomAudienceIDs`: each id is 1-32 letters or digits,
-  sent exactly as given, at most 100 per list, with no repeat and no id in both lists.
+  sent exactly as given, at most 60 per list, with no repeat and no id in both lists. All four
+  X targeting lists together (with `geoTargets` and `languages`) may name at most 60 criteria
+  per create (`twitter.CheckCreateCriteriaCount`), because each criterion is a write paced at one
+  per second inside the two-minute dispatch budget.
   `TwitterDispatcher.PreflightCreate` refuses a breach, or a value that is not an array of
   strings, with a synchronous 400 (`invalid campaign config: twitterConfig.<field>: ...`).
 - Before anything is created, every id is read with

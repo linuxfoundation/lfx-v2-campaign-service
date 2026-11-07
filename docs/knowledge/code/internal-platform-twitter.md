@@ -1631,8 +1631,15 @@ Not verified live: no X call was made. The dispatcher keeps both lists behind
 `CampaignInput.CustomAudienceIDs` and `ExcludedCustomAudienceIDs` add `CUSTOM_AUDIENCE` criteria
 to the line item a create makes: `EQ` to target, `NE` to exclude. `ValidateCustomAudienceIDs`
 holds the pure rules once (1-32 letters or digits, compared exactly and never trimmed, at most
-100 per list, no repeat, no id in both lists), so the dispatcher's synchronous preflight and
+60 per list, no repeat, no id in both lists), so the dispatcher's synchronous preflight and
 `CreateCampaign` cannot disagree.
+
+`CheckCreateCriteriaCount` caps the criteria ONE create posts across all four targeting lists
+(`MaxCreateTargetingCriteria`, 60, counted after de-duplication). Each criterion is its own
+write, paced at one per second, and the whole create runs inside the orchestrator's two-minute
+dispatch budget (`service.providerCallTimeout`). A larger request could not finish and would
+leave a retained PAUSED partial. `TestCreateTargetingCriteriaFitTheDispatchBudget` pins the
+margin against a mirrored copy of that budget.
 
 Before anything is created, `checkCustomAudiences` reads every id in one
 `GET accounts/:id/custom_audiences?custom_audience_ids=…&with_deleted=true` (200 ids per call,
@@ -1654,7 +1661,8 @@ still compare ignoring case).
 `ListCustomAudiences` backs `GET /projects/{project_id}/twitter-ads/custom-audiences`. It walks
 `custom_audiences?count=1000` by `next_cursor` for at most 10 pages, then returns what it read
 with `truncated` set. Deleted audiences are skipped. An unusable or repeated id, a missing data
-list, a full page with no usable cursor or a repeated cursor fails the whole read
+list, a full page with no usable cursor or a repeated cursor (checked before the page cap, so a
+loop on the last allowed page is refused too) fails the whole read
 (`ErrCustomAudiencesMalformed`, a 503), never a partial list.
 
 Not verified live: no X call was made. The dispatcher keeps both the create inputs and the read

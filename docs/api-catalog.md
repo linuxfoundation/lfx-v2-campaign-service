@@ -3127,10 +3127,16 @@ excludedCustomAudienceIds?: string[]
                                   criteria, posted FIRST of all the criteria so a create that stops
                                   part-way has applied the suppression before any inclusion.
                                   For BOTH lists: each id is 1-32 letters or digits, sent exactly
-                                  as given (not trimmed); at most 100 per list; a blank, malformed
+                                  as given (not trimmed); at most 60 per list; a blank, malformed
                                   or repeated id, or an id in both lists, is a synchronous 400
                                   `invalid campaign config: twitterConfig.<field>: …`, as is a
                                   value that is not an array of strings (null reads as absent).
+                                  ALL FOUR TARGETING LISTS TOGETHER (`geoTargets`, `languages`,
+                                  `customAudienceIds`, `excludedCustomAudienceIds`, counted after
+                                  de-duplication) may name at most 60 criteria per create: each is
+                                  a separate X write paced at one per second inside the two-minute
+                                  dispatch budget, so more could not finish. Over that is a
+                                  synchronous 400 `invalid campaign config: twitterConfig: …`.
                                   Before anything is created every id is read with
                                   `GET accounts/:id/custom_audiences?custom_audience_ids=…&with_deleted=true`
                                   and must come back live and `targetable`; a missing, deleted or

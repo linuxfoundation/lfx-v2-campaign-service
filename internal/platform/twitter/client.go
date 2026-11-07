@@ -3624,6 +3624,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// Fixed text naming the list and a position, never a value: operator-safe.
 		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", aerr.Error())
 	}
+	// And all the criteria together must fit the paced-write budget (MaxCreateTargetingCriteria).
+	if cerr := CheckCreateCriteriaCount(len(geoTargets) + len(languages) + len(in.CustomAudienceIDs) + len(in.ExcludedCustomAudienceIDs)); cerr != nil {
+		// Fixed text and counts only: operator-safe.
+		return nil, domain.PreflightRefusalf("invalid twitterConfig: %s", cerr.Error())
+	}
 
 	// Validate required account config before any mutating call. account_id and
 	// funding_instrument_id are both required by the X Ads campaign-create

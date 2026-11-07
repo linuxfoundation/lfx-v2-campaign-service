@@ -56,6 +56,16 @@ const (
 	// MaxLanguages caps CampaignInput.Languages.
 	MaxLanguages = 20
 
+	// MaxCreateTargetingCriteria caps the targeting criteria ONE create posts, across geoTargets,
+	// languages, customAudienceIds and excludedCustomAudienceIds together (after de-duplication).
+	// Each criterion is its own POST, paced at one write per second (writeDelay) and sent once,
+	// and the whole create runs inside the orchestrator's two-minute dispatch budget
+	// (service.providerCallTimeout) alongside the account read, the lookups and the campaign,
+	// line item, media and tweet writes. Sixty paced criteria leave that budget about a minute of
+	// headroom; more could not finish, and would leave a retained PAUSED partial whose targeting
+	// needs completing by hand. TestCreateTargetingCriteriaFitTheDispatchBudget pins the margin.
+	MaxCreateTargetingCriteria = 60
+
 	// TargetingLocation and TargetingLanguage are X's targeting_type values.
 	TargetingLocation = "LOCATION"
 	TargetingLanguage = "LANGUAGE"
@@ -117,6 +127,17 @@ func normalizeTargetList(field string, in []string, maxLen int, fold func(string
 		return nil, &TargetingError{Field: field, Msg: fmt.Sprintf("at most %d distinct entries are accepted, got %d", maxLen, len(out))}
 	}
 	return out, nil
+}
+
+// CheckCreateCriteriaCount refuses a create whose lists name more than MaxCreateTargetingCriteria
+// criteria in total. n is the count after each list's own normalization. Pure, so the
+// dispatcher's synchronous preflight and CreateCampaign apply the same bound.
+func CheckCreateCriteriaCount(n int) error {
+	if n <= MaxCreateTargetingCriteria {
+		return nil
+	}
+	return fmt.Errorf("%s, %s, %s and %s together name %d targeting criteria; at most %d are accepted per create, since each is a separate X write paced at one per second",
+		FieldGeoTargets, FieldLanguages, FieldCustomAudienceIDs, FieldExcludedCustomAudienceIDs, n, MaxCreateTargetingCriteria)
 }
 
 // createCriterion is one criterion the create path will POST.

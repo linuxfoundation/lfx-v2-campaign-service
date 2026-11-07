@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func audienceBody(els ...string) string {
@@ -45,8 +46,8 @@ func TestValidateCustomAudienceIDs(t *testing.T) {
 		{"repeat", []string{"a", "a"}, nil, "customAudienceIds: entry 2 repeats"},
 		{"case differs is not a repeat", []string{"a", "A"}, nil, ""},
 		{"overlap", []string{"a1"}, []string{"b", "a1"}, "excludedCustomAudienceIds: entry 2 is also in customAudienceIds"},
-		{"over the cap", over, nil, "customAudienceIds: holds 101 ids; at most 100"},
-		{"excluded over the cap", nil, over, "excludedCustomAudienceIds: holds 101 ids"},
+		{"over the cap", over, nil, fmt.Sprintf("customAudienceIds: holds %d ids; at most %d", MaxCustomAudienceIDs+1, MaxCustomAudienceIDs)},
+		{"excluded over the cap", nil, over, fmt.Sprintf("excludedCustomAudienceIds: holds %d ids", MaxCustomAudienceIDs+1)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := ValidateCustomAudienceIDs(tc.include, tc.exclude)
@@ -290,12 +291,13 @@ func TestListCustomAudiences_RefusesWhatItCannotBelieve(t *testing.T) {
 		full[i] = audienceEl(fmt.Sprintf("f%d", i), true, false)
 	}
 	for name, pages := range map[string]map[string]string{
-		"no data list":               {"": `{"next_cursor":null}`},
-		"unusable id":                {"": audienceBody(audienceEl("a-1", true, false))},
-		"listed twice":               {"": `{"data":[` + audienceEl("a1", true, false) + `],"next_cursor":"c1"}`, "c1": audienceBody(audienceEl("a1", true, false))},
-		"repeat cursor":              {"": `{"data":[` + audienceEl("a1", true, false) + `],"next_cursor":"c1"}`, "c1": `{"data":[` + audienceEl("a2", true, false) + `],"next_cursor":"c1"}`},
-		"full page without a cursor": {"": `{"data":[` + strings.Join(full, ",") + `]}`},
-		"upstream 500":               {},
+		"no data list":                           {"": `{"next_cursor":null}`},
+		"unusable id":                            {"": audienceBody(audienceEl("a-1", true, false))},
+		"listed twice":                           {"": `{"data":[` + audienceEl("a1", true, false) + `],"next_cursor":"c1"}`, "c1": audienceBody(audienceEl("a1", true, false))},
+		"repeat cursor":                          {"": `{"data":[` + audienceEl("a1", true, false) + `],"next_cursor":"c1"}`, "c1": `{"data":[` + audienceEl("a2", true, false) + `],"next_cursor":"c1"}`},
+		"full page without a cursor":             {"": `{"data":[` + strings.Join(full, ",") + `]}`},
+		"repeat cursor on the last allowed page": repeatOnLastPage(),
+		"upstream 500":                           {},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c, _ := listAudiencesServer(t, pages)
@@ -314,5 +316,68 @@ func TestListCustomAudiences_RefusesWhatItCannotBelieve(t *testing.T) {
 	c, _ = listAudiencesServer(t, map[string]string{"": audienceBody()})
 	if rows, _, err := c.ListCustomAudiences(context.Background()); err != nil || rows == nil || len(rows) != 0 {
 		t.Fatalf("empty: rows=%v err=%v", rows, err)
+	}
+}
+
+// repeatOnLastPage serves customAudienceMaxPages pages whose last one repeats an earlier cursor:
+// the walk must refuse it, not report a truncated list.
+func repeatOnLastPage() map[string]string {
+	pages := map[string]string{}
+	for i := range customAudienceMaxPages {
+		cur, next := "", fmt.Sprintf("c%d", i+1)
+		if i > 0 {
+			cur = fmt.Sprintf("c%d", i)
+		}
+		if i == customAudienceMaxPages-1 {
+			next = "c3"
+		}
+		pages[cur] = fmt.Sprintf(`{"data":[%s],"next_cursor":%q}`, audienceEl(fmt.Sprintf("r%d", i), true, false), next)
+	}
+	return pages
+}
+
+// A create whose lists together name more than MaxCreateTargetingCriteria criteria is refused
+// before any request, since the paced writes could not finish inside the dispatch budget.
+func TestCreateCampaign_RefusesMoreCriteriaThanTheBudgetAllows(t *testing.T) {
+	f := newTargetingFakeX()
+	c := targetingClient(t, f)
+	include := make([]string, 0, MaxCreateTargetingCriteria)
+	for i := range MaxCreateTargetingCriteria {
+		include = append(include, fmt.Sprintf("a%d", i))
+	}
+	in := audienceInput(include, nil)
+	in.GeoTargets = []string{"US"}
+	res, err := c.CreateCampaign(context.Background(), in)
+	if res != nil || !isRefusal(err) || !strings.Contains(err.Error(), fmt.Sprintf("together name %d targeting criteria; at most %d", MaxCreateTargetingCriteria+1, MaxCreateTargetingCriteria)) {
+		t.Fatalf("CreateCampaign = (%v, %v), want a refusal naming the total", res, err)
+	}
+	if writes, lookups := f.snapshot(); len(writes) != 0 || len(lookups) != 0 {
+		t.Errorf("writes=%v lookups=%v, want nothing sent", writes, lookups)
+	}
+	// Exactly at the cap is accepted by the count rule.
+	if err := CheckCreateCriteriaCount(MaxCreateTargetingCriteria); err != nil {
+		t.Errorf("CheckCreateCriteriaCount(cap) = %v, want nil", err)
+	}
+}
+
+// dispatchBudgetMirror mirrors service.providerCallTimeout (internal/service/orchestrator.go),
+// which this package cannot import. KEEP IN SYNC.
+const dispatchBudgetMirror = 2 * time.Minute
+
+// createOverheadWrites bounds the other paced writes of one create: the campaign, the line item,
+// the media library entry, the tweet and the promoted tweet, with room for a retry's re-read.
+const createOverheadWrites = 10
+
+// TestCreateTargetingCriteriaFitTheDispatchBudget pins the margin MaxCreateTargetingCriteria is
+// sized for: every paced write of a create at the cap must finish with at least a third of the
+// dispatch budget left for the unpaced reads (account, lookups, custom audience check).
+func TestCreateTargetingCriteriaFitTheDispatchBudget(t *testing.T) {
+	paced := time.Duration(MaxCreateTargetingCriteria+createOverheadWrites) * writeDelay
+	if paced > dispatchBudgetMirror*2/3 {
+		t.Fatalf("%d criteria + %d other writes at %v each take %v, more than two thirds of the %v dispatch budget",
+			MaxCreateTargetingCriteria, createOverheadWrites, writeDelay, paced, dispatchBudgetMirror)
+	}
+	if MaxGeoTargets > MaxCreateTargetingCriteria || MaxLanguages > MaxCreateTargetingCriteria || MaxCustomAudienceIDs > MaxCreateTargetingCriteria {
+		t.Fatal("a per-list cap exceeds the per-create criteria cap")
 	}
 }
