@@ -23,13 +23,15 @@ import (
 // microsoftConfig.<field>: ..."). Resolving the excluded codes and attaching the criteria happen in
 // the client (CreateCampaign), still before the ad group, under geoTargets' fail-closed rules.
 
-// microsoftProximityConfig is one microsoftConfig.proximityTargets entry.
+// microsoftProximityConfig is one microsoftConfig.proximityTargets entry. Latitude and Longitude
+// are pointers so a missing or null coordinate is refused rather than read as 0, which is a real
+// place (0°,0°); an explicit 0 is still accepted.
 type microsoftProximityConfig struct {
-	Latitude  float64 `json:"latitude"`
-	Longitude float64 `json:"longitude"`
-	Radius    float64 `json:"radius"`
-	Unit      string  `json:"unit"`
-	Name      string  `json:"name"`
+	Latitude  *float64 `json:"latitude"`
+	Longitude *float64 `json:"longitude"`
+	Radius    float64  `json:"radius"`
+	Unit      string   `json:"unit"`
+	Name      string   `json:"name"`
 }
 
 // microsoftCreateTargetingEnabled reports whether this deployment opted in. Read per call, like
@@ -44,7 +46,15 @@ func microsoftProximityTargets(in []microsoftProximityConfig) []microsoft.Proxim
 	}
 	out := make([]microsoft.ProximityTarget, len(in))
 	for i, p := range in {
-		out[i] = microsoft.ProximityTarget{Latitude: p.Latitude, Longitude: p.Longitude, Radius: p.Radius, Unit: p.Unit, Name: p.Name}
+		// checkMicrosoftCreateTargeting refuses a nil coordinate before this is reached.
+		var lat, lng float64
+		if p.Latitude != nil {
+			lat = *p.Latitude
+		}
+		if p.Longitude != nil {
+			lng = *p.Longitude
+		}
+		out[i] = microsoft.ProximityTarget{Latitude: lat, Longitude: lng, Radius: p.Radius, Unit: p.Unit, Name: p.Name}
 	}
 	return out
 }
@@ -73,6 +83,16 @@ func checkMicrosoftCreateTargeting(cfg microsoftConfig) error {
 		return domain.WrapPreflightRefusal(fmt.Errorf(
 			"%w: microsoftConfig: %s disabled on this deployment (%s is not \"true\"); omit %s, or ask an operator to set %s to \"true\"",
 			domain.ErrCreateConfigInvalid, fields, env, fields, env))
+	}
+	for i, p := range cfg.ProximityTargets {
+		for _, c := range []struct {
+			name string
+			v    *float64
+		}{{"latitude", p.Latitude}, {"longitude", p.Longitude}} {
+			if c.v == nil {
+				return domain.WrapPreflightRefusal(fmt.Errorf("%w: microsoftConfig.%s: entry %d %s is required", domain.ErrCreateConfigInvalid, microsoft.FieldProximityTargets, i+1, c.name))
+			}
+		}
 	}
 	if _, err := microsoft.ValidateCreateTargeting(cfg.GeoTargets, cfg.ExcludedGeoTargets, microsoftProximityTargets(cfg.ProximityTargets), cfg.Languages); err != nil {
 		var tErr *microsoft.CreateTargetingError

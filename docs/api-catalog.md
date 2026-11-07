@@ -896,7 +896,9 @@ excludedGeoTargets?: string[]   — Countries to EXCLUDE (#563 gap 5): ISO 3166-
                                   after the positive geoTargets. A code also in geoTargets is
                                   refused: Microsoft applies exclusions after inclusions.
 proximityTargets?: object[]     — Radius targets (#563 gap 5), at most 10:
-                                  {latitude (-85..85), longitude (-180..180), radius (whole number,
+                                  {latitude (-85..85, required), longitude (-180..180, required; a
+                                  missing or null coordinate is refused, an explicit 0 accepted),
+                                  radius (whole number,
                                   1-500 Miles or 1-800 Kilometers), unit ("Miles" | "Kilometers",
                                   any casing), name? (at most 50 characters, no control
                                   characters)}, attached as BiddableCampaignCriterion /

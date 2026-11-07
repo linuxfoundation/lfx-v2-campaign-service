@@ -314,3 +314,15 @@ func TestCreateCampaign_ReusedCampaignStopsBeforeTheAdGroup(t *testing.T) {
 		t.Errorf("steps = %v", res.Steps)
 	}
 }
+
+// The step label reduces a link in a radius name (it is persisted), and falls back to the
+// coordinates when nothing is left or no name was given.
+func TestProximityLabel_RedactsTheName(t *testing.T) {
+	got := proximityLabel([]ProximityTarget{
+		{Latitude: 1, Longitude: 2, Radius: 5, Unit: "Miles", Name: "Venue https://x.test/?token=SECRET"},
+		{Latitude: 3.5, Longitude: -4, Radius: 10, Unit: "Kilometers"},
+	})
+	if strings.Contains(got, "SECRET") || !strings.Contains(got, "5 Miles around Venue") || !strings.Contains(got, "10 Kilometers around 3.5,-4") {
+		t.Fatalf("label = %q", got)
+	}
+}

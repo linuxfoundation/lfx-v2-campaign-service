@@ -95,3 +95,43 @@ func TestMicrosoftCreateTargeting_DispatchSendsThem(t *testing.T) {
 		t.Errorf("ad group body = %s", adGroupBody)
 	}
 }
+
+// A radius target with a missing or null coordinate is refused, not read as 0°,0°; an explicit 0
+// is accepted.
+func TestMicrosoftCreateTargeting_CoordinatesAreRequired(t *testing.T) {
+	t.Setenv(constants.EnvMicrosoftCreateTargetingEnabled, "true")
+	api := &msAudAPI{}
+	d := newMSAudDispatcher(t, api)
+	for extra, want := range map[string]string{
+		`,"proximityTargets":[{"radius":25,"unit":"Miles"}]`:                                                                                     "microsoftConfig.proximityTargets: entry 1 latitude is required",
+		`,"proximityTargets":[{"latitude":null,"longitude":1,"radius":25,"unit":"Miles"}]`:                                                       "entry 1 latitude is required",
+		`,"proximityTargets":[{"latitude":1,"radius":25,"unit":"Miles"}]`:                                                                        "entry 1 longitude is required",
+		`,"proximityTargets":[{"latitude":1,"longitude":1,"radius":2,"unit":"Miles"},{"latitude":1,"longitude":null,"radius":2,"unit":"Miles"}]`: "entry 2 longitude is required",
+	} {
+		err := d.PreflightCreate(context.Background(), "cncf", model.ProviderMicrosoftAds, msNegConfig(extra))
+		requireConfigInvalid(t, err, want)
+		_, derr := d.Dispatch(context.Background(), testBrief(), model.ProviderMicrosoftAds, msNegConfig(extra))
+		requirePreCreate(t, derr)
+	}
+	if n := len(api.snapshot()); n != 0 {
+		t.Errorf("%d Microsoft calls for a refused radius target; want 0", n)
+	}
+	if err := d.PreflightCreate(context.Background(), "cncf", model.ProviderMicrosoftAds, msNegConfig(`,"proximityTargets":[{"latitude":0,"longitude":0,"radius":5,"unit":"Kilometers"}]`)); !errors.Is(err, domain.ErrPreflightNotApplicable) {
+		t.Errorf("explicit zero coordinates: PreflightCreate = %v, want not applicable", err)
+	}
+}
+
+// A radius target's name is caller text bound for the unencrypted config snapshot, so a link in
+// it is reduced there, while the config sent to Microsoft keeps it.
+func TestMicrosoftSnapshotConfig_ProximityNameRedacted(t *testing.T) {
+	lat, lng := 1.0, 2.0
+	const name = "https://x.test/?token=SECRET"
+	cfg := microsoftConfig{ProximityTargets: []microsoftProximityConfig{{Latitude: &lat, Longitude: &lng, Radius: 5, Unit: "Miles", Name: name}}}
+	snap := microsoftSnapshotConfig(cfg)
+	if strings.Contains(snap.ProximityTargets[0].Name, "SECRET") || snap.ProximityTargets[0].Name != sanitizeSnapshotText(name) {
+		t.Errorf("snapshot name = %q", snap.ProximityTargets[0].Name)
+	}
+	if cfg.ProximityTargets[0].Name != name {
+		t.Errorf("dispatch config mutated: %q", cfg.ProximityTargets[0].Name)
+	}
+}

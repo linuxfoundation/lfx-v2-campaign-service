@@ -13,6 +13,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
 )
 
 // ---------------------------------------------------------------------------
@@ -255,10 +257,13 @@ func (c *Client) createRadiusCriterions(ctx context.Context, campaignID string, 
 }
 
 // proximityLabel renders the radius targets for a step: "25 Miles around LA Convention Center".
+// The name is caller text bound for the persisted steps, so a link in it is reduced
+// (redact.SnapshotText) as every other persisted caller text is; the criterion sent to Microsoft
+// keeps the name as given.
 func proximityLabel(radii []ProximityTarget) string {
 	parts := make([]string, 0, len(radii))
 	for _, p := range radii {
-		where := p.Name
+		where := redact.SnapshotText(p.Name)
 		if where == "" {
 			where = strconv.FormatFloat(p.Latitude, 'f', -1, 64) + "," + strconv.FormatFloat(p.Longitude, 'f', -1, 64)
 		}

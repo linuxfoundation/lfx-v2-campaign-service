@@ -630,6 +630,15 @@ func microsoftSnapshotConfig(cfg microsoftConfig) microsoftConfig {
 		}
 	}
 	snapshot.Callouts = sanitizeSnapshotTexts(cfg.Callouts)
+	// A radius target's name (#563) is caller free text too: copied before it is reduced, since
+	// the caller's slice shares its backing array with the config sent to Microsoft.
+	if cfg.ProximityTargets != nil {
+		snapshot.ProximityTargets = make([]microsoftProximityConfig, len(cfg.ProximityTargets))
+		copy(snapshot.ProximityTargets, cfg.ProximityTargets)
+		for i := range snapshot.ProximityTargets {
+			snapshot.ProximityTargets[i].Name = sanitizeSnapshotText(snapshot.ProximityTargets[i].Name)
+		}
+	}
 	// NegativeKeywords (#563) needs no reduction: by the time a snapshot is written Dispatch has
 	// replaced the list with the VALIDATED one, whose text is letters, digits, spaces and & ' - .
 	// only, so it cannot carry a link (no ':' or '/').

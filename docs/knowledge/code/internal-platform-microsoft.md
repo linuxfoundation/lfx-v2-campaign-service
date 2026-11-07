@@ -1592,7 +1592,9 @@ also need `global_marketing_ops` (`service.MicrosoftMarketingOpsInputs`).
   serve.
 - `proximityTargets`: at most 10. Latitude -85..85, longitude -180..180, a whole radius of 1-500
   Miles or 1-800 Kilometers (Microsoft's `RadiusCriterion` bounds), an optional name of at most 50
-  characters.
+  characters. The dispatcher decodes the coordinates as pointers and refuses a missing or null
+  one, because 0 is a real place. The name is reduced (`redact.SnapshotText`) in the persisted
+  step and in the config snapshot, and sent to Microsoft as given.
 - `languages`: 1-10 of Microsoft's Search `Campaign.Languages` values, or `All` alone, matched
   ignoring case and sent in Microsoft's spelling.
 
