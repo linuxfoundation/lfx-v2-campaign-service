@@ -5425,7 +5425,21 @@ type CampaignCreateInputRequestBody struct {
 	// staffCountRanges, and any targeting while the deployment has not set
 	// LINKEDIN_ADS_TARGETING_ENABLED. audienceMatchingSegments and dynamicSegments
 	// name ad segments on the ad account, so they also require
-	// global_marketing_ops on the project (403; 503 when the check cannot be made).
+	// global_marketing_ops on the project (403; 503 when the check cannot be
+	// made). REDDIT EXCLUSIONS (#549): redditConfig takes `excludedSubreddits`
+	// (subreddit names, an optional r/ prefix stripped, each 2-21 letters, digits
+	// or underscores, at most 100, case-insensitive duplicates dropped) and
+	// `excludedGeoTargets` (ISO 3166-1 alpha-2 country codes, at most 50,
+	// uppercased and de-duplicated), sent as the ad group's
+	// targeting.excluded_communities and targeting.excluded_geolocations on every
+	// ad-group attempt (the retry that drops rejected communities and interests
+	// keeps them). A name also in `subreddits`, or a code also targeted
+	// (geoTargets, or the US default when geoTargets is empty), is refused. Both
+	// are OFF unless REDDIT_TARGETING_EXCLUSIONS_ENABLED is exactly "true" on the
+	// deployment. A blank or invalid entry, an overlap, a list over its cap, a
+	// value that is not an array of strings (null reads as absent), or either list
+	// while the flag is off, is refused with 400 "invalid campaign config:
+	// redditConfig.<field>: ..." before any job exists.
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed
