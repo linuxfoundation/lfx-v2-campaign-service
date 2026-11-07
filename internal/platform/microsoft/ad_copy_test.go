@@ -129,6 +129,23 @@ func TestCreateCampaign_PathRefusedBeforeAnyRequest(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_DisplayURLRefusalWithholdsTokenHost: the refusal reaches the job result
+// verbatim, so a token-shaped host label must not be echoed in it.
+func TestCreateCampaign_DisplayURLRefusalWithholdsTokenHost(t *testing.T) {
+	const token = "a8f3k29dq7x1m4n6b2v5c8z0p3r7t9w1"
+	c, _, _ := captureAdBody(t, &campaignsAPI{})
+	in := validInput()
+	in.RegistrationURL = "https://" + token + ".example.test/r"
+	in.Path1, in.Path2 = "abcdefghijklmno", "abcdefghijklmno"
+	_, err := c.CreateCampaign(context.Background(), in)
+	if err == nil || !strings.Contains(err.Error(), "display URL") {
+		t.Fatalf("CreateCampaign err = %v; want the display URL refusal", err)
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Errorf("refusal echoes the token host: %v", err)
+	}
+}
+
 // TestCreateCampaign_DisplayURLWithPathsAtCapIsAccepted is the boundary twin of the cap case: a
 // host plus "/path1/path2" of exactly 67 characters is sent.
 func TestCreateCampaign_DisplayURLWithPathsAtCapIsAccepted(t *testing.T) {

@@ -598,8 +598,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				pathLimit = maxDisplayDomainRunesWide
 			}
 			if n := utf8.RuneCountInString(shown); n > pathLimit {
-				return nil, domain.PreflightRefusalf("microsoft-ads ad display URL (domain %q plus path1/path2) is %d characters, exceeding the %d limit; shorten path1/path2",
-					truncate(authority, maxErrorBodyChars), n, pathLimit)
+				// The host is caller-supplied, so it is quoted only through domain.CallerValue: this
+				// sentence reaches the job result verbatim, and a host label can carry a token.
+				return nil, domain.PreflightRefusalf("microsoft-ads ad display URL (domain %s plus path1/path2) is %d characters, exceeding the %d limit; shorten path1/path2",
+					domain.CallerValue(authority), n, pathLimit)
 			}
 		}
 	}

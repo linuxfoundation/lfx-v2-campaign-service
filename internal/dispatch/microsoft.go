@@ -104,7 +104,8 @@ type microsoftConfig struct {
 	// Headlines, Descriptions, Path1 and Path2 are the OPTIONAL caller copy of the responsive
 	// search ad (#563), sent instead of the auto-composed copy: 3–15 headlines, 2–4 descriptions,
 	// and the two display-URL path segments. Refused unless MICROSOFT_AD_COPY_ENABLED is "true";
-	// the rules are microsoft.ValidateCallerAdCopy's (microsoft_ad_copy.go). Omitted, the ad is
+	// the gate and type check are in microsoft_ad_copy.go, the rules are
+	// microsoft.ValidateCallerAdCopy's (internal/platform/microsoft/ad_copy.go). Omitted, the ad is
 	// auto-composed from the event name, exactly as before these fields existed.
 	Headlines    []string `json:"headlines"`
 	Descriptions []string `json:"descriptions"`
@@ -487,8 +488,8 @@ func microsoftSnapshotConfig(cfg microsoftConfig) microsoftConfig {
 	snapshot.ImageAltText = sanitizeSnapshotText(cfg.ImageAltText)
 	// The caller ad copy (#563) is caller free text bound for the same unencrypted column, so it
 	// is reduced the same way. Both slices are REALLOCATED before they are rewritten.
-	snapshot.Headlines = sanitizeSnapshotList(cfg.Headlines)
-	snapshot.Descriptions = sanitizeSnapshotList(cfg.Descriptions)
+	snapshot.Headlines = sanitizeSnapshotTexts(cfg.Headlines)
+	snapshot.Descriptions = sanitizeSnapshotTexts(cfg.Descriptions)
 	snapshot.Path1 = sanitizeSnapshotText(cfg.Path1)
 	snapshot.Path2 = sanitizeSnapshotText(cfg.Path2)
 	if cfg.Keywords != nil {
@@ -499,19 +500,6 @@ func microsoftSnapshotConfig(cfg microsoftConfig) microsoftConfig {
 		}
 	}
 	return snapshot
-}
-
-// sanitizeSnapshotList returns a fresh copy of in with each entry passed through
-// sanitizeSnapshotText, nil for nil, so the snapshot never shares a backing array with cfg.
-func sanitizeSnapshotList(in []string) []string {
-	if in == nil {
-		return nil
-	}
-	out := make([]string, len(in))
-	for i, s := range in {
-		out[i] = sanitizeSnapshotText(s)
-	}
-	return out
 }
 
 // campaignFromMicrosoft maps the client result to the persistence model.
