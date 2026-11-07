@@ -89,14 +89,20 @@ type CustomAudience struct {
 }
 
 type customAudienceWire struct {
-	ID                   string   `json:"id"`
-	Name                 string   `json:"name"`
-	AudienceType         string   `json:"audience_type"`
-	Targetable           bool     `json:"targetable"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	AudienceType string `json:"audience_type"`
+	// Targetable and Deleted are pointers so an absent or null flag is told apart from false:
+	// the create lookup refuses to conclude anything from a missing one (checkCustomAudiences).
+	Targetable           *bool    `json:"targetable"`
 	AudienceSize         *int64   `json:"audience_size"`
 	ReasonsNotTargetable []string `json:"reasons_not_targetable"`
-	Deleted              bool     `json:"deleted"`
+	Deleted              *bool    `json:"deleted"`
 }
+
+// deleted reports X's deleted flag; an absent one reads as not deleted, which is what the picker
+// walk (with_deleted defaults to false) may assume. The create lookup does not rely on it.
+func (w customAudienceWire) deleted() bool { return w.Deleted != nil && *w.Deleted }
 
 func (w customAudienceWire) audience() CustomAudience {
 	reasons := make([]string, 0, len(w.ReasonsNotTargetable))
@@ -109,7 +115,7 @@ func (w customAudienceWire) audience() CustomAudience {
 		ID:                   w.ID,
 		Name:                 strings.TrimSpace(w.Name),
 		AudienceType:         strings.TrimSpace(w.AudienceType),
-		Targetable:           w.Targetable,
+		Targetable:           w.Targetable != nil && *w.Targetable,
 		AudienceSize:         w.AudienceSize,
 		ReasonsNotTargetable: reasons,
 	}
@@ -212,12 +218,18 @@ func (c *Client) checkCustomAudiences(ctx context.Context, include, exclude []st
 	}
 	for _, w := range wants {
 		e, ok := got[w.id]
+		// The lookup asks for deleted audiences too, so a live one is only one X says is not
+		// deleted and is targetable. An absent or null flag says neither: the answer cannot be
+		// believed, and nothing is created.
+		if ok && (e.Deleted == nil || e.Targetable == nil) {
+			return fmt.Errorf("x custom audience lookup: %w: an audience came back without its deleted or targetable flag", ErrCustomAudiencesMalformed)
+		}
 		switch {
 		case !ok:
 			return domain.PreflightRefusalf("invalid twitterConfig.%s: X has no custom audience %s on this ad account", w.field, domain.CallerValue(w.id))
-		case e.Deleted:
+		case *e.Deleted:
 			return domain.PreflightRefusalf("invalid twitterConfig.%s: X custom audience %s is deleted", w.field, domain.CallerValue(w.id))
-		case !e.Targetable:
+		case !*e.Targetable:
 			reasons := e.audience().ReasonsNotTargetable
 			if len(reasons) > maxReasonsShown {
 				reasons = reasons[:maxReasonsShown]
@@ -280,7 +292,7 @@ func (c *Client) ListCustomAudiences(ctx context.Context) (audiences []CustomAud
 				return nil, false, fmt.Errorf("list x custom audiences: %w: page %d: the same audience was listed twice", ErrCustomAudiencesMalformed, page)
 			}
 			seen[e.ID] = struct{}{}
-			if e.Deleted {
+			if e.deleted() {
 				continue
 			}
 			out = append(out, e.audience())

@@ -160,6 +160,15 @@ func TestCreateCampaign_CustomAudienceLookupFailureCreatesNothing(t *testing.T) 
 			f.audiences = audienceBody(audienceEl("1nmth", true, false), audienceEl("1nmth", true, false))
 		},
 		"duplicated key": func(f *targetingFakeX) { f.audiences = `{"data":[],"data":[]}` },
+		"deleted flag absent": func(f *targetingFakeX) {
+			f.audiences = audienceBody(`{"id":"1nmth","targetable":true}`)
+		},
+		"deleted flag null": func(f *targetingFakeX) {
+			f.audiences = audienceBody(`{"id":"1nmth","targetable":true,"deleted":null}`)
+		},
+		"targetable flag absent": func(f *targetingFakeX) {
+			f.audiences = audienceBody(`{"id":"1nmth","deleted":false}`)
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newTargetingFakeX()

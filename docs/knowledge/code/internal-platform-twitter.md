@@ -1647,7 +1647,9 @@ X's maximum). Every id must come back live and `targetable`. X says a custom aud
 targetable to be targeted. A missing, deleted or non-targetable audience is a `PreflightRefusal`
 naming the list and the id, plus X's `reasons_not_targetable` when they are enum-shaped
 (`TOO_SMALL`, `PROCESSING`); any other reason text is dropped. A read that fails or cannot be
-believed is a plain error. Either way nothing is created.
+believed is a plain error, and that includes an audience returned without its `deleted` or
+`targetable` flag (absent or null), since the lookup asks for deleted audiences too and a missing
+flag confirms neither. Either way nothing is created.
 
 The criteria go through the same per-criterion POST as the location and language criteria.
 `createCriterion` now carries an operator (`""` reads as EQ). The order is: exclusions first of
