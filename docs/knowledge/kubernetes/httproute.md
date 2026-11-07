@@ -15,7 +15,7 @@ See [charts/lfx-v2-campaign-service/templates/httproute.yaml](../../../charts/lf
 
 The service serves its API under `/projects/{projectId}/…` (the approved contract —
 every endpoint is nested under a project and gated on that project's
-`campaign_manager` relation, except the Google conversion-action, audience and user lists and the Meta custom-audience list, gated on
+`campaign_manager` relation, except the Google conversion-action, audience and user lists and the Reddit and Meta custom-audience lists, gated on
 `global_marketing_ops`).
 `project-service` owns `PathPrefix: /projects/`, and
 the token that distinguishes a campaign-service path (`connection-*`, `briefs`,
@@ -110,7 +110,8 @@ When `heimdall.enabled`, both rules attach the `heimdall-forward-body` middlewar
 MUST have a matching rule in [ruleset.md](ruleset.md) — a routed request with no
 matching Heimdall rule is rejected. The RuleSet's `project-api` rule covers every
 routed project-nested family except `google-ads/conversion-actions`,
-`google-ads/audiences`, `google-ads/user-lists` and `meta-ads/custom-audiences`, which its
+`google-ads/audiences`, `google-ads/user-lists`, `reddit-ads/custom-audiences` and
+`meta-ads/custom-audiences`, which its
 `marketing-ops-api` rule covers; its
 `campaigns-placeholder` rule covers the reserved prefixes, so chart↔route parity holds.
 

@@ -71,7 +71,7 @@ spec:
     # introduces no new FGA object types — every endpoint is nested under
     # /projects/{projectId}/… and gated on the `campaign_manager` relation of that
     # project (reads AND writes; there is no read-only audience), except the Google
-    # conversion-action, audience and user lists and the Meta custom-audience list, gated on `global_marketing_ops` (marketing-ops-api below). The projectId is
+    # conversion-action, audience and user lists and the Reddit and Meta custom-audience lists, gated on `global_marketing_ops` (marketing-ops-api below). The projectId is
     # captured from the URL and the authorizer checks it against `project:{id}`.
     #
     # When OpenFGA is disabled (local dev only) all requests are allowed, matching
