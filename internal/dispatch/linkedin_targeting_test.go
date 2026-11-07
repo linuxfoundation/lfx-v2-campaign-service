@@ -23,6 +23,25 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
+// TestLinkedIn_TargetingPreflightRefusesWrongTypedEmployerExclusions pins that, with targeting
+// set, a malformed employerExclusions is the synchronous 400, not a job that fails later.
+func TestLinkedIn_TargetingPreflightRefusesWrongTypedEmployerExclusions(t *testing.T) {
+	t.Setenv(constants.EnvLinkedInAdsTargetingEnabled, "true")
+	d := NewLinkedInDispatcher(fakeConnReader{}, identityEncryptor{})
+	for _, excl := range []string{`[17]`, `"urn:li:company:1"`} {
+		cfg := json.RawMessage(`{"linkedInConfig":{"employerExclusions":` + excl + `,"targeting":{"include":[{"skills":["urn:li:skill:1"]}]}}}`)
+		err := d.PreflightCreate(context.Background(), "cncf", model.ProviderLinkedInAds, cfg)
+		if !errors.Is(err, domain.ErrCreateConfigInvalid) || !strings.Contains(err.Error(), "employerExclusions must be an array") {
+			t.Errorf("employerExclusions %s: PreflightCreate = %v, want the 400", excl, err)
+		}
+	}
+	// Without targeting the profile path is unchanged: not this check's business.
+	cfg := json.RawMessage(`{"linkedInConfig":{"employerExclusions":[17]}}`)
+	if err := d.PreflightCreate(context.Background(), "cncf", model.ProviderLinkedInAds, cfg); !errors.Is(err, domain.ErrPreflightNotApplicable) {
+		t.Errorf("without targeting: PreflightCreate = %v, want not applicable", err)
+	}
+}
+
 // linkedInTargetingConfig is a create config with linkedInConfig.targeting and NO targeting
 // profiles: with targeting set the profile is not read, so none is needed.
 func linkedInTargetingConfig(targeting string) json.RawMessage {
