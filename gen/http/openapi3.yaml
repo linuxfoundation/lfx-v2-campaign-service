@@ -16492,6 +16492,113 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/linkedin-ads/audiences:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-linkedin-ads-audiences lfx-v2-campaign-service-connections
+            description: 'List the ad segments (matched and retargeting audiences) on the LinkedIn ad account a create for this project uses, live from LinkedIn''s Ad Segments finder, for picking linkedInConfig.targeting audienceMatchingSegments and dynamicSegments (#552). EXPIRED and FAILED segments are left out. Credentials resolve as for a LinkedIn create: the project''s own connection, or the shared LF system account when it has none (or when the deployment forces the LF account), so the ids are on the account the create sends them to. The LF system account is the fallback of every project without its own connection, so the read can list resources built for other foundations; it is therefore gated on global_marketing_ops of {project_id} (the LF marketing team), not campaign_manager, which also admits a foundation''s executive director. The read pages LinkedIn''s finder 100 at a time and never truncates: more than 1000 entries, a page that repeats an earlier one, or an entry of another ad account fails it with 503. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#list-linkedin-ads-audiences
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/LinkedinAdsAudienceSegments'
+                            example:
+                                account_id: "512345678"
+                                audience_count: 1
+                                audiences:
+                                    - approximate_member_count: 48000
+                                      facet: dynamicSegments
+                                      id: "16182906"
+                                      name: KubeCon site visitors 90d
+                                      status: READY
+                                      type: RETARGETING
+                                      urn: urn:li:adSegment:16182906
+                                    - approximate_member_count: 48000
+                                      facet: dynamicSegments
+                                      id: "16182906"
+                                      name: KubeCon site visitors 90d
+                                      status: READY
+                                      type: RETARGETING
+                                      urn: urn:li:adSegment:16182906
+                                truncated: false
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/linkedin-ads/campaign-ref:
         get:
             tags:
@@ -16534,6 +16641,108 @@ paths:
                                     - brief_id: 2c8e5a1b-4d3f-4e6a-9b7c-1d2e3f4a5b6c
                                       campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                                 platform_campaign_id: "24183781329"
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/linkedin-ads/conversions:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-linkedin-ads-conversions lfx-v2-campaign-service-connections
+            description: 'List the conversion rules on the LinkedIn ad account a create for this project uses, live from LinkedIn''s Conversions finder, for picking linkedInConfig.conversions (#552). Disabled rules are listed with enabled false. Credentials resolve as for a LinkedIn create: the project''s own connection, or the shared LF system account when it has none (or when the deployment forces the LF account), so the ids are on the account the create sends them to. The LF system account is the fallback of every project without its own connection, so the read can list resources built for other foundations; it is therefore gated on global_marketing_ops of {project_id} (the LF marketing team), not campaign_manager, which also admits a foundation''s executive director. The read pages LinkedIn''s finder 100 at a time and never truncates: more than 1000 entries, a page that repeats an earlier one, or an entry of another ad account fails it with 503. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#list-linkedin-ads-conversions
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/LinkedinAdsConversionRules'
+                            example:
+                                account_id: "512345678"
+                                conversion_count: 1
+                                conversions:
+                                    - enabled: true
+                                      id: "104012"
+                                      name: KubeCon registration
+                                      type: REGISTRATION
+                                      urn: urn:lla:llaPartnerConversion:104012
+                                    - enabled: true
+                                      id: "104012"
+                                      name: KubeCon registration
+                                      type: REGISTRATION
+                                      urn: urn:lla:llaPartnerConversion:104012
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -25449,6 +25658,115 @@ components:
                 - clicks
                 - cost_micros
                 - ctr
+        LinkedinAdsAudienceSegment:
+            type: object
+            properties:
+                approximate_member_count:
+                    type: integer
+                    description: LinkedIn's approximate member count. Absent when LinkedIn reported none; a campaign's audience can differ widely once other facets apply.
+                    example: 48000
+                    format: int64
+                facet:
+                    type: string
+                    description: 'The linkedInConfig.targeting key the segment goes under: dynamicSegments for RETARGETING, audienceMatchingSegments for BULK, MARKET_AUTOMATION and BUSINESS_OBJECTIVE_BASED_AUDIENCE. Absent for any other type, which this service does not classify.'
+                    example: dynamicSegments
+                    enum:
+                        - audienceMatchingSegments
+                        - dynamicSegments
+                id:
+                    type: string
+                    description: The ad segment's numeric id
+                    example: "16182906"
+                name:
+                    type: string
+                    description: The segment's display name. Not an identifier.
+                    example: KubeCon site visitors 90d
+                status:
+                    type: string
+                    description: LinkedIn's AdSegmentStatus, verbatim. EXPIRED and FAILED segments are not listed; BUILDING, UPDATING and ARCHIVED ones are, and only READY serves today.
+                    example: READY
+                type:
+                    type: string
+                    description: LinkedIn's AdSegmentType, verbatim (BULK, RETARGETING, MARKET_AUTOMATION, BUSINESS_OBJECTIVE_BASED_AUDIENCE, or another LinkedIn adds)
+                    example: RETARGETING
+                urn:
+                    type: string
+                    description: urn:li:adSegment:{id}, in exactly the form linkedInConfig.targeting takes
+                    example: urn:li:adSegment:16182906
+            example:
+                approximate_member_count: 48000
+                facet: dynamicSegments
+                id: "16182906"
+                name: KubeCon site visitors 90d
+                status: READY
+                type: RETARGETING
+                urn: urn:li:adSegment:16182906
+            required:
+                - id
+                - urn
+                - name
+                - type
+                - status
+        LinkedinAdsAudienceSegments:
+            type: object
+            properties:
+                account_id:
+                    type: string
+                    description: 'The LinkedIn ad account the segments were read from: the account a LinkedIn create for this project uses'
+                    example: "512345678"
+                audience_count:
+                    type: integer
+                    description: How many segments are in `audiences`
+                    example: 1
+                    format: int64
+                audiences:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/LinkedinAdsAudienceSegment'
+                    description: The account's targetable segments, sorted by name (ignoring case)
+                    example:
+                        - approximate_member_count: 48000
+                          facet: dynamicSegments
+                          id: "16182906"
+                          name: KubeCon site visitors 90d
+                          status: READY
+                          type: RETARGETING
+                          urn: urn:li:adSegment:16182906
+                        - approximate_member_count: 48000
+                          facet: dynamicSegments
+                          id: "16182906"
+                          name: KubeCon site visitors 90d
+                          status: READY
+                          type: RETARGETING
+                          urn: urn:li:adSegment:16182906
+                truncated:
+                    type: boolean
+                    description: 'Always false: the read never truncates (more than 1000 segments fails it with 503). Kept for shape parity with the Google audience picker.'
+                    example: false
+            example:
+                account_id: "512345678"
+                audience_count: 1
+                audiences:
+                    - approximate_member_count: 48000
+                      facet: dynamicSegments
+                      id: "16182906"
+                      name: KubeCon site visitors 90d
+                      status: READY
+                      type: RETARGETING
+                      urn: urn:li:adSegment:16182906
+                    - approximate_member_count: 48000
+                      facet: dynamicSegments
+                      id: "16182906"
+                      name: KubeCon site visitors 90d
+                      status: READY
+                      type: RETARGETING
+                      urn: urn:li:adSegment:16182906
+                truncated: false
+            required:
+                - account_id
+                - audiences
+                - audience_count
+                - truncated
         LinkedinAdsConnection:
             type: object
             properties:
@@ -25532,6 +25850,87 @@ components:
             required:
                 - account_id
                 - org_id
+        LinkedinAdsConversionRule:
+            type: object
+            properties:
+                enabled:
+                    type: boolean
+                    description: Whether the rule is enabled; false when LinkedIn did not say
+                    example: true
+                id:
+                    type: string
+                    description: The conversion rule's numeric id, in exactly the form linkedInConfig.conversions takes
+                    example: "104012"
+                name:
+                    type: string
+                    description: The rule's display name. Not an identifier.
+                    example: KubeCon registration
+                type:
+                    type: string
+                    description: LinkedIn's conversion type, verbatim (e.g. REGISTRATION, LEAD, PURCHASE); empty when LinkedIn sent none
+                    example: REGISTRATION
+                urn:
+                    type: string
+                    description: urn:lla:llaPartnerConversion:{id}
+                    example: urn:lla:llaPartnerConversion:104012
+            example:
+                enabled: true
+                id: "104012"
+                name: KubeCon registration
+                type: REGISTRATION
+                urn: urn:lla:llaPartnerConversion:104012
+            required:
+                - id
+                - urn
+                - name
+                - type
+                - enabled
+        LinkedinAdsConversionRules:
+            type: object
+            properties:
+                account_id:
+                    type: string
+                    description: 'The LinkedIn ad account the rules were read from: the account a LinkedIn create for this project uses'
+                    example: "512345678"
+                conversion_count:
+                    type: integer
+                    description: How many rules are in `conversions`
+                    example: 1
+                    format: int64
+                conversions:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/LinkedinAdsConversionRule'
+                    description: The account's conversion rules, enabled or not, sorted by name (ignoring case)
+                    example:
+                        - enabled: true
+                          id: "104012"
+                          name: KubeCon registration
+                          type: REGISTRATION
+                          urn: urn:lla:llaPartnerConversion:104012
+                        - enabled: true
+                          id: "104012"
+                          name: KubeCon registration
+                          type: REGISTRATION
+                          urn: urn:lla:llaPartnerConversion:104012
+            example:
+                account_id: "512345678"
+                conversion_count: 1
+                conversions:
+                    - enabled: true
+                      id: "104012"
+                      name: KubeCon registration
+                      type: REGISTRATION
+                      urn: urn:lla:llaPartnerConversion:104012
+                    - enabled: true
+                      id: "104012"
+                      name: KubeCon registration
+                      type: REGISTRATION
+                      urn: urn:lla:llaPartnerConversion:104012
+            required:
+                - account_id
+                - conversions
+                - conversion_count
         LinkedinAdsCredentials:
             type: object
             properties:

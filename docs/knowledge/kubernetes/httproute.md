@@ -110,7 +110,9 @@ When `heimdall.enabled`, both rules attach the `heimdall-forward-body` middlewar
 MUST have a matching rule in [ruleset.md](ruleset.md) — a routed request with no
 matching Heimdall rule is rejected. The RuleSet's `project-api` rule covers every
 routed project-nested family except `google-ads/conversion-actions`,
-`google-ads/audiences` and `google-ads/user-lists`, which its `marketing-ops-api` rule covers; its
+`google-ads/audiences`, `google-ads/user-lists`, `reddit-ads/custom-audiences`,
+`linkedin-ads/audiences` and `linkedin-ads/conversions`, which its `marketing-ops-api` rule
+covers; its
 `campaigns-placeholder` rule covers the reserved prefixes, so chart↔route parity holds.
 
 This parity is enforced by a Go test — `TestRouteRuleSetParity`
@@ -135,7 +137,8 @@ Path extraction is SCOPED to the two FGA-gated rule blocks, `project-api` and
 `TestConversionActionsIsAMarketingOpsRead` pins that `google-ads/conversion-actions` is ruled
 by `marketing-ops-api` alone, on `global_marketing_ops`, and that no rule gates on the ROOT
 project; `TestGoogleAudiencesIsAMarketingOpsRead` and `TestUserListsIsAMarketingOpsRead` pin
-`google-ads/audiences` and `google-ads/user-lists` the same way. A
+`google-ads/audiences` and `google-ads/user-lists` the same way, and
+`TestLinkedInPickersAreMarketingOpsReads` the two LinkedIn pickers (#552). A
 separate `TestProjectAPIRuleEnforcesCampaignManager` asserts
 the `project-api` rule has two `openfga_check` authorizers on relation `campaign_manager`, each
 paired with the correct object: `project:{{- .Outputs.project_slug_resolver_contextualizer.uid -}}`

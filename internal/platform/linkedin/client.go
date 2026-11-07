@@ -445,6 +445,13 @@ type responseElement struct {
 	// It is optional on LinkedIn's side (absent for some legacy/person-sponsored accounts),
 	// so its absence here is inconclusive, never treated as "no organization".
 	Reference string `json:"reference"`
+	// Account, ApproximateMemberCount and Enabled are read by the picker lookups (#552,
+	// lookups.go): the ad account an ad segment or conversion rule belongs to, a segment's
+	// approximate size, and whether a conversion rule is enabled. Pointers where absence must
+	// not read as zero or false.
+	Account                string `json:"account"`
+	ApproximateMemberCount *int64 `json:"approximateMemberCount"`
+	Enabled                *bool  `json:"enabled"`
 }
 
 // pathValidRE allow-lists the characters a built request path may contain. `%` is included
@@ -1693,6 +1700,7 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 var preEncodedParams = map[string]struct{}{
 	"search":    {}, // findMatch — the name filter
 	"campaigns": {}, // listCreativeURNs — the creatives finder's campaign List()
+	"accounts":  {}, // ListAdSegments — the ad segments finder's account List() (#552)
 }
 
 // buildRawQuery renders params as a query string, percent-encoding every value

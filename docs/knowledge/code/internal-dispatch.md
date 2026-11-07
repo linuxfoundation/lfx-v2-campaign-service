@@ -5589,6 +5589,14 @@ JSON decode) or come after a read was sent (Meta's inactive-account check) are d
 opts in. Pinned by `preflight_refusal_test.go` (one refusal per platform, verbatim, nothing
 sent; a real Meta 4xx/5xx whose body carries a secret query; a real Reddit token refusal).
 
+**LinkedIn picker lookups (#552).** `LinkedInDispatcher` implements `service.AudienceReader` (kind
+`ad_segment` only; any other kind is `ErrTargetingLookupUnsupported` before any request) and
+`service.ConversionActionReader`, through `createLookupClient`: the CREATE path's resolution
+(`creds.resolve`), so the ids are on the account the create uses. A malformed bound account is
+refused there with `ErrConnectionNotUsable` before any request (so it is not recorded as an
+upstream call); a credential defect is the connection's (`linkedInLookupError`); anything else is
+the platform's.
+
 **LinkedIn conversions (#552).** `linkedinConfig.Conversions` is gated by
 `linkedinConversionsEnabled` (`LINKEDIN_ADS_CONVERSIONS_ENABLED`, off by default) and validated by
 `linkedin.ValidateConversions` in `linkedinConversions`, which `PreflightCreate` (synchronous 400)

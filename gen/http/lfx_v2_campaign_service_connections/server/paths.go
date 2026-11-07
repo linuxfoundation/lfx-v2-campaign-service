@@ -274,6 +274,16 @@ func GetLinkedinAdsAudienceLfxV2CampaignServiceConnectionsPath(projectID string)
 	return fmt.Sprintf("/projects/%v/linkedin-ads/audience", projectID)
 }
 
+// ListLinkedinAdsAudiencesLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-linkedin-ads-audiences HTTP endpoint.
+func ListLinkedinAdsAudiencesLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/linkedin-ads/audiences", projectID)
+}
+
+// ListLinkedinAdsConversionsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-linkedin-ads-conversions HTTP endpoint.
+func ListLinkedinAdsConversionsLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/linkedin-ads/conversions", projectID)
+}
+
 // GetMicrosoftAdsKeywordsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service get-microsoft-ads-keywords HTTP endpoint.
 func GetMicrosoftAdsKeywordsLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/microsoft-ads/keywords", projectID)
