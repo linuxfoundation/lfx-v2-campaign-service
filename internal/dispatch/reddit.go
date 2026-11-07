@@ -71,6 +71,12 @@ type redditConfig struct {
 	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic
 	// (BIDLESS, unchanged); manual creates a MANUAL_BIDDING CPC campaign — see redditBidPlan.
 	Bidding *biddingConfig `json:"bidding,omitempty"`
+	// CustomAudienceIDs / ExcludedCustomAudienceIDs are custom audiences on the ad account to
+	// target and to exclude (#549, reddit_custom_audiences.go). Admitted only behind
+	// REDDIT_CUSTOM_AUDIENCES_ENABLED, and only from global_marketing_ops
+	// (service.RedditMarketingOpsInputs), because the audiences belong to the shared ad account.
+	CustomAudienceIDs         []string `json:"customAudienceIds"`
+	ExcludedCustomAudienceIDs []string `json:"excludedCustomAudienceIds"`
 }
 
 // redditBidPlan resolves redditConfig's bidding choice. Manual bidding creates campaign and ad
@@ -226,6 +232,12 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		return nil, notCreated(err)
 	}
 
+	// A mistyped custom audience list fails the decode below as a plain decoding error; check
+	// its type on the raw config first so a path that skipped PreflightCreate still reports the
+	// field-specific refusal (#549).
+	if err := checkRedditCustomAudienceShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg redditConfig
 	if err := unmarshalPlatformConfig(config, "redditConfig", &cfg); err != nil {
 		return nil, notCreated(err)
@@ -237,6 +249,12 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	}
 	plan, err := redditBidPlan(cfg)
 	if err != nil {
+		return nil, notCreated(err)
+	}
+	// Custom audiences (#549): the deployment gate and the id rules, before any Reddit call
+	// (PreflightCreate normally refused a bad list already, as a 400). Their type was checked on
+	// the raw config above, before the decode.
+	if err := checkRedditCustomAudiences(cfg); err != nil {
 		return nil, notCreated(err)
 	}
 	// The exclusions' deployment gate and rules, re-checked here for any path that skipped
@@ -321,6 +339,9 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		ConversionPixelID:  cfg.ConversionPixelID,
 		VideoGoal:          cfg.VideoGoal,
 		ManualCPCBid:       plan.amount,
+
+		CustomAudienceIDs:         cfg.CustomAudienceIDs,
+		ExcludedCustomAudienceIDs: cfg.ExcludedCustomAudienceIDs,
 
 		// The name labels of the CLAIMED row (multi-campaign cs-3): its stored funnel stage and
 		// tactic (model.DispatchLabels) and its slot version, never the request's. A retry of
