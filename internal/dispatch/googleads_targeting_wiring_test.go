@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,6 +49,9 @@ type targetingCapture struct {
 	sharedSets       [][]byte
 	audiences        [][]byte
 	sawBudget        bool
+	// sharedSetReply, when set, answers the shared set type read (#548); unset, every named set
+	// is an ENABLED NEGATIVE_KEYWORDS one (sharedSetSearchResults).
+	sharedSetReply func() (int, string)
 }
 
 func (c *targetingCapture) add(dst *[][]byte, body []byte) {
@@ -70,6 +74,24 @@ func (c *targetingCapture) campaignCriteriaWith(key string) []byte {
 	return nil
 }
 
+// sharedSetNameRE pulls the quoted resource names out of the shared set type read's IN list.
+var sharedSetNameRE = regexp.MustCompile(`'(customers/\d+/sharedSets/\d+)'`)
+
+// sharedSetSearchResults answers the shared set type read (#548) with an ENABLED
+// NEGATIVE_KEYWORDS row for every set the query names.
+func sharedSetSearchResults(body []byte) string {
+	var req struct {
+		Query string `json:"query"`
+	}
+	_ = json.Unmarshal(body, &req)
+	rows := []string{}
+	for _, m := range sharedSetNameRE.FindAllStringSubmatch(req.Query, -1) {
+		rows = append(rows, `{"sharedSet":{"resourceName":"`+m[1]+
+			`","type":"NEGATIVE_KEYWORDS","status":"ENABLED"}}`)
+	}
+	return `{"results":[` + strings.Join(rows, ",") + `]}`
+}
+
 // targetingServers serves the whole Search create cascade, echoing ONE result per
 // requested operation everywhere — the client reads any other count as UNCONFIRMED,
 // so a fixed-size fake would fail whichever test's operation count it did not match
@@ -88,6 +110,18 @@ func targetingServers(t *testing.T) ([]googleads.Option, *targetingCapture) {
 		w.Header().Set("Content-Type", "application/json")
 		body, _ := io.ReadAll(r.Body)
 		switch {
+		case strings.HasSuffix(r.URL.Path, "googleAds:search") &&
+			strings.Contains(string(body), "FROM shared_set"):
+			cap.mu.Lock()
+			override := cap.sharedSetReply
+			cap.mu.Unlock()
+			if override != nil {
+				status, out := override()
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, out)
+				return
+			}
+			_, _ = io.WriteString(w, sharedSetSearchResults(body))
 		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
 			_, _ = io.WriteString(w, `{"results":[]}`)
 		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):

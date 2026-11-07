@@ -144,7 +144,15 @@ type Service interface {
 	// WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are immediately eligible
 	// for the bid lever, and eligibility follows the platform's current strategy.
 	// Every other dispatch failure, including an imageAssetId that does not exist
-	// for this brief, still arrives later, as the job's own result.
+	// for this brief, still arrives later, as the job's own result. That includes
+	// a Search googleAdsConfig.sharedNegativeKeywordLists entry that is not an
+	// ENABLED NEGATIVE_KEYWORDS shared set of the connected Google Ads account
+	// (#548). One read-only GAQL query reads every named list's shared_set.type
+	// and status before anything is created. A NEGATIVE_PLACEMENTS, BRANDS or
+	// other set, a REMOVED set or a set not in the account is refused in the job's
+	// Google Ads error, which names the set id and, for a set of another known
+	// type, that type. A read that fails stops the create too, with nothing
+	// created.
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Create ONE HubSpot workflow that sends an already-staged series of emails,
 	// and return it DISABLED. Each brief named in brief_ids must already have a
