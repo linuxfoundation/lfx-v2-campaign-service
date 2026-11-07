@@ -63,7 +63,7 @@ type:
 A spread is resolved by interpreting the enclosing function's statements up to
 the log call. The interpreter tracks whole paths: each path holds one concrete
 value for every `[]any` variable, so slices assigned together on one branch
-stay together, and an alias is followed.
+stay together.
 
 - Statements run in order.
 - An `if`, `switch` or `select` runs each branch in sequence from the paths on
@@ -80,6 +80,16 @@ stay together, and an alias is followed.
   writes `[]any` elements in place (`fields[i] = v`, `copy`, `clear`), a
   non-constant reslice, a multi-value assignment, or a call result from outside
   the package.
+- Slices are modelled as values, so anything that can make two `[]any` share a
+  backing array is untraceable too: an alias assignment (`y := x`), an append
+  stored under another variable (`y := append(x, ...)`), and a reslice with an
+  upper bound (`fields[:n]`). An append used directly in a call, or assigned
+  back to its own base (`x = append(x, ...)`), is fine.
+- A same-package helper's result is read with the helper's `[]any` parameters
+  bound from that call's own arguments.
+- slog's key test is the built-in `string`: a defined string type (`type label
+  string`) is a `!BADKEY` value, while an alias of `string`, or of `slog.Attr`,
+  is the type itself.
 - A same-package function's `[]any` result (for example `probeErrAttrs` in
   `internal/infrastructure/postgres`) is resolved by interpreting its body up to
   each `return`. `make([]any, 0, n)` is empty, a constant reslice

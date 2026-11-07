@@ -202,10 +202,6 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 			slog.Info("m", fields...)
 			fields = append(fields, "projectID", id)
 			_ = fields`, []string{"a"}},
-		{"an alias of the slice is followed", `fields := []any{"projectID", id}
-			copied := fields
-			fields = append(copied, "err", e)
-			slog.Info("m", fields...)`, []string{"projectID", "err"}},
 		{"appends in one branch run in sequence", `fields := []any{"event", "x"}
 			if c {
 				fields = append(fields, "kind")
@@ -307,6 +303,11 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 		{"parameters bound from one call stay together", `logPair([]any{"project_id"}, []any{"project"})
 			logPair([]any{"event", "x"}, []any{"kind", 1})`, []string{"project_id", "event", "kind"}},
 		{"a variadic wrapper's arguments are read from its call sites", `warnf("projectID", id)`, []string{"projectID"}},
+		{"a defined string type is not a key", `slog.Info("m", label("event"), "projectID", id)`, []string{"projectID"}},
+		{"an alias of string is a key", `slog.Info("m", str("projectID"), id)`, []string{"projectID"}},
+		{"an aliased slog.Attr literal", `slog.LogAttrs(ctx, lvl, "m", Attr{Key: "projectID", Value: slog.IntValue(1)})`, []string{"projectID"}},
+		{"a helper's result binds this call's arguments only", `_ = passthrough([]any{"project", 1})
+			slog.Info("m", passthrough([]any{"project_id", 1})...)`, []string{"project_id"}},
 		{"a full reslice is the slice", `fields := []any{"projectID", id}
 			slog.Info("m", fields[:]...)`, []string{"projectID"}},
 		{"a constant reslice keeps its window", `fields := []any{"x", 1, "projectID", id}
@@ -356,6 +357,10 @@ var (
 	mk      func() ([]any, error)
 )
 const keyConst = "projectID"
+type label string
+type str = string
+type Attr = slog.Attr
+func passthrough(f []any) []any { return f }
 func logWith(fields []any) { slog.Info("w", fields...) }
 func warnf(args ...any)      { slog.Warn("w", args...) }
 func logPair(head, tail []any) { slog.Info("w", append(head, tail...)...) }
@@ -553,7 +558,10 @@ func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, bool) {
 	}
 	// calleeResults is defined below, once pathsAt exists: the []any sequences a
 	// same-package function can return.
-	var calleeResults func(fn *types.Func) seqs
+	var calleeResults func(fn *types.Func, call *ast.CallExpr, p path) seqs
+	// bindArgs is defined below: the entry paths for one call, its []any parameters bound
+	// together from that call's arguments.
+	var bindArgs func(sig *types.Signature, call *ast.CallExpr, cp path) []path
 	// entryPaths is defined below too: the paths on entry to a function, with its []any
 	// parameters bound from each call site together.
 	var entryPaths func(fd *ast.FuncDecl) []path
@@ -595,7 +603,7 @@ func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, bool) {
 				}
 			}
 			if fn := calledFunc(x, info); fn != nil && isAnySlice(info.TypeOf(x)) {
-				if alts := calleeResults(fn); alts != nil {
+				if alts := calleeResults(fn, x, p); alts != nil {
 					return alts
 				}
 			}
@@ -927,26 +935,24 @@ func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, bool) {
 		return nil
 	}
 
-	// calleeResults interprets a same-package function's body up to each of its
-	// single-result return statements and collects the sequences it can return. Its
-	// parameters are unknown (empty). nil means the function is not one the guard can
-	// read (another package, a method value, a bare return); a result it cannot fully
-	// trace (recursion, goto, element writes) yields an untraced sequence.
-	calleeMemo := map[*types.Func]seqs{}
+	// calleeResults interprets a same-package function's body, entered with its []any
+	// parameters bound from THIS call's arguments on path p, up to each of its
+	// single-result return statements, and collects the sequences it can return. nil
+	// means the function is not one the guard can read (another package, no body); a
+	// result it cannot fully trace (recursion, goto, shared backing, a bare return) yields
+	// an untraced sequence.
 	calleeBusy := map[*types.Func]bool{}
-	calleeResults = func(fn *types.Func) seqs {
+	calleeResults = func(fn *types.Func, call *ast.CallExpr, p path) seqs {
 		fd := decls[fn]
 		if fd == nil || fd.Body == nil {
 			return nil
 		}
-		if alts, ok := calleeMemo[fn]; ok {
-			return alts
-		}
-		if calleeBusy[fn] || hasGoto(fd.Body.List) || writesAnyElements(fd.Body.List, info) {
+		if calleeBusy[fn] || hasGoto(fd.Body.List) || sharesAnyBacking(fd.Body.List, info) {
 			return seqs{{untraced}}
 		}
 		calleeBusy[fn] = true
 		defer delete(calleeBusy, fn)
+		entry := bindArgs(fn.Type().(*types.Signature), call, p)
 		var out seqs
 		ast.Inspect(fd.Body, func(n ast.Node) bool {
 			if _, ok := n.(*ast.FuncLit); ok {
@@ -960,18 +966,58 @@ func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, bool) {
 				out = append(out, []ast.Expr{untraced}) // a bare or multi-value return
 				return true
 			}
-			for _, p := range pathsAt(fd.Body.List, entryPaths(fd), ret) {
-				out = append(out, evalSlice(ret.Results[0], p)...)
+			for _, rp := range pathsAt(fd.Body.List, clonePaths(entry), ret) {
+				out = append(out, evalSlice(ret.Results[0], rp)...)
 			}
 			return true
 		})
 		if out == nil {
 			out = seqs{{untraced}}
 		}
-		calleeMemo[fn] = out
 		return out
 	}
 
+	// anyParamsOf returns the indices of sig's []any parameters (a final ...any included).
+	anyParamsOf := func(sig *types.Signature) []int {
+		var out []int
+		for i := 0; i < sig.Params().Len(); i++ {
+			if isAnySlice(sig.Params().At(i).Type()) {
+				out = append(out, i)
+			}
+		}
+		return out
+	}
+	// bindArgs returns the entry paths for one call: every []any parameter of sig bound
+	// together from this call's arguments on caller path cp. A final ...any parameter
+	// takes the call's trailing arguments.
+	bindArgs = func(sig *types.Signature, call *ast.CallExpr, cp path) []path {
+		args := call.Args
+		if isMethodExpr(call, info) && len(args) > 0 {
+			args = args[1:]
+		}
+		next := []path{{}}
+		for _, i := range anyParamsOf(sig) {
+			var vals seqs
+			switch {
+			case sig.Variadic() && i == sig.Params().Len()-1 && i <= len(args):
+				vals = evalArgs(args[i:], call.Ellipsis.IsValid(), cp)
+			case i < len(args):
+				vals = evalSlice(args[i], cp)
+			default:
+				vals = seqs{{untraced}}
+			}
+			var split []path
+			for _, np := range next {
+				for _, v := range vals {
+					c := clonePath(np)
+					c[sig.Params().At(i)] = v
+					split = append(split, c)
+				}
+			}
+			next = split
+		}
+		return next
+	}
 	// entryPaths seeds a function's []any parameters. For an unexported function whose
 	// every use is a direct call, each call site contributes the paths that bind ALL its
 	// []any parameters from that one call, so arguments from different calls never mix;
@@ -987,12 +1033,7 @@ func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, bool) {
 			return unbound
 		}
 		sig := fn.Type().(*types.Signature)
-		var anyParams []int
-		for i := 0; i < sig.Params().Len(); i++ {
-			if isAnySlice(sig.Params().At(i).Type()) {
-				anyParams = append(anyParams, i)
-			}
-		}
+		anyParams := anyParamsOf(sig)
 		if len(anyParams) == 0 || fn.Exported() || idx.valueUse[fn] || entryBusy[fd] {
 			return unbound
 		}
@@ -1004,37 +1045,12 @@ func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, bool) {
 		var out []path
 		for _, call := range idx.calls[fn] {
 			cfd := enclosingDecl(call)
-			args := call.Args
-			if isMethodExpr(call, info) && len(args) > 0 {
-				args = args[1:]
-			}
 			var callerPaths []path
-			if cfd != nil && !hasGoto(cfd.Body.List) && !writesAnyElements(cfd.Body.List, info) {
+			if cfd != nil && !hasGoto(cfd.Body.List) && !sharesAnyBacking(cfd.Body.List, info) {
 				callerPaths = pathsAt(cfd.Body.List, entryPaths(cfd), call)
 			}
 			for _, cp := range callerPaths {
-				next := []path{{}}
-				for _, i := range anyParams {
-					var vals seqs
-					switch {
-					case sig.Variadic() && i == sig.Params().Len()-1 && i <= len(args):
-						vals = evalArgs(args[i:], call.Ellipsis.IsValid(), cp)
-					case i < len(args):
-						vals = evalSlice(args[i], cp)
-					default:
-						vals = seqs{{untraced}}
-					}
-					var split []path
-					for _, np := range next {
-						for _, v := range vals {
-							c := clonePath(np)
-							c[sig.Params().At(i)] = v
-							split = append(split, c)
-						}
-					}
-					next = split
-				}
-				out = union(out, next)
+				out = union(out, bindArgs(sig, call, cp))
 			}
 			if cfd == nil || len(callerPaths) == 0 {
 				// A call site the guard cannot replay: its arguments are unknown.
@@ -1075,7 +1091,9 @@ func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, bool) {
 				overflow = true // not an expression the type-checker typed: cannot classify
 				return
 			}
-			if b, ok := t.Underlying().(*types.Basic); ok && b.Info()&types.IsString != 0 {
+			// slog's type switch matches the built-in string only: a defined string type is
+			// a !BADKEY value. An alias of string is string.
+			if b, ok := types.Unalias(t).(*types.Basic); ok && b.Info()&types.IsString != 0 {
 				addKey(a)
 				i += 2
 				continue
@@ -1087,7 +1105,7 @@ func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, bool) {
 		ps := []path{{}}
 		if call.Ellipsis.IsValid() {
 			fd := enclosingDecl(call)
-			if fd == nil || hasGoto(fd.Body.List) || writesAnyElements(fd.Body.List, info) {
+			if fd == nil || hasGoto(fd.Body.List) || sharesAnyBacking(fd.Body.List, info) {
 				overflow = true
 				return
 			}
@@ -1150,18 +1168,67 @@ func hasGoto(body []ast.Stmt) bool {
 	return found
 }
 
-// writesAnyElements reports whether a function body writes elements of a []any in place
-// (fields[i] = v, copy(fields, ...), clear(fields)), which the interpreter does not model.
-func writesAnyElements(body []ast.Stmt, info *types.Info) bool {
+// sharesAnyBacking reports whether a function body does something to a []any that the
+// interpreter, which models slices as values, cannot follow: an in-place element write
+// (fields[i] = v, copy, clear), or a construct that can leave two slices sharing one
+// backing array, so that an append through one rewrites the other. Those are an alias
+// assignment (y = x), an append stored under a different variable (y = append(x, ...)),
+// and a reslice with an upper bound (fields[:n], fields[i:j:k]).
+func sharesAnyBacking(body []ast.Stmt, info *types.Info) bool {
 	found := false
+	identObj := func(e ast.Expr) types.Object {
+		id, ok := ast.Unparen(e).(*ast.Ident)
+		if !ok {
+			return nil
+		}
+		if o := info.Defs[id]; o != nil {
+			return o
+		}
+		return info.Uses[id]
+	}
+	// sharesWith reports whether assigning rhs to lhs can make lhs share rhs's backing.
+	sharesWith := func(lhs, rhs ast.Expr) bool {
+		if id, ok := ast.Unparen(lhs).(*ast.Ident); ok && id.Name == "_" {
+			return false // discarded: nothing holds the shared backing
+		}
+		if !isAnySlice(info.TypeOf(rhs)) {
+			return false
+		}
+		switch r := ast.Unparen(rhs).(type) {
+		case *ast.Ident:
+			return r.Name != "nil" // y = x
+		case *ast.CallExpr:
+			if isBuiltin(r, info, "append") && len(r.Args) > 0 {
+				if _, fresh := ast.Unparen(r.Args[0]).(*ast.CompositeLit); fresh {
+					return false
+				}
+				lo := identObj(lhs)
+				return lo == nil || identObj(r.Args[0]) != lo // y = append(x, ...)
+			}
+		}
+		return false
+	}
 	for _, s := range body {
 		ast.Inspect(s, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.AssignStmt:
-				for _, l := range x.Lhs {
+				for i, l := range x.Lhs {
 					if ix, ok := ast.Unparen(l).(*ast.IndexExpr); ok && isAnySlice(info.TypeOf(ix.X)) {
 						found = true
 					}
+					if len(x.Lhs) == len(x.Rhs) && sharesWith(l, x.Rhs[i]) {
+						found = true
+					}
+				}
+			case *ast.ValueSpec:
+				for i, id := range x.Names {
+					if len(x.Names) == len(x.Values) && sharesWith(id, x.Values[i]) {
+						found = true
+					}
+				}
+			case *ast.SliceExpr:
+				if isAnySlice(info.TypeOf(x.X)) && (x.High != nil || x.Slice3) {
+					found = true
 				}
 			case *ast.CallExpr:
 				if fn, ok := ast.Unparen(x.Fun).(*ast.Ident); ok && len(x.Args) > 0 {
@@ -1393,7 +1460,10 @@ func slogFunc(call *ast.CallExpr, info *types.Info) *types.Func {
 
 // isSlogAttr reports whether t is log/slog.Attr.
 func isSlogAttr(t types.Type) bool {
-	n, ok := t.(*types.Named)
+	if t == nil {
+		return false
+	}
+	n, ok := types.Unalias(t).(*types.Named)
 	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == "log/slog" && n.Obj().Name() == "Attr"
 }
 
@@ -1441,16 +1511,19 @@ func TestLogKeys_PathOverflowIsReported(t *testing.T) {
 // instead of being checked as it was before, or read as empty.
 func TestLogKeys_UnmodelledSlicesAreReportedUntraceable(t *testing.T) {
 	for name, stmt := range map[string]string{
-		"index assignment":           `fields[0] = "projectID"`,
-		"copy":                       `copy(fields, []any{"projectID"})`,
-		"clear":                      `clear(fields)`,
-		"multi-value call":           `fields, _ = mk()`,
-		"call result":                `fields = mk1()`,
-		"variable reslice":           `fields = fields[n:]`,
-		"indexed literal with a gap": `fields = []any{0: "kind", 2: id}`,
-		"package-level slice":        `fields = pkgFields`,
-		"range variable":             "for _, g := range groups {\nfields = g\n}",
-		"function used as a value":   "g := logWith\ng(fields)",
+		"index assignment":            `fields[0] = "projectID"`,
+		"copy":                        `copy(fields, []any{"projectID"})`,
+		"clear":                       `clear(fields)`,
+		"multi-value call":            `fields, _ = mk()`,
+		"call result":                 `fields = mk1()`,
+		"variable reslice":            `fields = fields[n:]`,
+		"indexed literal with a gap":  `fields = []any{0: "kind", 2: id}`,
+		"package-level slice":         `fields = pkgFields`,
+		"alias assignment":            "copied := fields\n_ = copied",
+		"append stored elsewhere":     "g := append(fields, \"x\", 1)\n_ = g",
+		"reslice with an upper bound": "prefix := fields[:1]\n_ = prefix",
+		"range variable":              "for _, g := range groups {\nfields = g\n}",
+		"function used as a value":    "g := logWith\ng(fields)",
 	} {
 		t.Run(name, func(t *testing.T) {
 			src := "package p\nimport \"log/slog\"\nvar (\nid any\nn int\nmk func() ([]any, error)\nmk1 func() []any\ngroups [][]any\n)\nvar pkgFields = []any{\"projectID\", 1}\nfunc logWith(fields []any) { slog.Info(\"m\", fields...) }\nfunc f() {\nfields := []any{\"kind\", id}\n" +

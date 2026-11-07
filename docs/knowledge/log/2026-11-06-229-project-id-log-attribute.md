@@ -26,7 +26,9 @@ clear, as `"project_id"`.
     path, as does a `panic`), loops run zero or one times after a `for` initializer, a
     `break` skips the post statement, a labelled `break`/`continue` targets its named loop,
     `fallthrough` carries paths into the next clause,
-    and aliases are followed. More than 1024 paths fails the guard (pinned by
+    and slices are modelled as values: an alias, a stored append from another slice or a
+    narrowing reslice, any of which can share a backing array, is untraceable. More than
+    1024 paths fails the guard (pinned by
     `TestLogKeys_PathOverflowIsReported`) rather than checking a subset, and so does a
     spread in a function with a `goto` or an in-place `[]any` element write
     (`TestLogKeys_GotoIsReportedUntraceable`, `TestLogKeys_UnmodelledSlicesAreReportedUntraceable`),
@@ -57,7 +59,9 @@ clear, as `"project_id"`.
     `fallthrough` was ignored, the path bound dropped branches silently, labelled
     branches targeted the innermost loop, a `goto` was taken to fall through,
     element writes were ignored, a reslice or a method expression's receiver hid keys, and
-    parameters, package-level slices and zero-value declarations were mis-read.
+    parameters, package-level slices and zero-value declarations were mis-read. Then shared
+    backing arrays, defined string types, aliased `slog.Attr` and per-call helper results were
+    handled.
 - Mutation-checked:
   - Renaming one key to `projectID` in `internal/service/connection.go`, or the spread-slice
     key in `internal/service/meta_ad_sets.go`, fails the guard.
