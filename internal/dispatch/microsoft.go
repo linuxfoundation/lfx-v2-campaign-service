@@ -330,10 +330,12 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 }
 
 // PreflightCreate refuses, before the create job exists, a microsoftConfig whose bidding cannot be
-// created as asked (see microsoftBidPlan). It never calls Microsoft, so every other outcome is
+// created as asked (see microsoftBidPlan), or whose caller ad copy (#563: headlines, descriptions,
+// path1, path2) is wrong-typed, gated off by MICROSOFT_AD_COPY_ENABLED or breaks
+// microsoft.ValidateCallerAdCopy. It never calls Microsoft, so every other outcome is
 // ErrPreflightNotApplicable; a config that does not decode is left to Dispatch (except a wrong-typed
-// `bidding`, refused here by checkBiddingShape), which reports it as
-// the job failure, as Reddit's pre-check does.
+// `bidding` or copy field, refused here by checkBiddingShape / checkMicrosoftAdCopyShape), which
+// reports it as the job failure, as Reddit's pre-check does.
 func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
 	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
 	if err := checkBiddingShape(config, "microsoftConfig"); err != nil {
@@ -347,7 +349,7 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
 	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
 	// not decode is its zero value, which no plan rule reads as a refusal. The decode error itself
-	// stays "not applicable" — only bidding is promised as a synchronous 400.
+	// stays "not applicable" — only bidding and the caller ad copy are promised as synchronous 400s.
 	var cfg microsoftConfig
 	_ = unmarshalPlatformConfig(config, "microsoftConfig", &cfg)
 	if _, err := microsoftBidPlan(cfg); err != nil {
