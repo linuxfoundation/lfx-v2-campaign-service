@@ -1064,7 +1064,10 @@ func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, []token.Po
 		for _, call := range idx.calls[fn] {
 			cfd := enclosingDecl(call)
 			var callerPaths []path
-			if cfd != nil && !hasGoto(cfd.Body.List) && !sharesAnyBacking(cfd.Body.List, info) {
+			// A call site in a deferred, go or stored closure that captures a slice runs
+			// with later contents than where it is written: its arguments are unknown.
+			if cfd != nil && !hasGoto(cfd.Body.List) && !sharesAnyBacking(cfd.Body.List, info) &&
+				!inDeferredClosure(cfd, call, info) {
 				callerPaths = pathsAt(cfd.Body.List, entryPaths(cfd), call)
 			}
 			for _, cp := range callerPaths {
@@ -1654,26 +1657,27 @@ func TestLogKeys_PathOverflowIsReported(t *testing.T) {
 // instead of being checked as it was before, or read as empty.
 func TestLogKeys_UnmodelledSlicesAreReportedUntraceable(t *testing.T) {
 	for name, stmt := range map[string]string{
-		"index assignment":                `fields[0] = "projectID"`,
-		"copy":                            `copy(fields, []any{"projectID"})`,
-		"clear":                           `clear(fields)`,
-		"multi-value call":                `fields, _ = mk()`,
-		"call result":                     `fields = mk1()`,
-		"variable reslice":                `fields = fields[n:]`,
-		"indexed literal with a gap":      `fields = []any{0: "kind", 2: id}`,
-		"package-level slice":             `fields = pkgFields`,
-		"alias assignment":                "copied := fields\n_ = copied",
-		"append stored elsewhere":         "g := append(fields, \"x\", 1)\n_ = g",
-		"reslice with an upper bound":     "prefix := fields[:1]\n_ = prefix",
-		"loop appending pairs":            "for range 2 {\nfields = append(fields, \"projectID\")\n}",
-		"deferred closure":                "defer func() { slog.Info(\"d\", fields...) }()",
-		"go closure":                      "go func() { slog.Info(\"g\", fields...) }()",
-		"stored closure":                  "g := func() { slog.Info(\"s\", fields...) }\ng()",
-		"interface value in key position": "var k any = \"event\"\nslog.Info(\"i\", k, \"project_id\", \"projectID\", 7)",
-		"nested later-running closure":    "g := func() {\nlocal := []any{\"a\", 1}\ndefer func() { slog.Info(\"d\", local...) }()\nlocal = []any{\"projectID\", id}\n}\ng()",
-		"closure writes a captured slice": "func() { fields = []any{\"projectID\", id} }()",
-		"range variable":                  "for _, g := range groups {\nfields = g\n}",
-		"function used as a value":        "g := logWith\ng(fields)",
+		"index assignment":                  `fields[0] = "projectID"`,
+		"copy":                              `copy(fields, []any{"projectID"})`,
+		"clear":                             `clear(fields)`,
+		"multi-value call":                  `fields, _ = mk()`,
+		"call result":                       `fields = mk1()`,
+		"variable reslice":                  `fields = fields[n:]`,
+		"indexed literal with a gap":        `fields = []any{0: "kind", 2: id}`,
+		"package-level slice":               `fields = pkgFields`,
+		"alias assignment":                  "copied := fields\n_ = copied",
+		"append stored elsewhere":           "g := append(fields, \"x\", 1)\n_ = g",
+		"reslice with an upper bound":       "prefix := fields[:1]\n_ = prefix",
+		"loop appending pairs":              "for range 2 {\nfields = append(fields, \"projectID\")\n}",
+		"deferred closure":                  "defer func() { slog.Info(\"d\", fields...) }()",
+		"go closure":                        "go func() { slog.Info(\"g\", fields...) }()",
+		"stored closure":                    "g := func() { slog.Info(\"s\", fields...) }\ng()",
+		"interface value in key position":   "var k any = \"event\"\nslog.Info(\"i\", k, \"project_id\", \"projectID\", 7)",
+		"nested later-running closure":      "g := func() {\nlocal := []any{\"a\", 1}\ndefer func() { slog.Info(\"d\", local...) }()\nlocal = []any{\"projectID\", id}\n}\ng()",
+		"closure writes a captured slice":   "func() { fields = []any{\"projectID\", id} }()",
+		"deferred call to a logging helper": "defer func() { logWith(fields) }()\nfields = []any{\"projectID\", 1}",
+		"range variable":                    "for _, g := range groups {\nfields = g\n}",
+		"function used as a value":          "g := logWith\ng(fields)",
 	} {
 		t.Run(name, func(t *testing.T) {
 			src := "package p\nimport \"log/slog\"\nvar (\nid any\nn int\nmk func() ([]any, error)\nmk1 func() []any\ngroups [][]any\n)\nvar pkgFields = []any{\"projectID\", 1}\nfunc logWith(fields []any) { slog.Info(\"m\", fields...) }\nfunc f() {\nfields := []any{\"kind\", id}\n" +

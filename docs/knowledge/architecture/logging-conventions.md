@@ -96,7 +96,8 @@ stay together.
   closure, because it runs with the slice's later contents. An immediately
   invoked `func() { ... }()` is traced. Every enclosing later-running closure
   is checked, however deeply nested, and a closure that assigns a captured
-  `[]any` makes the function untraceable.
+  `[]any` makes the function untraceable. The same check applies when such a
+  closure calls a logging helper: that call site's arguments are unknown.
 - An argument of an empty interface type (`any`) in a key position may hold a
   string at run time, so its pairing is unknown and it is untraceable.
   `Record.Add` pairs its arguments like `With`.
