@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -42,7 +41,13 @@ func ValidateConversions(ids []string) ([]string, error) {
 	if len(ids) == 0 {
 		return nil, fmt.Errorf("%w: the list is empty; omit conversions instead", ErrConversionsInvalid)
 	}
-	out := make([]string, 0, len(ids))
+	// Bounded before any per-entry work, so a long list costs nothing: room for every distinct id
+	// LinkedIn allows plus as many duplicates again.
+	if len(ids) > 2*MaxConversions {
+		return nil, fmt.Errorf("%w: %d conversions; at most %d", ErrConversionsInvalid, len(ids), MaxConversions)
+	}
+	out := make([]string, 0, min(len(ids), MaxConversions+1))
+	seen := make(map[string]struct{}, min(len(ids), MaxConversions+1))
 	for _, id := range ids {
 		if !isPositiveLong(id) {
 			if strings.HasPrefix(id, "urn:") {
@@ -50,12 +55,14 @@ func ValidateConversions(ids []string) ([]string, error) {
 			}
 			return nil, fmt.Errorf("%w: %s is not a conversion rule id (a positive integer without a leading zero)", ErrConversionsInvalid, domain.CallerValue(id))
 		}
-		if !slices.Contains(out, id) {
-			out = append(out, id)
+		if _, dup := seen[id]; dup {
+			continue
 		}
-	}
-	if len(out) > MaxConversions {
-		return nil, fmt.Errorf("%w: %d conversions; at most %d", ErrConversionsInvalid, len(out), MaxConversions)
+		seen[id] = struct{}{}
+		out = append(out, id)
+		if len(out) > MaxConversions {
+			return nil, fmt.Errorf("%w: more than %d distinct conversions; at most %d", ErrConversionsInvalid, MaxConversions, MaxConversions)
+		}
 	}
 	return out, nil
 }

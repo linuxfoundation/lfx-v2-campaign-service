@@ -211,12 +211,8 @@ func linkedinConversionsEnabled() bool {
 	return os.Getenv(constants.EnvLinkedInAdsConversionsEnabled) == "true"
 }
 
-// linkedinConversions checks linkedInConfig.conversions before any job or request: refused while
-// the deployment gate is off, and refused when linkedin.ValidateConversions refuses it. Both are
-// ErrCreateConfigInvalid pre-flight refusals, so PreflightCreate answers them with a synchronous
-// 400 and Dispatch fails the job with the same sentence. Returns the de-duplicated copy.
 // checkConversionsShape refuses a linkedInConfig.conversions that is not a JSON array of strings
-// (#552). encoding/json decodes a number entry into a []string as "" and the best-effort
+// (#552), explicit null included. encoding/json decodes a number entry into a []string as "" and the best-effort
 // pre-flight decode keeps going, so without this a caller sending [104012] would be told "" is
 // not an id. Anything it cannot attribute to `conversions` is left to the ordinary decode.
 func checkConversionsShape(config json.RawMessage) error {
@@ -233,7 +229,9 @@ func checkConversionsShape(config json.RawMessage) error {
 			continue
 		}
 		var entries []json.RawMessage
-		if json.Unmarshal(raw, &entries) != nil {
+		// An explicit null decodes to a nil slice without error, which would read as "omitted";
+		// it is refused instead, as a non-array is.
+		if isJSONNull(raw) || json.Unmarshal(raw, &entries) != nil {
 			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.conversions must be an array of conversion rule id strings, e.g. [\"104012\"]", domain.ErrCreateConfigInvalid))
 		}
 		for _, e := range entries {
@@ -246,6 +244,10 @@ func checkConversionsShape(config json.RawMessage) error {
 	return nil
 }
 
+// linkedinConversions checks linkedInConfig.conversions before any job or request: refused while
+// the deployment gate is off, and refused when linkedin.ValidateConversions refuses it. Both are
+// ErrCreateConfigInvalid pre-flight refusals, so PreflightCreate answers them with a synchronous
+// 400 and Dispatch fails the job with the same sentence. Returns the de-duplicated copy.
 func linkedinConversions(cfg linkedinConfig) ([]string, error) {
 	if cfg.Conversions == nil {
 		return nil, nil

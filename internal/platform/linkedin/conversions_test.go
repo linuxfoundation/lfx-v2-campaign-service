@@ -41,6 +41,14 @@ func TestValidateConversions(t *testing.T) {
 		{"past int64", []string{"9223372036854775808"}, "not a conversion rule id"},
 		{"too many", many, "at most 20"},
 		{"duplicates fit the cap", append(append([]string{}, many[:MaxConversions]...), "1"), ""},
+		{"over twice the cap, duplicates or not", func() []string {
+			out := make([]string, 2*MaxConversions+1)
+			for i := range out {
+				out[i] = "1"
+			}
+			return out
+		}(), "at most 20"},
+		{"invalid entry past the raw cap is not reached", append(make([]string, 2*MaxConversions+1), "x"), "at most 20"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := ValidateConversions(tc.in)

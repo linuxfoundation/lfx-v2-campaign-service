@@ -65,6 +65,8 @@ func TestLinkedIn_ConversionsPreflight(t *testing.T) {
 		{"not an id", `["abc"]`, "not a conversion rule id"},
 		{"number entries", `[104012]`, "entries must be strings"},
 		{"not an array", `"104012"`, "must be an array"},
+		{"null", `null`, "must be an array"},
+		{"a long list is refused before any per-entry work", `[` + strings.TrimSuffix(strings.Repeat(`"1",`, 41), ",") + `]`, "at most 20"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := d.PreflightCreate(context.Background(), "cncf", model.ProviderLinkedInAds, linkedInConversionsConfig(tc.conversions))

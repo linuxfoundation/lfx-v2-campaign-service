@@ -809,7 +809,7 @@ reused by name keeps its own status, which may be ACTIVE, so the step says it ma
 serving without the conversion.
 
 Refused with a synchronous `400 invalid campaign config: linkedInConfig.conversions: …`: a
-`conversions` that is not an array of JSON strings (send `["104012"]`, not `[104012]`), a URN
+`conversions` that is not an array of JSON strings (send `["104012"]`, not `[104012]`; an explicit `null` is refused too), more than 40 entries (checked before any per-entry work), a URN
 instead of the numeric id, an id that is not a positive integer without a leading zero, an empty
 list (omit the field), more than 20 ids. Conversion rules belong to the ad account, so
 create-campaigns also requires `global_marketing_ops` on the project for `conversions` (`403`;
