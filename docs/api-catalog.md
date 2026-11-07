@@ -2687,6 +2687,18 @@ dsaPayor?: string               — EU DSA "payer" (who pays for the ads), set o
                                   and a create without them is refused with a synchronous 400 naming
                                   the EU countries, before any job exists, rather than creating an ad
                                   set Meta will not publish. Blank/whitespace = absent.
+callToAction?: string           — OPTIONAL button on every ad (#550), case-insensitive: LEARN_MORE
+                                  (default — the only button before #550), SIGN_UP, BUY_TICKETS,
+                                  APPLY_NOW, BOOK_NOW, SUBSCRIBE, DOWNLOAD, WATCH_MORE, CONTACT_US
+                                  → `link_data.call_to_action.type`. Anything else (REGISTER_NOW
+                                  is not a Meta button) is a synchronous 400. Refused with a 400
+                                  unless META_CALL_TO_ACTION_ENABLED is exactly "true".
+conversionEvent?: string        — OPTIONAL `promoted_object.custom_event_type` for the
+                                  `conversions` objective (#550), case-insensitive: PURCHASE
+                                  (default — the only event before #550), COMPLETE_REGISTRATION,
+                                  LEAD, SUBMIT_APPLICATION, SUBSCRIBE. On any other objective, or
+                                  outside the list, a synchronous 400. Refused with a 400 unless
+                                  META_CONVERSION_EVENT_ENABLED is exactly "true".
 targeting?: object              — OPTIONAL audience targeting on the ad set (#550). Refused
                                   with a 400 before any job exists unless the deployment sets
                                   META_AUDIENCE_TARGETING_ENABLED to exactly "true" (not yet
