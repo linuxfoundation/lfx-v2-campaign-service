@@ -14,8 +14,10 @@ adjustment. Excluded lists suppress, for example registrants.
 - After the keywords, the lists are attached to the confirmed ad group with
   `AddAdGroupCriterions` (`CriterionType: Audience`): exclusions first as
   `NegativeAdGroupCriterion`, then observed lists as `BiddableAdGroupCriterion` with a
-  `BidMultiplier`. Outcomes are recorded as `audiences` in the result. A shortfall makes the
-  campaign `created_degraded` and never fails the job.
+  `BidMultiplier`. Outcomes are recorded as `audiences` in the result (a 4152 duplicate is
+  `ALREADY_PRESENT`). On an ad group reused from an earlier attempt no list is sent, because
+  its status and audience setting are not read. A shortfall makes the campaign
+  `created_degraded` and never fails the job.
 - The lists belong to the shared LF account, so a microsoft-ads create that sets either list
   needs `global_marketing_ops` on the project (`service.MicrosoftMarketingOpsInputs`, the same
   single check as the other platforms; 403, or 503 when the check cannot be made).

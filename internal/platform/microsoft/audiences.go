@@ -68,7 +68,27 @@ const (
 	criterionBidMultiplier       = "BidMultiplier"
 	// maxAudienceErrorItems bounds a decoded error array, as maxIndexedErrorItems does.
 	maxAudienceErrorItems = 4 * MaxAudienceIDs
+
+	// errCodeDuplicateAdGroupCriterion (4152, CampaignServiceDuplicateAdGroupCriterion,
+	// "Duplicate ad group criterions are not allowed") is how Microsoft refuses a list the ad
+	// group already carries, for example on a dispatch that reuses an ad group an earlier attempt
+	// reached. The state asked for holds, so it is OutcomeAlreadyPresent.
+	errCodeDuplicateAdGroupCriterion        = "CampaignServiceDuplicateAdGroupCriterion"
+	errCodeDuplicateAdGroupCriterionNumeric = "4152"
 )
+
+// isJSONNullRaw reports whether raw is the JSON literal null.
+func isJSONNullRaw(raw json.RawMessage) bool { return string(bytes.TrimSpace(raw)) == "null" }
+
+// isDuplicateAdGroupCriterion matches 4152 STRICTLY, as isNegativeKeywordAlreadyExists matches
+// 4335: a symbolic ErrorCode must be that name, and the numeric code is consulted only when the
+// symbolic one is absent.
+func isDuplicateAdGroupCriterion(errorCode, code json.RawMessage) bool {
+	if sym := codeString(errorCode); sym != "" {
+		return sym == errCodeDuplicateAdGroupCriterion
+	}
+	return codeString(code) == errCodeDuplicateAdGroupCriterionNumeric
+}
 
 // AudienceError is a refusal of one audience input; Field is the microsoftConfig key.
 type AudienceError struct {
@@ -158,7 +178,7 @@ var errAudienceLookupMalformed = errors.New("microsoft-ads remarketing list look
 // nothing is created.
 func (c *Client) CheckRemarketingLists(ctx context.Context, include, exclude []string) error {
 	type want struct{ field, id string }
-	wants := make([]want, 0, len(include)+len(exclude))
+	var wants []want
 	for _, id := range exclude {
 		wants = append(wants, want{FieldExcludedAudienceIDs, id})
 	}
@@ -176,14 +196,29 @@ func (c *Client) CheckRemarketingLists(ctx context.Context, include, exclude []s
 	if err != nil {
 		return fmt.Errorf("microsoft-ads remarketing list lookup failed: %w", err)
 	}
+	// The Audiences array must be PRESENT: a 2xx without it (`{}`, `null`) describes nothing this
+	// client asked for, and reading it as "no such list" would blame a possibly valid id.
+	var probe map[string]json.RawMessage
 	var resp getAudiencesByIDsResponse
-	if json.Unmarshal(raw, &resp) != nil {
+	if json.Unmarshal(raw, &probe) != nil || json.Unmarshal(raw, &resp) != nil {
 		return fmt.Errorf("%w: the response is not the documented shape", errAudienceLookupMalformed)
+	}
+	if aud, ok := probe["Audiences"]; !ok || isJSONNullRaw(aud) {
+		return fmt.Errorf("%w: the response carries no Audiences array", errAudienceLookupMalformed)
 	}
 	if len(resp.Audiences) > len(wants) {
 		return fmt.Errorf("%w: it returned more audiences than were asked for", errAudienceLookupMalformed)
 	}
-	att := attribute(resp.PartialErrors, len(wants))
+	// A zero or empty code is a default, not an error (meaningfulCode); only the rest are
+	// attributed.
+	var lookupErrs indexedErrors
+	lookupErrs.Truncated = resp.PartialErrors.Truncated
+	for _, it := range resp.PartialErrors.Items {
+		if meaningfulCode(it.ErrorCode, it.Code) != "" {
+			lookupErrs.Items = append(lookupErrs.Items, it)
+		}
+	}
+	att := attribute(lookupErrs, len(wants))
 	if att.unattributable {
 		return fmt.Errorf("%w: an error could not be attributed to an id", errAudienceLookupMalformed)
 	}
@@ -216,7 +251,9 @@ func (c *Client) CheckRemarketingLists(ctx context.Context, include, exclude []s
 // After create: AddAdGroupCriterions.
 // ---------------------------------------------------------------------------
 
-// AudienceOutcome is one list's positional outcome on the ad group. CriterionID is set only for
+// AudienceOutcome is one list's positional outcome on the ad group: OutcomeApplied,
+// OutcomeAlreadyPresent (Microsoft refused it only as a duplicate of a criterion the ad group
+// already carries), OutcomeFailed or OutcomeUnconfirmed. CriterionID is set only for
 // OutcomeApplied. The JSON tags are the persisted shape (CampaignResult.Audiences).
 type AudienceOutcome struct {
 	AudienceID  string `json:"audienceId"`
@@ -382,29 +419,48 @@ func (c *Client) addAudienceCriteria(ctx context.Context, adGroupID string, ids 
 		all(OutcomeUnconfirmed, "")
 		return out, fmt.Errorf("microsoft-ads %s audience lists UNCONFIRMED: the response could not be read", kind)
 	}
-	// errored maps a request index to the first code refusing it. An error with no usable index
-	// (or a truncated array) names no list, so it is not attributed: a list with an id is still
-	// APPLIED, and one with neither id nor error stays UNCONFIRMED below.
+	// errored maps a request index to the first code refusing it; onlyDuplicate records whether
+	// every error naming that index is 4152 (already on the ad group). Codes are read with
+	// meaningfulCode, so a zero or empty default (BatchError Code is a non-nullable int) is not an
+	// error, while any other non-null code is. incomplete is set when the evidence cannot cover
+	// every list: an error array (outer or nested) was truncated, or an error carried no usable
+	// index. Then no list without an error of its own can be proven attached, and it is
+	// UNCONFIRMED even with an id, the rule geo.go's criterion add applies.
 	errored := map[int]string{}
+	onlyDuplicate := map[int]bool{}
+	incomplete := resp.NestedPartialErrors.Truncated
 	for _, coll := range resp.NestedPartialErrors.Items {
 		code := meaningfulCode(coll.ErrorCode, coll.Code)
-		isErr := code != "" || rawCodePresent(coll.ErrorCode) || rawCodePresent(coll.Code)
+		collErr := code != ""
+		isErr := collErr
+		dup := !collErr || isDuplicateAdGroupCriterion(coll.ErrorCode, coll.Code)
+		if coll.BatchErrors.Truncated {
+			incomplete = true
+		}
 		for _, it := range coll.BatchErrors.Items {
-			if it.isError() {
-				isErr = true
-				if code == "" {
-					code = it.code()
-				}
+			itCode := meaningfulCode(it.ErrorCode, it.Code)
+			if itCode == "" {
+				continue
+			}
+			isErr = true
+			dup = dup && isDuplicateAdGroupCriterion(it.ErrorCode, it.Code)
+			if code == "" {
+				code = itCode
 			}
 		}
 		if !isErr {
 			continue
 		}
 		if coll.Index == nil || *coll.Index < 0 || *coll.Index >= len(ids) {
+			incomplete = true
 			continue
 		}
-		if _, seen := errored[*coll.Index]; !seen {
-			errored[*coll.Index] = code
+		i := *coll.Index
+		if _, seen := errored[i]; !seen {
+			errored[i] = code
+			onlyDuplicate[i] = dup
+		} else {
+			onlyDuplicate[i] = onlyDuplicate[i] && dup
 		}
 	}
 	for i := range out {
@@ -414,8 +470,12 @@ func (c *Client) addAudienceCriteria(ctx context.Context, adGroupID string, ids 
 		}
 		code, refused := errored[i]
 		switch {
+		case refused && onlyDuplicate[i]:
+			out[i].Outcome = OutcomeAlreadyPresent
 		case refused:
 			out[i].Outcome, out[i].ErrorCode = OutcomeFailed, code
+		case incomplete:
+			out[i].Outcome = OutcomeUnconfirmed
 		case id != "":
 			out[i].Outcome, out[i].CriterionID = OutcomeApplied, id
 		default:

@@ -220,6 +220,10 @@ type CampaignResult struct {
 	// id is known is reconcilable by name (scoped to the campaign).
 	AdGroupName string `json:"adGroupName,omitempty"`
 	AdGroupID   string `json:"adGroupId,omitempty"`
+	// AdGroupReused is true when the ad group was FOUND by name (an earlier attempt made it)
+	// rather than created by this run. Its settings are then whatever they are now, which is why
+	// the create-time observed remarketing lists (#563) are not attached to it.
+	AdGroupReused bool `json:"adGroupReused,omitempty"`
 	// AdID identifies the Responsive Search Ad created under the ad group.
 	AdID string `json:"adId,omitempty"`
 	// KeywordIDs are the ids of the keywords THIS RUN attached to the ad group by the MS-4

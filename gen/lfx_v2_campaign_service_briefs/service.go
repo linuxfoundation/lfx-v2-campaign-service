@@ -1361,13 +1361,16 @@ type CampaignCreateInput struct {
 	// the confirmed ad group: exclusions as NegativeAdGroupCriterion first, then
 	// observed lists as BiddableAdGroupCriterion with the BidMultiplier; no
 	// TargetSetting is sent, so the ad group stays bid only for audiences. Each
-	// outcome (APPLIED, FAILED, UNCONFIRMED) is recorded as audiences in the
-	// result; anything but APPLIED leaves the campaign created_degraded with a
-	// step and never fails the job. OFF unless MICROSOFT_AUDIENCES_ENABLED is
-	// exactly "true", and only for global_marketing_ops (see create-campaigns). A
-	// wrong JSON type (null reads as absent), a rule breach, or any of the three
-	// while the flag is off is refused with 400 "invalid campaign config:
-	// microsoftConfig.<field>: ..." before any job exists.
+	// outcome (APPLIED, ALREADY_PRESENT when Microsoft reports the list already on
+	// the ad group, FAILED, UNCONFIRMED) is recorded as audiences in the result;
+	// on an ad group reused from an earlier attempt no list is sent, since its
+	// status and audience setting are not read; anything but APPLIED or
+	// ALREADY_PRESENT leaves the campaign created_degraded with a step and never
+	// fails the job. OFF unless MICROSOFT_AUDIENCES_ENABLED is exactly "true", and
+	// only for global_marketing_ops (see create-campaigns). A wrong JSON type
+	// (null reads as absent), a rule breach, or any of the three while the flag is
+	// off is refused with 400 "invalid campaign config: microsoftConfig.<field>:
+	// ..." before any job exists.
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

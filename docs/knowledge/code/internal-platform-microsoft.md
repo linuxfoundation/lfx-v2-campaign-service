@@ -1545,7 +1545,8 @@ at most 100 ids, which is why each list is capped at 50) with `Type: "Remarketin
 first. Every id must come back, index-aligned, as a `RemarketingList`. A null slot, a partial
 error or another type is a `PreflightRefusal` naming the field, the id and Microsoft's code (or
 the type, rendered only if code-shaped). An answer that cannot be believed is a plain error: too
-many entries, an id other than the one asked for, or an error with no usable index. Microsoft
+many entries, no `Audiences` array at all, an id other than the one asked for, or an error with
+no usable index. Microsoft
 documents that the system lists (All Visitors, All Converters, Smart lists) are not returned by
 `GetAudiencesByIds`, so they cannot pass this check.
 
@@ -1556,12 +1557,21 @@ documents that the system lists (All Visitors, All Converters, Smart lists) are 
 Audience group is then bid only, so an observed list never narrows who sees the ad. Each list
 gets a positional `AudienceOutcome`:
 - `APPLIED` when it has an id.
+- `ALREADY_PRESENT` when every error naming it is 4152 (`CampaignServiceDuplicateAdGroupCriterion`,
+  matched strictly as the negative-keyword 4335 is), which means the ad group already carries it.
 - `FAILED` when a `NestedPartialErrors` collection names its index, when the call was refused, or
   when it was `NOT_SENT` because the context ended.
-- `UNCONFIRMED` otherwise, including an ambiguous call or an unreadable 2xx.
+- `UNCONFIRMED` otherwise, including an ambiguous call or an unreadable 2xx, and every list
+  without an error of its own when the evidence cannot cover all of them: an outer or nested
+  error array was truncated, or an error carried no usable index (the rule geo.go's criterion add
+  follows). Codes are read with `meaningfulCode`, so a zero or empty default is not an error.
 
-The calls are not retried on 429, like every add here. The dispatcher (`applyMicrosoftAudiences`)
-records the outcomes as `CampaignResult.Audiences`. Anything but APPLIED makes the campaign
+The calls are not retried on 429, like every add here. `CampaignResult.AdGroupReused` reports an
+ad group found by name rather than created by this run. On such an ad group the dispatcher sends
+NO list (`NOT_SENT_REUSED_AD_GROUP`): its status and audience setting are not read, it may already
+be serving, and target-and-bid would turn an observed list into a restriction. The dispatcher
+(`applyMicrosoftAudiences`) records the outcomes as `CampaignResult.Audiences`. Anything but
+APPLIED or ALREADY_PRESENT makes the campaign
 `created_degraded`, with a step, and an extra "do not enable" step when an exclusion is short. It
 never fails the job.
 

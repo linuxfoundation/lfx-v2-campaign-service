@@ -864,11 +864,21 @@ audienceBidAdjustment?: number  — Whole percent, -90 through 900, on every obs
                                   the system lists (All Visitors, All Converters, Smart lists), so
                                   those cannot be used here. The lists are attached to the
                                   confirmed ad group after the keywords; each outcome (APPLIED,
-                                  FAILED or UNCONFIRMED) is recorded in the result as audiences,
-                                  exclusions first. Anything but APPLIED leaves the campaign
-                                  created_degraded with a step, plus "do not enable the campaign
-                                  until the exclusion is attached" when an exclusion is short; it
-                                  never fails the job, and the campaign stays PAUSED. The lists
+                                  ALREADY_PRESENT when Microsoft refuses it only as a duplicate of a
+                                  criterion the ad group already carries (4152), FAILED or
+                                  UNCONFIRMED) is recorded in the result as audiences, exclusions
+                                  first. On an ad group REUSED from an earlier attempt NO list is
+                                  sent (FAILED, NOT_SENT_REUSED_AD_GROUP): its status and audience
+                                  setting are not read, it may already be serving, and
+                                  target-and-bid would turn an observed list into a restriction. An
+                                  error array that was truncated, or an error with no usable index,
+                                  leaves every list without an error of its own UNCONFIRMED; a zero
+                                  or empty code is a default, not an error. A lookup answer with no Audiences array
+                                  is an unreadable answer, not a refusal of the ids. Anything but
+                                  APPLIED or ALREADY_PRESENT leaves the campaign created_degraded
+                                  with a step, plus "do not enable the campaign until the exclusion
+                                  is attached" when an exclusion is short; it never fails the job,
+                                  and the campaign stays PAUSED. The lists
                                   belong to the LF Microsoft Advertising account every foundation
                                   shares, so either list requires global_marketing_ops on the
                                   project (403; 503 when the check cannot be made). OFF unless

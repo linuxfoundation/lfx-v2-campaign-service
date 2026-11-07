@@ -103,6 +103,9 @@ func TestCheckRemarketingLists_Refusals(t *testing.T) {
 		{"too many", `{"Audiences":[{"Id":77,"Type":"RemarketingList"},{"Id":11,"Type":"RemarketingList"},{"Id":12,"Type":"RemarketingList"}]}`, 200, false, "more audiences"},
 		{"unattributable error", `{"Audiences":[{"Id":77,"Type":"RemarketingList"},{"Id":11,"Type":"RemarketingList"}],"PartialErrors":[{"Code":1,"ErrorCode":"X"}]}`, 200, false, "attributed"},
 		{"not json", `nope`, 200, false, "documented shape"},
+		{"no Audiences key", `{"PartialErrors":[]}`, 200, false, "no Audiences array"},
+		{"null body", `null`, 200, false, "no Audiences array"},
+		{"null Audiences", `{"Audiences":null}`, 200, false, "no Audiences array"},
 		{"500", `{}`, 500, false, "lookup failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -202,5 +205,65 @@ func TestAttachAdGroupAudiences_NotSent(t *testing.T) {
 	}
 	if out, err := c.AttachAdGroupAudiences(context.Background(), "0x1", []string{"11"}, nil, 0); err == nil || out != nil {
 		t.Fatalf("bad ad group id: out=%v err=%v", out, err)
+	}
+}
+
+// A list Microsoft refuses ONLY as a duplicate of a criterion the ad group already carries (4152)
+// is ALREADY_PRESENT; a duplicate travelling with another error, or a numeric 4152 under another
+// symbolic name, stays FAILED.
+func TestAttachAdGroupAudiences_DuplicateIsAlreadyPresent(t *testing.T) {
+	c, _ := kwRecorder(t, func(string, string) (int, string) {
+		return http.StatusOK, `{"AdGroupCriterionIds":[null,null,null,null],"NestedPartialErrors":[` +
+			`{"Index":0,"Code":4152,"ErrorCode":"CampaignServiceDuplicateAdGroupCriterion"},` +
+			`{"Index":1,"Code":0,"ErrorCode":null,"BatchErrors":[{"Code":4152,"ErrorCode":null}]},` +
+			`{"Index":2,"Code":4152,"ErrorCode":"CampaignServiceDuplicateAdGroupCriterion","BatchErrors":[{"Code":1001,"ErrorCode":"Other"}]},` +
+			`{"Index":3,"Code":4152,"ErrorCode":"SomethingElse"}]}`
+	})
+	out, err := c.AttachAdGroupAudiences(context.Background(), "444", []string{"11", "12", "13", "14"}, nil, 0)
+	if err != nil {
+		t.Fatalf("AttachAdGroupAudiences: %v", err)
+	}
+	if got := audienceOutcomes(out); got != "obs:11=ALREADY_PRESENT,obs:12=ALREADY_PRESENT,obs:13=FAILED,obs:14=FAILED" {
+		t.Fatalf("outcomes = %s", got)
+	}
+}
+
+// Evidence that cannot cover every list leaves a list with an id but no error of its own
+// UNCONFIRMED: a truncated outer or nested error array, or an error with no usable index. A zero
+// or empty code is a default, not an error, so a padding collection does not refuse a list.
+func TestAttachAdGroupAudiences_IncompleteEvidenceAndZeroCodes(t *testing.T) {
+	pad := make([]string, maxAudienceErrorItems+1)
+	for i := range pad {
+		pad[i] = `{"Index":null,"Code":0,"ErrorCode":null}`
+	}
+	nested := make([]string, maxIndexedErrorItems+1)
+	for i := range nested {
+		nested[i] = `{"Code":0}`
+	}
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{"outer truncated", `{"AdGroupCriterionIds":[6001],"NestedPartialErrors":[` + strings.Join(pad, ",") + `]}`, "obs:11=UNCONFIRMED"},
+		{"nested truncated", `{"AdGroupCriterionIds":[6001],"NestedPartialErrors":[{"Index":null,"Code":0,"BatchErrors":[` + strings.Join(nested, ",") + `]}]}`, "obs:11=UNCONFIRMED"},
+		{"unattributable error", `{"AdGroupCriterionIds":[6001],"NestedPartialErrors":[{"Code":1001,"ErrorCode":"X"}]}`, "obs:11=UNCONFIRMED"},
+		{"zero-code padding", `{"AdGroupCriterionIds":[6001],"NestedPartialErrors":[{"Index":0,"Code":0,"ErrorCode":"","BatchErrors":[{"Code":0,"ErrorCode":null}]}]}`, "obs:11=APPLIED"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, tc.body })
+			out, err := c.AttachAdGroupAudiences(context.Background(), "444", []string{"11"}, nil, 0)
+			if err != nil || audienceOutcomes(out) != tc.want {
+				t.Fatalf("outcomes = %s err = %v, want %s", audienceOutcomes(out), err, tc.want)
+			}
+		})
+	}
+}
+
+// A zero-code PartialErrors entry in the lookup is a default, not a refusal of the id it names.
+func TestCheckRemarketingLists_ZeroCodeIsNotARefusal(t *testing.T) {
+	c, _ := kwRecorder(t, func(string, string) (int, string) {
+		return http.StatusOK, `{"Audiences":[{"Id":11,"Type":"RemarketingList"}],"PartialErrors":[{"Index":0,"Code":0,"ErrorCode":""}]}`
+	})
+	if err := c.CheckRemarketingLists(context.Background(), []string{"11"}, nil); err != nil {
+		t.Fatalf("CheckRemarketingLists: %v", err)
 	}
 }

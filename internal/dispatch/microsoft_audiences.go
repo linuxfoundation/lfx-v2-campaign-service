@@ -127,6 +127,10 @@ func checkMicrosoftAudiences(cfg microsoftConfig) error {
 	return nil
 }
 
+// audienceSkippedReusedAdGroup is the ErrorCode of an observed list not sent because the ad
+// group was reused. Not a Microsoft code, and spelled so it cannot be mistaken for one.
+const audienceSkippedReusedAdGroup = "NOT_SENT_REUSED_AD_GROUP"
+
 // microsoftAudienceAdjustment is the BidMultiplier sent with each observed list: the caller's
 // audienceBidAdjustment, or 0 (observe only) when it is absent.
 func microsoftAudienceAdjustment(cfg microsoftConfig) float64 {
@@ -145,24 +149,42 @@ func applyMicrosoftAudiences(ctx context.Context, client *microsoft.Client, resu
 	if len(cfg.AudienceIDs) == 0 && len(cfg.ExcludedAudienceIDs) == 0 {
 		return false
 	}
-	outcomes, err := client.AttachAdGroupAudiences(ctx, result.AdGroupID, cfg.AudienceIDs, cfg.ExcludedAudienceIDs, microsoftAudienceAdjustment(cfg))
-	result.Audiences = outcomes
-	if len(outcomes) == 0 {
-		// Refused before any request (an ad group id this client cannot address).
-		msg := "Remarketing lists NOT attached; add them to the ad group in Microsoft Advertising before enabling the campaign"
-		if err != nil {
-			msg += ": " + err.Error()
+	// An ad group REUSED from an earlier attempt keeps whatever state it has now, and this client
+	// reads neither its status nor its audience setting. It may already be serving, where a new
+	// criterion changes live delivery, and if its Audience group is target-and-bid an observed list
+	// would narrow delivery to list members, the opposite of observing. So no list is written to a
+	// reused ad group: every one is reported not sent, the campaign degrades, and a step asks an
+	// operator to check the ad group and add the lists.
+	if result.AdGroupReused {
+		var skipped []microsoft.AudienceOutcome
+		for _, id := range cfg.ExcludedAudienceIDs {
+			skipped = append(skipped, microsoft.AudienceOutcome{AudienceID: id, Excluded: true, Outcome: microsoft.OutcomeFailed, ErrorCode: audienceSkippedReusedAdGroup})
 		}
-		result.Steps = append(result.Steps, msg)
+		for _, id := range cfg.AudienceIDs {
+			skipped = append(skipped, microsoft.AudienceOutcome{AudienceID: id, Outcome: microsoft.OutcomeFailed, ErrorCode: audienceSkippedReusedAdGroup})
+		}
+		result.Audiences = skipped
+		result.Steps = append(result.Steps, fmt.Sprintf("Remarketing lists NOT attached: ad group %s was reused from an earlier attempt and its status and audience setting were not read, so no list was written to it; check that it is paused and its audience setting is bid only in Microsoft Advertising, then add the lists. Do not enable the campaign until any exclusion is attached", result.AdGroupID))
+		slog.WarnContext(ctx, "microsoft create-time remarketing lists skipped on a reused ad group", "campaign_id", result.CampaignID, "ad_group_id", result.AdGroupID)
+		return true
+	}
+	outcomes, err := client.AttachAdGroupAudiences(ctx, result.AdGroupID, cfg.AudienceIDs, cfg.ExcludedAudienceIDs, microsoftAudienceAdjustment(cfg))
+	if len(outcomes) == 0 && err != nil {
+		// Refused before any request (an ad group id this client cannot address).
+		result.Steps = append(result.Steps, "Remarketing lists NOT attached; add them to the ad group in Microsoft Advertising before enabling the campaign: "+err.Error())
 		slog.WarnContext(ctx, "microsoft create-time remarketing lists not attached", "campaign_id", result.CampaignID, "error", err)
 		return true
 	}
-	var applied, failed, unconfirmed int
+	result.Audiences = outcomes
+	var applied, present, failed, unconfirmed int
 	exclusionShort := false
 	for _, o := range outcomes {
 		switch o.Outcome {
 		case microsoft.OutcomeApplied:
 			applied++
+			continue
+		case microsoft.OutcomeAlreadyPresent:
+			present++
 			continue
 		case microsoft.OutcomeFailed:
 			failed++
@@ -173,7 +195,7 @@ func applyMicrosoftAudiences(ctx context.Context, client *microsoft.Client, resu
 			exclusionShort = true
 		}
 	}
-	result.Steps = append(result.Steps, fmt.Sprintf("Remarketing lists on ad group %s: %d attached, %d failed, %d unconfirmed", result.AdGroupID, applied, failed, unconfirmed))
+	result.Steps = append(result.Steps, fmt.Sprintf("Remarketing lists on ad group %s: %d attached, %d already present, %d failed, %d unconfirmed", result.AdGroupID, applied, present, failed, unconfirmed))
 	if err != nil {
 		result.Steps = append(result.Steps, "Remarketing list call failed: "+err.Error())
 	}

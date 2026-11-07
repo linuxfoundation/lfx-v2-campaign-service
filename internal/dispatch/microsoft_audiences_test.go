@@ -281,9 +281,67 @@ func TestMicrosoftAudiences_ExclusionFailureDegrades(t *testing.T) {
 	}
 	_ = json.Unmarshal(camp.Result, &blob)
 	steps := strings.Join(blob.Steps, "\n")
-	for _, want := range []string{"1 attached, 1 failed, 0 unconfirmed", "do not enable the campaign until the exclusion is attached"} {
+	for _, want := range []string{"1 attached, 0 already present, 1 failed, 0 unconfirmed", "do not enable the campaign until the exclusion is attached"} {
 		if !strings.Contains(steps, want) {
 			t.Errorf("steps lack %q:\n%s", want, steps)
 		}
+	}
+}
+
+// On an ad group REUSED from an earlier attempt no list is written (its status and audience
+// setting were not read): every list is reported not sent, and the campaign degrades with a step
+// saying what to check.
+func TestMicrosoftAudiences_ReusedAdGroupWritesNothing(t *testing.T) {
+	t.Setenv(constants.EnvMicrosoftAudiencesEnabled, "true")
+	api := &msAudAPI{}
+	d := newMSAudDispatcher(t, api)
+	res, err := d.creds.resolve(context.Background(), "cncf", model.ProviderMicrosoftAds)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	creds, accountID, err := validateMicrosoftConnection("cncf", res)
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	client := d.cachedMicrosoftClient("cncf", model.ProviderMicrosoftAds, res, creds, accountID)
+	result := &microsoft.CampaignResult{CampaignID: "321", AdGroupID: "654", AdGroupReused: true}
+	var cfg microsoftConfig
+	if err := json.Unmarshal([]byte(`{"audienceIds":["11"],"excludedAudienceIds":["77"]}`), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !applyMicrosoftAudiences(context.Background(), client, result, cfg) {
+		t.Fatal("lists skipped on a reused ad group must degrade the campaign")
+	}
+	if calls := api.snapshot(); len(calls) != 0 {
+		t.Fatalf("calls = %v, want none", calls)
+	}
+	if len(result.Audiences) != 2 || !result.Audiences[0].Excluded || result.Audiences[0].ErrorCode != audienceSkippedReusedAdGroup ||
+		result.Audiences[1].AudienceID != "11" || result.Audiences[1].Outcome != microsoft.OutcomeFailed {
+		t.Errorf("audiences = %+v", result.Audiences)
+	}
+	if steps := strings.Join(result.Steps, "\n"); !strings.Contains(steps, "ad group 654 was reused from an earlier attempt") || !strings.Contains(steps, "Do not enable the campaign") {
+		t.Errorf("steps = %v", result.Steps)
+	}
+}
+
+// A list Microsoft reports as already on the ad group (4152) counts as attached: the campaign is
+// a clean created, with no "do not enable" step.
+func TestMicrosoftAudiences_AlreadyPresentIsNotDegraded(t *testing.T) {
+	t.Setenv(constants.EnvMicrosoftAudiencesEnabled, "true")
+	api := &msAudAPI{critStatus: http.StatusOK, critBody: `{"AdGroupCriterionIds":[null],"NestedPartialErrors":[{"Index":0,"Code":4152,"ErrorCode":"CampaignServiceDuplicateAdGroupCriterion"}]}`}
+	d := newMSAudDispatcher(t, api)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMicrosoftAds, msNegConfig(msAudExtra))
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if camp.Status != campaignStatusCreated {
+		t.Fatalf("status = %q, want created", camp.Status)
+	}
+	var blob struct {
+		Steps []string `json:"steps"`
+	}
+	_ = json.Unmarshal(camp.Result, &blob)
+	if steps := strings.Join(blob.Steps, "\n"); !strings.Contains(steps, "1 attached, 1 already present, 0 failed") || strings.Contains(steps, "do not enable") {
+		t.Errorf("steps = %s", steps)
 	}
 }
