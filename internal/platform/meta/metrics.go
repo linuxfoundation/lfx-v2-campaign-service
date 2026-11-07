@@ -4,8 +4,10 @@
 package meta
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -64,6 +66,11 @@ type CampaignMetrics struct {
 	CostMicros int64 `json:"costMicros"`
 	// Ctr is Clicks/Impressions, 0 when Impressions is 0 (never divides by zero).
 	Ctr float64 `json:"ctr"`
+	// Conversions is the count of the requested conversion action over the window (#550 gap 6),
+	// set ONLY by GetCampaignMetricsWithConversions; nil from GetCampaignMetrics. A non-nil 0 is
+	// a measured zero: the row carried no entry for the action (Meta omits empty action lists),
+	// or there was no delivery. Meta's value can be fractional and is kept as is.
+	Conversions *float64 `json:"conversions,omitempty"`
 }
 
 // insightsResponse is the shape of a Graph API .../insights read. Meta returns
@@ -87,7 +94,92 @@ type insightsResponse struct {
 		Impressions json.RawMessage `json:"impressions"`
 		Clicks      json.RawMessage `json:"clicks"`
 		Spend       json.RawMessage `json:"spend"`
+		// Actions is the AdsActionStats list, present only when `actions` was requested and
+		// the row had at least one action. Raw, so a malformed list is told apart from an
+		// absent one.
+		Actions json.RawMessage `json:"actions"`
 	} `json:"data"`
+}
+
+// conversionActionTypes maps a conversions campaign's promoted-object custom_event_type (the
+// event recorded on the create result, CampaignResult.ConversionEvent) to the Insights
+// action_type that counts it, from Meta's Ads Action Stats reference
+// (developers.facebook.com/docs/marketing-api/reference/ads-action-stats, read 2026-11-07).
+// SUBSCRIBE has no offsite_conversion.fb_pixel_* entry there; the pixel/Conversions API subscribe
+// count is subscribe_website.
+var conversionActionTypes = map[string]string{
+	"PURCHASE":              "offsite_conversion.fb_pixel_purchase",
+	"COMPLETE_REGISTRATION": "offsite_conversion.fb_pixel_complete_registration",
+	"LEAD":                  "offsite_conversion.fb_pixel_lead",
+	"SUBMIT_APPLICATION":    "offsite_conversion.fb_pixel_submit_application",
+	"SUBSCRIBE":             "subscribe_website",
+}
+
+// ConversionActionType returns the Insights action_type that counts conversions for a recorded
+// custom_event_type, or false when the event is unknown (or empty).
+func ConversionActionType(event string) (string, bool) {
+	t, ok := conversionActionTypes[strings.ToUpper(strings.TrimSpace(event))]
+	return t, ok
+}
+
+// actionStat is one AdsActionStats entry. Both fields are raw: Meta sends numbers as JSON
+// strings, and a null, missing or other-typed value or action_type must not read as "" or 0.
+type actionStat struct {
+	ActionType json.RawMessage `json:"action_type"`
+	Value      json.RawMessage `json:"value"`
+}
+
+// countAction returns the value of the ONE entry whose action_type is actionType, 0 when there is
+// none or the list is absent. Two entries for the same type, an unreadable list or a value that is
+// not a non-negative finite number is an error: summing duplicates could double count, and a
+// guessed number is worse than none. Errors never echo a value.
+func countAction(raw json.RawMessage, actionType string) (float64, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return 0, nil
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return 0, errors.New("actions is an explicit null")
+	}
+	// Entries are decoded one by one as raw objects, so a null entry, or one whose action_type is
+	// missing, null, not a string or blank, is refused rather than skipped: skipping it would
+	// read an entry this client cannot identify as "not the conversion", a measured zero that
+	// could be the conversion count itself.
+	var entries []json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return 0, fmt.Errorf("actions is not a list (%d bytes)", len(raw))
+	}
+	found := false
+	var total float64
+	for i, e := range entries {
+		if bytes.Equal(bytes.TrimSpace(e), []byte("null")) {
+			return 0, fmt.Errorf("actions entry %d is null", i+1)
+		}
+		var s actionStat
+		if err := json.Unmarshal(e, &s); err != nil {
+			return 0, fmt.Errorf("actions entry %d is not an object (%d bytes)", i+1, len(e))
+		}
+		var at string
+		if len(s.ActionType) == 0 || json.Unmarshal(s.ActionType, &at) != nil || strings.TrimSpace(at) == "" {
+			return 0, fmt.Errorf("actions entry %d has no readable action_type", i+1)
+		}
+		if at != actionType {
+			continue
+		}
+		if found {
+			return 0, errors.New("actions lists the conversion action type twice")
+		}
+		found = true
+		var str string
+		if err := json.Unmarshal(s.Value, &str); err != nil {
+			return 0, fmt.Errorf("conversion action value is not a JSON string (%d bytes)", len(s.Value))
+		}
+		v, err := strconv.ParseFloat(str, 64)
+		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+			return 0, fmt.Errorf("conversion action value is not a non-negative number (%d bytes)", len(str))
+		}
+		total = v
+	}
+	return total, nil
 }
 
 // parseMetricInt parses a metric string value, treating empty string as zero.
@@ -123,6 +215,21 @@ func parseMetricInt(s string) (int64, error) {
 // empty data array, and this method returns a zero-value CampaignMetrics rather
 // than surfacing "not found" — mirrors googleads.GetCampaignMetrics.
 func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, window MetricsWindow) (*CampaignMetrics, error) {
+	return c.getCampaignMetrics(ctx, campaignID, window, "")
+}
+
+// GetCampaignMetricsWithConversions is GetCampaignMetrics that also requests the Insights
+// `actions` list and reports, in Conversions, the value of the entry whose action_type is
+// actionType (ConversionActionType). Meta's `value` is the default attribution window's count.
+// An empty actionType is refused: there is nothing to count.
+func (c *Client) GetCampaignMetricsWithConversions(ctx context.Context, campaignID string, window MetricsWindow, actionType string) (*CampaignMetrics, error) {
+	if actionType == "" {
+		return nil, errors.New("get campaign metrics: no conversion action type to count")
+	}
+	return c.getCampaignMetrics(ctx, campaignID, window, actionType)
+}
+
+func (c *Client) getCampaignMetrics(ctx context.Context, campaignID string, window MetricsWindow, actionType string) (*CampaignMetrics, error) {
 	id := strings.TrimSpace(campaignID)
 	if id == "" || !numericIDRE.MatchString(id) {
 		return nil, fmt.Errorf("get campaign metrics: campaign id %q must be numeric", campaignID)
@@ -136,10 +243,28 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		return nil, fmt.Errorf("get campaign metrics: unsupported window %q", window)
 	}
 
-	path := "/" + id + "/insights?fields=impressions,clicks,spend&date_preset=" + preset
+	fields := "impressions,clicks,spend"
+	if actionType != "" {
+		fields += ",actions"
+	}
+	path := "/" + id + "/insights?fields=" + fields + "&date_preset=" + preset
 	var resp insightsResponse
-	if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
-		return nil, fmt.Errorf("get campaign metrics: %w", err)
+	if actionType == "" {
+		if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+			return nil, fmt.Errorf("get campaign metrics: %w", err)
+		}
+	} else {
+		// The conversions read decodes only a body identityjson accepted (getChecked): a
+		// duplicated key such as "value":"7","value":"0", or a repeated action_type or actions
+		// key (case variants included), is resolved last-wins by encoding/json and could turn a
+		// conversion count into a published zero.
+		raw, err := c.getChecked(ctx, path)
+		if err != nil {
+			return nil, fmt.Errorf("get campaign metrics: %w", err)
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return nil, fmt.Errorf("get campaign metrics: %w", &transportError{Method: http.MethodGet, Path: path, Err: errors.New("the response is not an insights object")})
+		}
 	}
 	if resp.Data == nil {
 		// 2xx with no `data` field at all: the body is malformed and cannot establish
@@ -153,7 +278,13 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		}
 	}
 	if len(*resp.Data) == 0 {
-		return &CampaignMetrics{CampaignID: id, Window: w}, nil
+		m := &CampaignMetrics{CampaignID: id, Window: w}
+		if actionType != "" {
+			// No delivery in the window: a measured zero, like the counters.
+			zero := 0.0
+			m.Conversions = &zero
+		}
+		return m, nil
 	}
 
 	row := (*resp.Data)[0]
@@ -186,6 +317,17 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	}
 	if impressions > 0 {
 		m.Ctr = float64(clicks) / float64(impressions)
+	}
+	if actionType != "" {
+		conv, cerr := countAction(row.Actions, actionType)
+		if cerr != nil {
+			return nil, &transportError{
+				Method: http.MethodGet,
+				Path:   path,
+				Err:    fmt.Errorf("decode campaign metrics row: %w", cerr),
+			}
+		}
+		m.Conversions = &conv
 	}
 	return m, nil
 }

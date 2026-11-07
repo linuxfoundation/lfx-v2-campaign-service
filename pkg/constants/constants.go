@@ -212,6 +212,16 @@ const (
 	// (service.TwitterMarketingOpsInputs) and the read sits in the gateway's marketing-ops-api rule.
 	EnvTwitterCustomAudiencesEnabled = "TWITTER_CUSTOM_AUDIENCES_ENABLED"
 
+	// EnvMetaConversionsMetricsEnabled opts a deployment IN to conversions in the Meta metrics read
+	// (#550 gap 6): for a campaign whose create result records a conversion event (the
+	// conversions objective, #559), the Insights read also requests `actions` and reports the
+	// matching action type's count as conversions. Only the exact value "true" enables it; unset
+	// or any other value keeps the read exactly as before (conversions unavailable, no `actions`
+	// requested). A read-only change, but the event-to-action-type mapping comes from Meta's
+	// reference and has not been checked against a live account, and a wrong mapping would
+	// publish a false zero. Turn it on per environment, in lfx-v2-argocd.
+	EnvMetaConversionsMetricsEnabled = "META_CONVERSIONS_METRICS_ENABLED"
+
 	// EnvMicrosoftAudiencesEnabled opts a deployment IN to microsoftConfig.audienceIds,
 	// excludedAudienceIds and audienceBidAdjustment (#563 gap 4): remarketing lists observed (bid
 	// only) and excluded on the ad group a Microsoft create makes. Only the exact value "true"

@@ -66,7 +66,8 @@ type Input struct {
 	// A POINTER, because the clicks-without-conversions rule turns entirely on the
 	// difference between the two zeros. A campaign that earned 500 clicks and 0 measured
 	// conversions is the finding the rule exists for; a campaign that earned 500 clicks on a
-	// platform with no conversions concept — Meta, X, Reddit, HubSpot — has no conversion
+	// platform with no conversions concept — X, Reddit, HubSpot, and Meta outside its #550
+	// recorded-event read — has no conversion
 	// figure at all, and firing on it would report the ABSENCE OF MEASUREMENT as a campaign
 	// defect. A plain number cannot hold those apart: both arrive as 0.
 	//
@@ -207,9 +208,9 @@ func Evaluate(in Input) []ActionItem {
 	//
 	//   - in.Conversions != nil gates the whole rule on the read's conversions status being
 	//     `reported` (the caller passes ReportedConversions), which excludes unavailable,
-	//     incomplete and no_conversions. The first two are the cases that matter most here. Four of the
-	//     seven adapters (Meta, X, Reddit, HubSpot) cannot report a campaign-level count at
-	//     all, for reasons that are properties of those APIs rather than gaps here; on those
+	//     incomplete and no_conversions. The first two are the cases that matter most here. Three of
+	//     the seven adapters (X, Reddit, HubSpot), and Meta outside its #550 recorded-event read,
+	//     cannot report a campaign-level count at all, for reasons that are properties of those APIs rather than gaps here; on those
 	//     platforms every campaign would otherwise present as 0 conversions and every one
 	//     would be flagged, forever. But a conversion-CAPABLE channel also reaches nil when
 	//     its response was incomplete — LinkedIn when a returned element omitted the metric,

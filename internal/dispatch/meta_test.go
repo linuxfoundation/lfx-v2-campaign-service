@@ -1300,8 +1300,9 @@ func TestMeta_ListAccounts_StillRejectsUnusableConnections(t *testing.T) {
 
 // Meta has no scalar campaign-level conversions field: the Insights edge reports conversions
 // inside the `actions` array as {action_type, value} objects. Reducing that to one number
-// requires deciding WHICH action types count as a conversion for this advertiser, which this
-// service has no input for — so the count stays absent.
+// requires deciding WHICH action types count as a conversion. Since #550 gap 6 that choice is
+// read from the campaign's recorded conversion event (TestMeta_ReadMetrics_ConversionsFromTheRecordedEvent);
+// a campaign with no recorded event, like this one, keeps the count absent.
 //
 // The fixture deliberately CARRIES an actions array in Meta's published shape. A zero here
 // would be a fabricated measurement, and this test fails if a future change starts summing

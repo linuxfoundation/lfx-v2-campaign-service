@@ -1428,7 +1428,7 @@ REST is proto3 JSON (which omits default-valued fields), an **absent conversions
 member is the encoding of a measured 0.0**, not "unmeasured" — the adapter
 materialises a non-nil zero, the same way `parseMetricInt` treats an omitted
 impressions value as a measured 0. A nil conversions count is reserved for the
-platforms that cannot report one at all (Meta, X, Reddit, email), which is what
+platforms that cannot report one at all (X, Reddit, email, and Meta outside its #550 read), which is what
 the pointer in `model.CampaignMetrics` exists to distinguish. The window and campaign id are
 both validated as constrained (an allow-list of GAQL predefined-date-range
 literals, and digits-only respectively) BEFORE string concatenation into the

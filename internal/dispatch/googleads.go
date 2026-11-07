@@ -3103,8 +3103,9 @@ func (d *GoogleAdsDispatcher) ReadMetrics(ctx context.Context, projectID string,
 		Ctr:         m.Ctr,
 		// Carried through as a POINTER rather than being flattened, because the DOMAIN field
 		// is a pointer and its nil carries meaning across platforms: it marks the adapters
-		// whose platform reports no campaign-level conversion count at all (Meta, X, Reddit,
-		// email), and the no_conversions rule refuses to fire on it.
+		// whose platform reports no campaign-level conversion count at all (X, Reddit, email,
+		// and Meta outside its #550 recorded-event read), and the no_conversions rule refuses to
+		// fire on it.
 		//
 		// This adapter never actually produces that nil. googleads.GetCampaignMetrics
 		// materialises a non-nil count on BOTH of its paths — an explicit zero for a no-row

@@ -402,6 +402,16 @@ app:
     TWITTER_CUSTOM_AUDIENCES_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to conversions in the Meta metrics read (#550):
+    # for a campaign this service created with the conversions objective, the
+    # Insights read also requests `actions` and reports the recorded event's
+    # action type as conversions. Read-only, but the event-to-action-type
+    # mapping has not been checked against a live account and a wrong one would
+    # publish a false zero. While off, Meta conversions stay unavailable, as
+    # before. Any value other than "true" is treated as off.
+    META_CONVERSIONS_METRICS_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to microsoftConfig.sitelinks and
     # microsoftConfig.callouts (#563), created at create time as sitelink and
     # callout ad extensions associated with the new Search campaign. Default
