@@ -929,6 +929,19 @@ matching rule.
 `CampaignResult.BidApplied` is always true on success: this client never reuses a campaign or ad
 group by name.
 
+## Conversion event (`CampaignInput.ConversionEvent`, #549)
+
+A conversions campaign optimizes toward `PURCHASE` unless the caller names another pixel event.
+`ResolveConversionEvent` accepts the web-pixel members of Reddit's optimization-goal enum
+(`ConversionEvents`: PURCHASE, SIGN_UP, LEAD, PAGE_VISIT, VIEW_CONTENT, ADD_TO_CART,
+ADD_TO_WISHLIST, SEARCH), case-insensitively, and only on the conversions objective. The value
+replaces `optimizationGoal`, which both the campaign and the ad group bodies read, because
+campaign budget optimization requires the two to match. Validation runs before the account
+verification GET, so a refused event creates and sends nothing. The dispatcher refuses the same
+cases synchronously (`checkRedditConversionEvent`) and keeps the field behind
+`REDDIT_CONVERSION_EVENT_ENABLED`, which is off until a live create confirms that Reddit accepts
+a non-PURCHASE goal on a CONVERSIONS CBO campaign.
+
 ## Create-time targeting exclusions (`targeting_exclusions.go`, #549)
 
 `CampaignInput.ExcludedSubreddits` and `ExcludedGeoTargets` become the ad group's

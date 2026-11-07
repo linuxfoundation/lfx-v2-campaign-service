@@ -670,6 +670,18 @@ conversionPixelId?: string      — OPTIONAL per-campaign override of the connec
                                   before any upstream call.
 videoGoal?: string              — REQUIRED when objective is video_views: VIDEO_VIEW_6S | VIDEO_VIEW_15S
                                   (Reddit has no bare VIDEO_VIEWS goal). Ignored for other objectives.
+conversionEvent?: string        — OPTIONAL pixel event a CONVERSIONS campaign optimizes toward (#549):
+                                  PURCHASE | SIGN_UP | LEAD | PAGE_VISIT | VIEW_CONTENT | ADD_TO_CART |
+                                  ADD_TO_WISHLIST | SEARCH (case-insensitive). Sent as optimization_goal
+                                  on BOTH the campaign and the ad group (budget optimization requires
+                                  them to match). Omitted = PURCHASE, unchanged. Accepted only with
+                                  objective conversions (or objective omitted, whose default is
+                                  conversions) and only while REDDIT_CONVERSION_EVENT_ENABLED is "true".
+                                  An unknown value, another objective, null, an empty or non-string
+                                  value, a case variant of the key, or the field with the flag off is
+                                  a synchronous **400** ("invalid campaign config:
+                                  redditConfig.conversionEvent: ..."), and Dispatch re-checks it
+                                  before any Reddit request.
 customAudienceIds?: string[]    — OPTIONAL Reddit custom audiences to TARGET (#549): retargeting, e.g. a
                                   pixel or engagement audience. Ids from GET .../reddit-ads/custom-audiences.
                                   Sent as the ad group's targeting.custom_audience_ids on EVERY ad-group
@@ -2701,6 +2713,18 @@ dsaPayor?: string               — EU DSA "payer" (who pays for the ads), set o
                                   and a create without them is refused with a synchronous 400 naming
                                   the EU countries, before any job exists, rather than creating an ad
                                   set Meta will not publish. Blank/whitespace = absent.
+callToAction?: string           — OPTIONAL button on every ad (#550), case-insensitive: LEARN_MORE
+                                  (default — the only button before #550), SIGN_UP, BUY_TICKETS,
+                                  APPLY_NOW, BOOK_NOW, SUBSCRIBE, DOWNLOAD, WATCH_MORE, CONTACT_US
+                                  → `link_data.call_to_action.type`. Anything else (REGISTER_NOW
+                                  is not a Meta button) is a synchronous 400. Refused with a 400
+                                  unless META_CALL_TO_ACTION_ENABLED is exactly "true".
+conversionEvent?: string        — OPTIONAL `promoted_object.custom_event_type` for the
+                                  `conversions` objective (#550), case-insensitive: PURCHASE
+                                  (default — the only event before #550), COMPLETE_REGISTRATION,
+                                  LEAD, SUBMIT_APPLICATION, SUBSCRIBE. On any other objective, or
+                                  outside the list, a synchronous 400. Refused with a 400 unless
+                                  META_CONVERSION_EVENT_ENABLED is exactly "true".
 targeting?: object              — OPTIONAL audience targeting on the ad set (#550). Refused
                                   with a 400 before any job exists unless the deployment sets
                                   META_AUDIENCE_TARGETING_ENABLED to exactly "true" (not yet
