@@ -70,8 +70,8 @@ func ValidateConversions(ids []string) ([]string, error) {
 func conversionURN(id string) string { return "urn:lla:llaPartnerConversion:" + id }
 
 // associateConversion creates one Campaign Conversions record. Both ids have been validated
-// (campaignID by createSponsoredCampaign's trailingID, conversionID by ValidateConversions), so
-// the compound key is built from digits only.
+// (campaignID by associateConversions' ValidateCampaignID, conversionID by ValidateConversions),
+// so the compound key is built from digits only.
 func (c *Client) associateConversion(ctx context.Context, campaignID, conversionID string) error {
 	campaign := "urn:li:sponsoredCampaign:" + campaignID
 	conversion := conversionURN(conversionID)
@@ -88,6 +88,17 @@ func (c *Client) associateConversion(ctx context.Context, campaignID, conversion
 // campaign reused by name keeps its own status, which may be ACTIVE, so its step says it may
 // already be serving without the conversion. No upstream text is copied into a step.
 func (c *Client) associateConversions(ctx context.Context, campaignID string, ids []string, reused bool) (associated, failed, steps []string) {
+	// The campaign id came from LinkedIn's create (or search) response, and createSponsoredCampaign
+	// only refuses an empty one. It is checked here before it goes into the compound key, so a
+	// malformed upstream id cannot turn part of the key into query text: every id is then
+	// reported failed, with no request sent.
+	if ValidateCampaignID(campaignID) != nil {
+		for _, id := range ids {
+			failed = append(failed, id)
+			steps = append(steps, fmt.Sprintf("Conversion %s NOT associated: the campaign id LinkedIn returned is not a usable id; associate it in Campaign Manager before activating", id))
+		}
+		return nil, failed, steps
+	}
 	for _, id := range ids {
 		if err := c.associateConversion(ctx, campaignID, id); err != nil {
 			failed = append(failed, id)

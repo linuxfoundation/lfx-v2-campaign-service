@@ -296,3 +296,21 @@ func reusedCampaignName(t *testing.T) string {
 	}
 	return buildCampaignName("KubeCon", plan.nameObjective, "CNCF", conversionInput())
 }
+
+// TestAssociateConversions_RefusesAMalformedCampaignID pins that an upstream campaign id that is
+// not a positive long never reaches the compound key: no request, every id failed.
+func TestAssociateConversions_RefusesAMalformedCampaignID(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	for _, bad := range []string{"200)?q=unexpected", "0200", "", "abc"} {
+		assoc, failed, steps := c.associateConversions(context.Background(), bad, []string{"104012", "7"}, false)
+		if len(assoc) != 0 || strings.Join(failed, ",") != "104012,7" || len(steps) != 2 {
+			t.Errorf("%q: associated %v failed %v steps %v", bad, assoc, failed, steps)
+		}
+	}
+	if n := calls.Load(); n != 0 {
+		t.Errorf("%d requests for a malformed campaign id", n)
+	}
+}
