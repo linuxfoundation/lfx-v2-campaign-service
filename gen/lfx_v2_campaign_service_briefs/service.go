@@ -137,7 +137,13 @@ type Service interface {
 	// check, made once with the Google one, covers linkedInConfig.targeting
 	// audienceMatchingSegments and dynamicSegments (#552), included or excluded:
 	// they name ad segments on the LinkedIn ad account, and the LF system account
-	// is the fallback connection of every project without its own. REDDIT
+	// is the fallback connection of every project without its own. META CREATIVE
+	// OPTIONS: metaConfig.callToAction outside its allow-list,
+	// metaConfig.conversionEvent outside its allow-list or on an objective other
+	// than conversions, or either one while its deployment flag
+	// (META_CALL_TO_ACTION_ENABLED, META_CONVERSION_EVENT_ENABLED) is not "true",
+	// is a synchronous 400 "invalid campaign config: metaConfig.callToAction..."
+	// or "invalid campaign config: metaConfig.conversionEvent...". REDDIT
 	// SHARED-ACCOUNT INPUTS (#549): a redditConfig that sets customAudienceIds or
 	// excludedCustomAudienceIds (any non-empty list) on a create that selects
 	// reddit-ads requires global_marketing_ops on this project in the same single

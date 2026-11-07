@@ -1030,6 +1030,24 @@ cannot be represented (`bidCapMinor > MaxInt64/5`) before forming the product; u
 bound no encoded bid reaches it, so it is a backstop against a later change to that bound
 (PR #332 review).
 
+## Call-to-action and conversion event (`creative_options.go`, #550)
+
+`CampaignInput.CallToAction` sets every variant creative's `link_data.call_to_action.type`
+(`NormalizeCallToAction`: LEARN_MORE when empty — the only value before #550 — else one of SIGN_UP,
+BUY_TICKETS, APPLY_NOW, BOOK_NOW, SUBSCRIBE, DOWNLOAD, WATCH_MORE, CONTACT_US, values of the
+`AdCreativeLinkDataCallToAction.Type` enum that send the click to the ad's link; REGISTER_NOW is not
+one). `CampaignInput.ConversionEvent` replaces the promoted object's fixed `custom_event_type`
+PURCHASE for the conversions objective (`NormalizeConversionEvent`: COMPLETE_REGISTRATION, LEAD,
+SUBMIT_APPLICATION, SUBSCRIBE or PURCHASE), and is refused on any other objective, where no pixel is
+promoted and it would be silently ignored. Both are checked with the other deterministic inputs
+before any request; refusals wrap `domain.ErrCreateConfigInvalid` (400) and are
+`domain.PreflightRefusal`s. The dispatcher gates each behind its own default-off flag
+(`META_CALL_TO_ACTION_ENABLED`, `META_CONVERSION_EVENT_ENABLED`) in `PreflightCreate` and `Dispatch`,
+and type-checks both with the publish-identity strings (`checkMetaStringFieldShape`) so a wrong type is
+a 400 rather than absent. `CampaignResult.ConversionEvent` records the event on the ad set THIS run created (empty when it
+was reused by name, as `BidApplied` is), which is what a conversions read must filter on. Not live-verified: whether every listed button is accepted with every
+objective.
+
 ## Audience targeting (`targeting.go`, #550)
 
 `CampaignInput.Targeting` (`metaConfig.targeting`) adds an age range, a gender, custom audiences to
