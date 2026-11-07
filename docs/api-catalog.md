@@ -604,6 +604,29 @@ interests?: string[]            — Interest targeting. Reddit wants opaque inte
                                   produce human labels, so these are commonly dropped with a warning
                                   (label->ID resolution tracked in LFXV2-3261).
 keywords?: string[]             — Keyword targeting attached to the ad group.
+excludedSubreddits?: string[]   — OPTIONAL brand-safety exclusions (#549), sent as the ad group's
+                                  `targeting.excluded_communities`, by NAME like `subreddits` (an
+                                  optional 'r/' prefix stripped, case-insensitive duplicates dropped,
+                                  first spelling kept). Each name must be 2–21 letters, digits or
+                                  underscores; a blank entry, a malformed name, a name also in
+                                  `subreddits`, or more than 100 entries is refused. Sent on EVERY
+                                  ad-group attempt: the retry that drops rejected communities and
+                                  interests keeps the exclusions, so a Reddit refusal of one fails
+                                  the ad group (campaign left PAUSED) rather than silently widening
+                                  the campaign. OFF unless REDDIT_TARGETING_EXCLUSIONS_ENABLED is
+                                  exactly "true".
+excludedGeoTargets?: string[]   — OPTIONAL ISO 3166-1 alpha-2 country codes to exclude (#549), sent as
+                                  `targeting.excluded_geolocations` (uppercased, de-duplicated). A
+                                  blank entry, an unassigned code, a code also targeted (`geoTargets`,
+                                  or the 'US' default when it is empty), or more than 50 entries is
+                                  refused. Same flag and same every-attempt rule as
+                                  `excludedSubreddits`. Both lists are checked synchronously: a rule
+                                  breach, a value that is not an array of strings (null reads as
+                                  absent), or either list while the flag is off is a **400**
+                                  "invalid campaign config: redditConfig.<field>: ..." before any job
+                                  exists, and is re-checked at dispatch before any Reddit call.
+                                  Built from Reddit's published v3 targeting schema; no live create
+                                  has sent either field yet.
 variants?: [{headline, body}]   — Ad copy variants. When no `postUrl`/`imageUrl` drives an ad, one
                                   "ready" instruction per variant is emitted (headline + display UTM
                                   URL) for manual ad creation. On the author-a-post path the FIRST
@@ -1338,11 +1361,23 @@ sharedNegativeKeywordLists?:    — OPTIONAL EXISTING shared negative keyword li
                                   refused another customer's set. A live create on 2026-11-06
                                   (#536) attached two NEGATIVE_KEYWORDS sets to paused campaign
                                   24433949469 in one multi-operation `campaignSharedSets:mutate`,
-                                  and GAQL read both links back ENABLED. The set's TYPE is not
-                                  checked (the resource name does not say it), and Google does
-                                  not refuse another type either: validateOnly accepted a
-                                  NEGATIVE_PLACEMENTS and a BRANDS set on a Search campaign. Name
-                                  only NEGATIVE_KEYWORDS sets.
+                                  and GAQL read both links back ENABLED. Google does NOT refuse
+                                  a set of another type (validateOnly accepted a
+                                  NEGATIVE_PLACEMENTS and a BRANDS set on a Search campaign), so
+                                  this service checks the TYPE itself (#548). Before the budget
+                                  mutate it reads `shared_set.type` and `shared_set.status` for
+                                  every named list in ONE read-only GAQL query on the connected
+                                  account. It refuses, naming the list (by its set id, since the full
+                                  resource name is withheld from the job result) and what it is, any list that is not `NEGATIVE_KEYWORDS`
+                                  (`NEGATIVE_PLACEMENTS`, `BRANDS`,
+                                  `ACCOUNT_LEVEL_NEGATIVE_KEYWORDS`, `WEBPAGES`, or a type this
+                                  service does not recognise), is not `ENABLED`, or is not in the
+                                  account. Example job error: `google-ads: shared negative keyword
+                                  list (value withheld) (shared set "1558651517") is a shared set
+                                  of type NEGATIVE_PLACEMENTS, not NEGATIVE_KEYWORDS; ...`.
+                                  Nothing is created. A read that fails stops the create too,
+                                  before anything is created ("answered HTTP n before anything was
+                                  created" for a 5xx or 429). A list is never attached unchecked.
 cpcBid?: number                 — OPTIONAL manual CPC bid for the ad group, in whole units of the ad
                                   ACCOUNT's currency (the same no-FX-conversion caveat `budget`
                                   carries). Accepted range 0.01..100000.0 inclusive; NaN/Inf or a

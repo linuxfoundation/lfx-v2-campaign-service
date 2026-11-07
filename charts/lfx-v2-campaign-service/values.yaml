@@ -333,6 +333,17 @@ app:
     REDDIT_CUSTOM_AUDIENCES_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to redditConfig.excludedSubreddits and
+    # redditConfig.excludedGeoTargets (#549), sent at create time as the ad
+    # group's excluded_communities and excluded_geolocations. Default off: the
+    # shape is built from Reddit's published v3 targeting schema and no live
+    # create has sent it. It names no account resource; it keeps an unverified
+    # shape off the shared ad account. While off, a create naming either list
+    # is refused with a 400 before any job exists. Any value other than "true"
+    # is treated as off, so a typo fails closed.
+    REDDIT_TARGETING_EXCLUSIONS_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to googleAdsConfig.demandGenAudience (#459): one
     # existing Google Ads Audience on a Demand Gen ad group. The same flag
     # gates each googleAdsConfig.demandGenAdGroups[].audience (#460), the same

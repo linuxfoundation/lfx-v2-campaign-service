@@ -41,6 +41,8 @@ var redditUngatedFields = map[string]bool{
 	"subreddits": true, "interests": true, "keywords": true, "variants": true, "postUrl": true,
 	"imageUrl": true, "imageAssetId": true, "callToAction": true, "conversionPixelId": true,
 	"videoGoal": true, "bidding": true,
+	// Exclusions (#549) are public vocabulary too: community names and ISO country codes.
+	"excludedSubreddits": true, "excludedGeoTargets": true,
 }
 
 // TestEveryRedditConfigFieldIsClassifiedForTheMarketingOpsGate fails when a redditConfig field is
