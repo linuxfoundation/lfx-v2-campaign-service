@@ -1323,11 +1323,23 @@ sharedNegativeKeywordLists?:    — OPTIONAL EXISTING shared negative keyword li
                                   refused another customer's set. A live create on 2026-11-06
                                   (#536) attached two NEGATIVE_KEYWORDS sets to paused campaign
                                   24433949469 in one multi-operation `campaignSharedSets:mutate`,
-                                  and GAQL read both links back ENABLED. The set's TYPE is not
-                                  checked (the resource name does not say it), and Google does
-                                  not refuse another type either: validateOnly accepted a
-                                  NEGATIVE_PLACEMENTS and a BRANDS set on a Search campaign. Name
-                                  only NEGATIVE_KEYWORDS sets.
+                                  and GAQL read both links back ENABLED. Google does NOT refuse
+                                  a set of another type (validateOnly accepted a
+                                  NEGATIVE_PLACEMENTS and a BRANDS set on a Search campaign), so
+                                  this service checks the TYPE itself (#548). Before the budget
+                                  mutate it reads `shared_set.type` and `shared_set.status` for
+                                  every named list in ONE read-only GAQL query on the connected
+                                  account. It refuses, naming the list (by its set id, since the full
+                                  resource name is withheld from the job result) and what it is, any list that is not `NEGATIVE_KEYWORDS`
+                                  (`NEGATIVE_PLACEMENTS`, `BRANDS`,
+                                  `ACCOUNT_LEVEL_NEGATIVE_KEYWORDS`, `WEBPAGES`, or a type this
+                                  service does not recognise), is not `ENABLED`, or is not in the
+                                  account. Example job error: `google-ads: shared negative keyword
+                                  list (value withheld) (shared set "1558651517") is a shared set
+                                  of type NEGATIVE_PLACEMENTS, not NEGATIVE_KEYWORDS; ...`.
+                                  Nothing is created. A read that fails stops the create too,
+                                  before anything is created ("answered HTTP n before anything was
+                                  created" for a 5xx or 429). A list is never attached unchecked.
 cpcBid?: number                 — OPTIONAL manual CPC bid for the ad group, in whole units of the ad
                                   ACCOUNT's currency (the same no-FX-conversion caveat `budget`
                                   carries). Accepted range 0.01..100000.0 inclusive; NaN/Inf or a

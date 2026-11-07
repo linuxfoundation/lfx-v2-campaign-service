@@ -12,10 +12,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // #477: Search campaign image, business-logo and business-name assets, and shared negative
@@ -43,6 +46,10 @@ type searchAssetServer struct {
 	sharedSets  []string
 	googleReply func(body []byte) (int, string)
 	sharedReply func(body []byte) (int, string)
+	// searches are the googleAds:search bodies; searchReply overrides the shared set type
+	// read's answer, which by default is an ENABLED NEGATIVE_KEYWORDS row per named set (#548).
+	searches    []string
+	searchReply func(body []byte) (int, string)
 	criteriaSeq int
 }
 
@@ -82,6 +89,14 @@ func (s *searchAssetServer) handler(t *testing.T) http.HandlerFunc {
 			override := s.sharedReply
 			s.mu.Unlock()
 			reply(w, body, override, sharedSetEcho)
+		case "googleAds:search":
+			s.mu.Lock()
+			s.searches = append(s.searches, string(body))
+			override := s.searchReply
+			s.mu.Unlock()
+			reply(w, body, override, func(b []byte) string {
+				return sharedSetSearchReply(t, b, "NEGATIVE_KEYWORDS", "ENABLED")
+			})
 		case "googleAds:mutate":
 			s.mu.Lock()
 			s.googleAds = append(s.googleAds, string(body))
@@ -124,6 +139,32 @@ func newSearchAssetClient(t *testing.T, s *searchAssetServer) *Client {
 	return noExistingCampaign(NewClient(testCreds(), testAccount(),
 		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
 		withRetryBaseDelay(time.Millisecond)))
+}
+
+// sharedSetQueryRE pulls the quoted resource names out of the shared set type read's IN list.
+var sharedSetQueryRE = regexp.MustCompile(`'(customers/\d+/sharedSets/\d+)'`)
+
+// sharedSetSearchReply answers the shared set type read (#548) with one row per resource name
+// the query names, each of the given type and status, in Google's REST search shape.
+func sharedSetSearchReply(t *testing.T, body []byte, typ, status string) string {
+	t.Helper()
+	var req struct {
+		Query string `json:"query"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Errorf("decode googleAds:search body: %v", err)
+	}
+	rows := make([]string, 0, 2)
+	for _, m := range sharedSetQueryRE.FindAllStringSubmatch(req.Query, -1) {
+		rows = append(rows, sharedSetRowJSON(m[1], typ, status))
+	}
+	return `{"results":[` + strings.Join(rows, ",") + `]}`
+}
+
+// sharedSetRowJSON is one shared_set search row.
+func sharedSetRowJSON(name, typ, status string) string {
+	return fmt.Sprintf(`{"sharedSet":{"resourceName":%q,"type":%q,"status":%q}}`,
+		name, typ, status)
 }
 
 // extensionAssetEcho answers an extension assets:mutate with asset 700, 701, ….
@@ -583,6 +624,7 @@ func TestCreateCampaign_SearchAssetsAndSharedListsPayloadsAndOrder(t *testing.T)
 	}
 	paths, googleAds, sharedSets := s.snapshot()
 	wantPaths := []string{
+		"googleAds:search",
 		"campaignBudgets:mutate", "campaigns:mutate", "campaignCriteria:mutate",
 		"campaignSharedSets:mutate", "assets:mutate", "campaignAssets:mutate",
 		"googleAds:mutate", "adGroups:mutate", "adGroupAds:mutate",
@@ -914,5 +956,195 @@ func TestCreateCampaign_SharedListRepeatedLinkIsUnconfirmed(t *testing.T) {
 	}
 	if res == nil || !reflect.DeepEqual(res.SharedNegativeKeywordListIDs, []string{"501"}) {
 		t.Errorf("res = %+v, want the first link's id kept", res)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The shared set type read (#548)
+// ---------------------------------------------------------------------------
+
+// Every named list is read in ONE query, on the connection's account, for its type and status,
+// before the budget. The query names exactly the trimmed, de-duplicated lists.
+func TestCreateCampaign_SharedListTypesAreReadInOneQuery(t *testing.T) {
+	s := &searchAssetServer{}
+	in := sampleInput()
+	in.SharedNegativeKeywordLists = []string{" " + sharedSetA, sharedSetB, sharedSetA}
+	if _, err := newSearchAssetClient(t, s).CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	paths, _, _ := s.snapshot()
+	if len(paths) == 0 || paths[0] != "googleAds:search" {
+		t.Fatalf("paths = %v, want the shared set read first", paths)
+	}
+	s.mu.Lock()
+	searches := append([]string(nil), s.searches...)
+	s.mu.Unlock()
+	if len(searches) != 1 {
+		t.Fatalf("got %d searches, want exactly one: %v", len(searches), searches)
+	}
+	var req struct {
+		Query string `json:"query"`
+	}
+	if err := json.Unmarshal([]byte(searches[0]), &req); err != nil {
+		t.Fatalf("decode search body: %v", err)
+	}
+	want := "SELECT shared_set.resource_name, shared_set.type, shared_set.status FROM shared_set " +
+		"WHERE shared_set.resource_name IN ('" + sharedSetA + "', '" + sharedSetB + "')"
+	if req.Query != want {
+		t.Errorf("query = %q\nwant    %q", req.Query, want)
+	}
+}
+
+// No list, no read: a Search create that names none sends no googleAds:search.
+func TestCreateCampaign_NoSharedListsNoTypeRead(t *testing.T) {
+	s := &searchAssetServer{}
+	if _, err := newSearchAssetClient(t, s).CreateCampaign(context.Background(), sampleInput()); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	paths, _, _ := s.snapshot()
+	for _, p := range paths {
+		if p == "googleAds:search" {
+			t.Fatalf("paths = %v, want no shared set read", paths)
+		}
+	}
+}
+
+// A list that is not an ENABLED NEGATIVE_KEYWORDS set of this account is refused before any
+// write, as a pre-flight refusal naming the list, its id and what it is. List A is always a
+// good one, so the refusal must be of list 2.
+func TestCreateCampaign_RefusesSharedListsThatAreNotNegativeKeywordLists(t *testing.T) {
+	good := sharedSetRowJSON(sharedSetA, "NEGATIVE_KEYWORDS", "ENABLED")
+	rowB := func(typ, status string) string {
+		return `{"results":[` + good + `,` + sharedSetRowJSON(sharedSetB, typ, status) + `]}`
+	}
+	cases := []struct {
+		name    string
+		body    string
+		want    string
+		notWant string
+	}{
+		{name: "negative placements", body: rowB("NEGATIVE_PLACEMENTS", "ENABLED"),
+			want: `is a shared set of type NEGATIVE_PLACEMENTS, not NEGATIVE_KEYWORDS`},
+		{name: "brands", body: rowB("BRANDS", "ENABLED"),
+			want: `is a shared set of type BRANDS, not NEGATIVE_KEYWORDS`},
+		{name: "account-level negative keywords",
+			body: rowB("ACCOUNT_LEVEL_NEGATIVE_KEYWORDS", "ENABLED"),
+			want: `is a shared set of type ACCOUNT_LEVEL_NEGATIVE_KEYWORDS, not NEGATIVE_KEYWORDS`},
+		{name: "webpages", body: rowB("WEBPAGES", "ENABLED"),
+			want: `is a shared set of type WEBPAGES, not NEGATIVE_KEYWORDS`},
+		{name: "unrecognised type is not echoed", body: rowB("SOME_FUTURE_TYPE", "ENABLED"),
+			want: "of a type this client does not recognise", notWant: "SOME_FUTURE_TYPE"},
+		{name: "missing type", body: rowB("", "ENABLED"),
+			want: "of a type this client does not recognise"},
+		{name: "removed", body: rowB("NEGATIVE_KEYWORDS", "REMOVED"),
+			want: `is REMOVED in account "1234567890"`},
+		{name: "unknown status", body: rowB("NEGATIVE_KEYWORDS", "UNKNOWN"),
+			want: `is not ENABLED in account "1234567890"`, notWant: "UNKNOWN"},
+		{name: "not in the account", body: `{"results":[` + good + `]}`,
+			want: `was not found in account "1234567890"`},
+		{name: "empty answer", body: `{}`,
+			// the first list is the first missing one
+			want: `list "customers/1234567890/sharedSets/501" (shared set "501") was not found`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &searchAssetServer{searchReply: func([]byte) (int, string) {
+				return http.StatusOK, tc.body
+			}}
+			in := sampleInput()
+			in.SharedNegativeKeywordLists = []string{sharedSetA, sharedSetB}
+			res, err := newSearchAssetClient(t, s).CreateCampaign(context.Background(), in)
+			if err == nil || res != nil {
+				t.Fatalf("res = %+v, err = %v; want a pre-create refusal", res, err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want it to contain %q", err, tc.want)
+			}
+			if tc.notWant != "" && strings.Contains(err.Error(), tc.notWant) {
+				t.Errorf("err = %v, want it not to echo %q", err, tc.notWant)
+			}
+			msg, ok := domain.AsPreflightRefusal(err)
+			if !ok {
+				t.Fatalf("err = %v, want a domain.PreflightRefusal", err)
+			}
+			wantID := `(shared set "502")`
+			if tc.name == "empty answer" {
+				wantID = `(shared set "501")`
+			}
+			if !strings.Contains(msg, wantID) {
+				t.Errorf("operator message = %q, want it to name %s", msg, wantID)
+			}
+			paths, _, _ := s.snapshot()
+			if !reflect.DeepEqual(paths, []string{"googleAds:search"}) {
+				t.Errorf("requests = %v, want only the shared set read", paths)
+			}
+		})
+	}
+}
+
+// A read that fails, or answers with rows that cannot be trusted, stops the create before any
+// write. It is NOT a pre-flight refusal (the caller's input was not judged), and an upstream
+// status stays on the chain for the dispatch layer's "answered HTTP n" mapping.
+func TestCreateCampaign_SharedListTypeReadFailureFailsClosed(t *testing.T) {
+	good := sharedSetRowJSON(sharedSetA, "NEGATIVE_KEYWORDS", "ENABLED")
+	goodB := sharedSetRowJSON(sharedSetB, "NEGATIVE_KEYWORDS", "ENABLED")
+	cases := []struct {
+		name       string
+		status     int
+		body       string
+		wantStatus int
+		want       string
+	}{
+		{name: "unavailable", status: http.StatusServiceUnavailable,
+			body: `{"error":{"code":14}}`, wantStatus: http.StatusServiceUnavailable},
+		{name: "refused read", status: http.StatusBadRequest,
+			body: `{"error":{"code":3}}`, wantStatus: http.StatusBadRequest},
+		{name: "bare null", status: http.StatusOK, body: `null`},
+		{name: "undecodable row", status: http.StatusOK,
+			body: `{"results":[` + good + `,{"sharedSet":"x"}]}`, want: "did not decode"},
+		{name: "a set not asked for", status: http.StatusOK,
+			body: `{"results":[` + good + `,` + goodB + `,` +
+				sharedSetRowJSON("customers/1234567890/sharedSets/999", "NEGATIVE_KEYWORDS",
+					"ENABLED") + `]}`,
+			want: "not asked for"},
+		{name: "another account's set", status: http.StatusOK,
+			body: `{"results":[` + good + `,` +
+				sharedSetRowJSON("customers/9999999999/sharedSets/502", "NEGATIVE_KEYWORDS",
+					"ENABLED") + `]}`,
+			want: "not asked for"},
+		{name: "a set twice", status: http.StatusOK,
+			body: `{"results":[` + good + `,` + goodB + `,` + goodB + `]}`,
+			want: `shared set "502" twice`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &searchAssetServer{searchReply: func([]byte) (int, string) {
+				return tc.status, tc.body
+			}}
+			in := sampleInput()
+			in.SharedNegativeKeywordLists = []string{sharedSetA, sharedSetB}
+			res, err := newSearchAssetClient(t, s).CreateCampaign(context.Background(), in)
+			if err == nil || res != nil {
+				t.Fatalf("res = %+v, err = %v; want the create stopped before any write", res, err)
+			}
+			if _, ok := domain.AsPreflightRefusal(err); ok {
+				t.Errorf("err = %v, want a read failure, not a pre-flight refusal", err)
+			}
+			if !strings.Contains(err.Error(), "could not be checked") {
+				t.Errorf("err = %v, want the could-not-be-checked failure", err)
+			}
+			if tc.want != "" && !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want it to contain %q", err, tc.want)
+			}
+			if got, _ := domain.UpstreamStatus(err); got != tc.wantStatus {
+				t.Errorf("upstream status = %d, want %d", got, tc.wantStatus)
+			}
+			paths, _, _ := s.snapshot()
+			for _, p := range paths {
+				if p != "googleAds:search" {
+					t.Errorf("%s sent after the failed read: %v", p, paths)
+				}
+			}
+		})
 	}
 }
