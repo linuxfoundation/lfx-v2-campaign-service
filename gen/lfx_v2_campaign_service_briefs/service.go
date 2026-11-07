@@ -136,7 +136,15 @@ type Service interface {
 	// resources belong to the Google Ads account every foundation shares. The same
 	// check, made once with the Google one, covers linkedInConfig.conversions
 	// (#552): conversion rules on the LinkedIn ad account, and the LF system
-	// account is the fallback connection of every project without its own. An
+	// account is the fallback connection of every project without its own. META
+	// SHARED-ACCOUNT INPUTS: likewise a metaConfig.targeting that sets
+	// customAudiences or excludedCustomAudiences (any non-empty list) names custom
+	// audiences of the Meta ad account every foundation shares and requires
+	// global_marketing_ops on this project (403 naming them, 503 when the check
+	// cannot be made); age, gender and advantageAudience are not gated. An invalid
+	// metaConfig.targeting, or any targeting block while
+	// META_AUDIENCE_TARGETING_ENABLED is not "true" on the deployment, is a
+	// synchronous 400 "invalid campaign config: metaConfig.targeting...". An
 	// invalid per-platform `bidding` object (see the config attribute) is also
 	// refused synchronously, with 400 "invalid campaign config:
 	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a

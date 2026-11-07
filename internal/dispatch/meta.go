@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // metaCreds is the credential shape stored (encrypted) for a Meta connection. Meta
@@ -69,6 +71,33 @@ type metaConfig struct {
 	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic
 	// (LOWEST_COST_WITHOUT_CAP, unchanged); manual creates a link-click bid cap — see metaBidPlan.
 	Bidding *biddingConfig `json:"bidding,omitempty"`
+	// Targeting is the optional audience targeting (#550): age, gender, custom audiences to include
+	// and exclude, and the Advantage+ audience flag. Refused while META_AUDIENCE_TARGETING_ENABLED is
+	// not "true" (metaTargetingEnabled); validated by meta.NormalizeAudienceTargeting. Null or absent
+	// targets as before.
+	Targeting *meta.AudienceTargeting `json:"targeting,omitempty"`
+}
+
+// metaTargetingEnabled reports whether this deployment opted in to metaConfig.targeting (#550).
+// Read per call, like googleAdsDisplayAudiencesEnabled; only the exact value "true" enables it.
+func metaTargetingEnabled() bool {
+	return os.Getenv(constants.EnvMetaAudienceTargetingEnabled) == "true"
+}
+
+// checkMetaTargeting refuses a metaConfig.targeting the create cannot send: any targeting block
+// while the deployment flag is off, and otherwise one that meta.NormalizeAudienceTargeting refuses.
+// Every refusal is a domain.PreflightRefusal, so PreflightCreate answers it with a 400 before any
+// job exists and Dispatch fails the job before any Meta request.
+func checkMetaTargeting(t *meta.AudienceTargeting) error {
+	if t == nil {
+		return nil
+	}
+	if !metaTargetingEnabled() {
+		return domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig.targeting is disabled on this deployment (%s is not \"true\"); omit targeting, or ask an operator to set %s to \"true\"",
+			domain.ErrCreateConfigInvalid, constants.EnvMetaAudienceTargetingEnabled, constants.EnvMetaAudienceTargetingEnabled))
+	}
+	_, err := meta.NormalizeAudienceTargeting(t)
+	return err
 }
 
 // creativeAssetReader is the ONE creative-asset operation this dispatcher needs: read a
@@ -677,6 +706,11 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	if err := checkMetaPublishIdentity(cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// The audience targeting gate and its shape (#550), before any Meta request. The client
+	// normalizes it again and reads each custom audience before the first write.
+	if err := checkMetaTargeting(cfg.Targeting); err != nil {
+		return nil, notCreated(err)
+	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
 	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
 	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
@@ -760,6 +794,8 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		// stays pristine for campaignFromMeta's snapshot and degraded-count check.
 		Variants: variants,
 		BidCap:   plan.amount,
+		// The audience targeting as the caller sent it; the client normalizes it (#550).
+		Targeting: cfg.Targeting,
 
 		// The name labels of the CLAIMED row (multi-campaign cs-3): its stored funnel stage and
 		// tactic (model.DispatchLabels) and its slot version, never the request's. A retry of
@@ -1554,7 +1590,61 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 	if err := checkMetaPublishIdentity(cfg); err != nil {
 		return err
 	}
+	// The audience targeting (#550): a wrong-typed block would decode to nil above and pass as
+	// absent, so it is decoded on its own first and a type error is a 400 too.
+	t, err := decodeMetaTargeting(config)
+	if err != nil {
+		return err
+	}
+	if err := checkMetaTargeting(t); err != nil {
+		return err
+	}
 	return domain.ErrPreflightNotApplicable
+}
+
+// decodeMetaTargeting decodes metaConfig.targeting on its own, so a wrong-typed block (or a
+// wrong-typed field in it) is a synchronous refusal rather than an absent block — PreflightCreate's
+// best-effort decode skips a field it cannot decode. A config that is not an object envelope, or
+// has no metaConfig object, is left to Dispatch. The key is matched case-insensitively, as
+// encoding/json matches it; null is absent.
+func decodeMetaTargeting(config json.RawMessage) (*meta.AudienceTargeting, error) {
+	if len(config) == 0 {
+		return nil, nil
+	}
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(config, &envelope) != nil {
+		return nil, nil
+	}
+	var platformCfg map[string]json.RawMessage
+	if json.Unmarshal(envelope["metaConfig"], &platformCfg) != nil {
+		return nil, nil
+	}
+	keys := make([]string, 0, len(platformCfg))
+	for k := range platformCfg {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var t *meta.AudienceTargeting
+	var seen []string
+	for _, k := range keys {
+		if !strings.EqualFold(k, "targeting") {
+			continue
+		}
+		// Two case-variant keys would be read by Dispatch's encoding/json in DOCUMENT order, which
+		// this map cannot see, so the pre-check could judge a different block than the job sends.
+		if seen = append(seen, quoteKey(k)); len(seen) > 1 {
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig: more than one targeting key (%s); send exactly one", domain.ErrCreateConfigInvalid, strings.Join(seen, ", ")))
+		}
+		if isJSONNull(platformCfg[k]) {
+			continue
+		}
+		var got meta.AudienceTargeting
+		if err := json.Unmarshal(platformCfg[k], &got); err != nil {
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig: %s must be an object of ageMin, ageMax (integers), genders, customAudiences, excludedCustomAudiences (string lists) and advantageAudience (boolean)", domain.ErrCreateConfigInvalid, quoteKey(k)))
+		}
+		t = &got
+	}
+	return t, nil
 }
 
 // metaIdentityKeys are the publish-identity fields checkMetaIdentityShape type-checks.
