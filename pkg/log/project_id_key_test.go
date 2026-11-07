@@ -326,6 +326,9 @@ func TestLogKeys_ReadsKeyPositionsOnly(t *testing.T) {
 			func() {
 				slog.Info("m", fields...)
 			}()`, []string{"projectID"}},
+		{"an Attr's Key field assignment is a key", `a := slog.Attr{}
+			a.Key = "projectID"
+			slog.LogAttrs(ctx, lvl, "m", a)`, []string{"projectID"}},
 		{"a full reslice is the slice", `fields := []any{"projectID", id}
 			slog.Info("m", fields[:]...)`, []string{"projectID"}},
 		{"a constant reslice keeps its window", `fields := []any{"x", 1, "projectID", id}
@@ -766,7 +769,11 @@ func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, []token.Po
 				always = always || cc.List == nil
 				bodies, nodes = append(bodies, cc.Body), append(nodes, cc)
 			case *ast.CommClause:
-				bodies, nodes = append(bodies, cc.Body), append(nodes, cc)
+				b := cc.Body
+				if cc.Comm != nil {
+					b = append([]ast.Stmt{cc.Comm}, b...) // the send or receive runs first
+				}
+				bodies, nodes = append(bodies, b), append(nodes, cc)
 			}
 		}
 		return init, bodies, nodes, always
@@ -1185,6 +1192,15 @@ func logKeys(f *ast.File, info *types.Info, idx *pkgIndex) ([]keyHit, []token.Po
 			if isSlogAttr(info.TypeOf(x)) {
 				attrLitKey(x)
 			}
+		case *ast.AssignStmt:
+			// a.Key = "k" on a slog.Attr sets a key as surely as a literal does.
+			if len(x.Lhs) == len(x.Rhs) {
+				for i, l := range x.Lhs {
+					if sel, ok := ast.Unparen(l).(*ast.SelectorExpr); ok && sel.Sel.Name == "Key" && isSlogAttr(info.TypeOf(sel.X)) {
+						addKey(x.Rhs[i])
+					}
+				}
+			}
 		}
 		return true
 	})
@@ -1286,9 +1302,10 @@ func sharesAnyBacking(body []ast.Stmt, info *types.Info) bool {
 					return !found
 				})
 			case *ast.ForStmt:
-				found = found || loopAppendsPairs(x.Body, info)
+				found = found || loopChangesPairing(x.Body, x.Body, info) ||
+					(x.Post != nil && loopChangesPairing(x.Post, x.Body, info))
 			case *ast.RangeStmt:
-				found = found || loopAppendsPairs(x.Body, info)
+				found = found || loopChangesPairing(x.Body, x.Body, info)
 			case *ast.CallExpr:
 				if fn, ok := ast.Unparen(x.Fun).(*ast.Ident); ok && len(x.Args) > 0 {
 					if b, ok := info.Uses[fn].(*types.Builtin); ok && (b.Name() == "copy" || b.Name() == "clear") &&
@@ -1464,30 +1481,40 @@ func constInt(e ast.Expr, info *types.Info) (int, bool) {
 	return int(v), ok
 }
 
-// loopAppendsPairs reports whether a loop body appends anything but slog.Attr values to a
-// []any declared outside the loop, so that it carries over between iterations. The
-// interpreter runs a loop body zero or one times; repeated appends of keys or values to a
-// carried slice can change key/value pairing on later iterations, while appended Attrs
-// cannot, and a slice created inside the body starts afresh each time.
-func loopAppendsPairs(body *ast.BlockStmt, info *types.Info) bool {
+// loopChangesPairing reports whether n, a loop's body or post statement, changes a []any
+// that carries over between iterations (declared outside body) in a way that can shift
+// key/value pairing when repeated: appending anything but slog.Attr values, or reslicing
+// it. The interpreter runs a loop body zero or one times, so such a change on a later
+// iteration is not modelled; appended Attrs cannot shift pairing, and a slice created
+// inside the body starts afresh each time.
+func loopChangesPairing(n ast.Node, body *ast.BlockStmt, info *types.Info) bool {
+	carried := func(e ast.Expr) bool {
+		id, ok := ast.Unparen(e).(*ast.Ident)
+		if !ok {
+			return true // not a plain variable: assume it carries over
+		}
+		o := info.Uses[id]
+		return o == nil || o.Pos() < body.Pos() || o.Pos() >= body.End()
+	}
 	found := false
-	ast.Inspect(body, func(n ast.Node) bool {
-		c, ok := n.(*ast.CallExpr)
-		if !ok || !isBuiltin(c, info, "append") || len(c.Args) == 0 || !isAnySlice(info.TypeOf(c.Args[0])) {
-			return !found
-		}
-		if id, ok := ast.Unparen(c.Args[0]).(*ast.Ident); ok {
-			if o := info.Uses[id]; o != nil && body.Pos() <= o.Pos() && o.Pos() < body.End() {
-				return !found // declared in the body: fresh on every iteration
-			}
-		}
-		if c.Ellipsis.IsValid() {
-			found = true // a spread's element types are not known here
-			return false
-		}
-		for _, a := range c.Args[1:] {
-			if !isSlogAttr(info.TypeOf(a)) {
+	ast.Inspect(n, func(m ast.Node) bool {
+		switch x := m.(type) {
+		case *ast.SliceExpr:
+			if isAnySlice(info.TypeOf(x.X)) && carried(x.X) {
 				found = true
+			}
+		case *ast.CallExpr:
+			if !isBuiltin(x, info, "append") || len(x.Args) == 0 || !isAnySlice(info.TypeOf(x.Args[0])) || !carried(x.Args[0]) {
+				break
+			}
+			if x.Ellipsis.IsValid() {
+				found = true // a spread's element types are not known here
+				break
+			}
+			for _, a := range x.Args[1:] {
+				if !isSlogAttr(info.TypeOf(a)) {
+					found = true
+				}
 			}
 		}
 		return !found
@@ -1676,6 +1703,9 @@ func TestLogKeys_UnmodelledSlicesAreReportedUntraceable(t *testing.T) {
 		"nested later-running closure":      "g := func() {\nlocal := []any{\"a\", 1}\ndefer func() { slog.Info(\"d\", local...) }()\nlocal = []any{\"projectID\", id}\n}\ng()",
 		"closure writes a captured slice":   "func() { fields = []any{\"projectID\", id} }()",
 		"deferred call to a logging helper": "defer func() { logWith(fields) }()\nfields = []any{\"projectID\", 1}",
+		"select receive into the slice":     "ch := make(chan []any)\nselect {\ncase fields = <-ch:\n}",
+		"loop reslicing a carried slice":    "for range 2 {\nfields = fields[2:]\n}",
+		"loop post appending pairs":         "for i := 0; i < 2; i, fields = i+1, append(fields, \"projectID\") {\n}",
 		"range variable":                    "for _, g := range groups {\nfields = g\n}",
 		"function used as a value":          "g := logWith\ng(fields)",
 	} {

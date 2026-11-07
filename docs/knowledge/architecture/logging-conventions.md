@@ -87,9 +87,10 @@ stay together.
   back to its own base (`x = append(x, ...)`), is fine.
 - A same-package helper's result is read with the helper's `[]any` parameters
   bound from that call's own arguments.
-- A loop body runs zero or one times, so a loop that appends keys or values
-  (anything but `slog.Attr`) to a slice declared outside it is untraceable:
-  later iterations could change the pairing. A slice created inside the body,
+- A loop body runs zero or one times, so a loop whose body or post statement
+  appends keys or values (anything but `slog.Attr`) to, or reslices, a slice
+  declared outside the body is untraceable: later iterations could change the
+  pairing. A slice created inside the body,
   or Attr-only appends such as the account monitor's `byClass`, are traced.
 - A log call in a closure that is deferred, started with `go`, or stored and
   called later is untraceable when it reads a `[]any` captured from outside the
@@ -100,7 +101,8 @@ stay together.
   closure calls a logging helper: that call site's arguments are unknown.
 - An argument of an empty interface type (`any`) in a key position may hold a
   string at run time, so its pairing is unknown and it is untraceable.
-  `Record.Add` pairs its arguments like `With`.
+  `Record.Add` pairs its arguments like `With`. A `select` clause's send or receive runs
+  before its body, and `a.Key = "k"` on a `slog.Attr` is read as a key.
 - slog's key test is the built-in `string`: a defined string type (`type label
   string`) is a `!BADKEY` value, while an alias of `string`, or of `slog.Attr`,
   is the type itself.
