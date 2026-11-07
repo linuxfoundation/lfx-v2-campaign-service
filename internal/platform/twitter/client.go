@@ -3882,26 +3882,35 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
-	// Step 3b: the create-time targeting criteria (#564), on the line item THIS call created and
-	// BEFORE any tweet is authored or promoted: a create whose targeting failed must not publish
-	// a tweet, the one artifact a retry cannot take back. A REUSED line item keeps whatever
-	// targeting it has, like its budget and bid; the warning says so and Reused already makes the
-	// row created_degraded.
+	// Step 3b: the create-time targeting criteria (#564), BEFORE any tweet is authored or
+	// promoted: a create whose targeting failed must not publish a tweet, the one artifact a retry
+	// cannot take back. On a REUSED line item — typically the retry of a create whose targeting
+	// stopped part-way — the criteria it already holds are read back first and only the missing
+	// ones are posted, so the retry finishes the targeting instead of promoting a tweet on a line
+	// item that serves worldwide. A read that fails stops the create here, before the tweet.
 	if len(criteria) > 0 {
+		pending := criteria
 		if lineItemReused {
-			steps = append(steps, fmt.Sprintf("Warning: location/language targeting NOT applied to reused line item %s; its existing targeting is unchanged — verify it in X Ads Manager before enabling", lineItemID))
-		} else {
-			for i, cr := range criteria {
-				if err := c.createTargetingCriterion(ctx, lineItemID, cr); err != nil {
-					state := "failed"
-					if createOutcomeAmbiguous(err) {
-						state = "UNCONFIRMED (it may have been applied)"
-					}
-					return partialResult(), fmt.Errorf("x targeting incomplete (%s, %s; %d of %d criteria applied, %s %s): do not enable the line item until its targeting is completed in X Ads Manager: %w",
-						campaignStatus(), lineItemStatus(), i, len(criteria), cr.label, state, err)
-				}
-				steps = append(steps, fmt.Sprintf("Targeting added to line item %s: %s", lineItemID, cr.label))
+			live, lerr := c.ListLineItemTargetingCriteria(ctx, lineItemID)
+			if lerr != nil {
+				return partialResult(), fmt.Errorf("x targeting not confirmed (%s, %s; its existing targeting criteria could not be read, so nothing was authored or promoted): verify the line item's targeting in X Ads Manager before retrying: %w",
+					campaignStatus(), lineItemStatus(), lerr)
 			}
+			pending = missingCriteria(criteria, live)
+			if have := len(criteria) - len(pending); have > 0 {
+				steps = append(steps, fmt.Sprintf("Reused line item %s already holds %d of the %d requested targeting criteria; adding the other %d", lineItemID, have, len(criteria), len(pending)))
+			}
+		}
+		for i, cr := range pending {
+			if err := c.createTargetingCriterion(ctx, lineItemID, cr); err != nil {
+				state := "failed"
+				if createOutcomeAmbiguous(err) {
+					state = "UNCONFIRMED (it may have been applied)"
+				}
+				return partialResult(), fmt.Errorf("x targeting incomplete (%s, %s; %d of %d criteria applied, %s %s): do not enable the line item until its targeting is completed in X Ads Manager: %w",
+					campaignStatus(), lineItemStatus(), len(criteria)-len(pending)+i, len(criteria), cr.label, state, err)
+			}
+			steps = append(steps, fmt.Sprintf("Targeting added to line item %s: %s", lineItemID, cr.label))
 		}
 	}
 

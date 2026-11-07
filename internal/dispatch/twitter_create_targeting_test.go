@@ -126,3 +126,17 @@ func TestTwitterCreateTargeting_DispatchSendsTheCriteria(t *testing.T) {
 		t.Fatalf("criteria = %q", got)
 	}
 }
+
+// Dispatch names the field for a mistyped list, before the generic decode error can.
+func TestTwitterCreateTargeting_DispatchNamesAMistypedList(t *testing.T) {
+	t.Setenv(constants.EnvTwitterCreateTargetingEnabled, "true")
+	d, _, calls := twitterTargetingServer(t)
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds, twitterTargetingCfg(`,"geoTargets":"US"`))
+	requirePreCreate(t, err)
+	if !strings.Contains(err.Error(), "twitterConfig.geoTargets: must be an array of strings") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := calls.Load(); n != 0 {
+		t.Errorf("%d X calls; want 0", n)
+	}
+}

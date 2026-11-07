@@ -1184,12 +1184,13 @@ type CampaignCreateInput struct {
 	// and before the promoted tweet. A value X does not offer, or a lookup that
 	// cannot be read, fails the job with nothing created; a criterion that fails
 	// stops the create before any tweet, with the PAUSED campaign and line item
-	// reported. A retry that reuses the line item does not re-target it. Both are
-	// OFF unless TWITTER_CREATE_TARGETING_ENABLED is exactly "true". A blank or
-	// malformed entry, a list over its cap, a value that is not an array of
-	// strings (null reads as absent), or either list while the flag is off, is
-	// refused with 400 "invalid campaign config: twitterConfig.<field>: ..."
-	// before any job exists.
+	// reported. A retry that reuses the line item reads its live criteria and adds
+	// only the missing ones, before the tweet; if that read fails the create stops
+	// before the tweet. Both are OFF unless TWITTER_CREATE_TARGETING_ENABLED is
+	// exactly "true". A blank or malformed entry, a list over its cap, a value
+	// that is not an array of strings (null reads as absent), or either list while
+	// the flag is off, is refused with 400 "invalid campaign config:
+	// twitterConfig.<field>: ..." before any job exists.
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

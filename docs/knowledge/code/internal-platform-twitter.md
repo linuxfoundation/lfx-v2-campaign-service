@@ -1594,8 +1594,13 @@ the line item and BEFORE the promoted tweet. A failure therefore stops the creat
 one irreversible artifact, a published tweet. It returns the partial result with an error giving
 how many criteria were applied, and says not to enable the line item until its targeting is
 completed. An ambiguous failure (429, 5xx, transport) is worded UNCONFIRMED. The single-create
-example omits `operator_type`, so an absent one reads as EQ. A REUSED line item is not
-re-targeted; a warning step says so, and `Reused` already makes the row `created_degraded`.
+example omits `operator_type`, so an absent one reads as EQ. A REUSED line item is usually the
+retry of a create whose targeting stopped part-way, so it is NOT skipped: its live criteria are
+read (`ListLineItemTargetingCriteria`) and only the missing ones (`missingCriteria`: same type and
+value, not negated) are posted, still before the tweet. Skipping it would have promoted a tweet
+on a line item serving worldwide, the outcome the ordering exists to prevent. A read that fails
+stops the create before the tweet. Criteria the line item holds beyond the requested ones are
+left alone, and `Reused` still makes the row `created_degraded`.
 
 Not verified live: no X call was made. The dispatcher keeps both lists behind
 `TWITTER_CREATE_TARGETING_ENABLED` (default off).

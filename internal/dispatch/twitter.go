@@ -258,6 +258,10 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		return nil, notCreated(domain.PreflightRefusalf("twitter connection for project %s is missing funding instrument id", domain.CallerValue(brief.ProjectID)))
 	}
 
+	// A mistyped geoTargets / languages gets its own message rather than the generic decode error.
+	if err := checkTwitterTargetingShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg twitterConfig
 	if err := unmarshalPlatformConfig(config, "twitterConfig", &cfg); err != nil {
 		return nil, notCreated(err)
@@ -271,10 +275,8 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		return nil, notCreated(err)
 	}
 	// The create-time targeting gate and rules (#564), again here: a job enqueued before the flag
-	// was turned off, or by a caller that skipped preflight, must not reach X.
-	if err := checkTwitterTargetingShape(config); err != nil {
-		return nil, notCreated(err)
-	}
+	// was turned off, or by a caller that skipped preflight, must not reach X. (The shape check
+	// runs before the decode above.)
 	geoTargets, languages, err := checkTwitterCreateTargeting(cfg)
 	if err != nil {
 		return nil, notCreated(err)

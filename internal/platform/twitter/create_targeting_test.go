@@ -29,6 +29,10 @@ type targetingFakeX struct {
 	failStatus    int
 	// reuseLineItem makes the line-item lookup find a same-name line item.
 	reuseLineItem string
+	// liveCriteria is the body of the line item's targeting-criteria list ("" = an empty list);
+	// failList makes that read answer 500.
+	liveCriteria string
+	failList     bool
 
 	writes    []string // "POST <kind>[ <type>=<value>]"
 	lookups   []string // "<kind>?<query>"
@@ -59,6 +63,17 @@ func (f *targetingFakeX) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, _ = w.Write([]byte(f.languagesPages[i]))
+	case r.Method == http.MethodGet && strings.HasSuffix(p, "/accounts/acc1/targeting_criteria"):
+		f.lookups = append(f.lookups, "criteria?"+r.URL.RawQuery)
+		if f.failList {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		body := f.liveCriteria
+		if body == "" {
+			body = `{"data":[],"next_cursor":null}`
+		}
+		_, _ = w.Write([]byte(body))
 	case r.Method == http.MethodGet && strings.HasSuffix(p, "/accounts/acc1"):
 		_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
 	case r.Method == http.MethodGet && strings.Contains(p, "line_items") && f.reuseLineItem != "":
@@ -163,9 +178,12 @@ func TestCreateCampaign_TargetingCriteriaFollowTheLineItem(t *testing.T) {
 
 // Every criterion is sent with operator_type=EQ on the created line item.
 func TestCreateTargetingCriterion_SendsEQOnTheLineItem(t *testing.T) {
-	var got string
+	gotCh := make(chan string, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = r.URL.RawQuery
+		select {
+		case gotCh <- r.URL.RawQuery:
+		default:
+		}
 		_, _ = w.Write([]byte(`{"data":{"id":"tc1","line_item_id":"li1","targeting_type":"LANGUAGE","targeting_value":"en","operator_type":"EQ"}}`))
 	}))
 	defer srv.Close()
@@ -174,6 +192,7 @@ func TestCreateTargetingCriterion_SendsEQOnTheLineItem(t *testing.T) {
 	if err := c.createTargetingCriterion(context.Background(), "li1", createCriterion{targetingType: TargetingLanguage, value: "en", label: "language en"}); err != nil {
 		t.Fatalf("createTargetingCriterion: %v", err)
 	}
+	got := <-gotCh
 	for _, s := range []string{"operator_type=EQ", "line_item_id=li1", "targeting_type=LANGUAGE", "targeting_value=en"} {
 		if !strings.Contains(got, s) {
 			t.Errorf("query %q lacks %s", got, s)
@@ -290,21 +309,67 @@ func TestCreateCampaign_TargetingFailureStopsBeforeTheTweet(t *testing.T) {
 	}
 }
 
-// A REUSED line item is not re-targeted; a warning step says so.
-func TestCreateCampaign_ReusedLineItemIsNotRetargeted(t *testing.T) {
+// A REUSED line item — the retry of a create whose targeting stopped part-way — gets the criteria
+// it does not already hold, and only those, before the promoted tweet.
+func TestCreateCampaign_ReusedLineItemGetsOnlyTheMissingCriteria(t *testing.T) {
 	f := newTargetingFakeX()
 	f.reuseLineItem = "Events | KubeCon | Promoted Tweets | AUTO"
+	f.liveCriteria = `{"data":[{"id":"tc1","line_item_id":"li9","targeting_type":"LOCATION","targeting_value":"96683cc9126741d1","operator_type":"EQ","deleted":false},` +
+		`{"id":"tc2","line_item_id":"li9","targeting_type":"LOCATION","targeting_value":"3376992a082d67c7","operator_type":"NE","deleted":false}],"next_cursor":null}`
 	c := targetingClient(t, f)
-	res, err := c.CreateCampaign(context.Background(), targetingInput([]string{"US"}, nil))
+	res, err := c.CreateCampaign(context.Background(), targetingInput([]string{"US", "CA"}, []string{"en"}))
 	if err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
 	writes, _ := f.snapshot()
-	if strings.Contains(strings.Join(writes, " "), "targeting_criteria") {
-		t.Fatalf("writes = %v, want no criterion on the reused line item", writes)
+	want := "POST campaigns\nPOST targeting_criteria LOCATION=3376992a082d67c7\nPOST targeting_criteria LANGUAGE=en\nPOST promoted_tweets"
+	if got := strings.Join(writes, "\n"); got != want {
+		t.Fatalf("writes =\n%s\nwant\n%s (a negated CA is not the CA targeting asked for)", got, want)
 	}
-	if !res.Reused || !strings.Contains(strings.Join(res.Steps, "\n"), "targeting NOT applied to reused line item li9") {
-		t.Fatalf("Reused=%v steps=%v, want the not-applied warning", res.Reused, res.Steps)
+	if !res.Reused || !strings.Contains(strings.Join(res.Steps, "\n"), "already holds 1 of the 3 requested targeting criteria") {
+		t.Fatalf("Reused=%v steps=%v", res.Reused, res.Steps)
+	}
+}
+
+// A reused line item whose criteria cannot be read stops the create before the tweet.
+func TestCreateCampaign_ReusedLineItemUnreadableTargetingStopsBeforeTheTweet(t *testing.T) {
+	f := newTargetingFakeX()
+	f.reuseLineItem = "Events | KubeCon | Promoted Tweets | AUTO"
+	f.failList = true
+	c := targetingClient(t, f)
+	res, err := c.CreateCampaign(context.Background(), targetingInput([]string{"US"}, nil))
+	if err == nil || res == nil || res.LineItemID != "li9" || !strings.Contains(err.Error(), "targeting not confirmed") {
+		t.Fatalf("res=%+v err=%v, want the partial result and the not-confirmed error", res, err)
+	}
+	writes, _ := f.snapshot()
+	if strings.Contains(strings.Join(writes, " "), "promoted_tweets") || strings.Contains(strings.Join(writes, " "), "targeting_criteria") {
+		t.Fatalf("writes = %v, want no criterion and no tweet", writes)
+	}
+}
+
+// A reused line item that already holds every criterion gets none and goes on to the tweet.
+func TestCreateCampaign_ReusedLineItemFullyTargetedPostsNoCriteria(t *testing.T) {
+	f := newTargetingFakeX()
+	f.reuseLineItem = "Events | KubeCon | Promoted Tweets | AUTO"
+	f.liveCriteria = `{"data":[{"id":"tc1","line_item_id":"li9","targeting_type":"LOCATION","targeting_value":"96683cc9126741d1","deleted":false}],"next_cursor":null}`
+	c := targetingClient(t, f)
+	if _, err := c.CreateCampaign(context.Background(), targetingInput([]string{"US"}, nil)); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	writes, _ := f.snapshot()
+	if got := strings.Join(writes, ","); got != "POST campaigns,POST promoted_tweets" {
+		t.Fatalf("writes = %s", got)
+	}
+}
+
+// Two distinct values among three entries are counted as two.
+func TestResolveCountry_CountsDistinctValues(t *testing.T) {
+	f := newTargetingFakeX()
+	f.countries["US"] = `{"data":[{"country_code":"US","location_type":"COUNTRIES","targeting_value":"a1"},{"country_code":"US","location_type":"COUNTRIES","targeting_value":"b2"},{"country_code":"US","location_type":"COUNTRIES","targeting_value":"b2"}],"next_cursor":null}`
+	c := targetingClient(t, f)
+	_, err := c.resolveCountry(context.Background(), "US")
+	if err == nil || !strings.Contains(err.Error(), "2 different country locations") {
+		t.Fatalf("err = %v, want the 2-value refusal", err)
 	}
 }
 

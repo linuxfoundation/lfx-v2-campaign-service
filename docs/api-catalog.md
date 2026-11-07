@@ -2952,7 +2952,9 @@ languages?: string[]             — Language targeting (#564). X language value
                                   with how many criteria were applied — enable nothing until the
                                   targeting is completed in X Ads Manager (an ambiguous failure is
                                   worded UNCONFIRMED). A retry that REUSES the line item by name
-                                  does not re-target it (a warning step; the row is
+                                  reads its live criteria and posts only the missing ones before
+                                  the tweet, so it finishes a targeting that stopped part-way; if
+                                  that read fails the create stops before the tweet (the row is
                                   `created_degraded`, as every reuse is). Not role-gated: a
                                   country or language names no account resource.
 ```

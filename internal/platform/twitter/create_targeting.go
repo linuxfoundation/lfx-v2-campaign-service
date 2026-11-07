@@ -187,6 +187,7 @@ func (c *Client) resolveCountry(ctx context.Context, code string) (string, error
 		return "", domain.PreflightRefusalf("invalid twitterConfig.%s: X answered more than one page of country locations for %s, so which one to target cannot be told", FieldGeoTargets, code)
 	}
 	var values []string
+	seen := map[string]struct{}{}
 	for _, o := range opts {
 		v := strings.TrimSpace(o.TargetingValue)
 		if !isCountryLocationType(o.LocationType) || !strings.EqualFold(strings.TrimSpace(o.CountryCode), code) || v == "" {
@@ -195,9 +196,11 @@ func (c *Client) resolveCountry(ctx context.Context, code string) (string, error
 		if o.TargetingType != "" && o.TargetingType != TargetingLocation {
 			continue
 		}
-		if len(values) == 0 || values[0] != v {
-			values = append(values, v)
+		if _, dup := seen[v]; dup {
+			continue
 		}
+		seen[v] = struct{}{}
+		values = append(values, v)
 	}
 	switch len(values) {
 	case 0:
@@ -331,4 +334,24 @@ func (c *Client) createTargetingCriterion(ctx context.Context, lineItemID string
 		return unconfirmed("acknowledged for another value")
 	}
 	return nil
+}
+
+// missingCriteria returns the wanted criteria the line item does not already hold live, as a
+// non-negated criterion of the same type and value. Extra criteria on the line item are left as
+// they are: this create only adds.
+func missingCriteria(want []createCriterion, live []TargetingCriterion) []createCriterion {
+	var out []createCriterion
+	for _, w := range want {
+		held := false
+		for _, l := range live {
+			if !l.Deleted && l.TargetingType == w.targetingType && (l.OperatorType == "" || l.OperatorType == OperatorEQ) && strings.EqualFold(l.TargetingValue, w.value) {
+				held = true
+				break
+			}
+		}
+		if !held {
+			out = append(out, w)
+		}
+	}
+	return out
 }

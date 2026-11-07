@@ -17,7 +17,8 @@ the Implement tab warned about.
   campaign is created. A miss or an unreadable lookup creates nothing.
 - The criteria are POSTed one at a time after the line item and before the promoted tweet. A
   failure stops the create before any tweet, with the PAUSED campaign and line item reported and
-  the count applied. A reused line item is not re-targeted.
+  the count applied. A retry that reuses the line item posts only the criteria it does not
+  already hold, before the tweet, and stops if those cannot be read.
 - Default-off deployment flag `TWITTER_CREATE_TARGETING_ENABLED`; the chart sets `"false"`. It
   names no account resource and is not role-gated.
 
