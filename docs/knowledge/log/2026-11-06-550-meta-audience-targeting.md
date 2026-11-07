@@ -21,9 +21,11 @@ because the Meta ad account is shared by every foundation.
 Tests: `targeting_test.go` pins the exact ad-set keys for seven shapes, ten refusals with no
 request sent, and the foreign/unreadable audience cases with no POST; `meta_targeting_test.go`
 covers the flag (off, `"TRUE"`, `"1"`), the 400s, a wrong-typed block, Dispatch's refusal and
-wiring, and the gate classification; the service gate table adds six Meta cases. 26 hand-applied
-mutations (each guard, the flag default, the inclusion rule, dedupe, the gender codes, the wiring
-and the gate) each fail a test.
+wiring, and the gate classification; the service gate table adds six Meta cases. 30 hand-applied
+mutations each fail a test: 26 on the first commit (each guard, the flag default, the inclusion
+rule, dedupe, the gender codes, the wiring, the flag comparison and the gate), two on the review
+fixes below (the owner comparison through `sameMetaAccount` and the duplicate-key refusal), and two
+on the PR #558 fixes (the audience `subtype` check and an explicit zero age).
 
 Review fixes before the PR: the audience owner is compared with `sameMetaAccount` (the `act_`
 prefix ignored on either side), and a `metaConfig` carrying two case-variant `targeting` keys is a
