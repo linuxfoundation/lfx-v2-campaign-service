@@ -1976,7 +1976,7 @@ published reference rather than inferred from what the clients happened to reque
 | Google Ads | Yes | `metrics.conversions` (added to the GAQL SELECT) | `DOUBLE` — a bare JSON number, unlike the int64 metrics Google encodes as strings |
 | LinkedIn | Yes | `externalWebsiteConversions`, named in the request's `fields` list | `long` |
 | Microsoft | Yes | `ConversionsQualified` report column | `double` |
-| Meta | **No scalar** | conversions live in the Insights `actions` array as `{action_type, value}` | — |
+| Meta | **Recorded event only** (#550) | conversions live in the Insights `actions` array as `{action_type, value}`; only for a campaign whose create result records a conversion event, and only while `META_CONVERSIONS_METRICS_ENABLED` is on, is that event's action type read (otherwise unavailable) | the `value` string, parsed as a non-negative float |
 | X (Twitter) | **No scalar** | split across `conversion_purchases`, `conversion_sign_ups`, … each a JSON object, under metric groups this client does not request | — |
 | Reddit | **Not requested** | the v3 report request names only `IMPRESSIONS`, `CLICKS` and `SPEND` | — |
 | HubSpot (email) | **No such concept** | the statistics counter vocabulary contains no conversion counter | — |

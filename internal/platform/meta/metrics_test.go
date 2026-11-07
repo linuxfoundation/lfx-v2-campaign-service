@@ -402,3 +402,89 @@ func TestGetCampaignMetrics_NullMetricIsAnError(t *testing.T) {
 		})
 	}
 }
+
+func TestConversionActionType(t *testing.T) {
+	for event, want := range map[string]string{
+		"PURCHASE":                "offsite_conversion.fb_pixel_purchase",
+		" complete_registration ": "offsite_conversion.fb_pixel_complete_registration",
+		"LEAD":                    "offsite_conversion.fb_pixel_lead",
+		"SUBMIT_APPLICATION":      "offsite_conversion.fb_pixel_submit_application",
+		"SUBSCRIBE":               "subscribe_website",
+	} {
+		if got, ok := ConversionActionType(event); !ok || got != want {
+			t.Errorf("ConversionActionType(%q) = %q, %v; want %q", event, got, ok, want)
+		}
+	}
+	for _, event := range []string{"", "ADD_TO_CART", "purchase_x"} {
+		if got, ok := ConversionActionType(event); ok || got != "" {
+			t.Errorf("ConversionActionType(%q) = %q, %v; want none", event, got, ok)
+		}
+	}
+	// Every allowed create-time event has a mapping, so a campaign created with one is readable.
+	for _, event := range conversionEvents {
+		if _, ok := ConversionActionType(event); !ok {
+			t.Errorf("conversion event %s has no action type", event)
+		}
+	}
+}
+
+func TestGetCampaignMetricsWithConversions(t *testing.T) {
+	const lead = "offsite_conversion.fb_pixel_lead"
+	for _, tc := range []struct {
+		name, body string
+		want       float64
+		wantErr    string
+	}{
+		{"match", `{"data":[{"impressions":"100","clicks":"5","actions":[{"action_type":"link_click","value":"5"},{"action_type":"offsite_conversion.fb_pixel_lead","value":"2.5"}]}]}`, 2.5, ""},
+		{"no actions is zero", `{"data":[{"impressions":"100","clicks":"5"}]}`, 0, ""},
+		{"no matching action is zero", `{"data":[{"impressions":"100","clicks":"5","actions":[{"action_type":"link_click","value":"5"}]}]}`, 0, ""},
+		{"no delivery is zero", `{"data":[]}`, 0, ""},
+		{"duplicate", `{"data":[{"actions":[{"action_type":"offsite_conversion.fb_pixel_lead","value":"1"},{"action_type":"offsite_conversion.fb_pixel_lead","value":"1"}]}]}`, 0, "twice"},
+		{"null actions", `{"data":[{"actions":null}]}`, 0, "explicit null"},
+		{"not a list", `{"data":[{"actions":{"a":1}}]}`, 0, "not a list"},
+		{"number value", `{"data":[{"actions":[{"action_type":"offsite_conversion.fb_pixel_lead","value":3}]}]}`, 0, "not a JSON string"},
+		{"negative", `{"data":[{"actions":[{"action_type":"offsite_conversion.fb_pixel_lead","value":"-1"}]}]}`, 0, "non-negative"},
+		{"garbage", `{"data":[{"actions":[{"action_type":"offsite_conversion.fb_pixel_lead","value":"x"}]}]}`, 0, "non-negative"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var query string
+			c := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				query = r.URL.RawQuery
+				mu.Unlock()
+				_, _ = io.WriteString(w, tc.body)
+			})
+			m, err := c.GetCampaignMetricsWithConversions(context.Background(), "23847290", WindowLast7Days, lead)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) || strings.Contains(err.Error(), "-1") {
+					t.Fatalf("err = %v, want one containing %q (and no value)", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || m.Conversions == nil || *m.Conversions != tc.want {
+				t.Fatalf("m = %+v err = %v, want conversions %v", m, err, tc.want)
+			}
+			mu.Lock()
+			q := query
+			mu.Unlock()
+			if !strings.Contains(q, "fields=impressions,clicks,spend,actions") {
+				t.Errorf("query = %s, want actions requested", q)
+			}
+		})
+	}
+	// The plain read asks for no actions and reports no conversions; an empty action type is
+	// refused before any request.
+	c := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.RawQuery, "actions") {
+			t.Errorf("plain read asked for actions: %s", r.URL.RawQuery)
+		}
+		_, _ = io.WriteString(w, `{"data":[{"impressions":"1","actions":[{"action_type":"offsite_conversion.fb_pixel_lead","value":"1"}]}]}`)
+	})
+	if m, err := c.GetCampaignMetrics(context.Background(), "23847290", WindowLast7Days); err != nil || m.Conversions != nil {
+		t.Fatalf("plain read: m = %+v err = %v", m, err)
+	}
+	if _, err := c.GetCampaignMetricsWithConversions(context.Background(), "23847290", WindowLast7Days, ""); err == nil {
+		t.Fatal("an empty action type must be refused")
+	}
+}

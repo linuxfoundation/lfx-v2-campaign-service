@@ -278,6 +278,15 @@ openssl rand -base64 32
   `"false"` (`app.environment.TWITTER_CREATE_TARGETING_ENABLED.value`);
   enable it per-environment in the ArgoCD overlay once a live create
   confirms it.
+- `META_CONVERSIONS_METRICS_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to conversions in the Meta metrics read (#550): for a
+  campaign this service created with the conversions objective, the Insights
+  read also requests `actions` and reports the recorded conversion event's
+  action type as `conversions` (#175 statuses). Only the exact value `true`
+  enables it; anything else keeps the read as before (conversions
+  `unavailable`, no `actions` requested). Read-only, but the event-to-action
+  mapping is unverified live and a wrong one would publish a false zero. The
+  chart sets it to `"false"`.
 - `TWITTER_CUSTOM_AUDIENCES_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to X custom audiences (#564): the create inputs
   `twitterConfig.customAudienceIds` / `excludedCustomAudienceIds`

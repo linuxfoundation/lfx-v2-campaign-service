@@ -807,20 +807,24 @@ type GetCampaignMetricsResponseBody struct {
 	// What this read established about conversions. `reported`: a complete
 	// measurement, carried in `conversions` (the ONLY status that carries it).
 	// `unavailable`: the channel, or this account on it, reports no campaign-level
-	// conversion count — Meta, X, Reddit and the email channel never do; LinkedIn
-	// when no returned analytics element carried externalWebsiteConversions;
-	// Microsoft when the ConversionsQualified column is missing or every cell is
-	// blank (no Universal Event Tracking). `incomplete`: a conversion-capable
-	// channel (LinkedIn, Microsoft) reported the metric for part of the response
-	// and omitted it for the rest, so any sum would be a partial count.
-	// `no_conversions`: the window had no clicks and no conversion was reported,
-	// on any channel (a Google window with no result rows, a Microsoft report of
-	// zero-click rows, a LinkedIn window with no activity — each used to be a
-	// measured 0). A zero against zero clicks is not a conversion finding, so it
-	// carries no total and the no_conversions action item never fires on it
-	// (zero_delivery covers a campaign that delivered nothing). It does not claim
-	// conversion was impossible: a zero-click window that reports a conversion
-	// (LinkedIn counts view-through conversions) is `reported`.
+	// conversion count — X, Reddit and the email channel never do; Meta does only
+	// for a campaign this service created with the conversions objective (its
+	// recorded conversion event's Insights action, #550) while
+	// META_CONVERSIONS_METRICS_ENABLED is "true", and is unavailable otherwise;
+	// LinkedIn when no returned analytics element carried
+	// externalWebsiteConversions; Microsoft when the ConversionsQualified column
+	// is missing or every cell is blank (no Universal Event Tracking).
+	// `incomplete`: a conversion-capable channel (LinkedIn, Microsoft) reported
+	// the metric for part of the response and omitted it for the rest, so any sum
+	// would be a partial count. `no_conversions`: the window had no clicks and no
+	// conversion was reported, on any channel (a Google window with no result
+	// rows, a Microsoft report of zero-click rows, a LinkedIn window with no
+	// activity — each used to be a measured 0). A zero against zero clicks is not
+	// a conversion finding, so it carries no total and the no_conversions action
+	// item never fires on it (zero_delivery covers a campaign that delivered
+	// nothing). It does not claim conversion was impossible: a zero-click window
+	// that reports a conversion (LinkedIn counts view-through conversions) is
+	// `reported`.
 	ConversionsStatus *string `form:"conversions_status,omitempty" json:"conversions_status,omitempty" xml:"conversions_status,omitempty"`
 	// Present only when conversions_status is `reported`, like conversions itself
 	// (#175). Summed monetary value of the conversions above, over the window, in
@@ -4919,20 +4923,24 @@ type CampaignMetricsResponseBody struct {
 	// What this read established about conversions. `reported`: a complete
 	// measurement, carried in `conversions` (the ONLY status that carries it).
 	// `unavailable`: the channel, or this account on it, reports no campaign-level
-	// conversion count — Meta, X, Reddit and the email channel never do; LinkedIn
-	// when no returned analytics element carried externalWebsiteConversions;
-	// Microsoft when the ConversionsQualified column is missing or every cell is
-	// blank (no Universal Event Tracking). `incomplete`: a conversion-capable
-	// channel (LinkedIn, Microsoft) reported the metric for part of the response
-	// and omitted it for the rest, so any sum would be a partial count.
-	// `no_conversions`: the window had no clicks and no conversion was reported,
-	// on any channel (a Google window with no result rows, a Microsoft report of
-	// zero-click rows, a LinkedIn window with no activity — each used to be a
-	// measured 0). A zero against zero clicks is not a conversion finding, so it
-	// carries no total and the no_conversions action item never fires on it
-	// (zero_delivery covers a campaign that delivered nothing). It does not claim
-	// conversion was impossible: a zero-click window that reports a conversion
-	// (LinkedIn counts view-through conversions) is `reported`.
+	// conversion count — X, Reddit and the email channel never do; Meta does only
+	// for a campaign this service created with the conversions objective (its
+	// recorded conversion event's Insights action, #550) while
+	// META_CONVERSIONS_METRICS_ENABLED is "true", and is unavailable otherwise;
+	// LinkedIn when no returned analytics element carried
+	// externalWebsiteConversions; Microsoft when the ConversionsQualified column
+	// is missing or every cell is blank (no Universal Event Tracking).
+	// `incomplete`: a conversion-capable channel (LinkedIn, Microsoft) reported
+	// the metric for part of the response and omitted it for the rest, so any sum
+	// would be a partial count. `no_conversions`: the window had no clicks and no
+	// conversion was reported, on any channel (a Google window with no result
+	// rows, a Microsoft report of zero-click rows, a LinkedIn window with no
+	// activity — each used to be a measured 0). A zero against zero clicks is not
+	// a conversion finding, so it carries no total and the no_conversions action
+	// item never fires on it (zero_delivery covers a campaign that delivered
+	// nothing). It does not claim conversion was impossible: a zero-click window
+	// that reports a conversion (LinkedIn counts view-through conversions) is
+	// `reported`.
 	ConversionsStatus *string `form:"conversions_status,omitempty" json:"conversions_status,omitempty" xml:"conversions_status,omitempty"`
 	// Present only when conversions_status is `reported`, like conversions itself
 	// (#175). Summed monetary value of the conversions above, over the window, in
