@@ -4599,6 +4599,37 @@ here; the operator remedy is to pause the keyword again after activating.
 (`MICROSOFT_METRICS_ENABLED`) gates only the unverified Reporting reads, and no Microsoft WRITE —
 create, toggle, budget — is gated. Both levers follow the writes.
 
+## Microsoft negative keywords at create (`microsoft_negative_keywords.go`, #563)
+
+`microsoftConfig.negativeKeywords` attaches campaign-level negatives to a Microsoft campaign the
+dispatch just created, through the client call the lever above makes
+(`AddCampaignNegativeKeywords`), so the rules are held once, in
+`microsoft.ValidateNegativeKeywords`.
+
+- **Gate first.** `MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED` must be exactly `"true"`; off, a
+  non-empty list is refused naming the flag, whatever its values. An absent, empty or `null`
+  list is not "set".
+- **Synchronous 400.** `PreflightCreate` runs `checkMicrosoftNegativeKeywordsShape` (a value that
+  is not an array of `{text, matchType}` objects, under any key casing encoding/json would match)
+  and then `checkMicrosoftNegativeKeywords` on the best-effort decode, so an unrelated mistyped
+  field cannot turn a gated or invalid list into an accepted job. Both refusals are
+  `ErrCreateConfigInvalid` wrapped as a `PreflightRefusal`, worded
+  `microsoftConfig.negativeKeywords: …` without the client's `microsoft-ads:` prefix. `Dispatch`
+  re-checks before any Microsoft call (`notCreated`, claim released).
+- **After a CONFIRMED create only**, after the image extension. An UNCONFIRMED create skips it.
+  `applyMicrosoftNegativeKeywords` records the positional outcomes on
+  `CampaignResult.NegativeKeywords` and a count step. Any FAILED or UNCONFIRMED keyword, or a
+  failed call ("NOT attached" / "UNCONFIRMED", status-only error text), degrades the campaign to
+  `created_degraded`; it never fails the job, for the reason `attachMicrosoftImage` gives.
+  Repeating the create does not re-run it: the orchestrator returns a `created` or
+  `created_degraded` campaign as it is, so a shortfall is fixed with `add-negative-keywords`
+  (the steps say so). Only a dispatch that reuses a campaign by name — one whose earlier
+  attempt was never confirmed — re-sends the list, and gets `ALREADY_PRESENT` (4335) for the
+  ones already there, which is not a shortfall.
+- **Snapshot.** Dispatch replaces the list with the validated one before the snapshot is built,
+  so it records what was sent (`jobs`/`Phrase`, not `  jobs `/`PHRASE`). That text cannot carry a
+  link (no `:` or `/` passes validation), so it needs no `sanitizeSnapshotText`.
+
 ## Google Ads negative keywords (`googleads_negative_keywords.go`, LFXV2-2665)
 
 `GoogleAdsDispatcher` implements `service.NegativeKeywordAdder`, attaching CAMPAIGN-level

@@ -1024,6 +1024,13 @@ decoded with `encoding/json` and no `identityjson` check. Tests in `keyword_leve
 `_InvalidInputSendsNothing`, `_ZeroCollectionCodeIsAbsent`, `_EntityCodeWithAnIDFallsThrough` and
 `_AlreadyExistsIsMatchedStrictly`. The dispatcher's are in `internal/dispatch/microsoft_keywords_test.go`.
 
+**Also at create (#563).** `AddCampaignNegativeKeywords` is also called by the create path,
+right after a confirmed `CreateCampaign`, for `microsoftConfig.negativeKeywords` (see
+[internal/dispatch](internal-dispatch.md), "Microsoft negative keywords at create"). The
+dispatcher records its positional outcomes on `CampaignResult.NegativeKeywords`, which is why
+`NegativeKeywordOutcome` carries camelCase JSON tags (`text`, `matchType`, `outcome`,
+`negativeKeywordId`, `errorCode`). `CreateCampaign` itself never sets the field.
+
 ## Ad-group max CPC bid read + write (LFXV2-2665)
 
 `bid.go` backs `MicrosoftDispatcher.WriteBid`. The bid lives on the AD GROUP (`AdGroup.CpcBid`,
@@ -1464,3 +1471,11 @@ keeps its existing scheme.
 the ad group (the bid); a reused campaign — found by name or by the duplicate-name self-heal — or a
 reused ad group sets it false and adds the step "Warning: bid NOT applied to reused campaign|ad group
 <id>; its existing bidding is unchanged".
+
+**Withheld error codes (#565 review).** `indexedErrorItem.code()` and `meaningfulCode` pass every
+code through `outputCode`: a value that is not code-shaped (`[A-Za-z0-9_.-]+`, i.e. a symbolic
+name or a number) is replaced by `withheldErrorCode`. The codes reach persisted steps, the
+positional outcomes and logs, and they come from the response body, so a URL or token there is
+never passed on. Classification (`isNegativeKeywordAlreadyExists`, `isError`, the entity-level
+"was there a code") still reads the raw values, and the replacement is non-empty, so an entity
+refusal stays definite and an item stays FAILED.
