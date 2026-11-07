@@ -278,6 +278,19 @@ openssl rand -base64 32
   `"false"` (`app.environment.TWITTER_CREATE_TARGETING_ENABLED.value`);
   enable it per-environment in the ArgoCD overlay once a live create
   confirms it.
+- `TWITTER_CUSTOM_AUDIENCES_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to X custom audiences (#564): the create inputs
+  `twitterConfig.customAudienceIds` / `excludedCustomAudienceIds`
+  (`CUSTOM_AUDIENCE` targeting criteria, `EQ` and `NE`, on the new line item)
+  and the picker read `GET /projects/{project_id}/twitter-ads/custom-audiences`.
+  Only the exact value `true` enables them; anything else fails closed: a
+  create setting either list is refused with 400 before any job exists, and
+  the read answers 400. Off by default because both shapes come from X's
+  published v12 reference and have not been exercised against a live ad
+  account. The audiences live on the ad account every foundation shares, so
+  the create inputs also need `global_marketing_ops` on the project (403
+  otherwise) and the read is gated on it at the gateway. The chart sets it to
+  `"false"`.
 - `MICROSOFT_AD_EXTENSIONS_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `microsoftConfig.sitelinks` and `microsoftConfig.callouts`
   (#563), created at create time as `SitelinkAdExtension` and

@@ -222,6 +222,10 @@ type Client struct {
 	// to the list-reddit-ads-custom-audiences endpoint.
 	ListRedditAdsCustomAudiencesDoer goahttp.Doer
 
+	// ListTwitterAdsCustomAudiences Doer is the HTTP client used to make requests
+	// to the list-twitter-ads-custom-audiences endpoint.
+	ListTwitterAdsCustomAudiencesDoer goahttp.Doer
+
 	// GetMetaAdsAudience Doer is the HTTP client used to make requests to the
 	// get-meta-ads-audience endpoint.
 	GetMetaAdsAudienceDoer goahttp.Doer
@@ -414,6 +418,7 @@ func NewClient(
 		ListGoogleAdsAudiencesDoer:         doer,
 		ListMetaCustomAudiencesDoer:        doer,
 		ListRedditAdsCustomAudiencesDoer:   doer,
+		ListTwitterAdsCustomAudiencesDoer:  doer,
 		GetMetaAdsAudienceDoer:             doer,
 		GetTwitterAdsAudienceDoer:          doer,
 		GetLinkedinAdsAudienceDoer:         doer,
@@ -1679,6 +1684,31 @@ func (c *Client) ListRedditAdsCustomAudiences() goa.Endpoint {
 		resp, err := c.ListRedditAdsCustomAudiencesDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ListTwitterAdsCustomAudiences returns an endpoint that makes HTTP requests
+// to the lfx-v2-campaign-service-connections service
+// list-twitter-ads-custom-audiences server.
+func (c *Client) ListTwitterAdsCustomAudiences() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeListTwitterAdsCustomAudiencesRequest(c.encoder)
+		decodeResponse = DecodeListTwitterAdsCustomAudiencesResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildListTwitterAdsCustomAudiencesRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ListTwitterAdsCustomAudiencesDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-twitter-ads-custom-audiences", err)
 		}
 		return decodeResponse(resp)
 	}

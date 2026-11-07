@@ -3322,6 +3322,14 @@ type CampaignInput struct {
 	// whose status or criteria cannot be read, stops the create before the tweet.
 	GeoTargets []string
 	Languages  []string
+	// CustomAudienceIDs and ExcludedCustomAudienceIDs (#564 gap 3; custom_audiences.go) are X
+	// custom audience ids, sent as CUSTOM_AUDIENCE criteria on the line item: EQ to target, NE to
+	// exclude. Checked by ValidateCustomAudienceIDs and confirmed live and targetable on the ad
+	// account before anything is created. The exclusions are posted first of all the criteria,
+	// and the inclusions last, after the location and language criteria. Empty means no custom
+	// audience criterion, as before.
+	CustomAudienceIDs         []string
+	ExcludedCustomAudienceIDs []string
 }
 
 // manualMaxBidMicros encodes a create-time manual bid in micro-units, refusing (never rounding)
@@ -3611,6 +3619,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// Fixed text plus CallerValue-rendered entries: operator-safe.
 		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", terr.Error())
 	}
+	// Custom audiences (#564 gap 3): the id rules here; the live check runs below with the lookups.
+	if aerr := ValidateCustomAudienceIDs(in.CustomAudienceIDs, in.ExcludedCustomAudienceIDs); aerr != nil {
+		// Fixed text naming the list and a position, never a value: operator-safe.
+		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", aerr.Error())
+	}
+	// And all the criteria together must fit the paced-write budget (MaxCreateTargetingCriteria).
+	if cerr := CheckCreateCriteriaCount(len(geoTargets) + len(languages) + len(in.CustomAudienceIDs) + len(in.ExcludedCustomAudienceIDs)); cerr != nil {
+		// Fixed text and counts only: operator-safe.
+		return nil, domain.PreflightRefusalf("invalid twitterConfig: %s", cerr.Error())
+	}
 
 	// Validate required account config before any mutating call. account_id and
 	// funding_instrument_id are both required by the X Ads campaign-create
@@ -3668,6 +3686,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	criteria, err := c.resolveCreateTargeting(ctx, geoTargets, languages)
 	if err != nil {
 		return nil, err
+	}
+	// Step 1a': the custom audiences (#564 gap 3) must each be live and targetable on this ad
+	// account, also before anything is created. Exclusions go first among all the criteria, so a
+	// create that stops part-way has applied the suppression before any inclusion.
+	if len(in.CustomAudienceIDs) > 0 || len(in.ExcludedCustomAudienceIDs) > 0 {
+		if err := c.checkCustomAudiences(ctx, in.CustomAudienceIDs, in.ExcludedCustomAudienceIDs); err != nil {
+			return nil, err
+		}
+		excluded, included := customAudienceCriteria(in.CustomAudienceIDs, in.ExcludedCustomAudienceIDs)
+		criteria = append(append(excluded, criteria...), included...)
 	}
 
 	// Step 1b: the creative image, BEFORE anything billable exists (media.go). A failure here

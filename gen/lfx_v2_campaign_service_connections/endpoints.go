@@ -67,6 +67,7 @@ type Endpoints struct {
 	ListGoogleAdsAudiences         goa.Endpoint
 	ListMetaCustomAudiences        goa.Endpoint
 	ListRedditAdsCustomAudiences   goa.Endpoint
+	ListTwitterAdsCustomAudiences  goa.Endpoint
 	GetMetaAdsAudience             goa.Endpoint
 	GetTwitterAdsAudience          goa.Endpoint
 	GetLinkedinAdsAudience         goa.Endpoint
@@ -156,6 +157,7 @@ func NewEndpoints(s Service) *Endpoints {
 		ListGoogleAdsAudiences:         NewListGoogleAdsAudiencesEndpoint(s, a.JWTAuth),
 		ListMetaCustomAudiences:        NewListMetaCustomAudiencesEndpoint(s, a.JWTAuth),
 		ListRedditAdsCustomAudiences:   NewListRedditAdsCustomAudiencesEndpoint(s, a.JWTAuth),
+		ListTwitterAdsCustomAudiences:  NewListTwitterAdsCustomAudiencesEndpoint(s, a.JWTAuth),
 		GetMetaAdsAudience:             NewGetMetaAdsAudienceEndpoint(s, a.JWTAuth),
 		GetTwitterAdsAudience:          NewGetTwitterAdsAudienceEndpoint(s, a.JWTAuth),
 		GetLinkedinAdsAudience:         NewGetLinkedinAdsAudienceEndpoint(s, a.JWTAuth),
@@ -243,6 +245,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ListGoogleAdsAudiences = m(e.ListGoogleAdsAudiences)
 	e.ListMetaCustomAudiences = m(e.ListMetaCustomAudiences)
 	e.ListRedditAdsCustomAudiences = m(e.ListRedditAdsCustomAudiences)
+	e.ListTwitterAdsCustomAudiences = m(e.ListTwitterAdsCustomAudiences)
 	e.GetMetaAdsAudience = m(e.GetMetaAdsAudience)
 	e.GetTwitterAdsAudience = m(e.GetTwitterAdsAudience)
 	e.GetLinkedinAdsAudience = m(e.GetLinkedinAdsAudience)
@@ -1467,6 +1470,30 @@ func NewListRedditAdsCustomAudiencesEndpoint(s Service, authJWTFn security.AuthJ
 			return nil, err
 		}
 		return s.ListRedditAdsCustomAudiences(ctx, p)
+	}
+}
+
+// NewListTwitterAdsCustomAudiencesEndpoint returns an endpoint function that
+// calls the method "list-twitter-ads-custom-audiences" of service
+// "lfx-v2-campaign-service-connections".
+func NewListTwitterAdsCustomAudiencesEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ListTwitterAdsCustomAudiencesPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ListTwitterAdsCustomAudiences(ctx, p)
 	}
 }
 

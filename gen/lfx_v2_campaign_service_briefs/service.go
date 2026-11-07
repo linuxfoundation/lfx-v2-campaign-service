@@ -155,24 +155,33 @@ type Service interface {
 	// excludedCustomAudienceIds (any non-empty list) on a create that selects
 	// reddit-ads requires global_marketing_ops on this project in the same single
 	// check, with the same 403 and 503; the custom audiences belong to the LF
-	// Reddit ad account every foundation shares. When both platforms' inputs are
-	// refused, the 403 names each platform's fields in its own sentence. A Reddit
-	// custom audience list is also refused synchronously with 400 "invalid
-	// campaign config: redditConfig.<field>: ..." when it is not an array of
-	// strings, when an id is not 1-64 letters, digits or underscores, repeats, or
-	// is in both lists, when a list holds more than 100 ids, and when
-	// REDDIT_CUSTOM_AUDIENCES_ENABLED is not "true" on this deployment. META
-	// SHARED-ACCOUNT INPUTS: likewise a metaConfig.targeting that sets
-	// customAudiences or excludedCustomAudiences (any non-empty list) names custom
-	// audiences of the Meta ad account every foundation shares and requires
-	// global_marketing_ops on this project (403 naming them, 503 when the check
-	// cannot be made); age, gender and advantageAudience are not gated. An invalid
-	// metaConfig.targeting, or any targeting block while
-	// META_AUDIENCE_TARGETING_ENABLED is not "true" on the deployment, is a
-	// synchronous 400 "invalid campaign config: metaConfig.targeting...". An
-	// invalid per-platform `bidding` object (see the config attribute) is also
-	// refused synchronously, with 400 "invalid campaign config:
-	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
+	// Reddit ad account every foundation shares. X SHARED-ACCOUNT INPUTS (#564):
+	// likewise a twitterConfig that sets customAudienceIds or
+	// excludedCustomAudienceIds (any non-empty list) on a create that selects
+	// twitter-ads requires global_marketing_ops on this project in the same single
+	// check; those audiences belong to the LF X ad account. An X custom audience
+	// list is also refused synchronously with 400 "invalid campaign config:
+	// twitterConfig.<field>: ..." when it is not an array of strings, when an id
+	// is not 1-32 letters or digits, repeats, or is in both lists, when a list
+	// holds more than 60 ids or the X targeting lists together name more than 60
+	// criteria, and when TWITTER_CUSTOM_AUDIENCES_ENABLED is not "true" on this
+	// deployment. When both platforms' inputs are refused, the 403 names each
+	// platform's fields in its own sentence. A Reddit custom audience list is also
+	// refused synchronously with 400 "invalid campaign config:
+	// redditConfig.<field>: ..." when it is not an array of strings, when an id is
+	// not 1-64 letters, digits or underscores, repeats, or is in both lists, when
+	// a list holds more than 100 ids, and when REDDIT_CUSTOM_AUDIENCES_ENABLED is
+	// not "true" on this deployment. META SHARED-ACCOUNT INPUTS: likewise a
+	// metaConfig.targeting that sets customAudiences or excludedCustomAudiences
+	// (any non-empty list) names custom audiences of the Meta ad account every
+	// foundation shares and requires global_marketing_ops on this project (403
+	// naming them, 503 when the check cannot be made); age, gender and
+	// advantageAudience are not gated. An invalid metaConfig.targeting, or any
+	// targeting block while META_AUDIENCE_TARGETING_ENABLED is not "true" on the
+	// deployment, is a synchronous 400 "invalid campaign config:
+	// metaConfig.targeting...". An invalid per-platform `bidding` object (see the
+	// config attribute) is also refused synchronously, with 400 "invalid campaign
+	// config: <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
 	// Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc)
 	// and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are
 	// immediately eligible for the bid lever, and eligibility follows the
@@ -1257,7 +1266,24 @@ type CampaignCreateInput struct {
 	// malformed entry, a list over its cap, a value that is not an array of
 	// strings (null reads as absent), or either list while the flag is off, is
 	// refused with 400 "invalid campaign config: twitterConfig.<field>: ..."
-	// before any job exists. MICROSOFT AD COPY (#563): microsoftConfig takes
+	// before any job exists. X CUSTOM AUDIENCES (#564): twitterConfig takes
+	// `customAudienceIds` and `excludedCustomAudienceIds`, arrays of X custom
+	// audience ids (list-twitter-ads-custom-audiences offers them) to target and
+	// to exclude, sent as CUSTOM_AUDIENCE targeting criteria on the new line item
+	// with operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
+	// given; at most 60 per list; no id twice and none in both lists. geoTargets,
+	// languages, customAudienceIds and excludedCustomAudienceIds together may name
+	// at most 60 criteria per create, since each is a separate X write paced at
+	// one per second inside the two-minute dispatch budget; more is refused with
+	// the same 400. Before anything is created every id is read with GET
+	// accounts/:account_id/custom_audiences and must be live and targetable; a
+	// missing, deleted or non-targetable audience fails the job with nothing
+	// created. The exclusions are posted first of all the criteria and the
+	// inclusions last, after the line item and before the promoted tweet; a
+	// criterion failure stops the create as for X TARGETING. Off unless
+	// TWITTER_CUSTOM_AUDIENCES_ENABLED is "true" (built from X's published
+	// reference, not yet exercised live), and only for global_marketing_ops (see
+	// create-campaigns). MICROSOFT AD COPY (#563): microsoftConfig takes
 	// `headlines` (3-15), `descriptions` (2-4), `path1` and `path2`, sent on the
 	// responsive search ad instead of the copy auto-composed from the event name.
 	// Each headline is at most 30 characters and each description at most 90 (15

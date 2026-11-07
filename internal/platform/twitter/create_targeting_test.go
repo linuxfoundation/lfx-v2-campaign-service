@@ -36,6 +36,14 @@ type targetingFakeX struct {
 	// reusedStatus is the reused line item's entity_status ("" = PAUSED); "fail" answers 500.
 	reusedStatus string
 
+	// audiences is the body the custom_audiences lookup answers ("" = an empty list); failAudiences
+	// makes it answer 500. dropNEOperator makes a criterion echo omit operator_type even for NE.
+	audiences      string
+	failAudiences  bool
+	dropNEOperator bool
+	// operators records each criterion POST's operator_type, in order.
+	operators []string
+
 	writes    []string // "POST <kind>[ <type>=<value>]"
 	lookups   []string // "<kind>?<query>"
 	criterion int
@@ -65,6 +73,17 @@ func (f *targetingFakeX) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, _ = w.Write([]byte(f.languagesPages[i]))
+	case r.Method == http.MethodGet && strings.HasSuffix(p, "/accounts/acc1/custom_audiences"):
+		f.lookups = append(f.lookups, "custom_audiences?"+r.URL.RawQuery)
+		if f.failAudiences {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		body := f.audiences
+		if body == "" {
+			body = `{"data":[],"next_cursor":null}`
+		}
+		_, _ = w.Write([]byte(body))
 	case r.Method == http.MethodGet && strings.HasSuffix(p, "/accounts/acc1/targeting_criteria"):
 		f.lookups = append(f.lookups, "criteria?"+r.URL.RawQuery)
 		if f.failList {
@@ -100,8 +119,15 @@ func (f *targetingFakeX) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(`{"errors":[{"code":"INVALID_TARGETING_CRITERIA"}]}`))
 			return
 		}
-		_, _ = fmt.Fprintf(w, `{"data":{"id":"tc%d","line_item_id":%q,"targeting_type":%q,"targeting_value":%q,"deleted":false}}`,
-			f.criterion, q.Get("line_item_id"), q.Get("targeting_type"), q.Get("targeting_value"))
+		f.operators = append(f.operators, q.Get("operator_type"))
+		// The single-create example omits operator_type, so an EQ echo omits it here too; an NE
+		// echo carries it unless dropNEOperator.
+		op := ""
+		if q.Get("operator_type") == OperatorNE && !f.dropNEOperator {
+			op = `,"operator_type":"NE"`
+		}
+		_, _ = fmt.Fprintf(w, `{"data":{"id":"tc%d","line_item_id":%q,"targeting_type":%q,"targeting_value":%q%s,"deleted":false}}`,
+			f.criterion, q.Get("line_item_id"), q.Get("targeting_type"), q.Get("targeting_value"), op)
 	case strings.HasSuffix(p, "/campaigns"):
 		f.writes = append(f.writes, "POST campaigns")
 		_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
@@ -114,6 +140,12 @@ func (f *targetingFakeX) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
+}
+
+func (f *targetingFakeX) ops() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.operators...)
 }
 
 func (f *targetingFakeX) snapshot() (writes, lookups []string) {
