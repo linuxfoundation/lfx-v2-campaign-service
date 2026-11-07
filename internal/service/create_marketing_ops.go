@@ -350,7 +350,7 @@ func linkedInMarketingOpsForbiddenMessage(fields []string) string {
 		"the global_marketing_ops role on this project: " + strings.Join(fields, ", ")
 }
 
-// requireMarketingOpsForSharedAccountInputs (also covering linkedin-ads (#552), LinkedInMarketingOpsInputs) refuses a google-ads, meta-ads or reddit-ads create that
+// requireMarketingOpsForSharedAccountInputs refuses a google-ads, meta-ads or reddit-ads create that
 // sets any GoogleAdsMarketingOpsInputs, MetaMarketingOpsInputs or RedditMarketingOpsInputs (#549)
 // field (each counted only when its platform is selected, since only that platform's dispatcher
 // reads it) unless the caller holds global_marketing_ops on the path project. One check per
@@ -369,6 +369,9 @@ func linkedInMarketingOpsForbiddenMessage(fields []string) string {
 //
 // Fail closed: no checker, no actor, or a check that could not be completed answers 503, and
 // only a definite grant admits the request.
+//
+// The linkedin-ads inputs (LinkedInMarketingOpsInputs, #552) take the same one check when
+// linkedin-ads is selected.
 func (s *BriefService) requireMarketingOpsForSharedAccountInputs(ctx context.Context, projectSlug string, platforms []model.Provider, config json.RawMessage) error {
 	var googleFields, metaFields, redditFields, linkedInFields []string
 	if slices.Contains(platforms, model.ProviderGoogleAds) {
