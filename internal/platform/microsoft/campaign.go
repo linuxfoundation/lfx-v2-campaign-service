@@ -275,6 +275,12 @@ type CampaignResult struct {
 	// partially-built extension can be found.
 	ImageMediaID       string `json:"imageMediaId,omitempty"`
 	ImageAdExtensionID string `json:"imageAdExtensionId,omitempty"`
+	// SitelinkAdExtensionIDs / CalloutAdExtensionIDs are the sitelink and callout extensions
+	// THIS RUN created and associated with the campaign (#563), set by the DISPATCHER after
+	// AttachCampaignTextExtensions. Empty does not mean the campaign has none: a type it
+	// already had is skipped, and the Steps entry says so.
+	SitelinkAdExtensionIDs []string `json:"sitelinkAdExtensionIds,omitempty"`
+	CalloutAdExtensionIDs  []string `json:"calloutAdExtensionIds,omitempty"`
 	// NegativeKeywords is the positional outcome of the create-time campaign negatives
 	// (microsoftConfig.negativeKeywords, #563), one entry per requested keyword in request
 	// order. Like the image ids it is set by the DISPATCHER after AddCampaignNegativeKeywords —

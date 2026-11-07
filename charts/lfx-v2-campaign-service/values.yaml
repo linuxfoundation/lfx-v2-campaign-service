@@ -367,6 +367,16 @@ app:
     REDDIT_TARGETING_EXCLUSIONS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to microsoftConfig.sitelinks and
+    # microsoftConfig.callouts (#563), created at create time as sitelink and
+    # callout ad extensions associated with the new Search campaign. Default
+    # off: the shape is built from the v13 Campaign Management reference and no
+    # live create has sent it. It names no account resource. While off, a
+    # create naming either list is refused with a 400 before any job exists.
+    # Any value other than "true" is treated as off, so a typo fails closed.
+    MICROSOFT_AD_EXTENSIONS_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to googleAdsConfig.demandGenAudience (#459): one
     # existing Google Ads Audience on a Demand Gen ad group. The same flag
     # gates each googleAdsConfig.demandGenAdGroups[].audience (#460), the same
