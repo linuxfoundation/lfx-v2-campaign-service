@@ -21,3 +21,7 @@ Local review fixes before the PR: the read has its own 45-second budget
 (`metaCustomAudiencesCallTimeout`), since its walk may make 20 sequential Graph calls; the catalog row
 documents the 500 arms of the LF-system fallback; and every "except the Google lists" line in the
 authorization docs now names the Meta custom-audience list too.
+
+PR #561 review: an explicitly empty `?q=` is refused with a 400 (`refuseEmptyQueryParam`, as for
+`google-ads/audiences`) instead of decoding as "no filter" and returning the unfiltered list;
+`TestMetaCustomAudiencesEmptyQIsRefusedByTheRealMux` drives the real mux.
