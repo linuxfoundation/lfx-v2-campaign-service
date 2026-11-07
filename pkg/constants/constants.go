@@ -195,6 +195,20 @@ const (
 	// LEAD, …) instead of the fixed PURCHASE. Same rules as EnvMetaCallToActionEnabled.
 	EnvMetaConversionEventEnabled = "META_CONVERSION_EVENT_ENABLED"
 
+	// EnvMetaAudienceTargetingEnabled opts a deployment IN to metaConfig.targeting (#550): age,
+	// gender, custom audiences to include and exclude, and the Advantage+ audience flag on the ad
+	// set. Only the exact value "true" enables it; unset or any other value fails closed, and a
+	// create carrying a targeting block is refused before any job exists (and again in the job,
+	// before any Meta request).
+	//
+	// A per-deployment opt-in, off by default, because the payloads were built from Meta's docs and
+	// not yet verified against a live ad account. Each custom audience is read and must belong to
+	// the connected ad account before anything is created. That account is shared by every
+	// foundation, so create-campaigns also requires global_marketing_ops on the project for the
+	// audience lists (service.MetaMarketingOpsInputs); age, gender and advantageAudience are not
+	// gated.
+	EnvMetaAudienceTargetingEnabled = "META_AUDIENCE_TARGETING_ENABLED"
+
 	// EnvGoogleAdsPMaxAudienceSignalEnabled opts a deployment IN to
 	// googleAdsConfig.performanceMaxAudienceSignal (#461): one existing Google Ads Audience
 	// attached to a Performance Max asset group as a signal. Only the exact value "true"

@@ -297,6 +297,18 @@ openssl rand -base64 32
   fails closed, and a create carrying the field is refused with a 400 before
   any job exists. The chart sets both to `"false"`; enable them
   per-environment in the ArgoCD overlay.
+- `META_AUDIENCE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `metaConfig.targeting` (#550): `ageMin`/`ageMax`,
+  `genders`, `customAudiences`, `excludedCustomAudiences` and
+  `advantageAudience` on the Meta ad set. Only the exact value `true`
+  enables it; anything else fails closed, and a create carrying a
+  `targeting` block is refused with a 400 before any job exists. Each
+  custom audience is read and must belong to the connected Meta ad account
+  before anything is created, and create-campaigns requires
+  `global_marketing_ops` on the project for the two audience lists (403
+  without it, 503 when the check cannot be made). The chart sets it to
+  `"false"` (`app.environment.META_AUDIENCE_TARGETING_ENABLED.value`);
+  enable it per-environment by setting it to `"true"` in the ArgoCD overlay.
 - `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.performanceMaxAudienceSignal`,
   one existing Google Ads Audience attached to a Performance Max asset

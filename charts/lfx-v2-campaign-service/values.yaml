@@ -381,6 +381,20 @@ app:
     META_CONVERSION_EVENT_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to metaConfig.targeting (#550): age, gender,
+    # custom audiences to include and exclude, and the Advantage+ audience
+    # flag on the Meta ad set. A per-deployment opt-in, off by default, because
+    # the payloads were built from Meta's docs and are not yet live-verified;
+    # set it to exactly "true" in lfx-v2-argocd to turn it on. Each custom
+    # audience is read and must belong to the connected Meta ad account before
+    # anything is created. That account is shared by every foundation, so
+    # create-campaigns also requires global_marketing_ops on the project for the
+    # audience lists (checked over NATS; 403 without it). While off, a create
+    # carrying a targeting block is refused with a 400 before any job exists.
+    # Any value other than "true" is treated as off, so a typo fails closed.
+    META_AUDIENCE_TARGETING_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to googleAdsConfig.performanceMaxAudienceSignal
     # (#461): one existing Google Ads Audience attached to a Performance Max
     # asset group as a signal. A per-deployment opt-in, off by default, like

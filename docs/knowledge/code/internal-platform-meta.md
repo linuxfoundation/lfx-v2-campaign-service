@@ -1048,6 +1048,50 @@ a 400 rather than absent. `CampaignResult.ConversionEvent` records the event on 
 was reused by name, as `BidApplied` is), which is what a conversions read must filter on. Not live-verified: whether every listed button is accepted with every
 objective.
 
+## Audience targeting (`targeting.go`, #550)
+
+`CampaignInput.Targeting` (`metaConfig.targeting`) adds an age range, a gender, custom audiences to
+include and exclude, and the Advantage+ audience flag to the ad set's `targeting` spec:
+`age_min`/`age_max` (18–65; pointers, so an explicit 0 is refused rather than read as omitted), `genders` (`[1]` male, `[2]` female; both or none sends nothing),
+`custom_audiences` and `excluded_custom_audiences` (`[{"id": …}]`, numeric ids, at most 25
+distinct each, never one id in both), and `targeting_automation.advantage_audience`. Lookalikes are
+custom audiences, so they go in the same lists. Nil or empty targeting leaves the ad set exactly as
+before.
+
+**The Advantage+ flag.** From Graph v23.0 Meta defaults `advantage_audience` to 1 on a new ad set,
+and a non-default age, gender, custom-audience inclusion or detailed-targeting inclusion WITHOUT
+the flag is an ad-set create error (Advantage+ Audience reference; developer blog 2025-06-13). So
+whenever an inclusion is set the flag is always sent, as 0 unless the caller said `true`: the
+targeting the operator chose is then a hard constraint, not a suggestion Meta may widen. Without an
+inclusion (exclusions only) it is sent only when the caller set it, so that create's payload is
+unchanged. With the flag on Meta accepts `age_min` ≤ 25 only and fixes `age_max` at 65, so
+`advantageAudience: true` with `ageMin` > 25 or `ageMax` < 65 is refused. Location, minimum age,
+language and custom-audience exclusions stay hard constraints either way.
+
+**Order.** `NormalizeAudienceTargeting` runs with the other deterministic checks, before any
+request; each refusal wraps `domain.ErrCreateConfigInvalid` and is a `domain.PreflightRefusal`, so
+the synchronous create answers 400 and the job reports it verbatim. After the account preflight
+and BEFORE the campaign create, `checkCustomAudiences` reads every listed audience
+(`GET /{id}?fields=id,account_id,subtype` through `getChecked`, so the raw body passes `identityjson`):
+`subtype` is what proves the node is an audience — a same-account campaign, ad set or ad also has an
+id and an `account_id` — so a node without one is a refusal, as is an audience reported under
+another ad account and a read that fails (Graph 100/33
+included, which cannot tell absent from not-visible) is an error. Either way nothing is created —
+an id Meta would refuse at the ad set no longer orphans a campaign.
+
+**Gates (dispatch and service).** The block is refused while `META_AUDIENCE_TARGETING_ENABLED` is not
+exactly `"true"` (default off: the payloads are from Meta's docs and not yet live-verified), in
+`PreflightCreate` (400) and again in `Dispatch` (not-created). `PreflightCreate` decodes the block
+on its own (`decodeMetaTargeting`) so a wrong-typed block is a 400 rather than read as absent. The
+two audience lists name custom audiences of the Meta ad account every foundation shares, so
+`service.MetaMarketingOpsInputs` puts them behind `global_marketing_ops` with the Google inputs
+(one check per request, 403/503); age, gender and `advantageAudience` are not gated
+(`TestEveryMetaTargetingFieldIsClassifiedForTheMarketingOpsGate`).
+
+**Not verified live.** The exact payloads, Meta's answer to `advantage_audience: 0` together with
+custom audiences, and the `account_id` field of the audience read are from the docs only; the flag
+stays off until a probe confirms them.
+
 ## Ads under an ad set (`ads.go`, decision D7 first step)
 
 `ListAdSetAds(ctx, adSetID, campaignID, accountID, window)` is read-only: `GET /{ad_set}/ads`
