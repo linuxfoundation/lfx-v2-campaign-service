@@ -296,7 +296,7 @@ func TestMicrosoftNegatives_DispatchAttachesToTheCreatedCampaign(t *testing.T) {
 	}
 }
 
-// A retry that reuses the campaign gets 4335 for each negative already there: ALREADY_PRESENT,
+// A dispatch that reuses a campaign by name gets 4335 for each negative already there: ALREADY_PRESENT,
 // not a failure, so the campaign is not degraded.
 func TestMicrosoftNegatives_AlreadyPresentIsNotDegraded(t *testing.T) {
 	t.Setenv(constants.EnvMicrosoftCreateNegativeKeywordsEnabled, "true")
@@ -346,6 +346,9 @@ func TestMicrosoftNegatives_ShortfallDegrades(t *testing.T) {
 				t.Errorf("campaign = %q status %q, want 321 created_degraded", camp.PlatformCampaignID, camp.Status)
 			}
 			blob := decodeMSNegResult(t, camp)
+			if !strings.Contains(strings.Join(blob.Steps, "\n"), "add-negative-keywords") {
+				t.Errorf("a shortfall step must point at add-negative-keywords, got:\n%s", strings.Join(blob.Steps, "\n"))
+			}
 			if !strings.Contains(strings.Join(blob.Steps, "\n"), tc.wantStep) {
 				t.Errorf("steps must record %q, got:\n%s", tc.wantStep, strings.Join(blob.Steps, "\n"))
 			}

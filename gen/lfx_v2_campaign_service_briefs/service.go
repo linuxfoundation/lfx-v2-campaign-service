@@ -1205,8 +1205,12 @@ type CampaignCreateInput struct {
 	// type) pair twice. Each keyword's outcome (APPLIED, ALREADY_PRESENT, FAILED
 	// or UNCONFIRMED) is recorded in the campaign result as negativeKeywords; a
 	// FAILED or UNCONFIRMED keyword, or a failed call, leaves the campaign
-	// created_degraded with a step naming it and never fails the job. A retry that
-	// reuses the campaign re-sends the list and gets ALREADY_PRESENT. OFF unless
+	// created_degraded with a step naming it and never fails the job. Repeating
+	// the create does not re-attach them, because a created or created_degraded
+	// campaign is returned without another dispatch: fix a shortfall with
+	// add-negative-keywords. Only a dispatch that reuses an existing campaign by
+	// name (one whose earlier attempt was never confirmed) re-sends the list, and
+	// gets ALREADY_PRESENT for the ones already there. OFF unless
 	// MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is exactly "true" on the
 	// deployment. A rule breach, a value that is not an array of {text, matchType}
 	// objects (null reads as absent), or a non-empty list while the flag is off,

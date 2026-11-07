@@ -15,7 +15,10 @@ created. An LF event Search campaign needs them from the first impression ("jobs
   Dispatch re-checks before any Microsoft call.
 - Applied only to a confirmed campaign. Outcomes are recorded positionally on the result
   (`negativeKeywords`). A FAILED or UNCONFIRMED keyword, or a failed call, degrades the campaign
-  (`created_degraded`) with a step; it never fails the job. A retry gets `ALREADY_PRESENT`.
+  (`created_degraded`) with a step pointing at `add-negative-keywords`; it never fails the job.
+  Repeating the create does not retry them (a created or degraded campaign is returned as it is);
+  only a dispatch that reuses an unconfirmed campaign by name re-sends them, and gets
+  `ALREADY_PRESENT` for the ones already there.
 - `NegativeKeywordOutcome` gained camelCase JSON tags for that record.
 - Default-off deployment flag `MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED`; the chart sets
   `"false"`. Not role-gated: a negative keyword names no account resource.

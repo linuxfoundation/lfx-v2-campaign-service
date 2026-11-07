@@ -129,8 +129,14 @@ func checkMicrosoftNegativeKeywordsShape(config json.RawMessage) error {
 // applyMicrosoftNegativeKeywords attaches the validated negatives to the confirmed campaign in
 // result, recording the positional outcomes and a Steps entry on result. It reports whether the
 // campaign is DEGRADED: a requested negative that is not, or may not be, on the campaign. A nil
-// list is a no-op. A retry that reuses the campaign re-sends the list; Microsoft answers each
-// one already there with 4335, which the client reports as ALREADY_PRESENT.
+// list is a no-op.
+//
+// A degraded campaign is NOT re-dispatched: the orchestrator returns a created or
+// created_degraded row as it is, so this never runs twice for one confirmed campaign, and the
+// shortfall steps point at add-negative-keywords. It runs again only when a later dispatch
+// reuses an existing campaign by name (an earlier attempt that was never confirmed); Microsoft
+// then answers each negative already there with 4335, which the client reports as
+// ALREADY_PRESENT.
 func applyMicrosoftNegativeKeywords(ctx context.Context, client *microsoft.Client, result *microsoft.CampaignResult, negatives []microsoft.NegativeKeyword) bool {
 	if len(negatives) == 0 {
 		return false
@@ -138,10 +144,10 @@ func applyMicrosoftNegativeKeywords(ctx context.Context, client *microsoft.Clien
 	outcomes, err := client.AddCampaignNegativeKeywords(ctx, result.CampaignID, negatives)
 	if err != nil {
 		if microsoft.IsOutcomeUnconfirmed(err) {
-			result.Steps = append(result.Steps, "Negative keywords UNCONFIRMED (they may be attached — verify in Microsoft Advertising before re-adding): "+err.Error())
+			result.Steps = append(result.Steps, "Negative keywords UNCONFIRMED (they may be attached — verify in Microsoft Advertising, then add any missing with add-negative-keywords): "+err.Error())
 			slog.WarnContext(ctx, "microsoft create-time negative keywords unconfirmed", "campaign_id", result.CampaignID, "error", err)
 		} else {
-			result.Steps = append(result.Steps, "Negative keywords NOT attached: "+err.Error())
+			result.Steps = append(result.Steps, "Negative keywords NOT attached (add them with add-negative-keywords): "+err.Error())
 			slog.WarnContext(ctx, "microsoft create-time negative keywords not attached", "campaign_id", result.CampaignID, "error", err)
 		}
 		return true
@@ -162,6 +168,7 @@ func applyMicrosoftNegativeKeywords(ctx context.Context, client *microsoft.Clien
 	}
 	result.Steps = append(result.Steps, fmt.Sprintf("Negative keywords: %d attached, %d already present, %d failed, %d unconfirmed", applied, present, failed, unconfirmed))
 	if failed > 0 || unconfirmed > 0 {
+		result.Steps = append(result.Steps, "Negative keywords not all attached: add the FAILED ones (and any UNCONFIRMED ones missing in Microsoft Advertising) with add-negative-keywords; repeating the create does not retry them")
 		slog.WarnContext(ctx, "microsoft create-time negative keywords partly applied", "campaign_id", result.CampaignID,
 			"failed", failed, "unconfirmed", unconfirmed)
 		return true

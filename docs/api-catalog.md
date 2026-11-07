@@ -773,8 +773,14 @@ negativeKeywords?: [{text, matchType}]
                                   recorded positionally in the result as negativeKeywords. A
                                   FAILED or UNCONFIRMED keyword, or a failed call, leaves the
                                   campaign created_degraded with a step ("NOT attached" or
-                                  "UNCONFIRMED"); it never fails the job. A retry that reuses the
-                                  campaign gets ALREADY_PRESENT. OFF unless
+                                  "UNCONFIRMED"); it never fails the job. Repeating the create does
+                                  NOT re-attach them: a created or created_degraded campaign is
+                                  returned as it is, without another dispatch, so fix a shortfall
+                                  with add-negative-keywords (or in Microsoft Advertising). Only a
+                                  dispatch that reuses an existing campaign by name — one whose
+                                  earlier attempt was never confirmed — re-sends the list, and
+                                  Microsoft then reports each one already there as
+                                  ALREADY_PRESENT. OFF unless
                                   MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is exactly "true". A
                                   rule breach, a value that is not an array of {text, matchType}
                                   objects (null reads as absent), or a non-empty list while the

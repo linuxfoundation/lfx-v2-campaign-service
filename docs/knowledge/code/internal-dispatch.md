@@ -4620,9 +4620,12 @@ dispatch just created, through the client call the lever above makes
   `applyMicrosoftNegativeKeywords` records the positional outcomes on
   `CampaignResult.NegativeKeywords` and a count step. Any FAILED or UNCONFIRMED keyword, or a
   failed call ("NOT attached" / "UNCONFIRMED", status-only error text), degrades the campaign to
-  `created_degraded`; it never fails the job, for the reason `attachMicrosoftImage` gives. A retry
-  that reuses the campaign re-sends the list and gets `ALREADY_PRESENT` (4335), which is not a
-  shortfall.
+  `created_degraded`; it never fails the job, for the reason `attachMicrosoftImage` gives.
+  Repeating the create does not re-run it: the orchestrator returns a `created` or
+  `created_degraded` campaign as it is, so a shortfall is fixed with `add-negative-keywords`
+  (the steps say so). Only a dispatch that reuses a campaign by name — one whose earlier
+  attempt was never confirmed — re-sends the list, and gets `ALREADY_PRESENT` (4335) for the
+  ones already there, which is not a shortfall.
 - **Snapshot.** Dispatch replaces the list with the validated one before the snapshot is built,
   so it records what was sent (`jobs`/`Phrase`, not `  jobs `/`PHRASE`). That text cannot carry a
   link (no `:` or `/` passes validation), so it needs no `sanitizeSnapshotText`.
