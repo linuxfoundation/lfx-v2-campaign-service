@@ -15,6 +15,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/textfold"
 )
@@ -291,8 +292,10 @@ func ValidateNegativeKeywords(in []NegativeKeyword) ([]NegativeKeyword, error) {
 		}
 		matchType, ok := canonicalMatchType(nk.MatchType)
 		if !ok || matchType == MatchTypeBroad {
-			return nil, fmt.Errorf("microsoft-ads: negative keyword %d has unsupported match type %q (want %s or %s)",
-				i, truncate(nk.MatchType, maxErrorBodyChars), MatchTypeExact, MatchTypePhrase)
+			// domain.CallerValue, not %q: this sentence reaches a persisted job error verbatim on the
+			// create path (#563), and a pasted URL or token in matchType must not ride along.
+			return nil, fmt.Errorf("microsoft-ads: negative keyword %d has unsupported match type %s (want %s or %s)",
+				i, domain.CallerValue(nk.MatchType), MatchTypeExact, MatchTypePhrase)
 		}
 		key := matchType + "\x00" + textfold.Key(text)
 		if _, dup := seen[key]; dup {

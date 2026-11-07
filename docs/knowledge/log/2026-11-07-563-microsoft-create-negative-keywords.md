@@ -20,6 +20,9 @@ created. An LF event Search campaign needs them from the first impression ("jobs
   only a dispatch that reuses an unconfirmed campaign by name re-sends them, and gets
   `ALREADY_PRESENT` for the ones already there.
 - `NegativeKeywordOutcome` gained camelCase JSON tags for that record.
+- `ValidateNegativeKeywords` now renders an unsupported match type through `domain.CallerValue`
+  instead of `%q`, because its sentence reaches a persisted job error verbatim; this also applies
+  to the `add-negative-keywords` lever.
 - Default-off deployment flag `MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED`; the chart sets
   `"false"`. Not role-gated: a negative keyword names no account resource.
 

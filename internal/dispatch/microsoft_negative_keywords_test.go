@@ -178,6 +178,7 @@ func TestMicrosoftNegatives_PreflightRules(t *testing.T) {
 		{"not an array", string(msNegConfig(`,"negativeKeywords":"jobs"`)), "must be an array"},
 		{"array of strings", string(msNegConfig(`,"negativeKeywords":["jobs"]`)), "must be an array"},
 		{"case-variant key", string(msNegConfig(`,"NegativeKeywords":{"text":"jobs"}`)), "must be an array"},
+		{"match type value withheld", string(msNegConfig(`,"negativeKeywords":[{"text":"jobs","matchType":"https://x.test/reset?token=SECRET-VALUE"}]`)), "(value withheld)"},
 		{"unrelated decode error", `{"microsoftConfig":{"budget":"bad","negativeKeywords":[{"text":"jobs","matchType":"Broad"}]}}`, "unsupported match type"},
 	}
 	for _, tc := range cases {
@@ -187,6 +188,9 @@ func TestMicrosoftNegatives_PreflightRules(t *testing.T) {
 			requireConfigInvalid(t, err, "microsoftConfig.negativeKeywords: ")
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("refusal %q does not contain %q", err.Error(), tc.want)
+			}
+			if strings.Contains(err.Error(), "SECRET-VALUE") {
+				t.Errorf("refusal must not echo a caller value that could carry a secret: %v", err)
 			}
 			if strings.Contains(err.Error(), "microsoft-ads:") {
 				t.Errorf("refusal must not carry the client's prefix: %v", err)
