@@ -307,8 +307,9 @@ func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ mode
 	if _, err := linkedinBidPlan(cfg); err != nil {
 		return err
 	}
-	// linkedInConfig.targeting (#552) is promised as a synchronous 400 too. A targeting that did
-	// not decode is left nil here, and Dispatch's own decode fails the job on the same type.
+	// linkedInConfig.targeting (#552) is promised as a synchronous 400 too. checkTargetingShape
+	// refuses a targeting whose JSON shape is wrong; the best-effort decode above would otherwise
+	// leave it nil or partial.
 	if err := checkTargetingShape(config); err != nil {
 		return err
 	}
