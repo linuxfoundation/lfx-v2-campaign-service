@@ -113,9 +113,11 @@ type Service interface {
 	// supply imageUrl'): 400 with that message. A redditConfig.excludedSubreddits
 	// or excludedGeoTargets that breaks its rules, or is sent while
 	// REDDIT_TARGETING_EXCLUSIONS_ENABLED is off, is also a synchronous 400 (see
-	// the config attribute). So is a microsoftConfig.negativeKeywords list that
-	// breaks its rules or is sent while MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED
-	// is off (see the config attribute). GOOGLE ADS SHARED-ACCOUNT INPUTS: a
+	// the config attribute). So is a microsoftConfig.sitelinks or callouts list
+	// that breaks its rules, or is sent while MICROSOFT_AD_EXTENSIONS_ENABLED is
+	// off (#563). So is a microsoftConfig.negativeKeywords list that breaks its
+	// rules or is sent while MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is off
+	// (see the config attribute). GOOGLE ADS SHARED-ACCOUNT INPUTS: a
 	// googleAdsConfig that sets any input naming an existing audience, user list,
 	// custom segment, shared negative keyword list or conversion action on the
 	// Google Ads account (demandGenAudience or an audience on any

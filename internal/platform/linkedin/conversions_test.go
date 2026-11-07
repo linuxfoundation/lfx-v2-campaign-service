@@ -310,6 +310,16 @@ func TestAssociateConversions_RefusesAMalformedCampaignID(t *testing.T) {
 			t.Errorf("%q: associated %v failed %v steps %v", bad, assoc, failed, steps)
 		}
 	}
+	// A reused campaign keeps its own status, which may be ACTIVE, so its step must not say
+	// "before activating": it says the campaign may already be serving without the conversion.
+	_, _, steps := c.associateConversions(context.Background(), "abc", []string{"104012"}, true)
+	if len(steps) != 1 || !strings.Contains(steps[0], "may already be serving") || strings.Contains(steps[0], "before activating") {
+		t.Errorf("reused malformed-id step = %v, want the reused advice", steps)
+	}
+	_, _, steps = c.associateConversions(context.Background(), "abc", []string{"104012"}, false)
+	if len(steps) != 1 || !strings.Contains(steps[0], "before activating") {
+		t.Errorf("created malformed-id step = %v, want the before-activating advice", steps)
+	}
 	if n := calls.Load(); n != 0 {
 		t.Errorf("%d requests for a malformed campaign id", n)
 	}

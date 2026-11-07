@@ -92,10 +92,14 @@ func (c *Client) associateConversions(ctx context.Context, campaignID string, id
 	// only refuses an empty one. It is checked here before it goes into the compound key, so a
 	// malformed upstream id cannot turn part of the key into query text: every id is then
 	// reported failed, with no request sent.
+	advice := "associate it in Campaign Manager before activating"
+	if reused {
+		advice = "associate it in Campaign Manager; this campaign was reused and may already be serving without it"
+	}
 	if ValidateCampaignID(campaignID) != nil {
 		for _, id := range ids {
 			failed = append(failed, id)
-			steps = append(steps, fmt.Sprintf("Conversion %s NOT associated: the campaign id LinkedIn returned is not a usable id; associate it in Campaign Manager before activating", id))
+			steps = append(steps, fmt.Sprintf("Conversion %s NOT associated: the campaign id LinkedIn returned is not a usable id; %s", id, advice))
 		}
 		return nil, failed, steps
 	}
@@ -105,10 +109,6 @@ func (c *Client) associateConversions(ctx context.Context, campaignID string, id
 			outcome := "FAILED"
 			if IsOutcomeUnconfirmed(err) {
 				outcome = "UNCONFIRMED"
-			}
-			advice := "associate it in Campaign Manager before activating"
-			if reused {
-				advice = "associate it in Campaign Manager; this campaign was reused and may already be serving without it"
 			}
 			steps = append(steps, fmt.Sprintf("Conversion %s association with campaign %s %s (%s); %s", id, campaignID, outcome, associationFailureClass(err), advice))
 			continue
