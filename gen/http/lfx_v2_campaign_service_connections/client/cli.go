@@ -1990,6 +1990,30 @@ func BuildListMetaCustomAudiencesPayload(lfxV2CampaignServiceConnectionsListMeta
 	return v, nil
 }
 
+// BuildListRedditAdsCustomAudiencesPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-reddit-ads-custom-audiences
+// endpoint from CLI flags.
+func BuildListRedditAdsCustomAudiencesPayload(lfxV2CampaignServiceConnectionsListRedditAdsCustomAudiencesProjectID *string, lfxV2CampaignServiceConnectionsListRedditAdsCustomAudiencesBearerToken *string) (*lfxv2campaignserviceconnections.ListRedditAdsCustomAudiencesPayload, error) {
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsListRedditAdsCustomAudiencesProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsListRedditAdsCustomAudiencesProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListRedditAdsCustomAudiencesBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsListRedditAdsCustomAudiencesBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListRedditAdsCustomAudiencesPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildGetMetaAdsAudiencePayload builds the payload for the
 // lfx-v2-campaign-service-connections get-meta-ads-audience endpoint from CLI
 // flags.

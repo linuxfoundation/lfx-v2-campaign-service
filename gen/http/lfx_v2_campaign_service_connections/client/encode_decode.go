@@ -10399,6 +10399,206 @@ func DecodeListMetaCustomAudiencesResponse(decoder func(*http.Response) goahttp.
 	}
 }
 
+// BuildListRedditAdsCustomAudiencesRequest instantiates a HTTP request object
+// with method and path set to call the "lfx-v2-campaign-service-connections"
+// service "list-reddit-ads-custom-audiences" endpoint
+func (c *Client) BuildListRedditAdsCustomAudiencesRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.ListRedditAdsCustomAudiencesPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", "*lfxv2campaignserviceconnections.ListRedditAdsCustomAudiencesPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ListRedditAdsCustomAudiencesLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeListRedditAdsCustomAudiencesRequest returns an encoder for requests
+// sent to the lfx-v2-campaign-service-connections
+// list-reddit-ads-custom-audiences server.
+func EncodeListRedditAdsCustomAudiencesRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.ListRedditAdsCustomAudiencesPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", "*lfxv2campaignserviceconnections.ListRedditAdsCustomAudiencesPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		return nil
+	}
+}
+
+// DecodeListRedditAdsCustomAudiencesResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// list-reddit-ads-custom-audiences endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+// DecodeListRedditAdsCustomAudiencesResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeListRedditAdsCustomAudiencesResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ListRedditAdsCustomAudiencesResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
+			}
+			err = ValidateListRedditAdsCustomAudiencesResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
+			}
+			res := NewListRedditAdsCustomAudiencesRedditAdsCustomAudiencesOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ListRedditAdsCustomAudiencesBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
+			}
+			err = ValidateListRedditAdsCustomAudiencesBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
+			}
+			return nil, NewListRedditAdsCustomAudiencesBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ListRedditAdsCustomAudiencesServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
+			}
+			err = ValidateListRedditAdsCustomAudiencesServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
+			}
+			return nil, NewListRedditAdsCustomAudiencesServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ListRedditAdsCustomAudiencesInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
+			}
+			err = ValidateListRedditAdsCustomAudiencesInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
+			}
+			return nil, NewListRedditAdsCustomAudiencesInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ListRedditAdsCustomAudiencesNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
+			}
+			err = ValidateListRedditAdsCustomAudiencesNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
+			}
+			return nil, NewListRedditAdsCustomAudiencesNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ListRedditAdsCustomAudiencesPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
+			}
+			err = ValidateListRedditAdsCustomAudiencesPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
+			}
+			return nil, NewListRedditAdsCustomAudiencesPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ListRedditAdsCustomAudiencesUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
+			}
+			err = ValidateListRedditAdsCustomAudiencesUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
+			}
+			return nil, NewListRedditAdsCustomAudiencesUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildGetMetaAdsAudienceRequest instantiates a HTTP request object with
 // method and path set to call the "lfx-v2-campaign-service-connections"
 // service "get-meta-ads-audience" endpoint
@@ -16761,6 +16961,23 @@ func unmarshalMetaCustomAudienceResponseBodyToLfxv2campaignserviceconnectionsMet
 		Description:                v.Description,
 		ApproximateCountLowerBound: v.ApproximateCountLowerBound,
 		ApproximateCountUpperBound: v.ApproximateCountUpperBound,
+	}
+
+	return res
+}
+
+// unmarshalRedditAdsCustomAudienceResponseBodyToLfxv2campaignserviceconnectionsRedditAdsCustomAudience
+// builds a value of type
+// *lfxv2campaignserviceconnections.RedditAdsCustomAudience from a value of
+// type *RedditAdsCustomAudienceResponseBody.
+func unmarshalRedditAdsCustomAudienceResponseBodyToLfxv2campaignserviceconnectionsRedditAdsCustomAudience(v *RedditAdsCustomAudienceResponseBody) *lfxv2campaignserviceconnections.RedditAdsCustomAudience {
+	res := &lfxv2campaignserviceconnections.RedditAdsCustomAudience{
+		ID:        *v.ID,
+		Name:      *v.Name,
+		Type:      *v.Type,
+		Status:    *v.Status,
+		SizeLower: v.SizeLower,
+		SizeUpper: v.SizeUpper,
 	}
 
 	return res

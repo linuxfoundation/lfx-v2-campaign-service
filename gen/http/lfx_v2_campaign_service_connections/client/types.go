@@ -905,6 +905,22 @@ type ListMetaCustomAudiencesResponseBody struct {
 	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
 }
 
+// ListRedditAdsCustomAudiencesResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-reddit-ads-custom-audiences" endpoint HTTP response body.
+type ListRedditAdsCustomAudiencesResponseBody struct {
+	// The Reddit ad account the audiences were read from: the account a Reddit
+	// create for this project uses
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The account's custom audiences, sorted by name (ignoring case), then id
+	Audiences []*RedditAdsCustomAudienceResponseBody `form:"audiences,omitempty" json:"audiences,omitempty" xml:"audiences,omitempty"`
+	// How many audiences are in `audiences`
+	AudienceCount *int `form:"audience_count,omitempty" json:"audience_count,omitempty" xml:"audience_count,omitempty"`
+	// True when Reddit still had more pages after the 10 this read follows; the
+	// list is then incomplete
+	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
+}
+
 // GetMetaAdsAudienceResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body.
@@ -4544,6 +4560,72 @@ type ListMetaCustomAudiencesUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListRedditAdsCustomAudiencesBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-reddit-ads-custom-audiences" endpoint HTTP response body for the
+// "BadRequest" error.
+type ListRedditAdsCustomAudiencesBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListRedditAdsCustomAudiencesServiceUnavailableResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "list-reddit-ads-custom-audiences" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type ListRedditAdsCustomAudiencesServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListRedditAdsCustomAudiencesInternalServerErrorResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "list-reddit-ads-custom-audiences" endpoint HTTP response body for the
+// "InternalServerError" error.
+type ListRedditAdsCustomAudiencesInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListRedditAdsCustomAudiencesNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-reddit-ads-custom-audiences" endpoint HTTP response body for the
+// "NotFound" error.
+type ListRedditAdsCustomAudiencesNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListRedditAdsCustomAudiencesPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-reddit-ads-custom-audiences" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type ListRedditAdsCustomAudiencesPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListRedditAdsCustomAudiencesUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-reddit-ads-custom-audiences" endpoint HTTP response body for the
+// "Unauthorized" error.
+type ListRedditAdsCustomAudiencesUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetMetaAdsAudienceBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -6619,6 +6701,29 @@ type MetaCustomAudienceResponseBody struct {
 	ApproximateCountLowerBound *int64 `form:"approximate_count_lower_bound,omitempty" json:"approximate_count_lower_bound,omitempty" xml:"approximate_count_lower_bound,omitempty"`
 	// Meta's estimated audience size, upper bound. Absent when Meta reported none.
 	ApproximateCountUpperBound *int64 `form:"approximate_count_upper_bound,omitempty" json:"approximate_count_upper_bound,omitempty" xml:"approximate_count_upper_bound,omitempty"`
+}
+
+// RedditAdsCustomAudienceResponseBody is used to define fields on response
+// body types.
+type RedditAdsCustomAudienceResponseBody struct {
+	// The audience id, in exactly the form redditConfig.customAudienceIds and
+	// excludedCustomAudienceIds accept. Send it as-is.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// The audience's display name. Not an identifier; may be empty.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Reddit's audience type, verbatim (CUSTOMER_LIST, LOOKALIKE,
+	// ENGAGEMENT_RETARGETING, PIXEL_RETARGETING, THIRD_PARTY or IN_MARKET); may be
+	// empty.
+	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
+	// Reddit's processing status, verbatim (VALID, SUCCESSFUL, PENDING, EXPIRED,
+	// NOT_ENOUGH_MATCHES_ERROR and so on); may be empty. Every audience is listed
+	// whatever its status, so a picker can show why one is not usable yet.
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Reddit's lower bound on the matched users. Absent when Reddit sent none,
+	// which is not a size of 0.
+	SizeLower *int64 `form:"size_lower,omitempty" json:"size_lower,omitempty" xml:"size_lower,omitempty"`
+	// Reddit's upper bound on the matched users. Absent when Reddit sent none.
+	SizeUpper *int64 `form:"size_upper,omitempty" json:"size_upper,omitempty" xml:"size_upper,omitempty"`
 }
 
 // MetaAdsAudienceBucketResponseBody is used to define fields on response body
@@ -12267,6 +12372,100 @@ func NewListMetaCustomAudiencesUnauthorized(body *ListMetaCustomAudiencesUnautho
 	return v
 }
 
+// NewListRedditAdsCustomAudiencesRedditAdsCustomAudiencesOK builds a
+// "lfx-v2-campaign-service-connections" service
+// "list-reddit-ads-custom-audiences" endpoint result from a HTTP "OK" response.
+func NewListRedditAdsCustomAudiencesRedditAdsCustomAudiencesOK(body *ListRedditAdsCustomAudiencesResponseBody) *lfxv2campaignserviceconnections.RedditAdsCustomAudiences {
+	v := &lfxv2campaignserviceconnections.RedditAdsCustomAudiences{
+		AccountID:     *body.AccountID,
+		AudienceCount: *body.AudienceCount,
+		Truncated:     *body.Truncated,
+	}
+	v.Audiences = make([]*lfxv2campaignserviceconnections.RedditAdsCustomAudience, len(body.Audiences))
+	for i, val := range body.Audiences {
+		if val == nil {
+			v.Audiences[i] = nil
+			continue
+		}
+		v.Audiences[i] = unmarshalRedditAdsCustomAudienceResponseBodyToLfxv2campaignserviceconnectionsRedditAdsCustomAudience(val)
+	}
+
+	return v
+}
+
+// NewListRedditAdsCustomAudiencesBadRequest builds a
+// lfx-v2-campaign-service-connections service list-reddit-ads-custom-audiences
+// endpoint BadRequest error.
+func NewListRedditAdsCustomAudiencesBadRequest(body *ListRedditAdsCustomAudiencesBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListRedditAdsCustomAudiencesServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service list-reddit-ads-custom-audiences
+// endpoint ServiceUnavailable error.
+func NewListRedditAdsCustomAudiencesServiceUnavailable(body *ListRedditAdsCustomAudiencesServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListRedditAdsCustomAudiencesInternalServerError builds a
+// lfx-v2-campaign-service-connections service list-reddit-ads-custom-audiences
+// endpoint InternalServerError error.
+func NewListRedditAdsCustomAudiencesInternalServerError(body *ListRedditAdsCustomAudiencesInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListRedditAdsCustomAudiencesNotFound builds a
+// lfx-v2-campaign-service-connections service list-reddit-ads-custom-audiences
+// endpoint NotFound error.
+func NewListRedditAdsCustomAudiencesNotFound(body *ListRedditAdsCustomAudiencesNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListRedditAdsCustomAudiencesPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service list-reddit-ads-custom-audiences
+// endpoint PayloadTooLarge error.
+func NewListRedditAdsCustomAudiencesPayloadTooLarge(body *ListRedditAdsCustomAudiencesPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListRedditAdsCustomAudiencesUnauthorized builds a
+// lfx-v2-campaign-service-connections service list-reddit-ads-custom-audiences
+// endpoint Unauthorized error.
+func NewListRedditAdsCustomAudiencesUnauthorized(body *ListRedditAdsCustomAudiencesUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetMetaAdsAudienceMetaAdsAudienceOK builds a
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint result from a HTTP "OK" response.
@@ -15955,6 +16154,31 @@ func ValidateListMetaCustomAudiencesResponseBody(body *ListMetaCustomAudiencesRe
 	for _, e := range body.Audiences {
 		if e != nil {
 			if err2 := validateMetaCustomAudienceResponseBody(e, "body.audiences[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateListRedditAdsCustomAudiencesResponseBody runs the validations
+// defined on ListRedditAdsCustomAudiencesResponseBody
+func ValidateListRedditAdsCustomAudiencesResponseBody(body *ListRedditAdsCustomAudiencesResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.Audiences == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("audiences", "body"))
+	}
+	if body.AudienceCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("audience_count", "body"))
+	}
+	if body.Truncated == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("truncated", "body"))
+	}
+	for _, e := range body.Audiences {
+		if e != nil {
+			if err2 := validateRedditAdsCustomAudienceResponseBody(e, "body.audiences[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -20664,6 +20888,81 @@ func ValidateListMetaCustomAudiencesUnauthorizedResponseBody(body *ListMetaCusto
 	return
 }
 
+// ValidateListRedditAdsCustomAudiencesBadRequestResponseBody runs the
+// validations defined on ListRedditAdsCustomAudiencesBadRequestResponseBody
+func ValidateListRedditAdsCustomAudiencesBadRequestResponseBody(body *ListRedditAdsCustomAudiencesBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListRedditAdsCustomAudiencesServiceUnavailableResponseBody runs the
+// validations defined on
+// ListRedditAdsCustomAudiencesServiceUnavailableResponseBody
+func ValidateListRedditAdsCustomAudiencesServiceUnavailableResponseBody(body *ListRedditAdsCustomAudiencesServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListRedditAdsCustomAudiencesInternalServerErrorResponseBody runs the
+// validations defined on
+// ListRedditAdsCustomAudiencesInternalServerErrorResponseBody
+func ValidateListRedditAdsCustomAudiencesInternalServerErrorResponseBody(body *ListRedditAdsCustomAudiencesInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListRedditAdsCustomAudiencesNotFoundResponseBody runs the
+// validations defined on ListRedditAdsCustomAudiencesNotFoundResponseBody
+func ValidateListRedditAdsCustomAudiencesNotFoundResponseBody(body *ListRedditAdsCustomAudiencesNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListRedditAdsCustomAudiencesPayloadTooLargeResponseBody runs the
+// validations defined on
+// ListRedditAdsCustomAudiencesPayloadTooLargeResponseBody
+func ValidateListRedditAdsCustomAudiencesPayloadTooLargeResponseBody(body *ListRedditAdsCustomAudiencesPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListRedditAdsCustomAudiencesUnauthorizedResponseBody runs the
+// validations defined on ListRedditAdsCustomAudiencesUnauthorizedResponseBody
+func ValidateListRedditAdsCustomAudiencesUnauthorizedResponseBody(body *ListRedditAdsCustomAudiencesUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetMetaAdsAudienceBadRequestResponseBody runs the validations
 // defined on GetMetaAdsAudienceBadRequestResponseBody
 func ValidateGetMetaAdsAudienceBadRequestResponseBody(body *GetMetaAdsAudienceBadRequestResponseBody) (err error) {
@@ -23339,6 +23638,49 @@ func validateMetaCustomAudienceResponseBody(body *MetaCustomAudienceResponseBody
 	}
 	if body.Subtype == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("subtype", path))
+	}
+	return
+}
+
+// ValidateRedditAdsCustomAudienceResponseBody runs the validations defined on
+// reddit-ads-custom-audience
+func ValidateRedditAdsCustomAudienceResponseBody(body *RedditAdsCustomAudienceResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	if body.ID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.id", *body.ID, "^[A-Za-z0-9_]{1,64}$"))
+	}
+	return
+}
+
+// validateRedditAdsCustomAudienceResponseBody checks
+// reddit-ads-custom-audience and reports errors using the path supplied by its
+// caller
+func validateRedditAdsCustomAudienceResponseBody(body *RedditAdsCustomAudienceResponseBody, path string) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", path))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", path))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", path))
+	}
+	if body.ID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".id", *body.ID, "^[A-Za-z0-9_]{1,64}$"))
 	}
 	return
 }

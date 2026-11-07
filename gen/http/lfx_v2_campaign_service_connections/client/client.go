@@ -218,6 +218,10 @@ type Client struct {
 	// list-meta-custom-audiences endpoint.
 	ListMetaCustomAudiencesDoer goahttp.Doer
 
+	// ListRedditAdsCustomAudiences Doer is the HTTP client used to make requests
+	// to the list-reddit-ads-custom-audiences endpoint.
+	ListRedditAdsCustomAudiencesDoer goahttp.Doer
+
 	// GetMetaAdsAudience Doer is the HTTP client used to make requests to the
 	// get-meta-ads-audience endpoint.
 	GetMetaAdsAudienceDoer goahttp.Doer
@@ -401,6 +405,7 @@ func NewClient(
 		ListGoogleAdsConversionActionsDoer: doer,
 		ListGoogleAdsAudiencesDoer:         doer,
 		ListMetaCustomAudiencesDoer:        doer,
+		ListRedditAdsCustomAudiencesDoer:   doer,
 		GetMetaAdsAudienceDoer:             doer,
 		GetTwitterAdsAudienceDoer:          doer,
 		GetLinkedinAdsAudienceDoer:         doer,
@@ -1639,6 +1644,31 @@ func (c *Client) ListMetaCustomAudiences() goa.Endpoint {
 		resp, err := c.ListMetaCustomAudiencesDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-meta-custom-audiences", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ListRedditAdsCustomAudiences returns an endpoint that makes HTTP requests to
+// the lfx-v2-campaign-service-connections service
+// list-reddit-ads-custom-audiences server.
+func (c *Client) ListRedditAdsCustomAudiences() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeListRedditAdsCustomAudiencesRequest(c.encoder)
+		decodeResponse = DecodeListRedditAdsCustomAudiencesResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildListRedditAdsCustomAudiencesRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ListRedditAdsCustomAudiencesDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
 		}
 		return decodeResponse(resp)
 	}
