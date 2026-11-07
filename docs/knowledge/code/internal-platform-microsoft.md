@@ -1447,6 +1447,27 @@ is not mistaken for an ambiguous mutation. `CampaignResult.ImageMediaID`/`ImageA
 are set by the dispatcher, never by `CreateCampaign`. See
 [Microsoft Creative Image Assets](../architecture/microsoft-creative-assets.md).
 
+## Campaign sitelink and callout extensions (#563)
+
+`AttachCampaignTextExtensions` (`text_extensions.go`) attaches caller sitelinks and callouts to a
+campaign this client created, as campaign-level `SitelinkAdExtension` and `CalloutAdExtension`
+entries. `ValidateTextExtensions` (also run by the dispatcher's preflight and Dispatch, behind
+`MICROSOFT_AD_EXTENSIONS_ENABLED`) holds the v13 limits: sitelinks 1–20, text 25 with a
+description and 35 without, both descriptions or neither at 35 each, an absolute http/https
+`FinalUrls` entry of at most 2,048 characters; callouts 2–20 at 25 each. Any double-width
+character switches a field to the reduced limits (11/15, 15, 12), applied conservatively as the
+RSA caps are. Every refusal is a `*TextExtensionError` naming the `microsoftConfig` field.
+
+Per type: one `AdExtensionsAssociations/Query` filtered to that type (`findCampaignExtension`,
+the image lookup generalised by type) — an extension of the type already on the campaign skips
+the type, and a failed lookup adds nothing of it. Then, per extension, one `AdExtensions` add
+(classified by `adExtensionIdentity`) and one `AdExtensionsAssociations/Set`
+(`associateCampaignExtension`, now shared with the image attach). One item per call keeps every
+response on the single-item Index-0 classifiers. A failure never stops the run: each extension
+is counted `Failed` or `Unconfirmed` and named in `Steps`, and `Degraded()` tells the dispatcher
+to mark the campaign `created_degraded`. `CampaignResult.SitelinkAdExtensionIDs` /
+`CalloutAdExtensionIDs` are set by the dispatcher. Not verified live.
+
 ## Create-time campaign bid strategy (`CampaignInput.BiddingScheme`, LFXV2-2665)
 
 `BiddingScheme` sets the CAMPAIGN's `BiddingScheme` (`msBiddingScheme`, `{"Type": ...}`) on the

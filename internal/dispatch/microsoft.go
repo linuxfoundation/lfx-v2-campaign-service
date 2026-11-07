@@ -101,6 +101,12 @@ type microsoftConfig struct {
 	// it and runs until stopped — exactly the behaviour before these fields existed.
 	StartDate string `json:"startDate"` // YYYY-MM-DD
 	EndDate   string `json:"endDate"`   // YYYY-MM-DD
+	// Sitelinks and Callouts are OPTIONAL campaign-level SitelinkAdExtension and
+	// CalloutAdExtension entries (#563), behind MICROSOFT_AD_EXTENSIONS_ENABLED
+	// (microsoft_text_extensions.go). Validated before anything is created; attached only to a
+	// confirmed campaign, and a failure degrades the campaign rather than failing the job.
+	Sitelinks []microsoftSitelinkConfig `json:"sitelinks"`
+	Callouts  []string                  `json:"callouts"`
 }
 
 // MicrosoftDispatcher creates Microsoft Advertising (Bing) campaigns for the orchestrator.
@@ -205,6 +211,11 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 			plan.stamp(camp)
 		}
 	}()
+	// Sitelinks and callouts (#563): gated and validated BEFORE any upstream call (PreflightCreate
+	// has normally refused a bad or gated one already, as a 400).
+	if err := checkMicrosoftTextExtensions(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -298,6 +309,9 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// retain the claim for a reconcile that cannot re-run this step (see attachMicrosoftImage).
 	bidApplied = result.BidApplied
 	degraded := d.attachMicrosoftImage(ctx, client, result, img)
+	if d.attachMicrosoftTextExtensions(ctx, client, result, cfg) {
+		degraded = true
+	}
 	camp = campaignFromMicrosoft(ctx, result, cfg)
 	if degraded {
 		camp.Status = campaignStatusCreatedDegraded
@@ -315,6 +329,10 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 	if err := checkBiddingShape(config, "microsoftConfig"); err != nil {
 		return err
 	}
+	// So is a wrong-typed sitelinks or callouts (#563).
+	if err := checkMicrosoftTextExtensionsShape(config); err != nil {
+		return err
+	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
 	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
 	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
@@ -323,6 +341,9 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 	var cfg microsoftConfig
 	_ = unmarshalPlatformConfig(config, "microsoftConfig", &cfg)
 	if _, err := microsoftBidPlan(cfg); err != nil {
+		return err
+	}
+	if err := checkMicrosoftTextExtensions(cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -458,6 +479,21 @@ func microsoftSnapshotConfig(cfg microsoftConfig) microsoftConfig {
 			snapshot.Keywords[i].Text = sanitizeSnapshotText(snapshot.Keywords[i].Text)
 		}
 	}
+	// Sitelinks and callouts (#563) are copied before they are reduced, because the caller's
+	// slices share their backing arrays with the config sent to Microsoft. The destination is
+	// reduced as googleAdsConfig.sitelinks' is; the copy is free text like the keywords.
+	if cfg.Sitelinks != nil {
+		snapshot.Sitelinks = make([]microsoftSitelinkConfig, len(cfg.Sitelinks))
+		for i, s := range cfg.Sitelinks {
+			snapshot.Sitelinks[i] = microsoftSitelinkConfig{
+				Text:         sanitizeSnapshotText(s.Text),
+				Description1: sanitizeSnapshotText(s.Description1),
+				Description2: sanitizeSnapshotText(s.Description2),
+				FinalURL:     sanitizeSnapshotURL(s.FinalURL),
+			}
+		}
+	}
+	snapshot.Callouts = sanitizeSnapshotTexts(cfg.Callouts)
 	return snapshot
 }
 

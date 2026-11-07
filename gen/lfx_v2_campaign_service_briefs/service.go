@@ -113,9 +113,11 @@ type Service interface {
 	// supply imageUrl'): 400 with that message. A redditConfig.excludedSubreddits
 	// or excludedGeoTargets that breaks its rules, or is sent while
 	// REDDIT_TARGETING_EXCLUSIONS_ENABLED is off, is also a synchronous 400 (see
-	// the config attribute). GOOGLE ADS SHARED-ACCOUNT INPUTS: a googleAdsConfig
-	// that sets any input naming an existing audience, user list, custom segment,
-	// shared negative keyword list or conversion action on the Google Ads account
+	// the config attribute). So is a microsoftConfig.sitelinks or callouts list
+	// that breaks its rules, or is sent while MICROSOFT_AD_EXTENSIONS_ENABLED is
+	// off (#563). GOOGLE ADS SHARED-ACCOUNT INPUTS: a googleAdsConfig that sets
+	// any input naming an existing audience, user list, custom segment, shared
+	// negative keyword list or conversion action on the Google Ads account
 	// (demandGenAudience or an audience on any demandGenAdGroups entry;
 	// audienceSegments, customAudiences, customAffinities or
 	// excludedAudienceSegments, on the campaign or on any displayAdGroups entry;
@@ -1171,7 +1173,27 @@ type CampaignCreateInput struct {
 	// blank or invalid entry, an overlap, a list over its cap, a value that is not
 	// an array of strings (null reads as absent), or either list while the flag is
 	// off, is refused with 400 "invalid campaign config: redditConfig.<field>:
-	// ..." before any job exists.
+	// ..." before any job exists. MICROSOFT SITELINKS AND CALLOUTS (#563):
+	// microsoftConfig takes `sitelinks` ([{text, description1?, description2?,
+	// finalUrl}], 1-20) and `callouts` (strings, 2-20), created after the campaign
+	// is confirmed as SitelinkAdExtension and CalloutAdExtension entries
+	// (AddAdExtensions) and associated with it (SetAdExtensionsAssociations,
+	// Campaign level), one extension per call. A sitelink's text is required, at
+	// most 25 characters when a description is set and 35 otherwise; description1
+	// and description2 are set together or not at all, at most 35 each; finalUrl
+	// is an absolute http or https URL of at most 2,048 characters, sent as given.
+	// A callout is 1-25 characters. Text holding any double-width character (CJK,
+	// emoji) is held to Microsoft's reduced limits: sitelink text 11 with a
+	// description and 15 without, a description 15, a callout 12. Values are
+	// trimmed; a control character, or a repeated sitelink text or callout
+	// (case-insensitive), is refused. A campaign that already has an extension of
+	// a type (a retry that reused it) gets none of that type added. An extension
+	// that is not, or may not be, attached marks the campaign created_degraded
+	// with a step saying which; it never fails the job. Both are OFF unless
+	// MICROSOFT_AD_EXTENSIONS_ENABLED is exactly "true" on the deployment. A rule
+	// breach, a wrong JSON type (null reads as absent), or either list while the
+	// flag is off, is refused with 400 "invalid campaign config:
+	// microsoftConfig.<field>: ..." before any job exists.
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

@@ -246,6 +246,16 @@ openssl rand -base64 32
   off the shared ad account. The chart sets it to `"false"`
   (`app.environment.REDDIT_TARGETING_EXCLUSIONS_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once a live create confirms it.
+- `MICROSOFT_AD_EXTENSIONS_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `microsoftConfig.sitelinks` and `microsoftConfig.callouts`
+  (#563), created at create time as `SitelinkAdExtension` and
+  `CalloutAdExtension` entries associated with the new Search campaign. Only
+  the exact value `true` enables them; anything else fails closed, and a
+  create naming either is refused with a 400 before any job exists. It names
+  no account resource; it keeps a shape no live create has sent off the
+  shared ad account. The chart sets it to `"false"`
+  (`app.environment.MICROSOFT_AD_EXTENSIONS_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once a live create confirms it.
 - `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.demandGenAudience`, one
   existing Google Ads Audience on a Demand Gen ad group (#459). Only the

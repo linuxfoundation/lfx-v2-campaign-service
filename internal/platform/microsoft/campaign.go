@@ -273,10 +273,16 @@ type CampaignResult struct {
 	// MediaID is "" when nothing was uploaded (no image requested, or an extension was
 	// already associated), and either may be set alongside a degraded outcome so a
 	// partially-built extension can be found.
-	ImageMediaID       string   `json:"imageMediaId,omitempty"`
-	ImageAdExtensionID string   `json:"imageAdExtensionId,omitempty"`
-	MicrosoftAdsURL    string   `json:"microsoftAdsUrl"`
-	Steps              []string `json:"steps"`
+	ImageMediaID       string `json:"imageMediaId,omitempty"`
+	ImageAdExtensionID string `json:"imageAdExtensionId,omitempty"`
+	// SitelinkAdExtensionIDs / CalloutAdExtensionIDs are the sitelink and callout extensions
+	// THIS RUN created and associated with the campaign (#563), set by the DISPATCHER after
+	// AttachCampaignTextExtensions. Empty does not mean the campaign has none: a type it
+	// already had is skipped, and the Steps entry says so.
+	SitelinkAdExtensionIDs []string `json:"sitelinkAdExtensionIds,omitempty"`
+	CalloutAdExtensionIDs  []string `json:"calloutAdExtensionIds,omitempty"`
+	MicrosoftAdsURL        string   `json:"microsoftAdsUrl"`
+	Steps                  []string `json:"steps"`
 }
 
 // msCampaign is one Campaign in the POST CampaignManagement/v13/Campaigns body. Only

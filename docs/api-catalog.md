@@ -734,6 +734,32 @@ imageAssetId?: string           — OPTIONAL id of a creative asset uploaded to 
 imageAltText?: string           — OPTIONAL extension AlternativeText, at most 35 characters, no
                                   control characters; defaults to the event name cut to 35. Refused
                                   without imageAssetId.
+sitelinks?: [{text, description1?, description2?, finalUrl}]
+                                — OPTIONAL campaign-level sitelink ad extensions (#563), 1–20, the
+                                  googleAdsConfig.sitelinks keys. text is required: at most 25
+                                  characters when a description is set, else 35. description1 and
+                                  description2 are set together or not at all, at most 35 each.
+                                  finalUrl is an absolute http/https URL of at most 2,048
+                                  characters, sent as given (no UTM is added). Text holding any
+                                  double-width character (CJK, emoji) is held to 11 / 15 (text with
+                                  / without a description) and 15 (description). Trimmed; a control
+                                  character or a repeated text (case-insensitive) is refused.
+callouts?: string[]             — OPTIONAL campaign-level callout ad extensions (#563), 2–20 (one
+                                  callout never serves, so one is refused), each 1–25 characters
+                                  (12 with a double-width character), trimmed, no control
+                                  character, no case-insensitive repeat.
+                                  BOTH are created after the campaign is confirmed, one extension per
+                                  call (AddAdExtensions → SetAdExtensionsAssociations, Campaign
+                                  level), and recorded in the result as sitelinkAdExtensionIds /
+                                  calloutAdExtensionIds. A campaign that already has an extension of
+                                  a type (a retry that reused it) gets none of that type added. An
+                                  extension NOT attached (definite) or UNCONFIRMED (verify before
+                                  re-attaching) leaves the campaign created_degraded with a step
+                                  saying which; the job never fails for it. OFF unless
+                                  MICROSOFT_AD_EXTENSIONS_ENABLED is exactly "true"; a rule breach,
+                                  a wrong JSON type (null reads as absent), or either list while the
+                                  flag is off is a synchronous 400 "invalid campaign config:
+                                  microsoftConfig.<field>: …" before any job exists.
 startDate?: string              — OPTIONAL flight start, YYYY-MM-DD (the `metaConfig` key and
                                   format). Sent as the AD GROUP's StartDate — Microsoft schedules
                                   delivery on the ad group, not the campaign. Must be a real
