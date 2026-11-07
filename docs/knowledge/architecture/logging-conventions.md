@@ -75,8 +75,9 @@ stay together, and an alias is followed.
 - A labelled `break` or `continue` targets the loop or switch it names.
 - A `fallthrough` carries a clause's paths into the next clause.
 - Paths are bounded at 1024. A spread with more fails the guard rather than
-  checking a subset. So does a spread in a function that contains a `goto`,
-  whose jumps are not modelled. The repo has none.
+  checking a subset. So does a spread in a function that contains a `goto`, or
+  that writes `[]any` elements in place (`fields[i] = v`, `copy`, `clear`). The
+  interpreter does not model either, and the repo has neither.
 - A log call inside a closure sees the paths where the closure sits.
 
 Each resulting sequence is resolved in full before it is paired, so a pair split
@@ -93,7 +94,8 @@ passes. A key held in a named constant is checked.
 - A key built at runtime.
 - A key that reaches slog across a function boundary. For example, a wrapper
   `func warn(msg string, args ...any)` that spreads `args...` into slog, or a
-  `[]any` passed in as a parameter. The guard traces a spread only within the
+  `[]any` passed in as a parameter, or a slice passed to a function that
+  rewrites its elements. The guard traces a spread only within the
   enclosing function, where a parameter has no known contents.
 
 The repo has no such logging wrapper today. The one slice that is handed to a

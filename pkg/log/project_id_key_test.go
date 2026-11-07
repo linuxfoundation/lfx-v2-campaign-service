@@ -114,7 +114,7 @@ func TestProjectIDLogKeyIsUniform(t *testing.T) {
 		for _, f := range files {
 			hits, over := logKeys(f, info)
 			if over {
-				t.Errorf("%s: a log call's spread slice cannot be fully traced (more than %d paths, or a goto in its function); simplify how the slice is built",
+				t.Errorf("%s: a log call's spread slice cannot be fully traced (more than %d paths, or a goto or an in-place []any element write in its function); simplify how the slice is built",
 					fset.Position(f.Package).Filename, 1024)
 			}
 			for _, h := range hits {
@@ -407,7 +407,7 @@ func newInfo() *types.Info {
 
 // logKeys returns the distinct constant attribute keys a type-checked file passes to
 // log/slog, in source order, and whether a spread slice could not be fully traced (more
-// paths than maxPaths, or a goto in its function), in which case the keys are incomplete
+// paths than maxPaths, or a goto or in-place []any element write in its function), in which case the keys are incomplete
 // and the caller must fail. A key is read where slog reads one, by argument type:
 //   - in a log call's key/value arguments (from kvStart on), a string argument is a key
 //     and takes two slots, a slog.Attr takes one, and anything else takes one (slog logs
@@ -458,7 +458,8 @@ func logKeys(f *ast.File, info *types.Info) ([]keyHit, bool) {
 	// loop's initializer.
 	const maxPaths = 1024
 	// overflow: the keys are incomplete, because a distinct path was dropped at maxPaths
-	// or a spread sits in a function with a goto, whose jumps are not modelled.
+	// or a spread sits in a function with a goto or an in-place []any element write,
+	// neither of which is modelled.
 	overflow := false
 	type path = map[types.Object][]ast.Expr
 	clonePath := func(p path) path {
@@ -823,7 +824,7 @@ func logKeys(f *ast.File, info *types.Info) ([]keyHit, bool) {
 		ps := []path{{}}
 		if call.Ellipsis.IsValid() {
 			body := enclosing(call)
-			if hasGoto(body) {
+			if hasGoto(body) || writesAnyElements(body, info) {
 				overflow = true
 				return
 			}
@@ -873,6 +874,33 @@ func hasGoto(body []ast.Stmt) bool {
 		ast.Inspect(s, func(n ast.Node) bool {
 			if b, ok := n.(*ast.BranchStmt); ok && b.Tok == token.GOTO {
 				found = true
+			}
+			return !found
+		})
+	}
+	return found
+}
+
+// writesAnyElements reports whether a function body writes elements of a []any in place
+// (fields[i] = v, copy(fields, ...), clear(fields)), which the interpreter does not model.
+func writesAnyElements(body []ast.Stmt, info *types.Info) bool {
+	found := false
+	for _, s := range body {
+		ast.Inspect(s, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.AssignStmt:
+				for _, l := range x.Lhs {
+					if ix, ok := ast.Unparen(l).(*ast.IndexExpr); ok && isAnySlice(info.TypeOf(ix.X)) {
+						found = true
+					}
+				}
+			case *ast.CallExpr:
+				if fn, ok := ast.Unparen(x.Fun).(*ast.Ident); ok && len(x.Args) > 0 {
+					if b, ok := info.Uses[fn].(*types.Builtin); ok && (b.Name() == "copy" || b.Name() == "clear") &&
+						isAnySlice(info.TypeOf(x.Args[0])) {
+						found = true
+					}
+				}
 			}
 			return !found
 		})
@@ -974,6 +1002,34 @@ func TestLogKeys_PathOverflowIsReported(t *testing.T) {
 	}
 	if _, over := logKeys(f, info); !over {
 		t.Fatal("2048 paths did not report an overflow")
+	}
+}
+
+// TestLogKeys_ElementWritesAreReportedUntraceable pins that an in-place write to a []any
+// element, which the interpreter does not model, makes a spread in its function
+// untraceable instead of checking the slice as it was before the write.
+func TestLogKeys_ElementWritesAreReportedUntraceable(t *testing.T) {
+	for name, stmt := range map[string]string{
+		"index assignment": `fields[0] = "projectID"`,
+		"copy":             `copy(fields, []any{"projectID"})`,
+		"clear":            `clear(fields)`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			src := "package p\nimport \"log/slog\"\nvar id any\nfunc f() {\nfields := []any{\"kind\", id}\n" +
+				stmt + "\nslog.Info(\"m\", fields...)\n}\n"
+			fset := token.NewFileSet()
+			f, err := parser.ParseFile(fset, "p.go", src, 0)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			info := newInfo()
+			if _, err := (&types.Config{Importer: importer.Default()}).Check("p", fset, []*ast.File{f}, info); err != nil {
+				t.Fatalf("type-check: %v", err)
+			}
+			if _, over := logKeys(f, info); !over {
+				t.Fatal("an in-place element write was not reported as untraceable")
+			}
+		})
 	}
 }
 
