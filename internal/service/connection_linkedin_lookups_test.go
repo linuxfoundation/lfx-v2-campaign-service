@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	connsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_connections/server"
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
@@ -83,8 +84,9 @@ func TestListLinkedinAdsLookups_EmptyIsAnEmptyArray(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if whole, _ := json.Marshal(a); !strings.Contains(string(whole), `"Truncated":false`) {
-		t.Errorf("the audience read must carry truncated=false: %s", whole)
+	// The wire body, not the Go struct: the generated server body is what ships "truncated".
+	if body, _ := json.Marshal(connsvr.NewListLinkedinAdsAudiencesResponseBody(a)); !strings.Contains(string(body), `"truncated":false`) {
+		t.Errorf("the audience response body must carry truncated=false: %s", body)
 	}
 	ab, _ := json.Marshal(a.Audiences)
 	cb, _ := json.Marshal(c.Conversions)
