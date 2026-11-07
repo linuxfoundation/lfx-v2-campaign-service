@@ -1566,3 +1566,36 @@ by its campaign. An over-long labelled name is the same `PreflightRefusal` as an
 with zero requests sent. Pinned by `TestBuildTwitterCampaignName_LabelTokens` and
 `TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest`; see the dispatch concept for the
 dispatcher side.
+
+## Create-time location and language targeting (`create_targeting.go`, #564)
+
+Before #564 the line item was created with NO targeting criteria, and X documents that a line
+item with none "will target all users worldwide". `CampaignInput.GeoTargets` (ISO 3166-1
+alpha-2) and `CampaignInput.Languages` (X language values such as `en`) now add `LOCATION` and
+`LANGUAGE` criteria to the line item THIS call creates. `NormalizeCreateTargeting` holds the
+pure rules once (trim, case-fold, shape, de-duplicate, caps of 50 and 20), so the dispatcher's
+synchronous preflight and `CreateCampaign` cannot disagree.
+
+Resolution is a READ and runs in the pre-create block, after `verifyAccount` and before the
+media upload and the campaign POST, so a value X does not offer is refused with nothing created.
+A country is looked up with `GET targeting_criteria/locations?location_type=COUNTRIES&country_code=XX`
+(not account-scoped) and must answer exactly ONE country-level entry for that code. Both
+spellings of the level are accepted (`COUNTRIES`, the lookup enum; `COUNTRY`, the singular form
+X's criterion echo uses). A city-only answer, two different values, or a second page are refused,
+never guessed. Languages are checked against `GET targeting_criteria/languages`, walked to the end
+under the same short-page rule `findByName` uses. A full page with no usable cursor, the page cap
+or a repeated cursor fails the read rather than reading as "not offered". A lookup that cannot
+be read is a plain error, not a refusal.
+
+The criteria are POSTed one at a time (`createTargetingCriterion`), not through the batch
+endpoint, which needs a JSON body this client does not send. Each one is paced, sent ONCE with
+`operator_type=EQ` and checked against its echo, like the negative-keyword create. They go after
+the line item and BEFORE the promoted tweet. A failure therefore stops the create before the
+one irreversible artifact, a published tweet. It returns the partial result with an error giving
+how many criteria were applied, and says not to enable the line item until its targeting is
+completed. An ambiguous failure (429, 5xx, transport) is worded UNCONFIRMED. The single-create
+example omits `operator_type`, so an absent one reads as EQ. A REUSED line item is not
+re-targeted; a warning step says so, and `Reused` already makes the row `created_degraded`.
+
+Not verified live: no X call was made. The dispatcher keeps both lists behind
+`TWITTER_CREATE_TARGETING_ENABLED` (default off).

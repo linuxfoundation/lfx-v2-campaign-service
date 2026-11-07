@@ -113,9 +113,11 @@ type Service interface {
 	// supply imageUrl'): 400 with that message. A redditConfig.excludedSubreddits
 	// or excludedGeoTargets that breaks its rules, or is sent while
 	// REDDIT_TARGETING_EXCLUSIONS_ENABLED is off, is also a synchronous 400 (see
-	// the config attribute). GOOGLE ADS SHARED-ACCOUNT INPUTS: a googleAdsConfig
-	// that sets any input naming an existing audience, user list, custom segment,
-	// shared negative keyword list or conversion action on the Google Ads account
+	// the config attribute). So is a twitterConfig.geoTargets or languages that
+	// breaks its rules, or is sent while TWITTER_CREATE_TARGETING_ENABLED is off
+	// (#564). GOOGLE ADS SHARED-ACCOUNT INPUTS: a googleAdsConfig that sets any
+	// input naming an existing audience, user list, custom segment, shared
+	// negative keyword list or conversion action on the Google Ads account
 	// (demandGenAudience or an audience on any demandGenAdGroups entry;
 	// audienceSegments, customAudiences, customAffinities or
 	// excludedAudienceSegments, on the campaign or on any displayAdGroups entry;
@@ -1171,7 +1173,23 @@ type CampaignCreateInput struct {
 	// blank or invalid entry, an overlap, a list over its cap, a value that is not
 	// an array of strings (null reads as absent), or either list while the flag is
 	// off, is refused with 400 "invalid campaign config: redditConfig.<field>:
-	// ..." before any job exists.
+	// ..." before any job exists. X TARGETING (#564): twitterConfig takes
+	// `geoTargets` (ISO 3166-1 alpha-2 country codes, at most 50, uppercased and
+	// de-duplicated) and `languages` (X language values such as en, at most 20,
+	// lowercased and de-duplicated). Before anything is created each country is
+	// resolved with X's GET targeting_criteria/locations (location_type COUNTRIES,
+	// exactly one country-level entry required) and the languages are checked
+	// against GET targeting_criteria/languages; the new line item then gets one
+	// LOCATION or LANGUAGE criterion (operator EQ) per value, after the line item
+	// and before the promoted tweet. A value X does not offer, or a lookup that
+	// cannot be read, fails the job with nothing created; a criterion that fails
+	// stops the create before any tweet, with the PAUSED campaign and line item
+	// reported. A retry that reuses the line item does not re-target it. Both are
+	// OFF unless TWITTER_CREATE_TARGETING_ENABLED is exactly "true". A blank or
+	// malformed entry, a list over its cap, a value that is not an array of
+	// strings (null reads as absent), or either list while the flag is off, is
+	// refused with 400 "invalid campaign config: twitterConfig.<field>: ..."
+	// before any job exists.
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

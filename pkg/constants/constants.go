@@ -136,6 +136,18 @@ const (
 	// environment, in lfx-v2-argocd.
 	EnvRedditTargetingExclusionsEnabled = "REDDIT_TARGETING_EXCLUSIONS_ENABLED"
 
+	// EnvTwitterCreateTargetingEnabled opts a deployment IN to twitterConfig.geoTargets and
+	// twitterConfig.languages (#564): country and language targeting criteria added to the line
+	// item an X create makes. Only the exact value "true" enables them; unset or any other value
+	// fails closed, and a create naming either is refused with a 400 before any job exists (and
+	// again at dispatch, before anything upstream).
+	//
+	// It names no account resource: it keeps an UNVERIFIED request shape (built from X's published
+	// v12 reference; no live create has sent a targeting criterion or read the location and
+	// language lookups) off the shared ad account until a live create confirms it. Turn it on per
+	// environment, in lfx-v2-argocd.
+	EnvTwitterCreateTargetingEnabled = "TWITTER_CREATE_TARGETING_ENABLED"
+
 	// EnvTwitterMetricsEnabled opts a deployment IN to the two X (Twitter) Ads features built on
 	// X's asynchronous stats-jobs API: the ACCOUNT MONITOR
 	// (GET /projects/{project_id}/connection-twitter-ads/account-monitor) and the AUDIENCE READ
