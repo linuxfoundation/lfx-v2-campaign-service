@@ -155,7 +155,7 @@ func TestLookupsFailRatherThanTruncate(t *testing.T) {
 		{"another account", map[int]string{0: `{"elements":[{"id":1,"name":"x","type":"BULK","status":"READY","account":"urn:li:sponsoredAccount:999"}]}`}, "another ad account", nil},
 		{"unusable id", map[int]string{0: `{"elements":[{"id":"abc","name":"x"}]}`}, "unusable id", nil},
 		{"too many", all, "more than 1000", ErrLookupTooLarge},
-		{"no elements", map[int]string{0: `{}`}, "", nil},
+		{"no elements", map[int]string{0: `{}`}, "missing elements field", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &lookupServer{path: "/adSegments", pages: tc.pages}

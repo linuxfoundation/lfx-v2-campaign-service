@@ -102,14 +102,16 @@ func TestLinkedIn_LookupsRefuseLocallyAndClassifyDefects(t *testing.T) {
 // local connection defect: ErrConnectionNotUsable, not reported as an upstream call, no request.
 func TestLinkedIn_LookupsRefuseAMalformedBoundAccount(t *testing.T) {
 	srv, calls := linkedInLookupServer(t, "/conversions", `{"elements":[]}`, http.StatusOK)
-	bad := activeLinkedInConn(goodLinkedInCreds)
-	bad.AccountID = "acct-1"
-	d := NewLinkedInDispatcher(fakeConnReader{conn: bad}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
-	if _, called, err := d.ListConversionActions(context.Background(), "cncf", model.ProviderLinkedInAds); called || !errors.Is(err, domain.ErrConnectionNotUsable) {
-		t.Errorf("conversions = %v (called %v), want a local connection defect", err, called)
-	}
-	if _, called, err := d.ListAudiences(context.Background(), "cncf", model.ProviderLinkedInAds, LinkedInAdSegmentKind); called || !errors.Is(err, domain.ErrConnectionNotUsable) {
-		t.Errorf("audiences = %v (called %v), want a local connection defect", err, called)
+	for _, acct := range []string{"acct-1", "0", "0123", "9223372036854775808"} {
+		bad := activeLinkedInConn(goodLinkedInCreds)
+		bad.AccountID = acct
+		d := NewLinkedInDispatcher(fakeConnReader{conn: bad}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
+		if _, called, err := d.ListConversionActions(context.Background(), "cncf", model.ProviderLinkedInAds); called || !errors.Is(err, domain.ErrConnectionNotUsable) {
+			t.Errorf("%s: conversions = %v (called %v), want a local connection defect", acct, err, called)
+		}
+		if _, called, err := d.ListAudiences(context.Background(), "cncf", model.ProviderLinkedInAds, LinkedInAdSegmentKind); called || !errors.Is(err, domain.ErrConnectionNotUsable) {
+			t.Errorf("%s: audiences = %v (called %v), want a local connection defect", acct, err, called)
+		}
 	}
 	if n := calls.Load(); n != 0 {
 		t.Errorf("%d requests for a malformed account", n)

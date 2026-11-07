@@ -29,8 +29,11 @@ func (d *LinkedInDispatcher) createLookupClient(ctx context.Context, projectID s
 	accountID := strings.TrimSpace(res.accountID)
 	// A malformed bound account is stored connection configuration the operator must repair, and
 	// it is refused here, before any request, so the read is not recorded as an upstream call.
-	if err := linkedin.ValidateAccountID(accountID); err != nil {
-		return nil, nil, "", res.systemScoped(fmt.Errorf("linkedin picker lookup: %w: %w", domain.ErrConnectionNotUsable, err))
+	// ValidAccountID, not ValidateAccountID: the id must be a canonical positive int64 (no
+	// leading zero, no overflow), as ReadSettings requires, or LinkedIn would refuse the URN and
+	// the refusal would read as an upstream failure.
+	if !linkedin.ValidAccountID(accountID) {
+		return nil, nil, "", linkedinAccountIDUnusable(res, projectID, "linkedin picker lookup")
 	}
 	return res, d.cachedLinkedInClient(projectID, platform, res, creds, accountID), accountID, nil
 }

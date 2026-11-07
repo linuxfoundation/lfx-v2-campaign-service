@@ -22,7 +22,7 @@ import (
 //	GET /rest/conversions?q=account&account=urn%3Ali%3AsponsoredAccount%3A<a>&start=<n>&count=<k>
 //	  (Conversion Tracking › Find Conversions by Ad Account)
 //
-// Neither walk truncates: a repeated page, an element of another account, an unusable id, or
+// Neither walk truncates: a repeated page, an element naming another account, an unusable id, or
 // more than MaxLookupRows entries fails the read, because a picker shown a partial list reads it
 // as the whole account.
 
@@ -108,6 +108,10 @@ func (c *Client) offsetWalk(ctx context.Context, path, what string, params func(
 				return fmt.Errorf("list linkedin %s: id %s listed twice", what, id)
 			}
 			seen[id] = struct{}{}
+			// Ad Segments documents `account` as optional and the Conversions finder's response
+			// may omit it, so the guard fires only when LinkedIn names an account; the request's
+			// own account filter is the scoping otherwise. Refusing an absent value is a change
+			// to make once a live probe shows both finders always send it.
 			if el.Account != "" && el.Account != wantAccount {
 				return fmt.Errorf("list linkedin %s: an element belongs to another ad account", what)
 			}
