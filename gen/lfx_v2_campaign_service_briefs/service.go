@@ -133,7 +133,15 @@ type Service interface {
 	// they do not, 503 when the check cannot be made (project lookup or
 	// authorization service unavailable). The gateway admits every
 	// campaign_manager, which includes foundation executive directors, and those
-	// resources belong to the Google Ads account every foundation shares. An
+	// resources belong to the Google Ads account every foundation shares. META
+	// SHARED-ACCOUNT INPUTS: likewise a metaConfig.targeting that sets
+	// customAudiences or excludedCustomAudiences (any non-empty list) names custom
+	// audiences of the Meta ad account every foundation shares and requires
+	// global_marketing_ops on this project (403 naming them, 503 when the check
+	// cannot be made); age, gender and advantageAudience are not gated. An invalid
+	// metaConfig.targeting, or any targeting block while
+	// META_AUDIENCE_TARGETING_ENABLED is not "true" on the deployment, is a
+	// synchronous 400 "invalid campaign config: metaConfig.targeting...". An
 	// invalid per-platform `bidding` object (see the config attribute) is also
 	// refused synchronously, with 400 "invalid campaign config:
 	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
