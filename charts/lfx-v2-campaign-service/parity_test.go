@@ -109,8 +109,16 @@ const googleAudiencesPath = "/projects/:projectId/google-ads/audiences"
 // TestUserListsIsAMarketingOpsRead pins that.
 const userListsPath = "/projects/:projectId/google-ads/user-lists"
 
+// linkedInAudiencesPath and linkedInConversionsPath are the LinkedIn picker reads (#552). They
+// read the account a LinkedIn create uses, the LF system account for every project without its
+// own connection, so they are ruled by marketing-ops-api only.
+const (
+	linkedInAudiencesPath   = "/projects/:projectId/linkedin-ads/audiences"
+	linkedInConversionsPath = "/projects/:projectId/linkedin-ads/conversions"
+)
+
 // marketingOpsPaths is every path the marketing-ops-api rule must hold, in order, and nothing else.
-var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath}
+var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, linkedInAudiencesPath, linkedInConversionsPath}
 
 // ruleBlock isolates one rendered Heimdall rule (from its `- id: "<id>"` line up to
 // the next `- id:` or EOF) so path/authorizer extraction is scoped to a SINGLE rule.
@@ -186,6 +194,14 @@ func TestConversionActionsIsAMarketingOpsRead(t *testing.T) {
 // customer, so a campaign_manager (executive_director included) must not reach it. The
 // singular google-ads/audience (the audience performance read of the project's own campaigns)
 // stays a project-api path and must not be swept along with it.
+// TestLinkedInPickersAreMarketingOpsReads pins the same for the LinkedIn ad-segment and
+// conversion-rule pickers (#552). The singular linkedin-ads/audience (the demographics read of
+// the project's own campaigns) stays a project-api path.
+func TestLinkedInPickersAreMarketingOpsReads(t *testing.T) {
+	assertMarketingOpsRead(t, linkedInAudiencesPath, "/projects/p1/linkedin-ads/audiences")
+	assertMarketingOpsRead(t, linkedInConversionsPath, "/projects/p1/linkedin-ads/conversions")
+}
+
 func TestGoogleAudiencesIsAMarketingOpsRead(t *testing.T) {
 	assertMarketingOpsRead(t, googleAudiencesPath, "/projects/p1/google-ads/audiences")
 	ruleset := helmTemplate(t, "templates/ruleset.yaml")
@@ -640,7 +656,11 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/reddit-ads/audiences", false},
 		{"/projects/p1/linkedin-ads/audience", true},
 		{"/projects/p1/linkedin-ads/audience/x", false},
-		{"/projects/p1/linkedin-ads/audiences", false},
+		{"/projects/p1/linkedin-ads/audiences", true},
+		{"/projects/p1/linkedin-ads/conversions", true},
+		{"/projects/p1/linkedin-ads/audiences/x", false},
+		{"/projects/p1/linkedin-ads/conversions/x", false},
+		{"/projects/p1/meta-ads/conversions", false},
 		// The Reddit keyword performance read (LFXV2-2665).
 		{"/projects/p1/reddit-ads/keywords", true},
 		{"/projects/p1/reddit-ads/keywords/x", false},

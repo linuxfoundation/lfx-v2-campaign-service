@@ -2062,6 +2062,54 @@ func BuildGetLinkedinAdsAudiencePayload(lfxV2CampaignServiceConnectionsGetLinked
 	return v, nil
 }
 
+// BuildListLinkedinAdsAudiencesPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-linkedin-ads-audiences endpoint
+// from CLI flags.
+func BuildListLinkedinAdsAudiencesPayload(lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesProjectID *string, lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesBearerToken *string) (*lfxv2campaignserviceconnections.ListLinkedinAdsAudiencesPayload, error) {
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListLinkedinAdsAudiencesPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildListLinkedinAdsConversionsPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-linkedin-ads-conversions endpoint
+// from CLI flags.
+func BuildListLinkedinAdsConversionsPayload(lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsProjectID *string, lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsBearerToken *string) (*lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload, error) {
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildGetMicrosoftAdsKeywordsPayload builds the payload for the
 // lfx-v2-campaign-service-connections get-microsoft-ads-keywords endpoint from
 // CLI flags.

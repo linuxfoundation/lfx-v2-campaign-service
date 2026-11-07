@@ -5557,3 +5557,9 @@ JSON decode) or come after a read was sent (Meta's inactive-account check) are d
 **not** marked. Google Ads (`googleads*.go`, `platform/googleads`) is untouched until its owner
 opts in. Pinned by `preflight_refusal_test.go` (one refusal per platform, verbatim, nothing
 sent; a real Meta 4xx/5xx whose body carries a secret query; a real Reddit token refusal).
+
+**LinkedIn picker lookups (#552).** `LinkedInDispatcher` implements `service.AudienceReader` (kind
+`ad_segment` only; any other kind is `ErrTargetingLookupUnsupported` before any request) and
+`service.ConversionActionReader`, through `createLookupClient`: the CREATE path's resolution
+(`creds.resolve`), so the ids are on the account the create uses. A malformed bound account and a
+credential defect are the connection's (`linkedInLookupError`); anything else is the platform's.

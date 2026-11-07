@@ -72,6 +72,8 @@ type Server struct {
 	GetMetaAdsAudience             http.Handler
 	GetTwitterAdsAudience          http.Handler
 	GetLinkedinAdsAudience         http.Handler
+	ListLinkedinAdsAudiences       http.Handler
+	ListLinkedinAdsConversions     http.Handler
 	GetMicrosoftAdsKeywords        http.Handler
 	GetMicrosoftAdsAudience        http.Handler
 	GetRedditAdsAudience           http.Handler
@@ -179,6 +181,8 @@ func New(
 			{"GetMetaAdsAudience", "GET", "/projects/{project_id}/meta-ads/audience"},
 			{"GetTwitterAdsAudience", "GET", "/projects/{project_id}/twitter-ads/audience"},
 			{"GetLinkedinAdsAudience", "GET", "/projects/{project_id}/linkedin-ads/audience"},
+			{"ListLinkedinAdsAudiences", "GET", "/projects/{project_id}/linkedin-ads/audiences"},
+			{"ListLinkedinAdsConversions", "GET", "/projects/{project_id}/linkedin-ads/conversions"},
 			{"GetMicrosoftAdsKeywords", "GET", "/projects/{project_id}/microsoft-ads/keywords"},
 			{"GetMicrosoftAdsAudience", "GET", "/projects/{project_id}/microsoft-ads/audience"},
 			{"GetRedditAdsAudience", "GET", "/projects/{project_id}/reddit-ads/audience"},
@@ -257,6 +261,8 @@ func New(
 		GetMetaAdsAudience:             NewGetMetaAdsAudienceHandler(e.GetMetaAdsAudience, mux, decoder, encoder, errhandler, formatter),
 		GetTwitterAdsAudience:          NewGetTwitterAdsAudienceHandler(e.GetTwitterAdsAudience, mux, decoder, encoder, errhandler, formatter),
 		GetLinkedinAdsAudience:         NewGetLinkedinAdsAudienceHandler(e.GetLinkedinAdsAudience, mux, decoder, encoder, errhandler, formatter),
+		ListLinkedinAdsAudiences:       NewListLinkedinAdsAudiencesHandler(e.ListLinkedinAdsAudiences, mux, decoder, encoder, errhandler, formatter),
+		ListLinkedinAdsConversions:     NewListLinkedinAdsConversionsHandler(e.ListLinkedinAdsConversions, mux, decoder, encoder, errhandler, formatter),
 		GetMicrosoftAdsKeywords:        NewGetMicrosoftAdsKeywordsHandler(e.GetMicrosoftAdsKeywords, mux, decoder, encoder, errhandler, formatter),
 		GetMicrosoftAdsAudience:        NewGetMicrosoftAdsAudienceHandler(e.GetMicrosoftAdsAudience, mux, decoder, encoder, errhandler, formatter),
 		GetRedditAdsAudience:           NewGetRedditAdsAudienceHandler(e.GetRedditAdsAudience, mux, decoder, encoder, errhandler, formatter),
@@ -342,6 +348,8 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.GetMetaAdsAudience = m(s.GetMetaAdsAudience)
 	s.GetTwitterAdsAudience = m(s.GetTwitterAdsAudience)
 	s.GetLinkedinAdsAudience = m(s.GetLinkedinAdsAudience)
+	s.ListLinkedinAdsAudiences = m(s.ListLinkedinAdsAudiences)
+	s.ListLinkedinAdsConversions = m(s.ListLinkedinAdsConversions)
 	s.GetMicrosoftAdsKeywords = m(s.GetMicrosoftAdsKeywords)
 	s.GetMicrosoftAdsAudience = m(s.GetMicrosoftAdsAudience)
 	s.GetRedditAdsAudience = m(s.GetRedditAdsAudience)
@@ -427,6 +435,8 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountGetMetaAdsAudienceHandler(mux, h.GetMetaAdsAudience)
 	MountGetTwitterAdsAudienceHandler(mux, h.GetTwitterAdsAudience)
 	MountGetLinkedinAdsAudienceHandler(mux, h.GetLinkedinAdsAudience)
+	MountListLinkedinAdsAudiencesHandler(mux, h.ListLinkedinAdsAudiences)
+	MountListLinkedinAdsConversionsHandler(mux, h.ListLinkedinAdsConversions)
 	MountGetMicrosoftAdsKeywordsHandler(mux, h.GetMicrosoftAdsKeywords)
 	MountGetMicrosoftAdsAudienceHandler(mux, h.GetMicrosoftAdsAudience)
 	MountGetRedditAdsAudienceHandler(mux, h.GetRedditAdsAudience)
@@ -3265,6 +3275,116 @@ func NewGetLinkedinAdsAudienceHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "get-linkedin-ads-audience")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountListLinkedinAdsAudiencesHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-audiences"
+// endpoint.
+func MountListLinkedinAdsAudiencesHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/linkedin-ads/audiences", f)
+}
+
+// NewListLinkedinAdsAudiencesHandler creates a HTTP handler which loads the
+// HTTP request and calls the "lfx-v2-campaign-service-connections" service
+// "list-linkedin-ads-audiences" endpoint.
+func NewListLinkedinAdsAudiencesHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeListLinkedinAdsAudiencesRequest(mux, decoder)
+		encodeResponse = EncodeListLinkedinAdsAudiencesResponse(encoder)
+		encodeError    = EncodeListLinkedinAdsAudiencesError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "list-linkedin-ads-audiences")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountListLinkedinAdsConversionsHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service
+// "list-linkedin-ads-conversions" endpoint.
+func MountListLinkedinAdsConversionsHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/linkedin-ads/conversions", f)
+}
+
+// NewListLinkedinAdsConversionsHandler creates a HTTP handler which loads the
+// HTTP request and calls the "lfx-v2-campaign-service-connections" service
+// "list-linkedin-ads-conversions" endpoint.
+func NewListLinkedinAdsConversionsHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeListLinkedinAdsConversionsRequest(mux, decoder)
+		encodeResponse = EncodeListLinkedinAdsConversionsResponse(encoder)
+		encodeError    = EncodeListLinkedinAdsConversionsError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "list-linkedin-ads-conversions")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
 		payload, err := decodeRequest(r)
 		if err != nil {

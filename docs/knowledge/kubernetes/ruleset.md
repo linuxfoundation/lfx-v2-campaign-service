@@ -70,8 +70,8 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    scoped to `project:{uid}` where `{uid}` is resolved from the URL-captured
    `:projectId` slug (see "Slug-to-UID resolution" below). A single rule covers
    all families because they share the identical authorization. The exceptions are
-   `google-ads/conversion-actions`, `google-ads/audiences` and `google-ads/user-lists`, ruled by
-   `marketing-ops-api` below.
+   `google-ads/conversion-actions`, `google-ads/audiences`, `google-ads/user-lists`,
+   `linkedin-ads/audiences` and `linkedin-ads/conversions`, ruled by `marketing-ops-api` below.
 4. **`marketing-ops-api`** — `GET /projects/:projectId/google-ads/conversion-actions` (#458),
    `GET /projects/:projectId/google-ads/audiences` (#496) and
    `GET /projects/:projectId/google-ads/user-lists` only. They list every foundation's
@@ -86,8 +86,11 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    `TestGoogleAudiencesIsAMarketingOpsRead` does the same for `google-ads/audiences` (and that
    the singular `google-ads/audience` performance read stays on `project-api`),
    `TestUserListsIsAMarketingOpsRead` does the same for `google-ads/user-lists` (a
-   `project-api` read the service refused with 409 on the shared account until 2026-11-05), and
-   `TestMarketingOpsRuleHoldsExactlyItsReads` pins the rule's whole path set.
+   `project-api` read the service refused with 409 on the shared account until 2026-11-05),
+   `TestLinkedInPickersAreMarketingOpsReads` does the same for the LinkedIn ad-segment and
+   conversion-rule pickers `linkedin-ads/audiences` and `linkedin-ads/conversions` (#552: they
+   read the account a LinkedIn create uses, the LF system account for every project without its
+   own connection), and `TestMarketingOpsRuleHoldsExactlyItsReads` pins the rule's whole path set.
 5. **`campaigns-placeholder:deny`** — the reserved `/campaigns`, `/campaigns/*`,
    and every other `/_campaigns/*` path (not openapi, not the signed asset route) are routed through Heimdall but are not
    real endpoints yet, so they **fail closed** with `deny_all`.

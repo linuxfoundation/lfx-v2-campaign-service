@@ -68,6 +68,8 @@ type Endpoints struct {
 	GetMetaAdsAudience             goa.Endpoint
 	GetTwitterAdsAudience          goa.Endpoint
 	GetLinkedinAdsAudience         goa.Endpoint
+	ListLinkedinAdsAudiences       goa.Endpoint
+	ListLinkedinAdsConversions     goa.Endpoint
 	GetMicrosoftAdsKeywords        goa.Endpoint
 	GetMicrosoftAdsAudience        goa.Endpoint
 	GetRedditAdsAudience           goa.Endpoint
@@ -153,6 +155,8 @@ func NewEndpoints(s Service) *Endpoints {
 		GetMetaAdsAudience:             NewGetMetaAdsAudienceEndpoint(s, a.JWTAuth),
 		GetTwitterAdsAudience:          NewGetTwitterAdsAudienceEndpoint(s, a.JWTAuth),
 		GetLinkedinAdsAudience:         NewGetLinkedinAdsAudienceEndpoint(s, a.JWTAuth),
+		ListLinkedinAdsAudiences:       NewListLinkedinAdsAudiencesEndpoint(s, a.JWTAuth),
+		ListLinkedinAdsConversions:     NewListLinkedinAdsConversionsEndpoint(s, a.JWTAuth),
 		GetMicrosoftAdsKeywords:        NewGetMicrosoftAdsKeywordsEndpoint(s, a.JWTAuth),
 		GetMicrosoftAdsAudience:        NewGetMicrosoftAdsAudienceEndpoint(s, a.JWTAuth),
 		GetRedditAdsAudience:           NewGetRedditAdsAudienceEndpoint(s, a.JWTAuth),
@@ -236,6 +240,8 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.GetMetaAdsAudience = m(e.GetMetaAdsAudience)
 	e.GetTwitterAdsAudience = m(e.GetTwitterAdsAudience)
 	e.GetLinkedinAdsAudience = m(e.GetLinkedinAdsAudience)
+	e.ListLinkedinAdsAudiences = m(e.ListLinkedinAdsAudiences)
+	e.ListLinkedinAdsConversions = m(e.ListLinkedinAdsConversions)
 	e.GetMicrosoftAdsKeywords = m(e.GetMicrosoftAdsKeywords)
 	e.GetMicrosoftAdsAudience = m(e.GetMicrosoftAdsAudience)
 	e.GetRedditAdsAudience = m(e.GetRedditAdsAudience)
@@ -1479,6 +1485,54 @@ func NewGetLinkedinAdsAudienceEndpoint(s Service, authJWTFn security.AuthJWTFunc
 			return nil, err
 		}
 		return s.GetLinkedinAdsAudience(ctx, p)
+	}
+}
+
+// NewListLinkedinAdsAudiencesEndpoint returns an endpoint function that calls
+// the method "list-linkedin-ads-audiences" of service
+// "lfx-v2-campaign-service-connections".
+func NewListLinkedinAdsAudiencesEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ListLinkedinAdsAudiencesPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ListLinkedinAdsAudiences(ctx, p)
+	}
+}
+
+// NewListLinkedinAdsConversionsEndpoint returns an endpoint function that
+// calls the method "list-linkedin-ads-conversions" of service
+// "lfx-v2-campaign-service-connections".
+func NewListLinkedinAdsConversionsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ListLinkedinAdsConversionsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ListLinkedinAdsConversions(ctx, p)
 	}
 }
 
