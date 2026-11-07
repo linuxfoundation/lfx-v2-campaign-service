@@ -138,18 +138,19 @@ type Service interface {
 	// metaConfig.conversionEvent outside its allow-list or on an objective other
 	// than conversions, or either one while its deployment flag
 	// (META_CALL_TO_ACTION_ENABLED, META_CONVERSION_EVENT_ENABLED) is not "true",
-	// is a synchronous 400 "invalid campaign config:
-	// metaConfig.callToAction|conversionEvent. META SHARED-ACCOUNT INPUTS:
-	// likewise a metaConfig.targeting that sets customAudiences or
-	// excludedCustomAudiences (any non-empty list) names custom audiences of the
-	// Meta ad account every foundation shares and requires global_marketing_ops on
-	// this project (403 naming them, 503 when the check cannot be made); age,
-	// gender and advantageAudience are not gated. An invalid metaConfig.targeting,
-	// or any targeting block while META_AUDIENCE_TARGETING_ENABLED is not "true"
-	// on the deployment, is a synchronous 400 "invalid campaign config:
-	// metaConfig.targeting...". An invalid per-platform `bidding` object (see the
-	// config attribute) is also refused synchronously, with 400 "invalid campaign
-	// config: <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
+	// is a synchronous 400 "invalid campaign config: metaConfig.callToAction..."
+	// or "invalid campaign config: metaConfig.conversionEvent...". META
+	// SHARED-ACCOUNT INPUTS: likewise a metaConfig.targeting that sets
+	// customAudiences or excludedCustomAudiences (any non-empty list) names custom
+	// audiences of the Meta ad account every foundation shares and requires
+	// global_marketing_ops on this project (403 naming them, 503 when the check
+	// cannot be made); age, gender and advantageAudience are not gated. An invalid
+	// metaConfig.targeting, or any targeting block while
+	// META_AUDIENCE_TARGETING_ENABLED is not "true" on the deployment, is a
+	// synchronous 400 "invalid campaign config: metaConfig.targeting...". An
+	// invalid per-platform `bidding` object (see the config attribute) is also
+	// refused synchronously, with 400 "invalid campaign config:
+	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
 	// Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc)
 	// and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are
 	// immediately eligible for the bid lever, and eligibility follows the
