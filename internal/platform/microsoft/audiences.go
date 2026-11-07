@@ -458,10 +458,12 @@ func (c *Client) addAudienceCriteria(ctx context.Context, adGroupID string, ids 
 	// errored maps a request index to the first code refusing it; onlyDuplicate records whether
 	// every error naming that index is 4152 (already on the ad group). Codes are read with
 	// audienceErrorCode, so a zero or empty default (BatchError Code is a non-nullable int) is not
-	// an error, while any other non-null code is, rendered as withheld when unreadable. incomplete is set when the evidence cannot cover
-	// every list: an error array (outer or nested) was truncated, or an error carried no usable
-	// index. Then no list without an error of its own can be proven attached, and it is
-	// UNCONFIRMED even with an id, the rule geo.go's criterion add applies.
+	// an error, while any other non-null code is, rendered as withheld when unreadable.
+	//
+	// incomplete is set when the evidence cannot cover every list: an error array (outer or
+	// nested) was truncated, or an error carried no usable index. Then no list without an error
+	// of its own can be proven attached, and it is UNCONFIRMED even with an id, the rule geo.go's
+	// criterion add applies; a duplicate is not ALREADY_PRESENT either.
 	errored := map[int]string{}
 	onlyDuplicate := map[int]bool{}
 	incomplete := resp.NestedPartialErrors.Truncated
