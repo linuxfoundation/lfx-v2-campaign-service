@@ -92,6 +92,33 @@ func TestGoogleAdsMarketingOpsInputs(t *testing.T) {
 	}
 }
 
+func TestRedditMarketingOpsInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		config string
+		want   []string
+	}{
+		{"empty", ``, nil},
+		{"no reddit config", `{"googleAdsConfig":{"customAudiences":["x"]}}`, nil},
+		{"reddit config without gated input", `{"redditConfig":{"subreddits":["k8s"],"interests":["x"],"conversionPixelId":"p"}}`, nil},
+		{"custom audiences", `{"redditConfig":{"customAudienceIds":["1"]}}`, []string{"customAudienceIds"}},
+		{"excluded custom audiences", `{"redditConfig":{"excludedCustomAudienceIds":["1"]}}`, []string{"excludedCustomAudienceIds"}},
+		{"both, in config order", `{"redditConfig":{"excludedCustomAudienceIds":["2"],"customAudienceIds":["1"]}}`, []string{"customAudienceIds", "excludedCustomAudienceIds"}},
+		{"a list of blanks counts", `{"redditConfig":{"customAudienceIds":[""]}}`, []string{"customAudienceIds"}},
+		{"empty and null lists do not count", `{"redditConfig":{"customAudienceIds":[],"excludedCustomAudienceIds":null}}`, nil},
+		{"case variant key", `{"redditConfig":{"CustomAudienceIds":["1"]}}`, []string{"customAudienceIds"}},
+		{"inputs around a type error", `{"redditConfig":{"budgetUsd":"x","customAudienceIds":["1"]}}`, []string{"customAudienceIds"}},
+		{"envelope key is exact", `{"RedditConfig":{"customAudienceIds":["1"]}}`, nil},
+		{"malformed envelope", `{`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := RedditMarketingOpsInputs(json.RawMessage(tc.config)); !slices.Equal(got, tc.want) {
+				t.Fatalf("RedditMarketingOpsInputs(%s) = %q, want %q", tc.config, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps drives the gate through
 // CreateCampaigns: a refusal arrives before any job exists, and a grant creates the job.
 func TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps(t *testing.T) {
@@ -110,6 +137,12 @@ func TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps(t *tes
 		"channel": "search", "audienceSegments": []any{"customers/1/userLists/2"}}}
 	conversions := map[string]any{"googleAdsConfig": map[string]any{
 		"channel": "search", "conversionActions": []any{"customers/1/conversionActions/2"}}}
+	redditAudiences := map[string]any{"redditConfig": map[string]any{
+		"budgetUsd": 50, "customAudienceIds": []any{"1"}, "excludedCustomAudienceIds": []any{"2"}}}
+	redditPlain := map[string]any{"redditConfig": map[string]any{"budgetUsd": 50}}
+	both := map[string]any{
+		"googleAdsConfig": map[string]any{"channel": "search", "conversionActions": []any{"customers/1/conversionActions/2"}},
+		"redditConfig":    map[string]any{"customAudienceIds": []any{"1"}}}
 	metaAudiences := map[string]any{"metaConfig": map[string]any{"targeting": map[string]any{
 		"ageMin": 25, "customAudiences": []any{"111"}, "excludedCustomAudiences": []any{"222"}}}}
 	metaAgeOnly := map[string]any{"metaConfig": map[string]any{"targeting": map[string]any{"ageMin": 25, "genders": []any{"male"}}}}
@@ -124,6 +157,8 @@ func TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps(t *tes
 	wantContains := map[string]string{
 		"google and meta, one check, both named": "googleAdsConfig inputs that name a resource on the shared Google Ads account " +
 			"require the global_marketing_ops role on this project: conversionActions; metaConfig inputs",
+		"google and reddit inputs, one check, both named": "googleAdsConfig inputs that name a resource on the shared Google Ads account " +
+			"require the global_marketing_ops role on this project: conversionActions; redditConfig inputs",
 	}
 	for _, tc := range []struct {
 		name      string
@@ -166,6 +201,14 @@ func TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps(t *tes
 		// googleAdsConfig is read only by the google-ads dispatcher, so another platform's create
 		// carrying it is not checked.
 		{"another platform is not checked", []string{"microsoft-ads"}, audience, &fakeMarketingOps{}, testActor, "", 0, ""},
+		// #549: Reddit custom audiences name the shared Reddit ad account's audiences.
+		{"reddit custom audiences are checked", []string{"reddit-ads"}, redditAudiences, &fakeMarketingOps{}, testActor, "403", 1, "customAudienceIds, excludedCustomAudienceIds"},
+		{"marketing ops may send reddit custom audiences", []string{"reddit-ads"}, redditAudiences, &fakeMarketingOps{allow: true}, testActor, "", 1, ""},
+		{"reddit without custom audiences is not checked", []string{"reddit-ads"}, redditPlain, &fakeMarketingOps{}, testActor, "", 0, ""},
+		{"a reddit config on a google create is not checked", []string{"google-ads"}, redditAudiences, &fakeMarketingOps{}, testActor, "", 0, ""},
+		{"a failed check on reddit audiences is unavailable", []string{"reddit-ads"}, redditAudiences,
+			&fakeMarketingOps{allow: true, err: errors.New("nats: timeout")}, testActor, "503", 1, ""},
+		{"google and reddit inputs, one check, both named", []string{"google-ads", "reddit-ads"}, both, &fakeMarketingOps{}, testActor, "403", 1, "customAudienceIds"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, jobs, _ := approvedPaidBriefService(t)

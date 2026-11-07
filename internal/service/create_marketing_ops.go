@@ -188,6 +188,51 @@ func GoogleAdsMarketingOpsInputs(config json.RawMessage) []string {
 	return set
 }
 
+// RedditMarketingOpsInputs names, in config order, the redditConfig inputs this config sets that
+// name an EXISTING custom audience on the connected Reddit ad account (#549):
+// customAudienceIds and excludedCustomAudienceIds. That account is the LF one every foundation
+// shares, so only global_marketing_ops may send them, exactly as for the Google inputs above.
+//
+// Any non-empty list counts, whatever its entries hold, as the dispatcher's own gate
+// (dispatch.checkRedditCustomAudiences) counts them. It decodes the envelope the way the
+// dispatcher's unmarshalPlatformConfig does (exact envelope key, then encoding/json into the same
+// field names and types, so a case variant of a field counts too), and dispatch's
+// TestEveryRedditConfigFieldIsClassifiedForTheMarketingOpsGate requires every redditConfig field
+// to be classified as gated or not.
+func RedditMarketingOpsInputs(config json.RawMessage) []string {
+	if len(config) == 0 {
+		return nil
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(config, &envelope); err != nil {
+		return nil
+	}
+	raw, ok := envelope["redditConfig"]
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	var cfg struct {
+		CustomAudienceIDs         []string `json:"customAudienceIds"`
+		ExcludedCustomAudienceIDs []string `json:"excludedCustomAudienceIds"`
+	}
+	_ = json.Unmarshal(raw, &cfg) // a partial decode is still inspected, as for Google
+	var set []string
+	if len(cfg.CustomAudienceIDs) > 0 {
+		set = append(set, "customAudienceIds")
+	}
+	if len(cfg.ExcludedCustomAudienceIDs) > 0 {
+		set = append(set, "excludedCustomAudienceIds")
+	}
+	return set
+}
+
+// redditMarketingOpsForbiddenMessage is the 403 sentence for the gated Reddit fields, built like
+// marketingOpsForbiddenMessage.
+func redditMarketingOpsForbiddenMessage(fields []string) string {
+	return "redditConfig inputs that name a resource on the shared Reddit Ads account require " +
+		"the global_marketing_ops role on this project: " + strings.Join(fields, ", ")
+}
+
 // marketingOpsForbiddenMessage is the 403 sentence for the gated fields. Service-authored: it
 // names the inputs (service-derived, see GoogleAdsMarketingOpsInputs) and the relation, never a
 // caller value.
@@ -236,6 +281,13 @@ func MetaMarketingOpsInputs(config json.RawMessage) []string {
 		set = append(set, "targeting.excludedCustomAudiences")
 	}
 	return set
+}
+
+// metaMarketingOpsForbiddenMessage is the 403 sentence for the gated metaConfig fields, worded as
+// marketingOpsForbiddenMessage is for Google. Service-authored: it names service-derived inputs only.
+func metaMarketingOpsForbiddenMessage(fields []string) string {
+	return "metaConfig inputs that name a resource on the shared Meta ad account require " +
+		"the global_marketing_ops role on this project: " + strings.Join(fields, ", ")
 }
 
 // LinkedInMarketingOpsInputs names the linkedInConfig inputs this config sets that name an ad
@@ -298,18 +350,12 @@ func linkedInMarketingOpsForbiddenMessage(fields []string) string {
 		"the global_marketing_ops role on this project: " + strings.Join(fields, ", ")
 }
 
-// metaMarketingOpsForbiddenMessage is the 403 sentence for the gated metaConfig fields, worded as
-// marketingOpsForbiddenMessage is for Google. Service-authored: it names service-derived inputs only.
-func metaMarketingOpsForbiddenMessage(fields []string) string {
-	return "metaConfig inputs that name a resource on the shared Meta ad account require " +
-		"the global_marketing_ops role on this project: " + strings.Join(fields, ", ")
-}
-
-// requireMarketingOpsForSharedAccountInputs refuses a google-ads, meta-ads or linkedin-ads create
-// that sets any GoogleAdsMarketingOpsInputs, MetaMarketingOpsInputs or LinkedInMarketingOpsInputs
-// field (each counted only when its platform
-// is selected, since only that platform's dispatcher reads it) unless the caller holds
-// global_marketing_ops on the path project. One check per request, however many fields are set.
+// requireMarketingOpsForSharedAccountInputs (also covering linkedin-ads (#552), LinkedInMarketingOpsInputs) refuses a google-ads, meta-ads or reddit-ads create that
+// sets any GoogleAdsMarketingOpsInputs, MetaMarketingOpsInputs or RedditMarketingOpsInputs (#549)
+// field (each counted only when its platform is selected, since only that platform's dispatcher
+// reads it) unless the caller holds global_marketing_ops on the path project. One check per
+// request, however many fields and platforms are set; the 403 names every gated field, each
+// platform's in its own sentence.
 //
 // The gateway admits every campaign_manager to create-campaigns, and campaign_manager is
 // `executive_director or global_marketing_ops` (lfx-v2-helm model.fga): it includes each
@@ -324,17 +370,20 @@ func metaMarketingOpsForbiddenMessage(fields []string) string {
 // Fail closed: no checker, no actor, or a check that could not be completed answers 503, and
 // only a definite grant admits the request.
 func (s *BriefService) requireMarketingOpsForSharedAccountInputs(ctx context.Context, projectSlug string, platforms []model.Provider, config json.RawMessage) error {
-	var googleFields, metaFields, linkedInFields []string
+	var googleFields, metaFields, redditFields, linkedInFields []string
 	if slices.Contains(platforms, model.ProviderGoogleAds) {
 		googleFields = GoogleAdsMarketingOpsInputs(config)
 	}
 	if slices.Contains(platforms, model.ProviderMetaAds) {
 		metaFields = MetaMarketingOpsInputs(config)
 	}
+	if slices.Contains(platforms, model.ProviderRedditAds) {
+		redditFields = RedditMarketingOpsInputs(config)
+	}
 	if slices.Contains(platforms, model.ProviderLinkedInAds) {
 		linkedInFields = LinkedInMarketingOpsInputs(config)
 	}
-	if len(googleFields) == 0 && len(metaFields) == 0 && len(linkedInFields) == 0 {
+	if len(googleFields) == 0 && len(metaFields) == 0 && len(redditFields) == 0 && len(linkedInFields) == 0 {
 		return nil
 	}
 	var configKeys, sentences []string
@@ -348,6 +397,11 @@ func (s *BriefService) requireMarketingOpsForSharedAccountInputs(ctx context.Con
 		configKeys = append(configKeys, "metaConfig")
 		sentences = append(sentences, metaMarketingOpsForbiddenMessage(metaFields))
 		all = append(all, metaFields...)
+	}
+	if len(redditFields) > 0 {
+		configKeys = append(configKeys, "redditConfig")
+		sentences = append(sentences, redditMarketingOpsForbiddenMessage(redditFields))
+		all = append(all, redditFields...)
 	}
 	if len(linkedInFields) > 0 {
 		configKeys = append(configKeys, "linkedInConfig")
