@@ -236,6 +236,15 @@ openssl rand -base64 32
   exercised against a live ad account. The read
   (`GET .../keyword-targeting`) is not gated. The chart sets it to
   `"false"`.
+- `REDDIT_CONVERSION_EVENT_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `redditConfig.conversionEvent` (#549), the pixel event a
+  conversions campaign optimizes toward (sent as `optimization_goal` on the
+  campaign and the ad group instead of the default `PURCHASE`). Only the
+  exact value `true` enables it; anything else fails closed, and a create
+  that sets the field is refused with a 400 before any job exists. Off by
+  default because no live create has yet confirmed Reddit accepts a goal
+  other than `PURCHASE` on a CONVERSIONS campaign under budget optimization.
+  The chart sets it to `"false"`.
 - `REDDIT_CUSTOM_AUDIENCES_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to Reddit custom audiences (#549): the create inputs
   `redditConfig.customAudienceIds` / `excludedCustomAudienceIds` (the ad
@@ -301,6 +310,15 @@ openssl rand -base64 32
   so they too require `global_marketing_ops`. The chart sets it to `"false"`
   (`app.environment.GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED.value`); enable
   it per-environment by setting it to `"true"` in the ArgoCD overlay.
+- `META_CALL_TO_ACTION_ENABLED` and `META_CONVERSION_EVENT_ENABLED` (default
+  unset, i.e. OFF) — opt a deployment IN to `metaConfig.callToAction` (the
+  button on every Meta ad: `SIGN_UP`, `BUY_TICKETS`, … instead of
+  `LEARN_MORE`) and `metaConfig.conversionEvent` (the conversions objective's
+  `custom_event_type`: `COMPLETE_REGISTRATION`, `LEAD`, … instead of
+  `PURCHASE`), #550. Only the exact value `true` enables each; anything else
+  fails closed, and a create carrying the field is refused with a 400 before
+  any job exists. The chart sets both to `"false"`; enable them
+  per-environment in the ArgoCD overlay.
 - `META_AUDIENCE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `metaConfig.targeting` (#550): `ageMin`/`ageMax`,
   `genders`, `customAudiences`, `excludedCustomAudiences` and
@@ -384,6 +402,20 @@ openssl rand -base64 32
   to `"false"` (`charts/lfx-v2-campaign-service/values.yaml`); flip it
   only after the contract is verified against a live Microsoft ad
   account.
+
+- `MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED` (default unset, i.e.
+  OFF) — opts a deployment IN to `microsoftConfig.negativeKeywords`
+  (#563), campaign-level negative keywords attached right after a
+  Microsoft Advertising campaign is created, through the same
+  `AddNegativeKeywordsToEntities` call the `add-negative-keywords`
+  lever makes. Only the exact value `true` enables it; anything else
+  fails closed, and a create naming a non-empty list is refused with a
+  400 before any job exists. It names no account resource; it keeps a
+  create-path call no live create has made off the shared ad account.
+  The chart sets it to `"false"`
+  (`app.environment.MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED.value`);
+  enable it per-environment in the ArgoCD overlay once a live create
+  confirms it.
 
 - `TWITTER_METRICS_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to BOTH X (Twitter) Ads features built on X's
