@@ -215,6 +215,37 @@ func linkedinConversionsEnabled() bool {
 // the deployment gate is off, and refused when linkedin.ValidateConversions refuses it. Both are
 // ErrCreateConfigInvalid pre-flight refusals, so PreflightCreate answers them with a synchronous
 // 400 and Dispatch fails the job with the same sentence. Returns the de-duplicated copy.
+// checkConversionsShape refuses a linkedInConfig.conversions that is not a JSON array of strings
+// (#552). encoding/json decodes a number entry into a []string as "" and the best-effort
+// pre-flight decode keeps going, so without this a caller sending [104012] would be told "" is
+// not an id. Anything it cannot attribute to `conversions` is left to the ordinary decode.
+func checkConversionsShape(config json.RawMessage) error {
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(config, &envelope) != nil {
+		return nil
+	}
+	var platformCfg map[string]json.RawMessage
+	if json.Unmarshal(envelope["linkedInConfig"], &platformCfg) != nil {
+		return nil
+	}
+	for k, raw := range platformCfg {
+		if !strings.EqualFold(k, "conversions") {
+			continue
+		}
+		var entries []json.RawMessage
+		if json.Unmarshal(raw, &entries) != nil {
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.conversions must be an array of conversion rule id strings, e.g. [\"104012\"]", domain.ErrCreateConfigInvalid))
+		}
+		for _, e := range entries {
+			var str string
+			if json.Unmarshal(e, &str) != nil {
+				return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.conversions entries must be strings, e.g. [\"104012\"]", domain.ErrCreateConfigInvalid))
+			}
+		}
+	}
+	return nil
+}
+
 func linkedinConversions(cfg linkedinConfig) ([]string, error) {
 	if cfg.Conversions == nil {
 		return nil, nil
@@ -276,7 +307,11 @@ func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ mode
 	if _, err := linkedinBidPlan(cfg); err != nil {
 		return err
 	}
-	// linkedInConfig.conversions (#552) is promised as a synchronous 400 too.
+	// linkedInConfig.conversions (#552) is promised as a synchronous 400 too, a wrong JSON type
+	// included.
+	if err := checkConversionsShape(config); err != nil {
+		return err
+	}
 	if _, err := linkedinConversions(cfg); err != nil {
 		return err
 	}
@@ -375,6 +410,9 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	}
 	// Conversion rule ids (#552), gated and validated before any upstream call; the
 	// de-duplicated copy replaces the request's, for the client and the stored snapshot.
+	if err := checkConversionsShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	if cfg.Conversions, err = linkedinConversions(cfg); err != nil {
 		return nil, notCreated(err)
 	}
@@ -1392,8 +1430,9 @@ func campaignFromLinkedIn(ctx context.Context, r *linkedin.CampaignResult, reque
 		}
 		if len(r.ConversionsFailed) > 0 {
 			// A conversion rule the caller asked for is not associated (#552): the campaign
-			// exists and is PAUSED, but it would not report those conversions. The steps name
-			// each id to associate in Campaign Manager before activating.
+			// exists (PAUSED when this run created it; a campaign reused by name keeps its own
+			// status) but would not report those conversions. The steps name each id to
+			// associate in Campaign Manager.
 			c.Status = campaignStatusCreatedDegraded
 		}
 	case r.CampaignGroupID != "":

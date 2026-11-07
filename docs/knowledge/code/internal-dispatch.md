@@ -5557,6 +5557,7 @@ sent; a real Meta 4xx/5xx whose body carries a secret query; a real Reddit token
 **LinkedIn conversions (#552).** `linkedinConfig.Conversions` is gated by
 `linkedinConversionsEnabled` (`LINKEDIN_ADS_CONVERSIONS_ENABLED`, off by default) and validated by
 `linkedin.ValidateConversions` in `linkedinConversions`, which `PreflightCreate` (synchronous 400)
-and `Dispatch` (not-created refusal) both run; `Dispatch` keeps the de-duplicated copy for the
+and `Dispatch` (not-created refusal) both run, after `checkConversionsShape` refuses entries that
+are not JSON strings (encoding/json would decode a number to `""`); `Dispatch` keeps the de-duplicated copy for the
 client and the snapshot. `campaignFromLinkedIn` reports a result with `ConversionsFailed` as
 `created_degraded`.

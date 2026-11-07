@@ -63,6 +63,8 @@ func TestLinkedIn_ConversionsPreflight(t *testing.T) {
 		{"urn", `["urn:lla:llaPartnerConversion:1"]`, "is a URN"},
 		{"empty", `[]`, "omit conversions"},
 		{"not an id", `["abc"]`, "not a conversion rule id"},
+		{"number entries", `[104012]`, "entries must be strings"},
+		{"not an array", `"104012"`, "must be an array"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := d.PreflightCreate(context.Background(), "cncf", model.ProviderLinkedInAds, linkedInConversionsConfig(tc.conversions))

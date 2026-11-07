@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
@@ -222,4 +223,68 @@ func TestCreateCampaign_NoConversionsSendsNoAssociation(t *testing.T) {
 	if strings.Contains(string(b), "conversions") {
 		t.Errorf("result blob carries empty conversion fields: %s", b)
 	}
+}
+
+// TestCreateCampaign_ConversionPUTRetriesA429 pins that the association PUT, idempotent on its
+// key, is retried after a 429 like a GET rather than reported failed.
+func TestCreateCampaign_ConversionPUTRetriesA429(t *testing.T) {
+	var throttled atomic.Bool
+	s := &conversionServer{}
+	inner := s.handler(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "campaignConversions") && throttled.CompareAndSwap(false, true) {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		inner(w, r)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
+	res, err := c.CreateCampaign(context.Background(), conversionInput("104012"))
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if strings.Join(res.ConversionsAssociated, ",") != "104012" || len(res.ConversionsFailed) != 0 {
+		t.Errorf("a throttled PUT was not retried: %v / %v", res.ConversionsAssociated, res.ConversionsFailed)
+	}
+}
+
+// TestCreateCampaign_FailedConversionOnAReusedCampaignSaysItMayBeServing pins the step for a
+// campaign reused by name: it keeps its own status, so "before activating" would be wrong.
+func TestCreateCampaign_FailedConversionOnAReusedCampaignSaysItMayBeServing(t *testing.T) {
+	s := &conversionServer{failConv: "104012", status: http.StatusBadRequest}
+	inner := s.handler(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "adCampaigns") && !strings.Contains(r.URL.Path, "adCampaignGroups") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"elements":[{"id":777,"name":"`+reusedCampaignName(t)+`","status":"ACTIVE","campaignGroup":"urn:li:sponsoredCampaignGroup:100","objectiveType":"WEBSITE_VISIT"}],"metadata":{}}`)
+			return
+		}
+		inner(w, r)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	res, err := c.CreateCampaign(context.Background(), conversionInput("104012"))
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if res.CampaignID != "777" {
+		t.Fatalf("campaign was not reused: %s (steps %v)", res.CampaignID, res.Steps)
+	}
+	steps := strings.Join(res.Steps, "\n")
+	if !strings.Contains(steps, "this campaign was reused and may already be serving without it") || strings.Contains(steps, "before activating") {
+		t.Errorf("reused-campaign step is wrong: %s", steps)
+	}
+}
+
+// reusedCampaignName is the name CreateCampaign composes for conversionInput under automatic
+// bidding, so a search can answer with an existing campaign of that name.
+func reusedCampaignName(t *testing.T) string {
+	t.Helper()
+	plan, err := campaignBidding(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return buildCampaignName("KubeCon", plan.nameObjective, "CNCF", conversionInput())
 }

@@ -800,12 +800,16 @@ PUT /rest/campaignConversions/(campaign:urn%3Ali%3AsponsoredCampaign%3A<c>,conve
 {"campaign":"urn:li:sponsoredCampaign:<c>","conversion":"urn:lla:llaPartnerConversion:<id>"}  → 204
 ```
 
-The PUT is idempotent, so a retry re-associates safely. A failed association does not stop the
-create: the campaign is PAUSED, the row is `created_degraded`, the result lists
-`conversionsAssociated` and `conversionsFailed`, and a step names each failed id ("associate it in
-Campaign Manager before activating"; the HTTP status only, never LinkedIn's text).
+The PUT is idempotent, so a retry re-associates safely and a `429` on it is retried with the
+client's bounded backoff. A failed association does not stop the create: the row is
+`created_degraded`, the result lists `conversionsAssociated` and `conversionsFailed`, and a step
+names each failed id with the HTTP status only, never LinkedIn's text. A campaign this run created
+is PAUSED, so the step says to associate it in Campaign Manager before activating; a campaign
+reused by name keeps its own status, which may be ACTIVE, so the step says it may already be
+serving without the conversion.
 
-Refused with a synchronous `400 invalid campaign config: linkedInConfig.conversions: …`: a URN
+Refused with a synchronous `400 invalid campaign config: linkedInConfig.conversions: …`: a
+`conversions` that is not an array of JSON strings (send `["104012"]`, not `[104012]`), a URN
 instead of the numeric id, an id that is not a positive integer without a leading zero, an empty
 list (omit the field), more than 20 ids. Conversion rules belong to the ad account, so
 create-campaigns also requires `global_marketing_ops` on the project for `conversions` (`403`;

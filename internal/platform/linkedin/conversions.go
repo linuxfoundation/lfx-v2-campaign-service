@@ -75,10 +75,12 @@ func (c *Client) associateConversion(ctx context.Context, campaignID, conversion
 }
 
 // associateConversions associates every id with the campaign, in order, and reports which
-// succeeded and which failed. A failure does not stop the others: the campaign is PAUSED, and
-// the caller reports a partial association as a degraded create rather than discarding a
-// campaign that exists. Each failure gets a step naming the id; no upstream text is copied.
-func (c *Client) associateConversions(ctx context.Context, campaignID string, ids []string) (associated, failed, steps []string) {
+// succeeded and which failed. A failure does not stop the others, and the caller reports a
+// partial association as a degraded create rather than discarding a campaign that exists. A
+// campaign this run created is PAUSED, so its step says to associate before activating; a
+// campaign reused by name keeps its own status, which may be ACTIVE, so its step says it may
+// already be serving without the conversion. No upstream text is copied into a step.
+func (c *Client) associateConversions(ctx context.Context, campaignID string, ids []string, reused bool) (associated, failed, steps []string) {
 	for _, id := range ids {
 		if err := c.associateConversion(ctx, campaignID, id); err != nil {
 			failed = append(failed, id)
@@ -86,7 +88,11 @@ func (c *Client) associateConversions(ctx context.Context, campaignID string, id
 			if IsOutcomeUnconfirmed(err) {
 				outcome = "UNCONFIRMED"
 			}
-			steps = append(steps, fmt.Sprintf("Conversion %s association with campaign %s %s (%s); associate it in Campaign Manager before activating", id, campaignID, outcome, associationFailureClass(err)))
+			advice := "associate it in Campaign Manager before activating"
+			if reused {
+				advice = "associate it in Campaign Manager; this campaign was reused and may already be serving without it"
+			}
+			steps = append(steps, fmt.Sprintf("Conversion %s association with campaign %s %s (%s); %s", id, campaignID, outcome, associationFailureClass(err), advice))
 			continue
 		}
 		associated = append(associated, id)

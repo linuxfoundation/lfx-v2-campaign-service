@@ -95,7 +95,8 @@ type campaignBiddingPlan struct {
 //
 // DECISION (2026-10-13, Misha): automatic LinkedIn campaigns optimise for CLICKS via
 // WEBSITE_VISIT/MAX_CLICK, because MAX_CONVERSION — the only automated target the Website
-// conversions objective allows — needs a conversion association this service does not create.
+// conversions objective allows — needs a conversion association, which this service creates only
+// when linkedInConfig.conversions is supplied (#552, flag-gated), so automatic stays on clicks.
 // The objective therefore depends on the strategy. Sources, li-lms-2026-09, consulted 2026-10-13:
 //
 //   - "Ad Budget Type Allowable Combinations"

@@ -1094,7 +1094,10 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 	// A caller that must SEND ONCE (the bid write, withSendOnce) opts out: a 429 then comes
 	// back as itself, which createOutcomeAmbiguous classifies UNCONFIRMED, rather than a
 	// retry's definite answer standing in for the first attempt's unknown one.
-	idempotent := (method == http.MethodGet || method == http.MethodHead ||
+	// A PUT is idempotent by definition: the one PUT sent through here is the Campaign
+	// Conversions association (#552), which writes the same record on its compound key however
+	// often it is repeated, so its 429 is retried like a GET's.
+	idempotent := (method == http.MethodGet || method == http.MethodHead || method == http.MethodPut ||
 		strings.EqualFold(headers["X-Restli-Method"], "PARTIAL_UPDATE")) && !sendOnce(ctx)
 	for attempt := 0; attempt <= retryMax; attempt++ {
 		var reqBody *bytes.Reader
@@ -2945,7 +2948,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	var convAssociated, convFailed []string
 	if len(conversions) > 0 {
 		var convSteps []string
-		convAssociated, convFailed, convSteps = c.associateConversions(ctx, campaignID, conversions)
+		convAssociated, convFailed, convSteps = c.associateConversions(ctx, campaignID, conversions, campaignReused)
 		steps = append(steps, convSteps...)
 	}
 	withConversions := func(r *CampaignResult) *CampaignResult {
