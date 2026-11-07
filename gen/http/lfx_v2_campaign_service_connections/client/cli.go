@@ -2014,6 +2014,30 @@ func BuildListRedditAdsCustomAudiencesPayload(lfxV2CampaignServiceConnectionsLis
 	return v, nil
 }
 
+// BuildListTwitterAdsCustomAudiencesPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-twitter-ads-custom-audiences
+// endpoint from CLI flags.
+func BuildListTwitterAdsCustomAudiencesPayload(lfxV2CampaignServiceConnectionsListTwitterAdsCustomAudiencesProjectID *string, lfxV2CampaignServiceConnectionsListTwitterAdsCustomAudiencesBearerToken *string) (*lfxv2campaignserviceconnections.ListTwitterAdsCustomAudiencesPayload, error) {
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsListTwitterAdsCustomAudiencesProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsListTwitterAdsCustomAudiencesProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListTwitterAdsCustomAudiencesBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsListTwitterAdsCustomAudiencesBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListTwitterAdsCustomAudiencesPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildGetMetaAdsAudiencePayload builds the payload for the
 // lfx-v2-campaign-service-connections get-meta-ads-audience endpoint from CLI
 // flags.

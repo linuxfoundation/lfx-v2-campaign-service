@@ -71,7 +71,7 @@ spec:
     # introduces no new FGA object types — every endpoint is nested under
     # /projects/{projectId}/… and gated on the `campaign_manager` relation of that
     # project (reads AND writes; there is no read-only audience), except the Google
-    # conversion-action, audience and user lists, the Reddit and Meta custom-audience lists and
+    # conversion-action, audience and user lists, the Reddit, Meta and X custom-audience lists and
     # the LinkedIn ad-segment and conversion-rule pickers, gated on `global_marketing_ops`
     # (marketing-ops-api below). The projectId is
     # captured from the URL and the authorizer checks it against `project:{id}`.
@@ -82,8 +82,8 @@ spec:
     # Every project-nested campaign path routed through the heimdall middleware in
     # httproute.yaml is gated on the project `campaign_manager` relation, except
     # google-ads/conversion-actions, google-ads/audiences, google-ads/user-lists,
-    # reddit-ads/custom-audiences, linkedin-ads/audiences, linkedin-ads/conversions and
-    # meta-ads/custom-audiences (marketing-ops-api below). This is a
+    # reddit-ads/custom-audiences, twitter-ads/custom-audiences, linkedin-ads/audiences,
+    # linkedin-ads/conversions and meta-ads/custom-audiences (marketing-ops-api below). This is a
     # SINGLE rule covering every other routed family — connections, briefs, campaigns
     # (under a brief), jobs, the google-ads reads and create-form lookups,
     # meta-ads, reddit-ads, twitter-ads and linkedin-ads audience, reddit-ads keywords, and hubspot UTM — because they share the exact same
@@ -343,9 +343,10 @@ spec:
     # Google audience list (#496: custom audiences, combined audiences, Audience resources,
     # user interests), and the Google user-list read (HubSpot CRM and website visitor lists,
     # for the Search observed-lists picker), for the audience pickers, and the Meta custom
-    # audience list (#550, for the metaConfig.targeting pickers). The LF Google Ads customer and
-    # the LF Meta ad account are shared by every foundation, so these list every foundation's
-    # actions, audiences and user lists. campaign_manager is not enough here: it includes the project's
+    # audience list (#550, for the metaConfig.targeting pickers), plus the Reddit and X custom
+    # audience lists (#549, #564). The LF Google Ads customer and the LF Meta, Reddit and X ad
+    # accounts are shared by every foundation, so these list every foundation's actions,
+    # audiences and user lists. campaign_manager is not enough here: it includes the project's
     # executive_director (lfx-v2-helm model.fga), a foundation-scoped person. These reads are
     # gated on global_marketing_ops on the same project instead: the LF marketing team,
     # granted on every project, so no ROOT project id is needed (#468, #486). Same slug/UUID
@@ -362,6 +363,9 @@ spec:
           # The Reddit custom-audience list (#549), for the customAudienceIds picker. The LF
           # Reddit ad account is shared the same way, so it lists every foundation's audiences.
           - path: /projects/:projectId/reddit-ads/custom-audiences
+          # The X custom-audience list (#564), for the twitterConfig customAudienceIds picker.
+          # The LF X ad account is shared the same way, so it lists every foundation's audiences.
+          - path: /projects/:projectId/twitter-ads/custom-audiences
           # The LinkedIn ad-segment and conversion-rule pickers (#552). They read the account a
           # LinkedIn create uses, which is the LF system account for every project without its
           # own connection, so they can list other foundations' segments and rules.

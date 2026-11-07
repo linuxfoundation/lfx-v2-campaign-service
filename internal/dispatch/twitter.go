@@ -70,6 +70,12 @@ type twitterConfig struct {
 	// omitted, the line item carries no criterion of that type, as before.
 	GeoTargets []string `json:"geoTargets,omitempty"`
 	Languages  []string `json:"languages,omitempty"`
+	// CustomAudienceIDs and ExcludedCustomAudienceIDs are X custom audience ids to target and to
+	// exclude on the new line item (#564 gap 3, twitter_custom_audiences.go). Behind
+	// TWITTER_CUSTOM_AUDIENCES_ENABLED, and global_marketing_ops only
+	// (service.TwitterMarketingOpsInputs): the audiences belong to the shared LF ad account.
+	CustomAudienceIDs         []string `json:"customAudienceIds,omitempty"`
+	ExcludedCustomAudienceIDs []string `json:"excludedCustomAudienceIds,omitempty"`
 }
 
 // twitterBidPlan resolves twitterConfig's bidding choice. Every X campaign here is WEBSITE_CLICKS,
@@ -106,6 +112,10 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 	if err := checkTwitterTargetingShape(config); err != nil {
 		return err
 	}
+	// And a mistyped customAudienceIds / excludedCustomAudienceIds (#564 gap 3).
+	if err := checkTwitterCustomAudienceShape(config); err != nil {
+		return err
+	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
 	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
 	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
@@ -117,6 +127,9 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 		return err
 	}
 	if _, _, err := checkTwitterCreateTargeting(cfg); err != nil {
+		return err
+	}
+	if err := checkTwitterCustomAudiences(cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -262,6 +275,9 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if err := checkTwitterTargetingShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	if err := checkTwitterCustomAudienceShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg twitterConfig
 	if err := unmarshalPlatformConfig(config, "twitterConfig", &cfg); err != nil {
 		return nil, notCreated(err)
@@ -279,6 +295,11 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// runs before the decode above.)
 	geoTargets, languages, err := checkTwitterCreateTargeting(cfg)
 	if err != nil {
+		return nil, notCreated(err)
+	}
+	// Likewise the custom audience gate and id rules (#564 gap 3). The role check ran before the
+	// job existed (service.TwitterMarketingOpsInputs) and is not repeated here.
+	if err := checkTwitterCustomAudiences(cfg); err != nil {
 		return nil, notCreated(err)
 	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
@@ -394,6 +415,9 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 
 		GeoTargets: geoTargets,
 		Languages:  languages,
+
+		CustomAudienceIDs:         cfg.CustomAudienceIDs,
+		ExcludedCustomAudienceIDs: cfg.ExcludedCustomAudienceIDs,
 	}
 
 	// Built through the client cache, so concurrent dispatches for this account share ONE

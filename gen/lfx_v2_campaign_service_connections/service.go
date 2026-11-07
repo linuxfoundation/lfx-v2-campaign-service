@@ -261,6 +261,26 @@ type Service interface {
 	// or repeated id) is 503 with nothing partial. A pure read: nothing is
 	// persisted.
 	ListRedditAdsCustomAudiences(context.Context, *ListRedditAdsCustomAudiencesPayload) (res *RedditAdsCustomAudiences, err error)
+	// List the custom audiences on the X ad account an X create for this project
+	// uses, live from X Ads API v12 GET accounts/:account_id/custom_audiences
+	// (count=1000), for picking twitterConfig.customAudienceIds and
+	// excludedCustomAudienceIds (#564). Follows next_cursor for at most 10 pages;
+	// `truncated` is set when more remained. Deleted audiences are left out; every
+	// other audience is listed, targetable or not, with X's
+	// reasons_not_targetable. Sorted by name, ignoring case, then id. Credentials
+	// resolve as for a create: the project's own X connection, or the LF system
+	// account when the deployment forces it. The X ad account is shared by every
+	// foundation, so the response lists EVERY foundation's audiences; like
+	// list-reddit-ads-custom-audiences it is therefore gated on
+	// global_marketing_ops of {project_id} (the LF marketing team), not
+	// campaign_manager, which also admits a foundation's executive director.
+	// Disabled (400 not supported) unless TWITTER_CUSTOM_AUDIENCES_ENABLED is
+	// "true": the read is built from X's published reference and has not been
+	// exercised against a live ad account. An answer this service cannot believe
+	// (no data list, an unusable or repeated id, a full page with no usable
+	// cursor, a repeated cursor) is 503 with nothing partial. A pure read: nothing
+	// is persisted.
+	ListTwitterAdsCustomAudiences(context.Context, *ListTwitterAdsCustomAudiencesPayload) (res *TwitterAdsCustomAudiences, err error)
 	// Read Meta audience insights — age and gender (one combined breakdown) and
 	// placement (publisher_platform and platform_position) — for this project's
 	// own campaigns, live from the Meta Marketing API Insights edge of the
@@ -814,7 +834,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [81]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "list-google-ads-audiences", "list-meta-custom-audiences", "list-reddit-ads-custom-audiences", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "list-linkedin-ads-audiences", "list-linkedin-ads-conversions", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
+var MethodNames = [82]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "list-google-ads-audiences", "list-meta-custom-audiences", "list-reddit-ads-custom-audiences", "list-twitter-ads-custom-audiences", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "list-linkedin-ads-audiences", "list-linkedin-ads-conversions", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -2296,6 +2316,16 @@ type ListTwitterAdsAccountsResult struct {
 	Accounts []*AccessibleAccount
 }
 
+// ListTwitterAdsCustomAudiencesPayload is the payload type of the
+// lfx-v2-campaign-service-connections service
+// list-twitter-ads-custom-audiences method.
+type ListTwitterAdsCustomAudiencesPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
 type MarketingEmail struct {
 	// HubSpot marketing-email id, ready to pass as the campaign config's
 	// sourceEmailId
@@ -3241,6 +3271,41 @@ type TwitterAdsCredentials struct {
 	AccessToken string
 	// OAuth 1.0a access token secret
 	AccessTokenSecret string
+}
+
+type TwitterAdsCustomAudience struct {
+	// The audience id, in exactly the form twitterConfig.customAudienceIds and
+	// excludedCustomAudienceIds accept. Send it as-is.
+	ID string
+	// The audience's display name. Not an identifier; may be empty.
+	Name string
+	// X's audience_type, verbatim (for example WEB, LIST or MOBILE); may be empty.
+	AudienceType string
+	// X's targetable flag. Only a targetable audience is accepted at create; every
+	// audience is listed, so a picker can show why one is not usable yet.
+	Targetable bool
+	// X's audience_size. Absent when X sent none, which is not a size of 0.
+	AudienceSize *int64
+	// X's reasons_not_targetable (for example TOO_SMALL or PROCESSING); only
+	// enum-shaped values are passed through. Empty when targetable.
+	ReasonsNotTargetable []string
+}
+
+// TwitterAdsCustomAudiences is the result type of the
+// lfx-v2-campaign-service-connections service
+// list-twitter-ads-custom-audiences method.
+type TwitterAdsCustomAudiences struct {
+	// The X ad account the audiences were read from: the account an X create for
+	// this project uses
+	AccountID string
+	// The account's non-deleted custom audiences, sorted by name (ignoring case),
+	// then id
+	Audiences []*TwitterAdsCustomAudience
+	// How many audiences are in `audiences`
+	AudienceCount int
+	// True when X still had more pages after the 10 this read follows; the list is
+	// then incomplete
+	Truncated bool
 }
 
 type UnauthorizedError struct {

@@ -1625,3 +1625,39 @@ unreadable lookup, not a confirmed "exactly one", which is the language walk's r
 
 Not verified live: no X call was made. The dispatcher keeps both lists behind
 `TWITTER_CREATE_TARGETING_ENABLED` (default off).
+
+## Custom audiences (`custom_audiences.go`, #564 gap 3)
+
+`CampaignInput.CustomAudienceIDs` and `ExcludedCustomAudienceIDs` add `CUSTOM_AUDIENCE` criteria
+to the line item a create makes: `EQ` to target, `NE` to exclude. `ValidateCustomAudienceIDs`
+holds the pure rules once (1-32 letters or digits, compared exactly and never trimmed, at most
+100 per list, no repeat, no id in both lists), so the dispatcher's synchronous preflight and
+`CreateCampaign` cannot disagree.
+
+Before anything is created, `checkCustomAudiences` reads every id in one
+`GET accounts/:id/custom_audiences?custom_audience_ids=…&with_deleted=true` (200 ids per call,
+X's maximum). Every id must come back live and `targetable`. X says a custom audience must be
+targetable to be targeted. A missing, deleted or non-targetable audience is a `PreflightRefusal`
+naming the list and the id, plus X's `reasons_not_targetable` when they are enum-shaped
+(`TOO_SMALL`, `PROCESSING`); any other reason text is dropped. A read that fails or cannot be
+believed is a plain error. Either way nothing is created.
+
+The criteria go through the same per-criterion POST as the location and language criteria.
+`createCriterion` now carries an operator (`""` reads as EQ). The order is: exclusions first of
+all the criteria, so a create that stops part-way has applied the suppression before any
+inclusion, then locations, languages, and the inclusions last. An `NE` criterion must be echoed
+as `NE`. An echo without `operator_type` reads as X's default EQ, the opposite of the exclusion
+sent, so it is UNCONFIRMED, which is the negative-keyword path's rule. `missingCriteria` compares
+the operator too, and compares a custom audience id exactly (location values and language codes
+still compare ignoring case).
+
+`ListCustomAudiences` backs `GET /projects/{project_id}/twitter-ads/custom-audiences`. It walks
+`custom_audiences?count=1000` by `next_cursor` for at most 10 pages, then returns what it read
+with `truncated` set. Deleted audiences are skipped. An unusable or repeated id, a missing data
+list, a full page with no usable cursor or a repeated cursor fails the whole read
+(`ErrCustomAudiencesMalformed`, a 503), never a partial list.
+
+Not verified live: no X call was made. The dispatcher keeps both the create inputs and the read
+behind `TWITTER_CUSTOM_AUDIENCES_ENABLED` (default off). The audiences belong to the shared LF ad
+account, so the create inputs need `global_marketing_ops` (`service.TwitterMarketingOpsInputs`)
+and the read sits in the gateway's `marketing-ops-api` rule.

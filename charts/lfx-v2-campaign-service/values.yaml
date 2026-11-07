@@ -390,6 +390,18 @@ app:
     TWITTER_CREATE_TARGETING_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to X custom audiences (#564): the create inputs
+    # twitterConfig.customAudienceIds / excludedCustomAudienceIds (CUSTOM_AUDIENCE
+    # targeting criteria, EQ and NE, on the new line item) and the picker read
+    # twitter-ads/custom-audiences. Built from X's published v12 reference and not
+    # yet exercised against a live ad account. While off, a create setting either
+    # list is refused with a 400 before any job exists and the read answers 400.
+    # The audiences live on the ad account every foundation shares, so the create
+    # inputs also need global_marketing_ops (403 otherwise) and the read is gated
+    # on it at the gateway. Any value other than "true" is treated as off.
+    TWITTER_CUSTOM_AUDIENCES_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to microsoftConfig.sitelinks and
     # microsoftConfig.callouts (#563), created at create time as sitelink and
     # callout ad extensions associated with the new Search campaign. Default

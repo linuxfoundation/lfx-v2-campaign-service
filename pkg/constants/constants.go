@@ -198,6 +198,20 @@ const (
 	// environment, in lfx-v2-argocd.
 	EnvTwitterCreateTargetingEnabled = "TWITTER_CREATE_TARGETING_ENABLED"
 
+	// EnvTwitterCustomAudiencesEnabled opts a deployment IN to X custom audiences (#564 gap 3): the
+	// create inputs twitterConfig.customAudienceIds / excludedCustomAudienceIds (CUSTOM_AUDIENCE
+	// targeting criteria, EQ and NE, on the new line item) and the picker read
+	// GET /projects/{project_id}/twitter-ads/custom-audiences. Only the exact value "true" enables
+	// them; unset or any other value fails closed: a create that sets either list is refused with
+	// 400 before any job exists, and the read answers 400 "not supported".
+	//
+	// Both shapes come from X's published Ads API v12 reference and have NOT been exercised
+	// against a live ad account. Turn it on in lfx-v2-argocd only after a live create confirms
+	// them. Independent of it, an audience names a resource of the LF ad account every foundation
+	// shares, so the create inputs also require global_marketing_ops
+	// (service.TwitterMarketingOpsInputs) and the read sits in the gateway's marketing-ops-api rule.
+	EnvTwitterCustomAudiencesEnabled = "TWITTER_CUSTOM_AUDIENCES_ENABLED"
+
 	// EnvMicrosoftAdExtensionsEnabled opts a deployment IN to microsoftConfig.sitelinks and
 	// microsoftConfig.callouts (#563), created at create time as SitelinkAdExtension and
 	// CalloutAdExtension entries and associated with the new Search campaign. Only the exact value

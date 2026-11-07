@@ -119,6 +119,11 @@ const metaCustomAudiencesPath = "/projects/:projectId/meta-ads/custom-audiences"
 // only, and TestRedditCustomAudiencesIsAMarketingOpsRead pins that.
 const redditCustomAudiencesPath = "/projects/:projectId/reddit-ads/custom-audiences"
 
+// twitterCustomAudiencesPath is the X custom-audience list (#564). It lists every foundation's
+// audiences on the shared LF X ad account, so it is ruled by marketing-ops-api only, and
+// TestTwitterCustomAudiencesIsAMarketingOpsRead pins that.
+const twitterCustomAudiencesPath = "/projects/:projectId/twitter-ads/custom-audiences"
+
 // linkedInAudiencesPath and linkedInConversionsPath are the LinkedIn picker reads (#552). They
 // read the account a LinkedIn create uses, the LF system account for every project without its
 // own connection, so they are ruled by marketing-ops-api only.
@@ -128,7 +133,7 @@ const (
 )
 
 // marketingOpsPaths is every path the marketing-ops-api rule must hold, in order, and nothing else.
-var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, redditCustomAudiencesPath, linkedInAudiencesPath, linkedInConversionsPath, metaCustomAudiencesPath}
+var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, redditCustomAudiencesPath, twitterCustomAudiencesPath, linkedInAudiencesPath, linkedInConversionsPath, metaCustomAudiencesPath}
 
 // ruleBlock isolates one rendered Heimdall rule (from its `- id: "<id>"` line up to
 // the next `- id:` or EOF) so path/authorizer extraction is scoped to a SINGLE rule.
@@ -251,6 +256,25 @@ func TestLinkedInPickersAreMarketingOpsReads(t *testing.T) {
 // campaign_manager (executive_director included) must not reach it.
 func TestUserListsIsAMarketingOpsRead(t *testing.T) {
 	assertMarketingOpsRead(t, userListsPath, "/projects/p1/google-ads/user-lists")
+}
+
+// TestTwitterCustomAudiencesIsAMarketingOpsRead pins the same for the X custom-audience list
+// (#564): it lists every foundation's custom audiences on the shared LF X ad account, so a
+// campaign_manager (executive_director included) must not reach it. The sibling
+// twitter-ads/audience insights read stays a project-api path.
+func TestTwitterCustomAudiencesIsAMarketingOpsRead(t *testing.T) {
+	assertMarketingOpsRead(t, twitterCustomAudiencesPath, "/projects/p1/twitter-ads/custom-audiences")
+	ruleset := helmTemplate(t, "templates/ruleset.yaml")
+	const insights = "/projects/p1/twitter-ads/audience"
+	matched := false
+	for _, p := range rulePatterns(t, ruleset, projectAPIRuleID) {
+		if ruleMatcher(t, p).MatchString(insights) {
+			matched = true
+		}
+	}
+	if !matched {
+		t.Errorf("%s rule no longer matches %s, the campaign_manager X audience insights read", projectAPIRuleID, insights)
+	}
 }
 
 // TestRedditCustomAudiencesIsAMarketingOpsRead pins the same for the Reddit custom-audience list
@@ -688,6 +712,8 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/google-ads/audiences/x", false},
 		{"/projects/p1/meta-ads/custom-audiences", true},
 		{"/projects/p1/meta-ads/custom-audiences/x", false},
+		{"/projects/p1/twitter-ads/custom-audiences", true},
+		{"/projects/p1/twitter-ads/custom-audiences/x", false},
 		{"/projects/p1/google-ads/conversion-actions/x", false},
 		{"/projects/p1/microsoft-ads/conversion-actions", false},
 		{"/projects/p1/connection-google-ads/conversion-actions", false},

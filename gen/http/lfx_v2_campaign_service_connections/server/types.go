@@ -921,6 +921,23 @@ type ListRedditAdsCustomAudiencesResponseBody struct {
 	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
 }
 
+// ListTwitterAdsCustomAudiencesResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body.
+type ListTwitterAdsCustomAudiencesResponseBody struct {
+	// The X ad account the audiences were read from: the account an X create for
+	// this project uses
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The account's non-deleted custom audiences, sorted by name (ignoring case),
+	// then id
+	Audiences []*TwitterAdsCustomAudienceResponseBody `form:"audiences" json:"audiences" xml:"audiences"`
+	// How many audiences are in `audiences`
+	AudienceCount int `form:"audience_count" json:"audience_count" xml:"audience_count"`
+	// True when X still had more pages after the 10 this read follows; the list is
+	// then incomplete
+	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
+}
+
 // GetMetaAdsAudienceResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body.
@@ -4656,6 +4673,72 @@ type ListRedditAdsCustomAudiencesUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListTwitterAdsCustomAudiencesBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
+// "BadRequest" error.
+type ListTwitterAdsCustomAudiencesBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListTwitterAdsCustomAudiencesServiceUnavailableResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type ListTwitterAdsCustomAudiencesServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListTwitterAdsCustomAudiencesInternalServerErrorResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
+// "InternalServerError" error.
+type ListTwitterAdsCustomAudiencesInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListTwitterAdsCustomAudiencesNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
+// "NotFound" error.
+type ListTwitterAdsCustomAudiencesNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListTwitterAdsCustomAudiencesPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type ListTwitterAdsCustomAudiencesPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListTwitterAdsCustomAudiencesUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
+// "Unauthorized" error.
+type ListTwitterAdsCustomAudiencesUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetMetaAdsAudienceBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -6882,6 +6965,26 @@ type RedditAdsCustomAudienceResponseBody struct {
 	SizeUpper *int64 `form:"size_upper,omitempty" json:"size_upper,omitempty" xml:"size_upper,omitempty"`
 }
 
+// TwitterAdsCustomAudienceResponseBody is used to define fields on response
+// body types.
+type TwitterAdsCustomAudienceResponseBody struct {
+	// The audience id, in exactly the form twitterConfig.customAudienceIds and
+	// excludedCustomAudienceIds accept. Send it as-is.
+	ID string `form:"id" json:"id" xml:"id"`
+	// The audience's display name. Not an identifier; may be empty.
+	Name string `form:"name" json:"name" xml:"name"`
+	// X's audience_type, verbatim (for example WEB, LIST or MOBILE); may be empty.
+	AudienceType string `form:"audience_type" json:"audience_type" xml:"audience_type"`
+	// X's targetable flag. Only a targetable audience is accepted at create; every
+	// audience is listed, so a picker can show why one is not usable yet.
+	Targetable bool `form:"targetable" json:"targetable" xml:"targetable"`
+	// X's audience_size. Absent when X sent none, which is not a size of 0.
+	AudienceSize *int64 `form:"audience_size,omitempty" json:"audience_size,omitempty" xml:"audience_size,omitempty"`
+	// X's reasons_not_targetable (for example TOO_SMALL or PROCESSING); only
+	// enum-shaped values are passed through. Empty when targetable.
+	ReasonsNotTargetable []string `form:"reasons_not_targetable" json:"reasons_not_targetable" xml:"reasons_not_targetable"`
+}
+
 // MetaAdsAudienceBucketResponseBody is used to define fields on response body
 // types.
 type MetaAdsAudienceBucketResponseBody struct {
@@ -8574,6 +8677,30 @@ func NewListRedditAdsCustomAudiencesResponseBody(res *lfxv2campaignserviceconnec
 		}
 	} else {
 		body.Audiences = []*RedditAdsCustomAudienceResponseBody{}
+	}
+	return body
+}
+
+// NewListTwitterAdsCustomAudiencesResponseBody builds the HTTP response body
+// from the result of the "list-twitter-ads-custom-audiences" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsCustomAudiencesResponseBody(res *lfxv2campaignserviceconnections.TwitterAdsCustomAudiences) *ListTwitterAdsCustomAudiencesResponseBody {
+	body := &ListTwitterAdsCustomAudiencesResponseBody{
+		AccountID:     res.AccountID,
+		AudienceCount: res.AudienceCount,
+		Truncated:     res.Truncated,
+	}
+	if res.Audiences != nil {
+		body.Audiences = make([]*TwitterAdsCustomAudienceResponseBody, len(res.Audiences))
+		for i, val := range res.Audiences {
+			if val == nil {
+				body.Audiences[i] = nil
+				continue
+			}
+			body.Audiences[i] = marshalLfxv2campaignserviceconnectionsTwitterAdsCustomAudienceToTwitterAdsCustomAudienceResponseBody(val)
+		}
+	} else {
+		body.Audiences = []*TwitterAdsCustomAudienceResponseBody{}
 	}
 	return body
 }
@@ -12947,6 +13074,74 @@ func NewListRedditAdsCustomAudiencesUnauthorizedResponseBody(res *lfxv2campaigns
 	return body
 }
 
+// NewListTwitterAdsCustomAudiencesBadRequestResponseBody builds the HTTP
+// response body from the result of the "list-twitter-ads-custom-audiences"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsCustomAudiencesBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListTwitterAdsCustomAudiencesBadRequestResponseBody {
+	body := &ListTwitterAdsCustomAudiencesBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListTwitterAdsCustomAudiencesServiceUnavailableResponseBody builds the
+// HTTP response body from the result of the
+// "list-twitter-ads-custom-audiences" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsCustomAudiencesServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListTwitterAdsCustomAudiencesServiceUnavailableResponseBody {
+	body := &ListTwitterAdsCustomAudiencesServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListTwitterAdsCustomAudiencesInternalServerErrorResponseBody builds the
+// HTTP response body from the result of the
+// "list-twitter-ads-custom-audiences" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsCustomAudiencesInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListTwitterAdsCustomAudiencesInternalServerErrorResponseBody {
+	body := &ListTwitterAdsCustomAudiencesInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListTwitterAdsCustomAudiencesNotFoundResponseBody builds the HTTP
+// response body from the result of the "list-twitter-ads-custom-audiences"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsCustomAudiencesNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListTwitterAdsCustomAudiencesNotFoundResponseBody {
+	body := &ListTwitterAdsCustomAudiencesNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListTwitterAdsCustomAudiencesPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "list-twitter-ads-custom-audiences"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsCustomAudiencesPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListTwitterAdsCustomAudiencesPayloadTooLargeResponseBody {
+	body := &ListTwitterAdsCustomAudiencesPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListTwitterAdsCustomAudiencesUnauthorizedResponseBody builds the HTTP
+// response body from the result of the "list-twitter-ads-custom-audiences"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsCustomAudiencesUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListTwitterAdsCustomAudiencesUnauthorizedResponseBody {
+	body := &ListTwitterAdsCustomAudiencesUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetMetaAdsAudienceBadRequestResponseBody builds the HTTP response body
 // from the result of the "get-meta-ads-audience" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -15619,6 +15814,17 @@ func NewListMetaCustomAudiencesPayload(projectID string, q *string, bearerToken 
 // endpoint payload.
 func NewListRedditAdsCustomAudiencesPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListRedditAdsCustomAudiencesPayload {
 	v := &lfxv2campaignserviceconnections.ListRedditAdsCustomAudiencesPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListTwitterAdsCustomAudiencesPayload builds a
+// lfx-v2-campaign-service-connections service
+// list-twitter-ads-custom-audiences endpoint payload.
+func NewListTwitterAdsCustomAudiencesPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListTwitterAdsCustomAudiencesPayload {
+	v := &lfxv2campaignserviceconnections.ListTwitterAdsCustomAudiencesPayload{}
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken
 

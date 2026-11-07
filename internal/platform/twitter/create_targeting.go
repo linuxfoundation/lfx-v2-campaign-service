@@ -123,6 +123,9 @@ func normalizeTargetList(field string, in []string, maxLen int, fold func(string
 type createCriterion struct {
 	targetingType string
 	value         string
+	// operator is X's operator_type; "" means EQ. Only a custom audience exclusion (#564 gap 3)
+	// sends NE.
+	operator string
 	// label names it in steps and errors: the caller's country code or language, never X's
 	// opaque location value.
 	label string
@@ -296,9 +299,18 @@ func (c *Client) resolveCreateTargeting(ctx context.Context, geo, langs []string
 	return out, nil
 }
 
-// createTargetingCriterion POSTs one EQ criterion to the line item and confirms the echo: a live
-// criterion with a usable id, under THIS line item, of the requested type and value, and EQ (the
-// single-create example omits operator_type, so an absent one reads as X's default EQ). Paced and
+// op is the criterion's operator_type, EQ unless it says NE.
+func (cr createCriterion) op() string {
+	if cr.operator == "" {
+		return OperatorEQ
+	}
+	return cr.operator
+}
+
+// createTargetingCriterion POSTs one criterion to the line item and confirms the echo: a live
+// criterion with a usable id, under THIS line item, of the requested type, value and operator (the
+// single-create example omits operator_type, so an absent one reads as X's default EQ; an NE
+// criterion must be echoed as NE, as the negative-keyword path requires). Paced and
 // sent ONCE: X has no idempotency key for a criterion, so a 429 is not retried in-call and is
 // classified UNCONFIRMED by createOutcomeAmbiguous, as a transport failure, 3xx or 5xx is; any
 // other 4xx is a definite refusal. A 2xx that does not confirm is UNCONFIRMED.
@@ -308,7 +320,7 @@ func (c *Client) createTargetingCriterion(ctx context.Context, lineItemID string
 	}
 	resp, err := c.doRequest(ctx, http.MethodPost, "targeting_criteria", map[string]string{
 		"line_item_id":    lineItemID,
-		"operator_type":   OperatorEQ,
+		"operator_type":   cr.op(),
 		"targeting_type":  cr.targetingType,
 		"targeting_value": cr.value,
 	}, false /* sent once: a 429 is unconfirmed, never retried */)
@@ -334,23 +346,42 @@ func (c *Client) createTargetingCriterion(ctx context.Context, lineItemID string
 		return unconfirmed("acknowledged without a usable criterion id")
 	case tc.LineItemID != lineItemID:
 		return unconfirmed("acknowledged under another line item")
-	case tc.TargetingType != cr.targetingType || tc.Deleted || (tc.OperatorType != "" && tc.OperatorType != OperatorEQ):
+	case tc.TargetingType != cr.targetingType || tc.Deleted || !echoedOperator(tc.OperatorType, cr.op()):
 		return unconfirmed("acknowledged as a criterion other than the one sent")
-	case !strings.EqualFold(tc.TargetingValue, cr.value):
+	case !cr.sameValue(tc.TargetingValue):
 		return unconfirmed("acknowledged for another value")
 	}
 	return nil
 }
 
+// sameValue reports whether an echoed or listed targeting_value is this criterion's. A custom
+// audience id is an opaque, case-sensitive id and must match exactly; the other values (X's
+// location values and language codes) compare ignoring case.
+func (cr createCriterion) sameValue(v string) bool {
+	if cr.targetingType == TargetingCustomAudience {
+		return v == cr.value
+	}
+	return strings.EqualFold(v, cr.value)
+}
+
+// echoedOperator reports whether an echoed or listed operator_type is the one wanted. An absent
+// one reads as X's default EQ, so it confirms EQ and never NE.
+func echoedOperator(got, want string) bool {
+	if got == "" {
+		return want == OperatorEQ
+	}
+	return got == want
+}
+
 // missingCriteria returns the wanted criteria the line item does not already hold live, as a
-// non-negated criterion of the same type and value. Extra criteria on the line item are left as
+// criterion of the same type, value and operator. Extra criteria on the line item are left as
 // they are: this create only adds.
 func missingCriteria(want []createCriterion, live []TargetingCriterion) []createCriterion {
 	var out []createCriterion
 	for _, w := range want {
 		held := false
 		for _, l := range live {
-			if !l.Deleted && l.TargetingType == w.targetingType && (l.OperatorType == "" || l.OperatorType == OperatorEQ) && strings.EqualFold(l.TargetingValue, w.value) {
+			if !l.Deleted && l.TargetingType == w.targetingType && echoedOperator(l.OperatorType, w.op()) && w.sameValue(l.TargetingValue) {
 				held = true
 				break
 			}

@@ -71,6 +71,7 @@ type Server struct {
 	ListGoogleAdsAudiences         http.Handler
 	ListMetaCustomAudiences        http.Handler
 	ListRedditAdsCustomAudiences   http.Handler
+	ListTwitterAdsCustomAudiences  http.Handler
 	GetMetaAdsAudience             http.Handler
 	GetTwitterAdsAudience          http.Handler
 	GetLinkedinAdsAudience         http.Handler
@@ -182,6 +183,7 @@ func New(
 			{"ListGoogleAdsAudiences", "GET", "/projects/{project_id}/google-ads/audiences"},
 			{"ListMetaCustomAudiences", "GET", "/projects/{project_id}/meta-ads/custom-audiences"},
 			{"ListRedditAdsCustomAudiences", "GET", "/projects/{project_id}/reddit-ads/custom-audiences"},
+			{"ListTwitterAdsCustomAudiences", "GET", "/projects/{project_id}/twitter-ads/custom-audiences"},
 			{"GetMetaAdsAudience", "GET", "/projects/{project_id}/meta-ads/audience"},
 			{"GetTwitterAdsAudience", "GET", "/projects/{project_id}/twitter-ads/audience"},
 			{"GetLinkedinAdsAudience", "GET", "/projects/{project_id}/linkedin-ads/audience"},
@@ -264,6 +266,7 @@ func New(
 		ListGoogleAdsAudiences:         NewListGoogleAdsAudiencesHandler(e.ListGoogleAdsAudiences, mux, decoder, encoder, errhandler, formatter),
 		ListMetaCustomAudiences:        NewListMetaCustomAudiencesHandler(e.ListMetaCustomAudiences, mux, decoder, encoder, errhandler, formatter),
 		ListRedditAdsCustomAudiences:   NewListRedditAdsCustomAudiencesHandler(e.ListRedditAdsCustomAudiences, mux, decoder, encoder, errhandler, formatter),
+		ListTwitterAdsCustomAudiences:  NewListTwitterAdsCustomAudiencesHandler(e.ListTwitterAdsCustomAudiences, mux, decoder, encoder, errhandler, formatter),
 		GetMetaAdsAudience:             NewGetMetaAdsAudienceHandler(e.GetMetaAdsAudience, mux, decoder, encoder, errhandler, formatter),
 		GetTwitterAdsAudience:          NewGetTwitterAdsAudienceHandler(e.GetTwitterAdsAudience, mux, decoder, encoder, errhandler, formatter),
 		GetLinkedinAdsAudience:         NewGetLinkedinAdsAudienceHandler(e.GetLinkedinAdsAudience, mux, decoder, encoder, errhandler, formatter),
@@ -353,6 +356,7 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.ListGoogleAdsAudiences = m(s.ListGoogleAdsAudiences)
 	s.ListMetaCustomAudiences = m(s.ListMetaCustomAudiences)
 	s.ListRedditAdsCustomAudiences = m(s.ListRedditAdsCustomAudiences)
+	s.ListTwitterAdsCustomAudiences = m(s.ListTwitterAdsCustomAudiences)
 	s.GetMetaAdsAudience = m(s.GetMetaAdsAudience)
 	s.GetTwitterAdsAudience = m(s.GetTwitterAdsAudience)
 	s.GetLinkedinAdsAudience = m(s.GetLinkedinAdsAudience)
@@ -442,6 +446,7 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountListGoogleAdsAudiencesHandler(mux, h.ListGoogleAdsAudiences)
 	MountListMetaCustomAudiencesHandler(mux, h.ListMetaCustomAudiences)
 	MountListRedditAdsCustomAudiencesHandler(mux, h.ListRedditAdsCustomAudiences)
+	MountListTwitterAdsCustomAudiencesHandler(mux, h.ListTwitterAdsCustomAudiences)
 	MountGetMetaAdsAudienceHandler(mux, h.GetMetaAdsAudience)
 	MountGetTwitterAdsAudienceHandler(mux, h.GetTwitterAdsAudience)
 	MountGetLinkedinAdsAudienceHandler(mux, h.GetLinkedinAdsAudience)
@@ -3230,6 +3235,61 @@ func NewListRedditAdsCustomAudiencesHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "list-reddit-ads-custom-audiences")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountListTwitterAdsCustomAudiencesHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint.
+func MountListTwitterAdsCustomAudiencesHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/twitter-ads/custom-audiences", f)
+}
+
+// NewListTwitterAdsCustomAudiencesHandler creates a HTTP handler which loads
+// the HTTP request and calls the "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint.
+func NewListTwitterAdsCustomAudiencesHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeListTwitterAdsCustomAudiencesRequest(mux, decoder)
+		encodeResponse = EncodeListTwitterAdsCustomAudiencesResponse(encoder)
+		encodeError    = EncodeListTwitterAdsCustomAudiencesError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "list-twitter-ads-custom-audiences")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
 		payload, err := decodeRequest(r)
 		if err != nil {

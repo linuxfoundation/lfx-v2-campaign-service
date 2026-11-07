@@ -5478,7 +5478,21 @@ type CampaignCreateInputRequestBody struct {
 	// malformed entry, a list over its cap, a value that is not an array of
 	// strings (null reads as absent), or either list while the flag is off, is
 	// refused with 400 "invalid campaign config: twitterConfig.<field>: ..."
-	// before any job exists. MICROSOFT AD COPY (#563): microsoftConfig takes
+	// before any job exists. X CUSTOM AUDIENCES (#564): twitterConfig takes
+	// `customAudienceIds` and `excludedCustomAudienceIds`, arrays of X custom
+	// audience ids (list-twitter-ads-custom-audiences offers them) to target and
+	// to exclude, sent as CUSTOM_AUDIENCE targeting criteria on the new line item
+	// with operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
+	// given; at most 100 per list; no id twice and none in both lists. Before
+	// anything is created every id is read with GET
+	// accounts/:account_id/custom_audiences and must be live and targetable; a
+	// missing, deleted or non-targetable audience fails the job with nothing
+	// created. The exclusions are posted first of all the criteria and the
+	// inclusions last, after the line item and before the promoted tweet; a
+	// criterion failure stops the create as for X TARGETING. Off unless
+	// TWITTER_CUSTOM_AUDIENCES_ENABLED is "true" (built from X's published
+	// reference, not yet exercised live), and only for global_marketing_ops (see
+	// create-campaigns). MICROSOFT AD COPY (#563): microsoftConfig takes
 	// `headlines` (3-15), `descriptions` (2-4), `path1` and `path2`, sent on the
 	// responsive search ad instead of the copy auto-composed from the event name.
 	// Each headline is at most 30 characters and each description at most 90 (15

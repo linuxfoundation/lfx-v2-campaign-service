@@ -921,6 +921,23 @@ type ListRedditAdsCustomAudiencesResponseBody struct {
 	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
 }
 
+// ListTwitterAdsCustomAudiencesResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body.
+type ListTwitterAdsCustomAudiencesResponseBody struct {
+	// The X ad account the audiences were read from: the account an X create for
+	// this project uses
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The account's non-deleted custom audiences, sorted by name (ignoring case),
+	// then id
+	Audiences []*TwitterAdsCustomAudienceResponseBody `form:"audiences,omitempty" json:"audiences,omitempty" xml:"audiences,omitempty"`
+	// How many audiences are in `audiences`
+	AudienceCount *int `form:"audience_count,omitempty" json:"audience_count,omitempty" xml:"audience_count,omitempty"`
+	// True when X still had more pages after the 10 this read follows; the list is
+	// then incomplete
+	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
+}
+
 // GetMetaAdsAudienceResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body.
@@ -4656,6 +4673,72 @@ type ListRedditAdsCustomAudiencesUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListTwitterAdsCustomAudiencesBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
+// "BadRequest" error.
+type ListTwitterAdsCustomAudiencesBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListTwitterAdsCustomAudiencesServiceUnavailableResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type ListTwitterAdsCustomAudiencesServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListTwitterAdsCustomAudiencesInternalServerErrorResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
+// "InternalServerError" error.
+type ListTwitterAdsCustomAudiencesInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListTwitterAdsCustomAudiencesNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
+// "NotFound" error.
+type ListTwitterAdsCustomAudiencesNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListTwitterAdsCustomAudiencesPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type ListTwitterAdsCustomAudiencesPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListTwitterAdsCustomAudiencesUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
+// "Unauthorized" error.
+type ListTwitterAdsCustomAudiencesUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetMetaAdsAudienceBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -6880,6 +6963,26 @@ type RedditAdsCustomAudienceResponseBody struct {
 	SizeLower *int64 `form:"size_lower,omitempty" json:"size_lower,omitempty" xml:"size_lower,omitempty"`
 	// Reddit's upper bound on the matched users. Absent when Reddit sent none.
 	SizeUpper *int64 `form:"size_upper,omitempty" json:"size_upper,omitempty" xml:"size_upper,omitempty"`
+}
+
+// TwitterAdsCustomAudienceResponseBody is used to define fields on response
+// body types.
+type TwitterAdsCustomAudienceResponseBody struct {
+	// The audience id, in exactly the form twitterConfig.customAudienceIds and
+	// excludedCustomAudienceIds accept. Send it as-is.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// The audience's display name. Not an identifier; may be empty.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// X's audience_type, verbatim (for example WEB, LIST or MOBILE); may be empty.
+	AudienceType *string `form:"audience_type,omitempty" json:"audience_type,omitempty" xml:"audience_type,omitempty"`
+	// X's targetable flag. Only a targetable audience is accepted at create; every
+	// audience is listed, so a picker can show why one is not usable yet.
+	Targetable *bool `form:"targetable,omitempty" json:"targetable,omitempty" xml:"targetable,omitempty"`
+	// X's audience_size. Absent when X sent none, which is not a size of 0.
+	AudienceSize *int64 `form:"audience_size,omitempty" json:"audience_size,omitempty" xml:"audience_size,omitempty"`
+	// X's reasons_not_targetable (for example TOO_SMALL or PROCESSING); only
+	// enum-shaped values are passed through. Empty when targetable.
+	ReasonsNotTargetable []string `form:"reasons_not_targetable,omitempty" json:"reasons_not_targetable,omitempty" xml:"reasons_not_targetable,omitempty"`
 }
 
 // MetaAdsAudienceBucketResponseBody is used to define fields on response body
@@ -12665,6 +12768,101 @@ func NewListRedditAdsCustomAudiencesUnauthorized(body *ListRedditAdsCustomAudien
 	return v
 }
 
+// NewListTwitterAdsCustomAudiencesTwitterAdsCustomAudiencesOK builds a
+// "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint result from a HTTP "OK"
+// response.
+func NewListTwitterAdsCustomAudiencesTwitterAdsCustomAudiencesOK(body *ListTwitterAdsCustomAudiencesResponseBody) *lfxv2campaignserviceconnections.TwitterAdsCustomAudiences {
+	v := &lfxv2campaignserviceconnections.TwitterAdsCustomAudiences{
+		AccountID:     *body.AccountID,
+		AudienceCount: *body.AudienceCount,
+		Truncated:     *body.Truncated,
+	}
+	v.Audiences = make([]*lfxv2campaignserviceconnections.TwitterAdsCustomAudience, len(body.Audiences))
+	for i, val := range body.Audiences {
+		if val == nil {
+			v.Audiences[i] = nil
+			continue
+		}
+		v.Audiences[i] = unmarshalTwitterAdsCustomAudienceResponseBodyToLfxv2campaignserviceconnectionsTwitterAdsCustomAudience(val)
+	}
+
+	return v
+}
+
+// NewListTwitterAdsCustomAudiencesBadRequest builds a
+// lfx-v2-campaign-service-connections service
+// list-twitter-ads-custom-audiences endpoint BadRequest error.
+func NewListTwitterAdsCustomAudiencesBadRequest(body *ListTwitterAdsCustomAudiencesBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListTwitterAdsCustomAudiencesServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service
+// list-twitter-ads-custom-audiences endpoint ServiceUnavailable error.
+func NewListTwitterAdsCustomAudiencesServiceUnavailable(body *ListTwitterAdsCustomAudiencesServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListTwitterAdsCustomAudiencesInternalServerError builds a
+// lfx-v2-campaign-service-connections service
+// list-twitter-ads-custom-audiences endpoint InternalServerError error.
+func NewListTwitterAdsCustomAudiencesInternalServerError(body *ListTwitterAdsCustomAudiencesInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListTwitterAdsCustomAudiencesNotFound builds a
+// lfx-v2-campaign-service-connections service
+// list-twitter-ads-custom-audiences endpoint NotFound error.
+func NewListTwitterAdsCustomAudiencesNotFound(body *ListTwitterAdsCustomAudiencesNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListTwitterAdsCustomAudiencesPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service
+// list-twitter-ads-custom-audiences endpoint PayloadTooLarge error.
+func NewListTwitterAdsCustomAudiencesPayloadTooLarge(body *ListTwitterAdsCustomAudiencesPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListTwitterAdsCustomAudiencesUnauthorized builds a
+// lfx-v2-campaign-service-connections service
+// list-twitter-ads-custom-audiences endpoint Unauthorized error.
+func NewListTwitterAdsCustomAudiencesUnauthorized(body *ListTwitterAdsCustomAudiencesUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetMetaAdsAudienceMetaAdsAudienceOK builds a
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint result from a HTTP "OK" response.
@@ -16565,6 +16763,31 @@ func ValidateListRedditAdsCustomAudiencesResponseBody(body *ListRedditAdsCustomA
 	for _, e := range body.Audiences {
 		if e != nil {
 			if err2 := validateRedditAdsCustomAudienceResponseBody(e, "body.audiences[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateListTwitterAdsCustomAudiencesResponseBody runs the validations
+// defined on ListTwitterAdsCustomAudiencesResponseBody
+func ValidateListTwitterAdsCustomAudiencesResponseBody(body *ListTwitterAdsCustomAudiencesResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.Audiences == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("audiences", "body"))
+	}
+	if body.AudienceCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("audience_count", "body"))
+	}
+	if body.Truncated == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("truncated", "body"))
+	}
+	for _, e := range body.Audiences {
+		if e != nil {
+			if err2 := validateTwitterAdsCustomAudienceResponseBody(e, "body.audiences[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -21396,6 +21619,81 @@ func ValidateListRedditAdsCustomAudiencesUnauthorizedResponseBody(body *ListRedd
 	return
 }
 
+// ValidateListTwitterAdsCustomAudiencesBadRequestResponseBody runs the
+// validations defined on ListTwitterAdsCustomAudiencesBadRequestResponseBody
+func ValidateListTwitterAdsCustomAudiencesBadRequestResponseBody(body *ListTwitterAdsCustomAudiencesBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListTwitterAdsCustomAudiencesServiceUnavailableResponseBody runs the
+// validations defined on
+// ListTwitterAdsCustomAudiencesServiceUnavailableResponseBody
+func ValidateListTwitterAdsCustomAudiencesServiceUnavailableResponseBody(body *ListTwitterAdsCustomAudiencesServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListTwitterAdsCustomAudiencesInternalServerErrorResponseBody runs
+// the validations defined on
+// ListTwitterAdsCustomAudiencesInternalServerErrorResponseBody
+func ValidateListTwitterAdsCustomAudiencesInternalServerErrorResponseBody(body *ListTwitterAdsCustomAudiencesInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListTwitterAdsCustomAudiencesNotFoundResponseBody runs the
+// validations defined on ListTwitterAdsCustomAudiencesNotFoundResponseBody
+func ValidateListTwitterAdsCustomAudiencesNotFoundResponseBody(body *ListTwitterAdsCustomAudiencesNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListTwitterAdsCustomAudiencesPayloadTooLargeResponseBody runs the
+// validations defined on
+// ListTwitterAdsCustomAudiencesPayloadTooLargeResponseBody
+func ValidateListTwitterAdsCustomAudiencesPayloadTooLargeResponseBody(body *ListTwitterAdsCustomAudiencesPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListTwitterAdsCustomAudiencesUnauthorizedResponseBody runs the
+// validations defined on ListTwitterAdsCustomAudiencesUnauthorizedResponseBody
+func ValidateListTwitterAdsCustomAudiencesUnauthorizedResponseBody(body *ListTwitterAdsCustomAudiencesUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetMetaAdsAudienceBadRequestResponseBody runs the validations
 // defined on GetMetaAdsAudienceBadRequestResponseBody
 func ValidateGetMetaAdsAudienceBadRequestResponseBody(body *GetMetaAdsAudienceBadRequestResponseBody) (err error) {
@@ -24261,6 +24559,55 @@ func validateRedditAdsCustomAudienceResponseBody(body *RedditAdsCustomAudienceRe
 	}
 	if body.ID != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern(path+".id", *body.ID, "^[A-Za-z0-9_]{1,64}$"))
+	}
+	return
+}
+
+// ValidateTwitterAdsCustomAudienceResponseBody runs the validations defined on
+// twitter-ads-custom-audience
+func ValidateTwitterAdsCustomAudienceResponseBody(body *TwitterAdsCustomAudienceResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.AudienceType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("audience_type", "body"))
+	}
+	if body.Targetable == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("targetable", "body"))
+	}
+	if body.ReasonsNotTargetable == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("reasons_not_targetable", "body"))
+	}
+	if body.ID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.id", *body.ID, "^[A-Za-z0-9]{1,32}$"))
+	}
+	return
+}
+
+// validateTwitterAdsCustomAudienceResponseBody checks
+// twitter-ads-custom-audience and reports errors using the path supplied by
+// its caller
+func validateTwitterAdsCustomAudienceResponseBody(body *TwitterAdsCustomAudienceResponseBody, path string) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", path))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	if body.AudienceType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("audience_type", path))
+	}
+	if body.Targetable == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("targetable", path))
+	}
+	if body.ReasonsNotTargetable == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("reasons_not_targetable", path))
+	}
+	if body.ID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".id", *body.ID, "^[A-Za-z0-9]{1,32}$"))
 	}
 	return
 }
