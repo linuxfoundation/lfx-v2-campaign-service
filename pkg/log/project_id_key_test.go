@@ -1417,10 +1417,11 @@ func TestLogKeys_UnmodelledSlicesAreReportedUntraceable(t *testing.T) {
 		"variable reslice":           `fields = fields[n:]`,
 		"indexed literal with a gap": `fields = []any{0: "kind", 2: id}`,
 		"package-level slice":        `fields = pkgFields`,
+		"range variable":             "for _, g := range groups {\nfields = g\n}",
 		"function used as a value":   "g := logWith\ng(fields)",
 	} {
 		t.Run(name, func(t *testing.T) {
-			src := "package p\nimport \"log/slog\"\nvar (\nid any\nn int\nmk func() ([]any, error)\nmk1 func() []any\n)\nvar pkgFields = []any{\"projectID\", 1}\nfunc logWith(fields []any) { slog.Info(\"m\", fields...) }\nfunc f() {\nfields := []any{\"kind\", id}\n" +
+			src := "package p\nimport \"log/slog\"\nvar (\nid any\nn int\nmk func() ([]any, error)\nmk1 func() []any\ngroups [][]any\n)\nvar pkgFields = []any{\"projectID\", 1}\nfunc logWith(fields []any) { slog.Info(\"m\", fields...) }\nfunc f() {\nfields := []any{\"kind\", id}\n" +
 				stmt + "\nslog.Info(\"m\", fields...)\n}\n"
 			fset := token.NewFileSet()
 			f, err := parser.ParseFile(fset, "p.go", src, 0)
