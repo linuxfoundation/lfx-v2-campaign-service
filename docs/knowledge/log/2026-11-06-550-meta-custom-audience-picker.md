@@ -12,7 +12,7 @@ Meta ad account is shared by every foundation, so the route sits on the gateway'
 rule (`global_marketing_ops`) like `google-ads/audiences`. The chart's RuleSet, HTTPRoute regex and
 `parity_test.go` (`TestMetaCustomAudiencesIsAMarketingOpsRead`) change together.
 
-Tests: the client walk, cursor, field list, and nine malformed-answer refusals plus the page bound
+Tests: the client walk, cursor, field list, and ten malformed-answer refusals plus the page bound
 (`custom_audiences_test.go`); the dispatcher's account and local refusals; the service's mapping,
 filter, sort, cap, empty array, 400s and status mapping; and the upstream-instrumentation case for
 `list_meta_custom_audiences`.

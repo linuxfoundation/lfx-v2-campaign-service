@@ -218,7 +218,9 @@ func (o *Orchestrator) ReadAudiences(ctx context.Context, projectID string, plat
 // metaCustomAudiencesCallTimeout bounds the custom-audience read. It is longer than
 // accountsCallTimeout because the walk may make up to 20 sequential Graph calls (the client's page
 // bound) and each row asks for Meta's approximate audience size, which Meta computes per audience;
-// 20 seconds would leave about a second per page on the largest accounts this read admits.
+// 20 seconds would leave about a second per page on the largest accounts this read admits. It
+// fits the request path the same way toggleCallTimeout (also 45 s) does: the server's WriteTimeout
+// is constants.DefaultWriteTimeout (120 s), and the HTTPRoute sets no request timeout of its own.
 const metaCustomAudiencesCallTimeout = 45 * time.Second
 
 // ReadMetaCustomAudiences lists every custom audience of the Meta ad account a create for the
