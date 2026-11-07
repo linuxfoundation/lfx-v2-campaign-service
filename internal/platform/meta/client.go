@@ -2842,6 +2842,12 @@ type CampaignInput struct {
 	// of the currency's minor units, refused rather than rounded. Both are checked before the first
 	// mutating call.
 	BidCap float64
+	// Targeting is the optional audience targeting (metaConfig.targeting, #550): age, gender,
+	// custom audiences to include and exclude, and the Advantage+ audience flag. Nil or zero adds
+	// nothing to the ad set's targeting. It is validated (NormalizeAudienceTargeting) before any
+	// request, and every custom audience it names is read and must belong to the connected ad
+	// account before the first mutating call (checkCustomAudiences).
+	Targeting *AudienceTargeting
 	// ReconcileByName opts THIS call in to looking the campaign (and its ad set) up by
 	// name before creating, and reusing a PAUSED match instead of creating a second one.
 	//
@@ -3158,6 +3164,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, domain.WrapPreflightRefusal(err)
 	}
+	audience, err := NormalizeAudienceTargeting(in.Targeting)
+	if err != nil {
+		return nil, err
+	}
 
 	accountID := c.account.AccountID
 	label := c.account.Label
@@ -3293,6 +3303,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		} else {
 			steps = append(steps, fmt.Sprintf("Account verified: %s (%s)", label, accountID))
 		}
+	}
+
+	// Every custom audience the targeting names is read here, after the account preflight and
+	// before anything is created: an id Meta would refuse at the ad set is refused now instead.
+	if err := c.checkCustomAudiences(ctx, accountID, audience); err != nil {
+		return nil, err
 	}
 
 	// Resolve the currency offset used to convert the whole-currency-unit budget to
@@ -3568,6 +3584,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	for k, v := range placementTargeting {
 		targeting[k] = v
 	}
+	audience.apply(targeting)
 
 	adSetBody := map[string]any{
 		"name":              adSetName,

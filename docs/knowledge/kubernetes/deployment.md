@@ -78,6 +78,13 @@ enables it; off, a create naming one is refused before anything upstream exists.
 `app.environment.GOOGLE_ADS_DISPLAY_AUDIENCES_ENABLED.value` to `"true"` in that environment's
 ArgoCD overlay.
 
+`META_AUDIENCE_TARGETING_ENABLED` is the same kind of gate for Meta, defaulting to `"false"`
+(#550): it opts a cluster in to `metaConfig.targeting` (age, gender, custom audiences to include
+and exclude, and the Advantage+ audience flag on the ad set). Each custom audience is read and must
+belong to the connected Meta ad account before anything is created, and create-campaigns requires
+`global_marketing_ops` on the project for the audience lists. Only exactly `"true"` enables it;
+off, a create carrying a targeting block is refused with a 400 before any job exists.
+
 `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is the same kind of gate, defaulting to `"false"`
 (#461): it opts a cluster in to `googleAdsConfig.performanceMaxAudienceSignal`, one existing
 Google Ads Audience attached to a Performance Max asset group as a signal. Like the Demand Gen
