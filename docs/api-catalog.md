@@ -878,7 +878,8 @@ audienceBidAdjustment?: number  — Whole percent, -90 through 900, on every obs
                                   APPLIED or ALREADY_PRESENT leaves the campaign created_degraded
                                   with a step, plus "do not enable the campaign until the exclusion
                                   is attached" when an exclusion is short; it never fails the job,
-                                  and the campaign stays PAUSED. The lists
+                                  and a campaign this run created stays PAUSED (a campaign reused by
+                                  name keeps whatever status it has upstream). The lists
                                   belong to the LF Microsoft Advertising account every foundation
                                   shares, so either list requires global_marketing_ops on the
                                   project (403; 503 when the check cannot be made). OFF unless

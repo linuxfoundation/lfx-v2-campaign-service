@@ -106,6 +106,7 @@ func TestCheckRemarketingLists_Refusals(t *testing.T) {
 		{"no Audiences key", `{"PartialErrors":[]}`, 200, false, "no Audiences array"},
 		{"null body", `null`, 200, false, "no Audiences array"},
 		{"null Audiences", `{"Audiences":null}`, 200, false, "no Audiences array"},
+		{"unreadable error code", `{"Audiences":[{"Id":77,"Type":"RemarketingList"},{"Id":11,"Type":"RemarketingList"}],"PartialErrors":[{"Index":1,"ErrorCode":true}]}`, 200, false, "cannot read"},
 		{"500", `{}`, 500, false, "lookup failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -246,6 +247,11 @@ func TestAttachAdGroupAudiences_IncompleteEvidenceAndZeroCodes(t *testing.T) {
 		{"outer truncated", `{"AdGroupCriterionIds":[6001],"NestedPartialErrors":[` + strings.Join(pad, ",") + `]}`, "obs:11=UNCONFIRMED"},
 		{"nested truncated", `{"AdGroupCriterionIds":[6001],"NestedPartialErrors":[{"Index":null,"Code":0,"BatchErrors":[` + strings.Join(nested, ",") + `]}]}`, "obs:11=UNCONFIRMED"},
 		{"unattributable error", `{"AdGroupCriterionIds":[6001],"NestedPartialErrors":[{"Code":1001,"ErrorCode":"X"}]}`, "obs:11=UNCONFIRMED"},
+		{"duplicate with truncated evidence", `{"AdGroupCriterionIds":[null],"NestedPartialErrors":[{"Index":0,"Code":4152,"ErrorCode":"CampaignServiceDuplicateAdGroupCriterion"},` + strings.Join(pad, ",") + `]}`, "obs:11=UNCONFIRMED"},
+		{"duplicate with nested truncated evidence", `{"AdGroupCriterionIds":[null],"NestedPartialErrors":[{"Index":0,"Code":4152,"ErrorCode":"CampaignServiceDuplicateAdGroupCriterion"},{"Index":null,"BatchErrors":[` + strings.Join(nested, ",") + `]}]}`, "obs:11=UNCONFIRMED"},
+		{"unreadable collection code", `{"AdGroupCriterionIds":[6001],"NestedPartialErrors":[{"Index":0,"ErrorCode":true}]}`, "obs:11=FAILED"},
+		{"unreadable nested code", `{"AdGroupCriterionIds":[6001],"NestedPartialErrors":[{"Index":0,"Code":0,"BatchErrors":[{"ErrorCode":{"x":1}}]}]}`, "obs:11=FAILED"},
+		{"unreadable symbolic beside numeric 4152", `{"AdGroupCriterionIds":[null],"NestedPartialErrors":[{"Index":0,"Code":4152,"ErrorCode":true}]}`, "obs:11=FAILED"},
 		{"zero-code padding", `{"AdGroupCriterionIds":[6001],"NestedPartialErrors":[{"Index":0,"Code":0,"ErrorCode":"","BatchErrors":[{"Code":0,"ErrorCode":null}]}]}`, "obs:11=APPLIED"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

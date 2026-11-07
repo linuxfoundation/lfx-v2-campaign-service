@@ -71,11 +71,36 @@ const (
 
 	// errCodeDuplicateAdGroupCriterion (4152, CampaignServiceDuplicateAdGroupCriterion,
 	// "Duplicate ad group criterions are not allowed") is how Microsoft refuses a list the ad
-	// group already carries, for example on a dispatch that reuses an ad group an earlier attempt
-	// reached. The state asked for holds, so it is OutcomeAlreadyPresent.
+	// group already carries. Kept as a defensive classification: the dispatcher sends no list to
+	// a reused ad group, so a 4152 on an ad group this run created is unexpected, but it still
+	// means the list is attached, so it is OutcomeAlreadyPresent.
 	errCodeDuplicateAdGroupCriterion        = "CampaignServiceDuplicateAdGroupCriterion"
 	errCodeDuplicateAdGroupCriterionNumeric = "4152"
 )
+
+// isDefaultCode reports whether one code field holds only a default: absent, null, 0 or "".
+// BatchError.Code is a non-nullable int, so a slot with no error may carry 0.
+func isDefaultCode(raw json.RawMessage) bool {
+	switch string(bytes.TrimSpace(raw)) {
+	case "", "null", "0", `""`:
+		return true
+	}
+	return false
+}
+
+// audienceErrorCode separates error PRESENCE from safe rendering: a pair of code fields is an
+// error unless both are defaults (isDefaultCode). code is the rendered code (meaningfulCode), or
+// withheldErrorCode when a present code is unreadable (a boolean, an object, an oversized
+// string), so an error that cannot be shown is still counted as one.
+func audienceErrorCode(errorCode, code json.RawMessage) (present bool, rendered string) {
+	if isDefaultCode(errorCode) && isDefaultCode(code) {
+		return false, ""
+	}
+	if c := meaningfulCode(errorCode, code); c != "" {
+		return true, c
+	}
+	return true, withheldErrorCode
+}
 
 // isJSONNullRaw reports whether raw is the JSON literal null.
 func isJSONNullRaw(raw json.RawMessage) bool { return string(bytes.TrimSpace(raw)) == "null" }
@@ -86,6 +111,11 @@ func isJSONNullRaw(raw json.RawMessage) bool { return string(bytes.TrimSpace(raw
 func isDuplicateAdGroupCriterion(errorCode, code json.RawMessage) bool {
 	if sym := codeString(errorCode); sym != "" {
 		return sym == errCodeDuplicateAdGroupCriterion
+	}
+	// A symbolic code that is present but unreadable (a boolean, an object) is not "absent", so
+	// the numeric code cannot stand in for it.
+	if !isDefaultCode(errorCode) {
+		return false
 	}
 	return codeString(code) == errCodeDuplicateAdGroupCriterionNumeric
 }
@@ -209,14 +239,20 @@ func (c *Client) CheckRemarketingLists(ctx context.Context, include, exclude []s
 	if len(resp.Audiences) > len(wants) {
 		return fmt.Errorf("%w: it returned more audiences than were asked for", errAudienceLookupMalformed)
 	}
-	// A zero or empty code is a default, not an error (meaningfulCode); only the rest are
-	// attributed.
+	// A zero or empty code is a default, not an error (audienceErrorCode); the rest are
+	// attributed. A present code this client cannot read is evidence it cannot interpret, so
+	// the answer is refused as unreadable rather than guessed at.
 	var lookupErrs indexedErrors
 	lookupErrs.Truncated = resp.PartialErrors.Truncated
 	for _, it := range resp.PartialErrors.Items {
-		if meaningfulCode(it.ErrorCode, it.Code) != "" {
-			lookupErrs.Items = append(lookupErrs.Items, it)
+		present, rendered := audienceErrorCode(it.ErrorCode, it.Code)
+		if !present {
+			continue
 		}
+		if rendered == withheldErrorCode {
+			return fmt.Errorf("%w: an error carries a code this client cannot read", errAudienceLookupMalformed)
+		}
+		lookupErrs.Items = append(lookupErrs.Items, it)
 	}
 	att := attribute(lookupErrs, len(wants))
 	if att.unattributable {
@@ -421,8 +457,8 @@ func (c *Client) addAudienceCriteria(ctx context.Context, adGroupID string, ids 
 	}
 	// errored maps a request index to the first code refusing it; onlyDuplicate records whether
 	// every error naming that index is 4152 (already on the ad group). Codes are read with
-	// meaningfulCode, so a zero or empty default (BatchError Code is a non-nullable int) is not an
-	// error, while any other non-null code is. incomplete is set when the evidence cannot cover
+	// audienceErrorCode, so a zero or empty default (BatchError Code is a non-nullable int) is not
+	// an error, while any other non-null code is, rendered as withheld when unreadable. incomplete is set when the evidence cannot cover
 	// every list: an error array (outer or nested) was truncated, or an error carried no usable
 	// index. Then no list without an error of its own can be proven attached, and it is
 	// UNCONFIRMED even with an id, the rule geo.go's criterion add applies.
@@ -430,16 +466,15 @@ func (c *Client) addAudienceCriteria(ctx context.Context, adGroupID string, ids 
 	onlyDuplicate := map[int]bool{}
 	incomplete := resp.NestedPartialErrors.Truncated
 	for _, coll := range resp.NestedPartialErrors.Items {
-		code := meaningfulCode(coll.ErrorCode, coll.Code)
-		collErr := code != ""
+		collErr, code := audienceErrorCode(coll.ErrorCode, coll.Code)
 		isErr := collErr
 		dup := !collErr || isDuplicateAdGroupCriterion(coll.ErrorCode, coll.Code)
 		if coll.BatchErrors.Truncated {
 			incomplete = true
 		}
 		for _, it := range coll.BatchErrors.Items {
-			itCode := meaningfulCode(it.ErrorCode, it.Code)
-			if itCode == "" {
+			itErr, itCode := audienceErrorCode(it.ErrorCode, it.Code)
+			if !itErr {
 				continue
 			}
 			isErr = true
@@ -470,8 +505,12 @@ func (c *Client) addAudienceCriteria(ctx context.Context, adGroupID string, ids 
 		}
 		code, refused := errored[i]
 		switch {
-		case refused && onlyDuplicate[i]:
+		case refused && onlyDuplicate[i] && !incomplete:
 			out[i].Outcome = OutcomeAlreadyPresent
+		case refused && onlyDuplicate[i]:
+			// Only duplicates were retained, but a discarded or unattributable error may refuse
+			// the same list for another reason: not proven attached.
+			out[i].Outcome = OutcomeUnconfirmed
 		case refused:
 			out[i].Outcome, out[i].ErrorCode = OutcomeFailed, code
 		case incomplete:

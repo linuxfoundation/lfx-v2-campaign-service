@@ -1558,13 +1558,17 @@ Audience group is then bid only, so an observed list never narrows who sees the 
 gets a positional `AudienceOutcome`:
 - `APPLIED` when it has an id.
 - `ALREADY_PRESENT` when every error naming it is 4152 (`CampaignServiceDuplicateAdGroupCriterion`,
-  matched strictly as the negative-keyword 4335 is), which means the ad group already carries it.
+  matched strictly as the negative-keyword 4335 is) and the error evidence is complete, which means
+  the ad group already carries it. With incomplete evidence it is `UNCONFIRMED` instead. It is a
+  defensive case: the dispatcher sends no list to a reused ad group.
 - `FAILED` when a `NestedPartialErrors` collection names its index, when the call was refused, or
   when it was `NOT_SENT` because the context ended.
 - `UNCONFIRMED` otherwise, including an ambiguous call or an unreadable 2xx, and every list
   without an error of its own when the evidence cannot cover all of them: an outer or nested
   error array was truncated, or an error carried no usable index (the rule geo.go's criterion add
-  follows). Codes are read with `meaningfulCode`, so a zero or empty default is not an error.
+  follows). Codes are read with `audienceErrorCode`: a zero, empty or null default is not an error,
+  and a present code this client cannot read still counts as one (rendered `withheld`). In the
+  lookup, such an unreadable code makes the whole answer unreadable.
 
 The calls are not retried on 429, like every add here. `CampaignResult.AdGroupReused` reports an
 ad group found by name rather than created by this run. On such an ad group the dispatcher sends
