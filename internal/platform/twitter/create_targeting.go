@@ -6,13 +6,14 @@ package twitter
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
@@ -57,7 +58,8 @@ const (
 	MaxLanguages = 20
 
 	// MaxCreateTargetingCriteria caps the targeting criteria ONE create posts, across geoTargets,
-	// languages, customAudienceIds and excludedCustomAudienceIds together (after de-duplication).
+	// languages, keywords, interestIds, customAudienceIds and excludedCustomAudienceIds together
+	// (after de-duplication).
 	// Each criterion is its own POST, paced at one write per second (writeDelay) and sent once,
 	// and the whole create runs inside the orchestrator's two-minute dispatch budget
 	// (service.providerCallTimeout) alongside the account read, the lookups and the campaign,
@@ -69,12 +71,60 @@ const (
 	// TargetingLocation and TargetingLanguage are X's targeting_type values.
 	TargetingLocation = "LOCATION"
 	TargetingLanguage = "LANGUAGE"
+
+	// FieldKeywords and FieldInterestIDs are the gap 4 twitterConfig keys (#564).
+	FieldKeywords    = "keywords"
+	FieldInterestIDs = "interestIds"
+	// MaxCreateKeywords and MaxCreateInterests cap each gap 4 list; the per-create total
+	// (MaxCreateTargetingCriteria) bounds them together with the others.
+	MaxCreateKeywords  = MaxCreateTargetingCriteria
+	MaxCreateInterests = MaxCreateTargetingCriteria
+	// maxCreateKeywordRunes bounds one keyword.
+	maxCreateKeywordRunes = 80
+	// TargetingInterest is X's targeting_type for an interest criterion.
+	TargetingInterest = "INTEREST"
 )
 
 var (
 	countryCodeRe   = regexp.MustCompile(`^[A-Z]{2}$`)
 	languageValueRe = regexp.MustCompile(`^[a-z][a-z-]{1,7}$`)
+	interestIDRe    = regexp.MustCompile(`^[0-9]{1,19}$`)
 )
+
+// NormalizeKeywordInterestTargeting applies the gap 4 rules (#564): keywords are trimmed, must be
+// 1-80 characters with no control character, and case-insensitive duplicates are dropped; interest
+// ids are trimmed, must be 1-19 decimal digits, and duplicates are dropped. Each list has a cap; a
+// blank entry is refused. Pure, so the dispatcher's synchronous preflight and CreateCampaign apply
+// the same rules. A nil or empty list stays nil.
+func NormalizeKeywordInterestTargeting(keywords, interestIDs []string) (kws, interests []string, err error) {
+	if len(keywords) > 0 {
+		seen := make(map[string]struct{}, len(keywords))
+		for i, raw := range keywords {
+			k := strings.TrimSpace(raw)
+			if k == "" {
+				return nil, nil, &TargetingError{Field: FieldKeywords, Msg: fmt.Sprintf("entry %d is blank", i)}
+			}
+			if utf8.RuneCountInString(k) > maxCreateKeywordRunes || strings.IndexFunc(k, unicode.IsControl) >= 0 {
+				return nil, nil, &TargetingError{Field: FieldKeywords, Msg: fmt.Sprintf("entry %d must be at most %d characters with no control character", i, maxCreateKeywordRunes)}
+			}
+			key := strings.ToLower(k)
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			kws = append(kws, k)
+		}
+		if len(kws) > MaxCreateKeywords {
+			return nil, nil, &TargetingError{Field: FieldKeywords, Msg: fmt.Sprintf("at most %d distinct entries are accepted, got %d", MaxCreateKeywords, len(kws))}
+		}
+	}
+	interests, err = normalizeTargetList(FieldInterestIDs, interestIDs, MaxCreateInterests, func(s string) string { return s }, interestIDRe,
+		"must be an X interest id (1-19 digits, from GET targeting_criteria/interests)")
+	if err != nil {
+		return nil, nil, err
+	}
+	return kws, interests, nil
+}
 
 // TargetingError is a refusal of one create-time targeting list; Field is the twitterConfig key.
 type TargetingError struct {
@@ -136,8 +186,8 @@ func CheckCreateCriteriaCount(n int) error {
 	if n <= MaxCreateTargetingCriteria {
 		return nil
 	}
-	return fmt.Errorf("%s, %s, %s and %s together name %d targeting criteria; at most %d are accepted per create, since each is a separate X write paced at one per second",
-		FieldGeoTargets, FieldLanguages, FieldCustomAudienceIDs, FieldExcludedCustomAudienceIDs, n, MaxCreateTargetingCriteria)
+	return fmt.Errorf("%s, %s, %s, %s, %s and %s together name %d targeting criteria; at most %d are accepted per create, since each is a separate X write paced at one per second",
+		FieldGeoTargets, FieldLanguages, FieldKeywords, FieldInterestIDs, FieldCustomAudienceIDs, FieldExcludedCustomAudienceIDs, n, MaxCreateTargetingCriteria)
 }
 
 // createCriterion is one criterion the create path will POST.
@@ -248,31 +298,29 @@ func (c *Client) resolveCountry(ctx context.Context, code string) (string, error
 // maxTargetingValueLen bounds a value decoded from a lookup before it is put on a create URL.
 const maxTargetingValueLen = 128
 
-// resolveLanguages checks every requested value against X's language list, walking its pages.
-// It refuses a value X does not list, and refuses to conclude from a list it could not read to the
-// end (a full page with no usable cursor, or the page cap reached).
-func (c *Client) resolveLanguages(ctx context.Context, langs []string) error {
-	if len(langs) == 0 {
-		return nil
-	}
+// listTargetingValues walks one non-account-scoped targeting_criteria lookup (languages,
+// interests) to its end and returns the lower-cased targeting_values of entries of targetingType
+// (an entry with no targeting_type is kept). It refuses to conclude from a list it could not read
+// to the end: a full page with no usable cursor, the page cap, or a repeated cursor is an error.
+func (c *Client) listTargetingValues(ctx context.Context, kind, targetingType string) (map[string]bool, error) {
 	known := map[string]bool{}
 	cursor := ""
 	seenCursors := map[string]bool{}
 	for page := 0; ; page++ {
 		if page >= maxListPages {
-			return fmt.Errorf("x language lookup: the list did not end within %d pages", maxListPages)
+			return nil, fmt.Errorf("x %s lookup: the list did not end within %d pages", kind, maxListPages)
 		}
 		q := url.Values{}
 		q.Set("count", strconv.Itoa(listPageSize))
 		if cursor != "" {
 			q.Set("cursor", cursor)
 		}
-		opts, resp, err := c.lookupTargetingOptions(ctx, "languages", q)
+		opts, resp, err := c.lookupTargetingOptions(ctx, kind+"s", q)
 		if err != nil {
-			return fmt.Errorf("x language lookup failed: %w", err)
+			return nil, fmt.Errorf("x %s lookup failed: %w", kind, err)
 		}
 		for _, o := range opts {
-			if o.TargetingType != "" && o.TargetingType != TargetingLanguage {
+			if o.TargetingType != "" && o.TargetingType != targetingType {
 				continue
 			}
 			if v := strings.ToLower(strings.TrimSpace(o.TargetingValue)); v != "" {
@@ -281,16 +329,28 @@ func (c *Client) resolveLanguages(ctx context.Context, langs []string) error {
 		}
 		verdict := cursorVerdict(resp)
 		if verdict == cursorExhausted || verdict == cursorUnknowable && len(opts) < listPageSize {
-			break
+			return known, nil
 		}
 		if verdict == cursorUnknowable {
-			return errors.New("x language lookup: a full page came back with no usable cursor, so the list cannot be confirmed complete")
+			return nil, fmt.Errorf("x %s lookup: a full page came back with no usable cursor, so the list cannot be confirmed complete", kind)
 		}
 		if seenCursors[resp.NextCursor] {
-			return errors.New("x language lookup: the list repeated a page cursor")
+			return nil, fmt.Errorf("x %s lookup: the list repeated a page cursor", kind)
 		}
 		seenCursors[resp.NextCursor] = true
 		cursor = resp.NextCursor
+	}
+}
+
+// resolveLanguages checks every requested value against X's language list, walking its pages
+// (listTargetingValues). It refuses a value X does not list.
+func (c *Client) resolveLanguages(ctx context.Context, langs []string) error {
+	if len(langs) == 0 {
+		return nil
+	}
+	known, err := c.listTargetingValues(ctx, "language", TargetingLanguage)
+	if err != nil {
+		return err
 	}
 	for _, l := range langs {
 		if !known[l] {
@@ -300,9 +360,27 @@ func (c *Client) resolveLanguages(ctx context.Context, langs []string) error {
 	return nil
 }
 
+// resolveInterests checks every requested interest id against X's GET targeting_criteria/interests
+// list (#564 gap 4), walked to its end like the languages. It refuses an id X does not list.
+func (c *Client) resolveInterests(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	known, err := c.listTargetingValues(ctx, "interest", TargetingInterest)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if !known[strings.ToLower(id)] {
+			return domain.PreflightRefusalf("invalid twitterConfig.%s: X offers no interest %s", FieldInterestIDs, domain.CallerValue(id))
+		}
+	}
+	return nil
+}
+
 // resolveCreateTargeting turns the normalized lists into the criteria to POST, reading X's
 // lookups. Called in the pre-create block, so every failure leaves nothing created.
-func (c *Client) resolveCreateTargeting(ctx context.Context, geo, langs []string) ([]createCriterion, error) {
+func (c *Client) resolveCreateTargeting(ctx context.Context, geo, langs, keywords, interests []string) ([]createCriterion, error) {
 	var out []createCriterion
 	for _, code := range geo {
 		v, err := c.resolveCountry(ctx, code)
@@ -316,6 +394,18 @@ func (c *Client) resolveCreateTargeting(ctx context.Context, geo, langs []string
 	}
 	for _, l := range langs {
 		out = append(out, createCriterion{targetingType: TargetingLanguage, value: l, label: "language " + l})
+	}
+	// Keywords (#564 gap 4) need no lookup: a BROAD_KEYWORD criterion's value is the keyword text.
+	// The label is a count, not the text: the steps and errors are persisted and a keyword is
+	// caller free text.
+	for i, k := range keywords {
+		out = append(out, createCriterion{targetingType: TargetingBroadKeyword, value: k, label: fmt.Sprintf("keyword %d", i+1)})
+	}
+	if err := c.resolveInterests(ctx, interests); err != nil {
+		return nil, err
+	}
+	for _, id := range interests {
+		out = append(out, createCriterion{targetingType: TargetingInterest, value: id, label: "interest " + id})
 	}
 	return out, nil
 }

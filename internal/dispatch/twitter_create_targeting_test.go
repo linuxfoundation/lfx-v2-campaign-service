@@ -41,6 +41,8 @@ func twitterTargetingServer(t *testing.T) (*TwitterDispatcher, func() []string, 
 			_, _ = w.Write([]byte(`{"data":[{"country_code":"` + code + `","location_type":"COUNTRIES","targeting_type":"LOCATION","targeting_value":"loc-` + strings.ToLower(code) + `"}],"next_cursor":null}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/12/targeting_criteria/languages":
 			_, _ = w.Write([]byte(`{"data":[{"targeting_type":"LANGUAGE","targeting_value":"en"}],"next_cursor":null}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/12/targeting_criteria/interests":
+			_, _ = w.Write([]byte(`{"data":[{"name":"Technology","targeting_type":"INTEREST","targeting_value":"1001"}],"next_cursor":null}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
 			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
 		case r.Method == http.MethodGet:
@@ -219,5 +221,43 @@ func TestTwitterCreateTargeting_CriterionFailureReachesTheJobClassified(t *testi
 	}
 	if strings.Contains(strings.Join(blob.Steps, "\n"), upstream) {
 		t.Errorf("steps carry upstream text: %v", blob.Steps)
+	}
+}
+
+// Gap 4 (#564): keywords and interestIds sit behind the same flag, are refused synchronously when
+// malformed, and reach the line item as BROAD_KEYWORD and INTEREST criteria after the languages.
+func TestTwitterCreateTargeting_KeywordsAndInterests(t *testing.T) {
+	t.Setenv(constants.EnvTwitterCreateTargetingEnabled, "")
+	d, criteria, calls := twitterTargetingServer(t)
+	for _, extra := range []string{`,"keywords":["kubernetes"]`, `,"interestIds":["1001"]`} {
+		requireConfigInvalid(t, d.PreflightCreate(context.Background(), "cncf", model.ProviderTwitterAds, twitterTargetingCfg(extra)), constants.EnvTwitterCreateTargetingEnabled)
+	}
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds, twitterTargetingCfg(`,"keywords":["kubernetes"]`))
+	requirePreCreate(t, err)
+	if n := calls.Load(); n != 0 {
+		t.Fatalf("%d X calls with the flag off; want 0", n)
+	}
+
+	t.Setenv(constants.EnvTwitterCreateTargetingEnabled, "true")
+	for extra, want := range map[string]string{
+		`,"keywords":"kubernetes"`:                             "twitterConfig.keywords: must be an array of strings",
+		`,"INTERESTIDS":[1001]`:                                "twitterConfig.interestIds: must be an array of strings",
+		`,"keywords":[" "]`:                                    "twitterConfig.keywords: entry 0 is blank",
+		`,"interestIds":["tech"]`:                              "twitterConfig.interestIds: entry 0",
+		`,"budgetAmount":"bad","keywords":["a` + "\\t" + `b"]`: "twitterConfig.keywords: entry 0",
+	} {
+		requireConfigInvalid(t, d.PreflightCreate(context.Background(), "cncf", model.ProviderTwitterAds, twitterTargetingCfg(extra)), want)
+	}
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds,
+		twitterTargetingCfg(`,"languages":["en"],"keywords":["kubernetes","https://x.test/?token=SECRET"],"interestIds":["1001"]`))
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if got := strings.Join(criteria(), ","); got != "LANGUAGE=en,BROAD_KEYWORD=kubernetes,BROAD_KEYWORD=https://x.test/?token=SECRET,INTEREST=1001" {
+		t.Fatalf("criteria = %q", got)
+	}
+	// The stored config snapshot reduces a link in a keyword; X received it as given.
+	if strings.Contains(string(camp.ConfigSnapshot), "SECRET") {
+		t.Errorf("config snapshot keeps the keyword's token: %s", camp.ConfigSnapshot)
 	}
 }

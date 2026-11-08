@@ -24,6 +24,8 @@ type targetingFakeX struct {
 	countries map[string]string
 	// languagesPages are the language lookup's pages, served in order by cursor "p<i>".
 	languagesPages []string
+	// interestsPages are the interest lookup's pages (#564 gap 4), served the same way.
+	interestsPages []string
 	// failCriterion makes the n-th criterion POST (1-based) answer failStatus.
 	failCriterion int
 	failStatus    int
@@ -73,6 +75,17 @@ func (f *targetingFakeX) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, _ = w.Write([]byte(f.languagesPages[i]))
+	case r.Method == http.MethodGet && p == "/12/targeting_criteria/interests":
+		f.lookups = append(f.lookups, "interests?"+r.URL.RawQuery)
+		i := 0
+		if c := q.Get("cursor"); c != "" {
+			_, _ = fmt.Sscanf(c, "p%d", &i)
+		}
+		if i >= len(f.interestsPages) {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(f.interestsPages[i]))
 	case r.Method == http.MethodGet && strings.HasSuffix(p, "/accounts/acc1/custom_audiences"):
 		f.lookups = append(f.lookups, "custom_audiences?"+r.URL.RawQuery)
 		if f.failAudiences {

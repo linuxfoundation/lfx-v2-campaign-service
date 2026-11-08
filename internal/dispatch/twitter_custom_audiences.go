@@ -115,11 +115,11 @@ func checkTwitterCustomAudiences(cfg twitterConfig) error {
 
 // checkTwitterCreateCriteriaCount refuses a create whose targeting lists name more criteria in
 // total than one create can post inside its dispatch budget (twitter.CheckCreateCriteriaCount).
-// geo and langs are the normalized lists checkTwitterCreateTargeting returned; the custom
-// audience lists are counted as sent, since checkTwitterCustomAudiences refuses a repeat. Runs
-// after both list checks, so a list's own refusal wins.
-func checkTwitterCreateCriteriaCount(geo, langs []string, cfg twitterConfig) error {
-	n := len(geo) + len(langs) + len(cfg.CustomAudienceIDs) + len(cfg.ExcludedCustomAudienceIDs)
+// tgt is the normalized lists checkTwitterCreateTargeting returned; the custom audience lists are
+// counted as sent, since checkTwitterCustomAudiences refuses a repeat. Runs after both list
+// checks, so a list's own refusal wins.
+func checkTwitterCreateCriteriaCount(tgt twitterCreateTargeting, cfg twitterConfig) error {
+	n := tgt.count() + len(cfg.CustomAudienceIDs) + len(cfg.ExcludedCustomAudienceIDs)
 	if err := twitter.CheckCreateCriteriaCount(n); err != nil {
 		return domain.WrapPreflightRefusal(fmt.Errorf("%w: twitterConfig: %w", domain.ErrCreateConfigInvalid, err))
 	}

@@ -1671,3 +1671,29 @@ Not verified live: no X call was made. The dispatcher keeps both the create inpu
 behind `TWITTER_CUSTOM_AUDIENCES_ENABLED` (default off). The audiences belong to the shared LF ad
 account, so the create inputs need `global_marketing_ops` (`service.TwitterMarketingOpsInputs`)
 and the read sits in the gateway's `marketing-ops-api` rule.
+
+## Create-time keywords and interests (`create_targeting.go`, #564 gap 4)
+
+`CampaignInput.Keywords` and `InterestIDs` add `BROAD_KEYWORD` and `INTEREST` criteria (EQ) to
+the line item, through the same per-criterion POST, failure handling and reuse rules as the
+location and language criteria. The order of all criteria is: excluded audiences, locations,
+languages, keywords, interests, included audiences.
+
+`NormalizeKeywordInterestTargeting` holds the pure rules:
+- A keyword is trimmed and must be 1-80 characters with no control character. Case-insensitive
+  duplicates are dropped.
+- An interest id is 1-19 decimal digits. Duplicates are dropped.
+- Each list is capped at 60, and the per-create total (`CheckCreateCriteriaCount`) counts them
+  with the other lists.
+
+Interest ids are checked before anything is created against `GET targeting_criteria/interests`.
+The list is walked to its end by `listTargetingValues`, which the language check now shares: a
+full page with no usable cursor, the page cap or a repeated cursor fails the read. An id the list
+does not hold is a refusal, and nothing is created in either case. Keywords need no lookup, since
+the criterion's value is the keyword text. A step names a keyword by its number, never its text
+(the steps are persisted), and the dispatcher reduces a link in a keyword in the stored config
+snapshot.
+
+`followerLookalikeUserIds` from the gap 4 shape is deferred: X has no user lookup to check an id
+before create. Everything here is behind `TWITTER_CREATE_TARGETING_ENABLED` (default off) and is
+not verified live.
