@@ -70,6 +70,11 @@ type twitterConfig struct {
 	// omitted, the line item carries no criterion of that type, as before.
 	GeoTargets []string `json:"geoTargets,omitempty"`
 	Languages  []string `json:"languages,omitempty"`
+	// Keywords (BROAD_KEYWORD) and InterestIDs (INTEREST, ids from GET
+	// targeting_criteria/interests) target the new line item too (#564 gap 4), behind the same
+	// TWITTER_CREATE_TARGETING_ENABLED flag.
+	Keywords    []string `json:"keywords,omitempty"`
+	InterestIDs []string `json:"interestIds,omitempty"`
 	// CustomAudienceIDs and ExcludedCustomAudienceIDs are X custom audience ids to target and to
 	// exclude on the new line item (#564 gap 3, twitter_custom_audiences.go). Behind
 	// TWITTER_CUSTOM_AUDIENCES_ENABLED, and global_marketing_ops only
@@ -126,14 +131,14 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 	if _, err := twitterBidPlan(cfg); err != nil {
 		return err
 	}
-	geoTargets, languages, err := checkTwitterCreateTargeting(cfg)
+	tgt, err := checkTwitterCreateTargeting(cfg)
 	if err != nil {
 		return err
 	}
 	if err := checkTwitterCustomAudiences(cfg); err != nil {
 		return err
 	}
-	if err := checkTwitterCreateCriteriaCount(geoTargets, languages, cfg); err != nil {
+	if err := checkTwitterCreateCriteriaCount(tgt, cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -297,7 +302,7 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// The create-time targeting gate and rules (#564), again here: a job enqueued before the flag
 	// was turned off, or by a caller that skipped preflight, must not reach X. (The shape check
 	// runs before the decode above.)
-	geoTargets, languages, err := checkTwitterCreateTargeting(cfg)
+	tgt, err := checkTwitterCreateTargeting(cfg)
 	if err != nil {
 		return nil, notCreated(err)
 	}
@@ -306,7 +311,7 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if err := checkTwitterCustomAudiences(cfg); err != nil {
 		return nil, notCreated(err)
 	}
-	if err := checkTwitterCreateCriteriaCount(geoTargets, languages, cfg); err != nil {
+	if err := checkTwitterCreateCriteriaCount(tgt, cfg); err != nil {
 		return nil, notCreated(err)
 	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
@@ -420,8 +425,10 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		Tactic:     tacticToken,
 		SlotToken:  model.SlotNameToken(model.DispatchSlotVersion(ctx)),
 
-		GeoTargets: geoTargets,
-		Languages:  languages,
+		GeoTargets:  tgt.geo,
+		Languages:   tgt.langs,
+		Keywords:    tgt.keywords,
+		InterestIDs: tgt.interests,
 
 		CustomAudienceIDs:         cfg.CustomAudienceIDs,
 		ExcludedCustomAudienceIDs: cfg.ExcludedCustomAudienceIDs,
@@ -497,6 +504,9 @@ func campaignFromTwitter(ctx context.Context, r *twitter.CampaignResult, cfg twi
 	// is untouched — only the stored copy is stripped.
 	snapshot := cfg
 	snapshot.TweetText = sanitizeSnapshotText(cfg.TweetText)
+	// Keywords (#564 gap 4) are caller free text bound for the same column, so they are reduced
+	// the same way (sanitizeSnapshotTexts reallocates, leaving the list sent to X untouched).
+	snapshot.Keywords = sanitizeSnapshotTexts(cfg.Keywords)
 	applyCampaignConfig(ctx, c, cfg.BudgetAmount, false, cfg.StartDate, cfg.EndDate, snapshot)
 	if raw, err := json.Marshal(r); err != nil {
 		// A marshal failure should be near-impossible for this plain struct, but do NOT

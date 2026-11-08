@@ -120,10 +120,10 @@ type Service interface {
 	// reads Reddit, fails open when the read cannot run, and is repeated at
 	// dispatch fail-closed, before anything is created; resolved creates send
 	// Reddit's community spelling and interest ids. So is a
-	// twitterConfig.geoTargets or languages that breaks its rules, or is sent
-	// while TWITTER_CREATE_TARGETING_ENABLED is off (#564). So is a
-	// microsoftConfig.sitelinks or callouts list that breaks its rules, or is sent
-	// while MICROSOFT_AD_EXTENSIONS_ENABLED is off (#563). So is a
+	// twitterConfig.geoTargets, languages, keywords or interestIds that breaks its
+	// rules, or is sent while TWITTER_CREATE_TARGETING_ENABLED is off (#564). So
+	// is a microsoftConfig.sitelinks or callouts list that breaks its rules, or is
+	// sent while MICROSOFT_AD_EXTENSIONS_ENABLED is off (#563). So is a
 	// microsoftConfig.negativeKeywords list that breaks its rules or is sent while
 	// MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is off (see the config
 	// attribute). So is a microsoftConfig.headlines, descriptions, path1 or path2
@@ -1277,21 +1277,28 @@ type CampaignCreateInput struct {
 	// the targeting in X Ads Manager. When a create does find its line item by
 	// name, it changes that line item's targeting only if X reports it PAUSED,
 	// adding just the missing criteria before the tweet; otherwise, or if its
-	// status or criteria cannot be read, it stops before the tweet. Both are OFF
-	// unless TWITTER_CREATE_TARGETING_ENABLED is exactly "true". A blank or
-	// malformed entry, a list over its cap, a value that is not an array of
-	// strings (null reads as absent), or either list while the flag is off, is
-	// refused with 400 "invalid campaign config: twitterConfig.<field>: ..."
+	// status or criteria cannot be read, it stops before the tweet. twitterConfig
+	// also takes `keywords` (broad keywords, each trimmed, 1-80 characters with no
+	// control character, case-insensitive duplicates dropped, at most 60) and
+	// `interestIds` (X interest ids, 1-19 digits, each listed by GET
+	// targeting_criteria/interests, which is walked to its end before anything is
+	// created; at most 60), sent as BROAD_KEYWORD and INTEREST criteria (operator
+	// EQ) after the languages, with the same failure and reuse rules (#564 gap 4).
+	// All four are OFF unless TWITTER_CREATE_TARGETING_ENABLED is exactly "true".
+	// A blank or malformed entry, a list over its cap, a value that is not an
+	// array of strings (null reads as absent), or any list while the flag is off,
+	// is refused with 400 "invalid campaign config: twitterConfig.<field>: ..."
 	// before any job exists. X CUSTOM AUDIENCES (#564): twitterConfig takes
 	// `customAudienceIds` and `excludedCustomAudienceIds`, arrays of X custom
 	// audience ids (list-twitter-ads-custom-audiences offers them) to target and
 	// to exclude, sent as CUSTOM_AUDIENCE targeting criteria on the new line item
 	// with operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
 	// given; at most 60 per list; no id twice and none in both lists. geoTargets,
-	// languages, customAudienceIds and excludedCustomAudienceIds together may name
-	// at most 60 criteria per create, since each is a separate X write paced at
-	// one per second inside the two-minute dispatch budget; more is refused with
-	// the same 400. Before anything is created every id is read with GET
+	// languages, keywords, interestIds, customAudienceIds and
+	// excludedCustomAudienceIds together may name at most 60 criteria per create,
+	// since each is a separate X write paced at one per second inside the
+	// two-minute dispatch budget; more is refused with the same 400. Before
+	// anything is created every id is read with GET
 	// accounts/:account_id/custom_audiences and must be live and targetable; a
 	// missing, deleted or non-targetable audience fails the job with nothing
 	// created. The exclusions are posted first of all the criteria and the

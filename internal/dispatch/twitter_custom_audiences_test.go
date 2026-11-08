@@ -38,6 +38,8 @@ var twitterGatedFields = map[string]bool{
 var twitterUngatedFields = map[string]bool{
 	"budgetAmount": true, "startDate": true, "endDate": true, "tweetId": true, "tweetText": true,
 	"asUserId": true, "imageAssetId": true, "bidding": true, "geoTargets": true, "languages": true,
+	// #564 gap 4: keyword text and X's public interest ids name no account resource.
+	"keywords": true, "interestIds": true,
 }
 
 // TestEveryTwitterConfigFieldIsClassifiedForTheMarketingOpsGate fails when a twitterConfig field
@@ -253,7 +255,7 @@ func TestTwitterCustomAudiences_TotalCriteriaAreCapped(t *testing.T) {
 	over := `,"geoTargets":["US","us"],"languages":["en"],"customAudienceIds":[` + quoted("a", twitter.MaxCreateTargetingCriteria-3) +
 		`],"excludedCustomAudienceIds":[` + quoted("x", 2) + `]`
 	err := d.PreflightCreate(context.Background(), "cncf", model.ProviderTwitterAds, twitterTargetingCfg(over))
-	requireConfigInvalid(t, err, "twitterConfig: geoTargets, languages, customAudienceIds and excludedCustomAudienceIds together name 61 targeting criteria; at most 60")
+	requireConfigInvalid(t, err, "twitterConfig: geoTargets, languages, keywords, interestIds, customAudienceIds and excludedCustomAudienceIds together name 61 targeting criteria; at most 60")
 	_, err = d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds, twitterTargetingCfg(over))
 	requirePreCreate(t, err)
 	if !strings.Contains(err.Error(), "together name 61 targeting criteria") {

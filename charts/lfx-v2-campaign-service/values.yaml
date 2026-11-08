@@ -389,14 +389,15 @@ app:
     REDDIT_TARGETING_RESOLUTION_ENABLED:
       value: "false"
 
-    # Opts this deployment IN to twitterConfig.geoTargets and
-    # twitterConfig.languages (#564), sent at create time as LOCATION and
-    # LANGUAGE targeting criteria on the new X line item. Default off: the
+    # Opts this deployment IN to twitterConfig.geoTargets, languages, keywords
+    # and interestIds (#564), sent at create time as LOCATION, LANGUAGE,
+    # BROAD_KEYWORD and INTEREST targeting criteria on the new X line item.
+    # Default off: the
     # shape is built from X's published v12 reference and no live create has
     # sent it. It names no account resource; it keeps an unverified shape off
-    # the shared ad account. While off, a create naming either list is refused
-    # with a 400 before any job exists. Any value other than "true" is treated
-    # as off, so a typo fails closed.
+    # the shared ad account. While off, a create naming any of the lists is
+    # refused with a 400 before any job exists. Any value other than "true" is
+    # treated as off, so a typo fails closed.
     TWITTER_CREATE_TARGETING_ENABLED:
       value: "false"
 
