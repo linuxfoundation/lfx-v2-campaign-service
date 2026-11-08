@@ -1680,8 +1680,9 @@ location and language criteria. The order of all criteria is: excluded audiences
 languages, keywords, interests, included audiences.
 
 `NormalizeKeywordInterestTargeting` holds the pure rules:
-- A keyword is trimmed and must be 1-80 characters with no control character. Case-insensitive
-  duplicates are dropped.
+- A keyword is trimmed and must be 1-80 characters with no control character. Duplicates under
+  Unicode simple case folding (`foldKey`, the comparison `strings.EqualFold` makes in the echo
+  and reuse checks) are dropped, so `Σ` and `ς` count once.
 - An interest id is 1-19 decimal digits. Duplicates are dropped.
 - Each list is capped at 60, and the per-create total (`CheckCreateCriteriaCount`) counts them
   with the other lists.

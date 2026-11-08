@@ -91,8 +91,29 @@ var (
 	interestIDRe    = regexp.MustCompile(`^[0-9]{1,19}$`)
 )
 
+// foldKey canonicalizes s under Unicode simple case folding: each rune becomes the smallest rune
+// of its fold orbit. Two strings get the same key exactly when strings.EqualFold reports them
+// equal, which is how the criterion echo and the reuse diff (createCriterion.sameValue) compare
+// keyword values, so de-duplication and matching cannot disagree (strings.ToLower gives Σ and ς
+// different keys although EqualFold treats them as equal).
+func foldKey(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		m := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			if f < m {
+				m = f
+			}
+		}
+		b.WriteRune(m)
+	}
+	return b.String()
+}
+
 // NormalizeKeywordInterestTargeting applies the gap 4 rules (#564): keywords are trimmed, must be
-// 1-80 characters with no control character, and case-insensitive duplicates are dropped; interest
+// 1-80 characters with no control character, and duplicates under Unicode case folding
+// (foldKey, the comparison strings.EqualFold makes) are dropped, first spelling kept; interest
 // ids are trimmed, must be 1-19 decimal digits, and duplicates are dropped. Each list has a cap; a
 // blank entry is refused. Pure, so the dispatcher's synchronous preflight and CreateCampaign apply
 // the same rules. A nil or empty list stays nil.
@@ -107,7 +128,7 @@ func NormalizeKeywordInterestTargeting(keywords, interestIDs []string) (kws, int
 			if utf8.RuneCountInString(k) > maxCreateKeywordRunes || strings.IndexFunc(k, unicode.IsControl) >= 0 {
 				return nil, nil, &TargetingError{Field: FieldKeywords, Msg: fmt.Sprintf("entry %d must be at most %d characters with no control character", i, maxCreateKeywordRunes)}
 			}
-			key := strings.ToLower(k)
+			key := foldKey(k)
 			if _, dup := seen[key]; dup {
 				continue
 			}

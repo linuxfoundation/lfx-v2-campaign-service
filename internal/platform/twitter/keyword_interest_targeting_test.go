@@ -25,6 +25,7 @@ func TestNormalizeKeywordInterestTargeting(t *testing.T) {
 	}{
 		{"nothing", nil, nil, "", "", ""},
 		{"valid", []string{" kubernetes ", "Cloud Native", "KUBERNETES"}, []string{" 1001", "1002", "1001"}, "kubernetes,Cloud Native", "1001,1002", ""},
+		{"case-fold duplicates", []string{"ΟΔΟΣ", "οδος", "οδοσ", "Straße", "STRASSE"}, nil, "ΟΔΟΣ,Straße,STRASSE", "", ""},
 		{"blank keyword", []string{"ok", " "}, nil, "", "", "keywords: entry 1 is blank"},
 		{"long keyword", []string{strings.Repeat("k", 81)}, nil, "", "", "keywords: entry 0 must be at most 80 characters"},
 		{"control keyword", []string{"a\tb"}, nil, "", "", "keywords: entry 0 must be at most 80 characters with no control character"},
@@ -143,5 +144,14 @@ func TestCreateCampaign_KeywordsCountTowardTheCriteriaCap(t *testing.T) {
 	}
 	if writes, lookups := f.snapshot(); len(writes) != 0 || len(lookups) != 0 {
 		t.Errorf("writes=%v lookups=%v, want nothing sent", writes, lookups)
+	}
+}
+
+// foldKey agrees with strings.EqualFold, the comparison the echo and reuse checks make.
+func TestFoldKeyAgreesWithEqualFold(t *testing.T) {
+	for _, pair := range [][2]string{{"Σ", "ς"}, {"Σ", "σ"}, {"K", "\u212a"}, {"kubernetes", "KUBERNETES"}, {"ß", "SS"}, {"a", "b"}} {
+		if got, want := foldKey(pair[0]) == foldKey(pair[1]), strings.EqualFold(pair[0], pair[1]); got != want {
+			t.Errorf("foldKey(%q)==foldKey(%q) is %v, EqualFold says %v", pair[0], pair[1], got, want)
+		}
 	}
 }
