@@ -993,3 +993,35 @@ or more than 5000 audiences is `ErrCustomAudiencesMalformed`. Both shapes come f
 public v3 OpenAPI document and are unverified live; the dispatcher gates them on
 `REDDIT_CUSTOM_AUDIENCES_ENABLED`. See
 [Reddit Custom Audiences](../architecture/reddit-custom-audiences.md).
+
+## Community validation and interest resolution (`targeting_resolution.go`, #549 gaps 4 and 8)
+
+`NormalizeSubreddits` now holds the subreddit rules `CreateCampaign` applied inline (trim, strip
+`r/`, drop blanks and case-insensitive duplicates), so the dispatcher resolves exactly the names a
+create sends.
+
+`ResolveCommunities` confirms each name with `GET /targeting/communities?names=a,b,…` (exact
+names, comma-separated, at most 50 per call, `page.size=1000`). It follows `pagination.next_url`
+through `walkPagesCapped` (same origin, at most 10 pages) and returns Reddit's own spelling in
+request order. `ResolveInterests` reads `GET /targeting/interests` (`data[]` of
+`{id, name, category}`). An entry equal to an id, ignoring case, is that id. Otherwise the entry
+must equal exactly one name (trimmed, ignoring case), and that interest's id is used. Duplicates
+after resolution are dropped.
+
+Both return a `domain.PreflightRefusal` naming the 1-based entry for a value Reddit does not offer
+(an unknown community, an unknown or blank interest, or a name two interests share). A lookup that
+fails or cannot be believed is a plain error: a body identityjson rejects, a missing data list, an
+entry without a name or id, or a walk still paging at the cap.
+
+The dispatcher (`reddit_targeting_resolution.go`) runs them twice while
+`REDDIT_TARGETING_RESOLUTION_ENABLED` is `"true"`:
+- In `PreflightCreate`: a refusal is the synchronous 400, marked `UpstreamConsulted` so the
+  orchestrator records the read. A lookup that cannot run fails open.
+- In `Dispatch`, before the campaign is created: here both kinds of failure fail the job with
+  nothing created.
+
+The ad-group 400 fallback that drops communities and interests is unchanged, as a last resort.
+
+Not verified live: neither read has been exercised against a live account. The issue asks for a
+probe of the interests shape (that the ad group takes the listed ids, and whether the list
+paginates) before the flag is turned on.

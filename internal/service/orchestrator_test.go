@@ -3822,6 +3822,43 @@ func TestOrchestrator_PreflightCreate_RecordsARefusalAsASuccessfulRead(t *testin
 	}
 }
 
+// consultedRefusal is a config refusal a platform read produced (the Reddit lookups, #549).
+type consultedRefusal struct{ error }
+
+func (consultedRefusal) UpstreamConsulted() bool { return true }
+func (c consultedRefusal) Unwrap() error         { return c.error }
+
+// A config refusal decided on the config alone records no upstream call; one a platform read
+// produced (UpstreamConsulted) records the read as successful, and is still returned.
+func TestOrchestrator_PreflightCreate_RecordsAnUpstreamConfigRefusal(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want int
+	}{
+		"config alone":       {fmt.Errorf("%w: redditConfig.bidding: bad", ErrCreateConfigInvalid), 0},
+		"upstream consulted": {consultedRefusal{fmt.Errorf("%w: redditConfig.subreddits: entry 1", ErrCreateConfigInvalid)}, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := &recordingMetrics{}
+			orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+				model.ProviderRedditAds: &preflightStub{err: tc.err},
+			})
+			orch.SetMetrics(rec)
+			err := orch.PreflightCreate(context.Background(), "proj-1", []model.Provider{model.ProviderRedditAds}, nil)
+			if !errors.Is(err, ErrCreateConfigInvalid) {
+				t.Fatalf("PreflightCreate = %v, want the refusal", err)
+			}
+			got := rec.upstreamCalls()
+			if len(got) != tc.want {
+				t.Fatalf("recorded %d upstream calls, want %d: %+v", len(got), tc.want, got)
+			}
+			if tc.want == 1 && (got[0].outcome != callOutcomeOK || got[0].operation != opPreflightCreate) {
+				t.Errorf("recorded %+v, want a successful preflight read", got[0])
+			}
+		})
+	}
+}
+
 // boundCampaignRepo fails UpsertCampaign as the real repo does when the dispatch resolved to an
 // upstream campaign another live brief already binds (000020 / 000042).
 type boundCampaignRepo struct{ fakeCampaignRepo }

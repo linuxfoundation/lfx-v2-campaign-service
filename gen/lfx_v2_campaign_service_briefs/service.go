@@ -113,12 +113,19 @@ type Service interface {
 	// supply imageUrl'): 400 with that message. A redditConfig.excludedSubreddits
 	// or excludedGeoTargets that breaks its rules, or is sent while
 	// REDDIT_TARGETING_EXCLUSIONS_ENABLED is off, is also a synchronous 400 (see
-	// the config attribute). So is a twitterConfig.geoTargets or languages that
-	// breaks its rules, or is sent while TWITTER_CREATE_TARGETING_ENABLED is off
-	// (#564). So is a microsoftConfig.sitelinks or callouts list that breaks its
-	// rules, or is sent while MICROSOFT_AD_EXTENSIONS_ENABLED is off (#563). So is
-	// a microsoftConfig.negativeKeywords list that breaks its rules or is sent
-	// while MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is off (see the config
+	// the config attribute). So, while REDDIT_TARGETING_RESOLUTION_ENABLED is
+	// "true" (#549), is a redditConfig.subreddits entry Reddit's GET
+	// /targeting/communities does not list, or an interests entry that is neither
+	// a GET /targeting/interests id nor exactly one interest name: that check
+	// reads Reddit, fails open when the read cannot run, and is repeated at
+	// dispatch fail-closed, before anything is created; resolved creates send
+	// Reddit's community spelling and interest ids. So is a
+	// twitterConfig.geoTargets or languages that breaks its rules, or is sent
+	// while TWITTER_CREATE_TARGETING_ENABLED is off (#564). So is a
+	// microsoftConfig.sitelinks or callouts list that breaks its rules, or is sent
+	// while MICROSOFT_AD_EXTENSIONS_ENABLED is off (#563). So is a
+	// microsoftConfig.negativeKeywords list that breaks its rules or is sent while
+	// MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is off (see the config
 	// attribute). So is a microsoftConfig.headlines, descriptions, path1 or path2
 	// that breaks its rules or is sent while MICROSOFT_AD_COPY_ENABLED is off.
 	// GOOGLE ADS SHARED-ACCOUNT INPUTS: a googleAdsConfig that sets any input

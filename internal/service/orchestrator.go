@@ -3528,8 +3528,14 @@ func (o *Orchestrator) PreflightCreate(ctx context.Context, projectID string, pl
 			continue
 		}
 		if errors.Is(perr, ErrCreateConfigInvalid) {
-			// Refused on the config alone: nothing left the process, so — like
-			// ErrPreflightNotApplicable — there is no upstream call to record.
+			// Usually refused on the config alone: nothing left the process, so — like
+			// ErrPreflightNotApplicable — there is no upstream call to record. A refusal a
+			// platform read produced (the Reddit community and interest lookups, #549) says so
+			// with UpstreamConsulted, and is recorded as the successful read it was.
+			var consulted interface{ UpstreamConsulted() bool }
+			if errors.As(perr, &consulted) && consulted.UpstreamConsulted() {
+				o.recordUpstream(ctx, platform, opPreflightCreate, start, nil)
+			}
 			return perr
 		}
 		// A refusal is a read that SUCCEEDED and gave an answer we act on -- the platform replied

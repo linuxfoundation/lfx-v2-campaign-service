@@ -258,6 +258,14 @@ openssl rand -base64 32
   the create inputs also need `global_marketing_ops` on the project (403
   otherwise) and the read is gated on it at the gateway. The chart sets it to
   `"false"`.
+- `REDDIT_TARGETING_RESOLUTION_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to resolving `redditConfig.subreddits` and `interests` before
+  create (#549): each community is confirmed with `GET /targeting/communities`
+  and each interest resolved to its id with `GET /targeting/interests`. An
+  unknown value is a synchronous 400 (the pre-check fails open when the read
+  cannot run) and, at dispatch, a job failure with nothing created (fail
+  closed). Only the exact value `true` enables it; anything else keeps the
+  create as before. Not role-gated. The chart sets it to `"false"`.
 - `REDDIT_TARGETING_EXCLUSIONS_ENABLED` (default unset, i.e. OFF) — opts
   a deployment IN to `redditConfig.excludedSubreddits` and
   `redditConfig.excludedGeoTargets` (#549), sent at create time as the ad

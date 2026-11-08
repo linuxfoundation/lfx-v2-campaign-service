@@ -379,6 +379,16 @@ app:
     REDDIT_TARGETING_EXCLUSIONS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to resolving redditConfig.subreddits and
+    # redditConfig.interests before create (#549): communities confirmed with
+    # GET /targeting/communities and interests resolved to ids with
+    # GET /targeting/interests, as a synchronous 400 for an unknown value and
+    # again at dispatch, fail-closed. Neither read has been exercised against a
+    # live account. While off, values are sent as given, with the ad-group 400
+    # fallback. Any value other than "true" is treated as off.
+    REDDIT_TARGETING_RESOLUTION_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to twitterConfig.geoTargets and
     # twitterConfig.languages (#564), sent at create time as LOCATION and
     # LANGUAGE targeting criteria on the new X line item. Default off: the
