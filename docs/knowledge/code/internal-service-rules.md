@@ -286,8 +286,8 @@ exposes conversions solely as per-action-type structures with no scalar to read,
 likewise for every other campaign,
 Reddit's reporting read does not request a conversion field at all, and the email channel has no
 conversion concept.
-Flattening a nil to 0 anywhere along the path would flag **every** campaign on those four
-platforms, forever — reporting the absence of measurement as a campaign defect, which is the
+Flattening a nil to 0 anywhere along the path would flag **every** campaign on X, Reddit and
+email, and every Meta campaign outside the #550 read, forever — reporting the absence of measurement as a campaign defect, which is the
 failure mode the whole pointer exists to prevent.
 
 `isActive` is an allow-list of the statuses where the campaign is meant to be spending, and it

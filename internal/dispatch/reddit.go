@@ -327,6 +327,21 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		imageURLSource = d.lateAssetURL(brief, assetID, &signedURL)
 	}
 
+	// Community and interest resolution (#549 gaps 4 and 8), before anything is created and
+	// fail-closed: a value Reddit does not offer, or a lookup that cannot be read, fails the job
+	// with nothing created. The create then sends Reddit's community spelling and interest ids.
+	subreddits, interests := cfg.Subreddits, cfg.Interests
+	if needsRedditTargetingResolution(cfg) {
+		subreddits, interests, err = resolveRedditTargeting(ctx, client, cfg)
+		if err != nil {
+			var refusal *domain.PreflightRefusal
+			if errors.As(err, &refusal) {
+				return nil, notCreated(err)
+			}
+			return nil, notCreated(fmt.Errorf("reddit targeting could not be confirmed (nothing was created): %w", err))
+		}
+	}
+
 	stageToken, tacticToken := model.DispatchLabels(ctx).NameTokens()
 	in := reddit.CampaignInput{
 		EventName:       bf.EventName,
@@ -343,8 +358,8 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		EndDate:            cfg.EndDate,
 		Objective:          cfg.Objective,
 		GeoTargets:         cfg.GeoTargets,
-		Subreddits:         cfg.Subreddits,
-		Interests:          cfg.Interests,
+		Subreddits:         subreddits,
+		Interests:          interests,
 		Keywords:           cfg.Keywords,
 		ExcludedSubreddits: cfg.ExcludedSubreddits,
 		ExcludedGeoTargets: cfg.ExcludedGeoTargets,

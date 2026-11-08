@@ -186,6 +186,16 @@ const (
 	// environment, in lfx-v2-argocd.
 	EnvRedditTargetingExclusionsEnabled = "REDDIT_TARGETING_EXCLUSIONS_ENABLED"
 
+	// EnvRedditTargetingResolutionEnabled opts a deployment IN to resolving redditConfig.subreddits
+	// and redditConfig.interests before create (#549 gaps 4 and 8): each community is confirmed
+	// with GET /targeting/communities and each interest resolved to its id with
+	// GET /targeting/interests, as a synchronous 400 for an unknown value (the pre-check fails open
+	// when the lookup cannot run) and again at dispatch, fail-closed, before anything is created.
+	// Only the exact value "true" enables it; unset or any other value keeps the create as before
+	// (values sent as given, with the ad-group 400 fallback). Default off because neither read has
+	// been exercised against a live account; the issue asks for a probe of the interests shape.
+	EnvRedditTargetingResolutionEnabled = "REDDIT_TARGETING_RESOLUTION_ENABLED"
+
 	// EnvTwitterCreateTargetingEnabled opts a deployment IN to twitterConfig.geoTargets and
 	// twitterConfig.languages (#564): country and language targeting criteria added to the line
 	// item an X create makes. Only the exact value "true" enables them; unset or any other value
