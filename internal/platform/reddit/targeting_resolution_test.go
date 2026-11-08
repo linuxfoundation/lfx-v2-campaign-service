@@ -40,7 +40,7 @@ func TestResolveCommunities(t *testing.T) {
 		return 404, `{}`
 	}}
 	c := newCustomAudienceClient(t, stub)
-	got, err := c.ResolveCommunities(context.Background(), []string{"kubernetes", "DevOps"})
+	got, err := c.ResolveCommunities(context.Background(), NormalizeSubredditEntries([]string{"kubernetes", "DevOps"}))
 	if err != nil || strings.Join(got, ",") != "Kubernetes,devops" {
 		t.Fatalf("ResolveCommunities = %v, %v", got, err)
 	}
@@ -49,7 +49,7 @@ func TestResolveCommunities(t *testing.T) {
 	if q.Get("names") != "kubernetes,DevOps" || q.Get("page.size") != "1000" {
 		t.Errorf("query = %s", first)
 	}
-	_, err = c.ResolveCommunities(context.Background(), []string{"kubernetes", "nosuchsub"})
+	_, err = c.ResolveCommunities(context.Background(), NormalizeSubredditEntries([]string{"kubernetes", "nosuchsub"}))
 	if !isTargetingRefusal(err) || !strings.Contains(err.Error(), `invalid redditConfig.subreddits: entry 2 ("nosuchsub")`) {
 		t.Fatalf("missing community: err = %v", err)
 	}
@@ -67,7 +67,7 @@ func TestResolveCommunities_ChunksTheNamesFilter(t *testing.T) {
 		return 200, `{"data":[` + strings.Join(data, ",") + `]}`
 	}}
 	c := newCustomAudienceClient(t, stub)
-	if _, err := c.ResolveCommunities(context.Background(), names); err != nil {
+	if _, err := c.ResolveCommunities(context.Background(), NormalizeSubredditEntries(names)); err != nil {
 		t.Fatalf("ResolveCommunities: %v", err)
 	}
 	if n := len(stub.seen()); n != 2 {
@@ -85,7 +85,7 @@ func TestResolveTargeting_UnreadableLookupIsAnError(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			stub := &discoveryStub{respond: func(*discoveryStub, string, int) (int, string) { return 200, body }}
 			c := newCustomAudienceClient(t, stub)
-			if _, err := c.ResolveCommunities(context.Background(), []string{"kubernetes"}); err == nil || isTargetingRefusal(err) {
+			if _, err := c.ResolveCommunities(context.Background(), NormalizeSubredditEntries([]string{"kubernetes"})); err == nil || isTargetingRefusal(err) {
 				t.Fatalf("err = %v, want a plain error", err)
 			}
 		})
@@ -125,5 +125,49 @@ func TestResolveInterests(t *testing.T) {
 		if !isTargetingRefusal(err) || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: err = %v, want a refusal containing %q", entries, err, want)
 		}
+	}
+}
+
+// A malformed interest catalogue (a repeated id, a row with no name) is an unreadable lookup,
+// never a refusal blaming the caller.
+func TestResolveInterests_MalformedCatalogueIsAnError(t *testing.T) {
+	for name, body := range map[string]string{
+		"repeated id":  `{"data":[{"id":"technology_v3","name":"Technology"},{"id":"TECHNOLOGY_V3","name":"Technology"}]}`,
+		"missing name": `{"data":[{"id":"technology_v3"}]}`,
+		"blank name":   `{"data":[{"id":"technology_v3","name":"  "}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := &discoveryStub{respond: func(*discoveryStub, string, int) (int, string) { return 200, body }}
+			if _, err := newCustomAudienceClient(t, stub).ResolveInterests(context.Background(), []string{"Technology"}); err == nil || isTargetingRefusal(err) {
+				t.Fatalf("err = %v, want a plain error", err)
+			}
+		})
+	}
+}
+
+// A refusal names the entry the caller sent, counting blanks and duplicates the normalization
+// dropped; the caps are refused before any request.
+func TestResolveCommunities_ReportsTheCallersEntryAndCaps(t *testing.T) {
+	stub := &discoveryStub{respond: func(*discoveryStub, string, int) (int, string) {
+		return 200, `{"data":[{"id":"t5_1","name":"Kubernetes"}]}`
+	}}
+	c := newCustomAudienceClient(t, stub)
+	_, err := c.ResolveCommunities(context.Background(), NormalizeSubredditEntries([]string{"kubernetes", " ", "Kubernetes", "nosuchsub"}))
+	if !isTargetingRefusal(err) || !strings.Contains(err.Error(), `entry 4 ("nosuchsub")`) {
+		t.Fatalf("err = %v, want entry 4", err)
+	}
+	many := make([]string, MaxResolvedSubreddits+1)
+	for i := range many {
+		many[i] = fmt.Sprintf("s%d", i)
+	}
+	before := len(stub.seen())
+	if _, err := c.ResolveCommunities(context.Background(), NormalizeSubredditEntries(many)); !isTargetingRefusal(err) || !strings.Contains(err.Error(), "at most 100") {
+		t.Fatalf("over the cap: err = %v", err)
+	}
+	if _, err := c.ResolveInterests(context.Background(), make([]string, MaxResolvedInterests+1)); !isTargetingRefusal(err) || !strings.Contains(err.Error(), "at most 200") {
+		t.Fatalf("interests over the cap: err = %v", err)
+	}
+	if len(stub.seen()) != before {
+		t.Error("a request was sent for a list over its cap")
 	}
 }

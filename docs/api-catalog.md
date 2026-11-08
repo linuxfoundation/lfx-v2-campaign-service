@@ -609,8 +609,9 @@ subreddits?: string[]           — Community targeting as subreddit NAMES ('r/g
                                   (exact names, at most 50 per call, pages followed on the API
                                   origin) and sent in Reddit's own spelling; a name Reddit does not
                                   list is a synchronous 400 "invalid campaign config:
-                                  redditConfig.subreddits: entry N …", and again a job failure with
-                                  nothing created at dispatch.
+                                  redditConfig.subreddits: entry N …" (N counts the list as sent),
+                                  and again a job failure with nothing created at dispatch. At most
+                                  100 distinct communities while resolving (a config-only 400).
 interests?: string[]            — Interest targeting. Reddit wants opaque interest IDs while briefs
                                   produce human labels, so these are commonly dropped with a warning
                                   (label->ID resolution tracked in LFXV2-3261). With
@@ -621,7 +622,9 @@ interests?: string[]            — Interest targeting. Reddit wants opaque inte
                                   ignoring case) and that interest's id is sent; duplicates after
                                   resolution are dropped. A blank entry, one matching nothing, or a
                                   name two interests share is a synchronous 400 "invalid campaign
-                                  config: redditConfig.interests: entry N …". For BOTH: the
+                                  config: redditConfig.interests: entry N …"; at most 200 entries
+                                  while resolving. A malformed catalogue (a repeated id, a row with
+                                  no name) is an unreadable lookup, not a refusal. For BOTH: the
                                   synchronous pre-check fails OPEN when the lookup cannot run
                                   (connection or Reddit unavailable; the create proceeds), and
                                   dispatch repeats the lookups fail-CLOSED, so an unknown value or

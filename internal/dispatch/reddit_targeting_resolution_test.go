@@ -173,3 +173,26 @@ func TestReddit_TargetingResolution_LookupFailure(t *testing.T) {
 		}
 	}
 }
+
+// The list caps are a config-only 400 at pre-check: no credential lookup, no Reddit call, and
+// not marked as upstream-consulted.
+func TestReddit_TargetingResolution_CapsRefusedBeforeAnyCall(t *testing.T) {
+	t.Setenv(constants.EnvRedditTargetingResolutionEnabled, "true")
+	subs := make([]string, 101)
+	for i := range subs {
+		subs[i] = `"s` + strings.Repeat("x", i%5) + string(rune('a'+i%26)) + `_` + string(rune('a'+i/26)) + `"`
+	}
+	f := &resolvingRedditAPI{}
+	d := f.start(t)
+	err := d.PreflightCreate(context.Background(), "cncf", model.ProviderRedditAds, redditAudienceCfg(`,"subreddits":[`+strings.Join(subs, ",")+`]`))
+	if !errors.Is(err, domain.ErrCreateConfigInvalid) || !strings.Contains(err.Error(), "redditConfig.subreddits: at most 100 distinct communities") {
+		t.Fatalf("PreflightCreate = %v", err)
+	}
+	var consulted interface{ UpstreamConsulted() bool }
+	if errors.As(err, &consulted) {
+		t.Error("a cap refusal is decided on the config alone")
+	}
+	if len(f.paths) != 0 {
+		t.Errorf("calls were made: %v", f.paths)
+	}
+}

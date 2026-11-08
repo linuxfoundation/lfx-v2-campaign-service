@@ -44,6 +44,13 @@ const (
 	// targetingLookupMaxPages caps each lookup walk; a list still paging at the cap cannot be
 	// read to its end, which is an error, not "not found".
 	targetingLookupMaxPages = 10
+
+	// MaxResolvedSubreddits and MaxResolvedInterests bound the lists the lookups resolve, so one
+	// create cannot fan out into dozens of sequential Reddit calls inside the synchronous
+	// pre-check. 100 matches MaxExcludedSubreddits; 200 is targeting.interests' maxItems in
+	// Reddit's schema.
+	MaxResolvedSubreddits = 100
+	MaxResolvedInterests  = 200
 )
 
 // errTargetingLookupPageCap marks a lookup walk that still had a next page at the cap.
@@ -59,13 +66,21 @@ type interestElement struct {
 	Name string `json:"name"`
 }
 
-// NormalizeSubreddits applies CreateCampaign's subreddit rules: trim, strip an optional r/,
-// drop blanks and case-insensitive duplicates, keep the first spelling. Exported so the
-// dispatcher resolves exactly the names the create would send.
-func NormalizeSubreddits(in []string) []string {
-	out := make([]string, 0, len(in))
+// SubredditEntry is one normalized subreddit and its 1-based position in the caller's list, so
+// a refusal names the entry the caller sent, not its position after blanks and duplicates were
+// dropped.
+type SubredditEntry struct {
+	Name  string
+	Entry int
+}
+
+// NormalizeSubredditEntries applies CreateCampaign's subreddit rules: trim, strip an optional
+// r/, drop blanks and case-insensitive duplicates, keep the first spelling. Each kept name
+// carries its original position.
+func NormalizeSubredditEntries(in []string) []SubredditEntry {
+	out := make([]SubredditEntry, 0, len(in))
 	seen := make(map[string]struct{}, len(in))
-	for _, s := range in {
+	for i, s := range in {
 		name := strings.TrimSpace(stripSubredditPrefix(strings.TrimSpace(s)))
 		if name == "" {
 			continue
@@ -75,7 +90,18 @@ func NormalizeSubreddits(in []string) []string {
 			continue
 		}
 		seen[key] = struct{}{}
-		out = append(out, name)
+		out = append(out, SubredditEntry{Name: name, Entry: i + 1})
+	}
+	return out
+}
+
+// NormalizeSubreddits is NormalizeSubredditEntries' names, in order: exactly the names a create
+// sends.
+func NormalizeSubreddits(in []string) []string {
+	entries := NormalizeSubredditEntries(in)
+	out := make([]string, len(entries))
+	for i, e := range entries {
+		out[i] = e.Name
 	}
 	return out
 }
@@ -92,13 +118,24 @@ func lookupPage(resp *apiResponse, out any, what string, page int) error {
 	return nil
 }
 
-// ResolveCommunities confirms every name (already NormalizeSubreddits-ed) is a targetable
-// community, and returns them in Reddit's own spelling, in request order. A name Reddit does not
-// list is a domain.PreflightRefusal naming its 1-based position; a lookup that fails or cannot be
-// believed is a plain error. Either way the caller creates nothing.
-func (c *Client) ResolveCommunities(ctx context.Context, names []string) ([]string, error) {
-	if len(names) == 0 {
+// ResolveCommunities confirms every entry (from NormalizeSubredditEntries) is a targetable
+// community, and returns the names in Reddit's own spelling, in order. A name Reddit does not
+// list is a domain.PreflightRefusal naming the entry's position in the caller's list; a lookup
+// that fails or cannot be believed is a plain error. Either way the caller creates nothing.
+//
+// The names go in the filter as the caller spelled them and are matched ignoring case. Whether
+// Reddit's "exact names" filter itself ignores case is one of the things the live probe must
+// confirm before REDDIT_TARGETING_RESOLUTION_ENABLED is turned on.
+func (c *Client) ResolveCommunities(ctx context.Context, entries []SubredditEntry) ([]string, error) {
+	if len(entries) == 0 {
 		return nil, nil
+	}
+	if len(entries) > MaxResolvedSubreddits {
+		return nil, domain.PreflightRefusalf("invalid redditConfig.subreddits: at most %d distinct communities are accepted, got %d", MaxResolvedSubreddits, len(entries))
+	}
+	names := make([]string, len(entries))
+	for i, e := range entries {
+		names[i] = e.Name
 	}
 	canonical := map[string]string{}
 	for start := 0; start < len(names); start += communityNamesPerLookup {
@@ -125,11 +162,11 @@ func (c *Client) ResolveCommunities(ctx context.Context, names []string) ([]stri
 			return nil, fmt.Errorf("reddit community lookup failed: %w", err)
 		}
 	}
-	out := make([]string, len(names))
-	for i, n := range names {
-		got, ok := canonical[strings.ToLower(n)]
+	out := make([]string, len(entries))
+	for i, e := range entries {
+		got, ok := canonical[strings.ToLower(e.Name)]
 		if !ok {
-			return nil, domain.PreflightRefusalf("invalid redditConfig.subreddits: entry %d (%s) is not a targetable Reddit community", i+1, domain.CallerValue(n))
+			return nil, domain.PreflightRefusalf("invalid redditConfig.subreddits: entry %d (%s) is not a targetable Reddit community", e.Entry, domain.CallerValue(e.Name))
 		}
 		out[i] = got
 	}
@@ -145,6 +182,9 @@ func (c *Client) ResolveInterests(ctx context.Context, entries []string) ([]stri
 	if len(entries) == 0 {
 		return nil, nil
 	}
+	if len(entries) > MaxResolvedInterests {
+		return nil, domain.PreflightRefusalf("invalid redditConfig.interests: at most %d entries are accepted, got %d", MaxResolvedInterests, len(entries))
+	}
 	byID := map[string]string{}
 	byName := map[string][]string{}
 	err := c.walkPagesCapped(ctx, http.MethodGet, "/targeting/interests", nil, targetingLookupMaxPages, errTargetingLookupPageCap,
@@ -158,10 +198,20 @@ func (c *Client) ResolveInterests(ctx context.Context, entries []string) ([]stri
 				if id == "" {
 					return fmt.Errorf("reddit interest lookup page %d: an interest has no id", page)
 				}
-				byID[strings.ToLower(id)] = id
-				if name := strings.ToLower(strings.TrimSpace(e.Name)); name != "" {
-					byName[name] = append(byName[name], id)
+				// The catalogue is validated like the community answer: a repeated id or a row
+				// with no name makes the lookup unreadable (a plain error, so the pre-check fails
+				// open), rather than turning Reddit's malformed answer into a refusal that blames
+				// the caller ("names 2 interests", "not an interest").
+				key := strings.ToLower(id)
+				if _, dup := byID[key]; dup {
+					return fmt.Errorf("reddit interest lookup page %d: the same interest id was listed twice", page)
 				}
+				name := strings.ToLower(strings.TrimSpace(e.Name))
+				if name == "" {
+					return fmt.Errorf("reddit interest lookup page %d: an interest has no name", page)
+				}
+				byID[key] = id
+				byName[name] = append(byName[name], id)
 			}
 			return nil
 		})

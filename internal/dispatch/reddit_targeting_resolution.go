@@ -37,8 +37,8 @@ func redditTargetingResolutionEnabled() bool {
 // Reddit does not offer is a domain.PreflightRefusal; a failed lookup is a plain error.
 func resolveRedditTargeting(ctx context.Context, client *reddit.Client, cfg redditConfig) (subreddits, interests []string, err error) {
 	subreddits, interests = cfg.Subreddits, cfg.Interests
-	if names := reddit.NormalizeSubreddits(cfg.Subreddits); len(names) > 0 {
-		if subreddits, err = client.ResolveCommunities(ctx, names); err != nil {
+	if entries := reddit.NormalizeSubredditEntries(cfg.Subreddits); len(entries) > 0 {
+		if subreddits, err = client.ResolveCommunities(ctx, entries); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -69,6 +69,13 @@ func (e *upstreamConsultedRefusal) UpstreamConsulted() bool { return true }
 // (domain.ErrCreateConfigInvalid, marked as upstream-consulted); any other failure is returned
 // as is, which the orchestrator treats as a pre-check that could not be completed (fail open).
 func (d *RedditDispatcher) preflightRedditTargeting(ctx context.Context, projectID string, platform model.Provider, cfg redditConfig) error {
+	// The list caps are decided on the config alone, before any credential or Reddit call.
+	if n := len(reddit.NormalizeSubredditEntries(cfg.Subreddits)); n > reddit.MaxResolvedSubreddits {
+		return domain.WrapPreflightRefusal(fmt.Errorf("%w: redditConfig.subreddits: at most %d distinct communities are accepted, got %d", domain.ErrCreateConfigInvalid, reddit.MaxResolvedSubreddits, n))
+	}
+	if n := len(cfg.Interests); n > reddit.MaxResolvedInterests {
+		return domain.WrapPreflightRefusal(fmt.Errorf("%w: redditConfig.interests: at most %d entries are accepted, got %d", domain.ErrCreateConfigInvalid, reddit.MaxResolvedInterests, n))
+	}
 	client, _, err := d.resolveRedditClientWithCreds(ctx, projectID, platform, d.creds.resolve)
 	if err != nil {
 		return fmt.Errorf("reddit targeting pre-check: %w", err)

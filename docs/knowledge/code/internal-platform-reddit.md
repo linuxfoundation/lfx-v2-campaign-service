@@ -1009,9 +1009,12 @@ must equal exactly one name (trimmed, ignoring case), and that interest's id is 
 after resolution are dropped.
 
 Both return a `domain.PreflightRefusal` naming the 1-based entry for a value Reddit does not offer
-(an unknown community, an unknown or blank interest, or a name two interests share). A lookup that
+(an unknown community, an unknown or blank interest, or a name two interests share), and for a
+list over its cap (100 communities, 200 interests). A community entry counts the caller's list
+as sent: `NormalizeSubredditEntries` carries each kept name's original position. A lookup that
 fails or cannot be believed is a plain error: a body identityjson rejects, a missing data list, an
-entry without a name or id, or a walk still paging at the cap.
+entry without a name or id, a repeated interest id, or a walk still paging at the cap. The
+dispatcher refuses the caps on the config alone, before any credential or Reddit call.
 
 The dispatcher (`reddit_targeting_resolution.go`) runs them twice while
 `REDDIT_TARGETING_RESOLUTION_ENABLED` is `"true"`:
@@ -1022,6 +1025,7 @@ The dispatcher (`reddit_targeting_resolution.go`) runs them twice while
 
 The ad-group 400 fallback that drops communities and interests is unchanged, as a last resort.
 
-Not verified live: neither read has been exercised against a live account. The issue asks for a
-probe of the interests shape (that the ad group takes the listed ids, and whether the list
-paginates) before the flag is turned on.
+Not verified live: neither read has been exercised against a live account. Before the flag is
+turned on, a probe should confirm the interests shape (that the ad group takes the listed ids,
+and whether the list paginates) and whether the communities `names` filter ignores case. Names
+are sent as the caller spelled them and matched ignoring case.
