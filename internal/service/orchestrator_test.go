@@ -2057,6 +2057,54 @@ func TestOrchestrator_PartialDispatchErrorPersistsUpstreamID(t *testing.T) {
 	}
 }
 
+// idlessPartialResultDispatcher is partialResultDispatcher's id-less sibling: a campaign whose
+// upstream id was never captured, carrying only a Result reconcile blob, alongside an error.
+type idlessPartialResultDispatcher struct{}
+
+func (idlessPartialResultDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return &model.Campaign{Status: "unconfirmed", Result: json.RawMessage(`{"campaignName":"n"}`), CampaignName: "n"},
+		errors.New("create could not be confirmed")
+}
+
+// A create that fails after the upstream campaign exists names that campaign on the job
+// result (#576), not only the row it was recorded on, so the operator can find the half-built
+// campaign in the ad account. An id-less partial has no id to give, and the field stays absent.
+// When recording the partial fails, no row is named, and the job is the only place the id
+// survives.
+func TestOrchestrator_ARetainedPartialNamesItsUpstreamCampaign(t *testing.T) {
+	cases := []struct {
+		name       string
+		repo       domain.CampaignRepository
+		dispatcher PlatformDispatcher
+		wantID     string
+		wantRowID  bool
+	}{
+		{"with id", &fakeCampaignRepo{}, partialResultDispatcher{}, "pc-orphan-" + string(model.ProviderGoogleAds), true},
+		{"id-less", &fakeCampaignRepo{}, idlessPartialResultDispatcher{}, "", true},
+		{"with id, recording fails", &persistErrCampaignRepo{}, partialResultDispatcher{}, "pc-orphan-" + string(model.ProviderGoogleAds), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			jobs := newFakeJobRepo()
+			orch := NewOrchestrator(tc.repo, jobs, map[model.Provider]PlatformDispatcher{
+				model.ProviderGoogleAds: tc.dispatcher,
+			})
+			brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+			id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+			res := decodeResults(t, waitForTerminal(t, jobs, id))
+			if len(res) != 1 || res[0].OK {
+				t.Fatalf("result = %+v, want one failed result", res)
+			}
+			if res[0].CampaignID != tc.wantID {
+				t.Errorf("campaign_id = %q, want %q", res[0].CampaignID, tc.wantID)
+			}
+			if (res[0].CampaignRowID != "") != tc.wantRowID {
+				t.Errorf("campaign_row_id = %q, want set: %v", res[0].CampaignRowID, tc.wantRowID)
+			}
+		})
+	}
+}
+
 // preCreateWithPartialDispatcher returns a NON-NIL campaign ALONGSIDE an error that
 // claims NoUpstreamCreate. That pairing is self-contradictory: the error disowns the
 // create while the campaign is evidence something was built for an upstream resource.
