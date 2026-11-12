@@ -60,7 +60,7 @@ type displayCampaignCreate struct {
 	// biddingFields is embedded ANONYMOUSLY, as on all four sibling payloads, so the
 	// oneof invariant keeps one definition. Which strategies may be sent is
 	// channel-specific and lives in validateBiddingPlan — here, the four portfolio
-	// strategies, with the live-verification caveat recorded there. Manual CPC is
+	// strategies, with the probe that settled them recorded there. Manual CPC is
 	// refused on this channel even though Google accepts it; see
 	// displayBiddingStrategies for why.
 	biddingFields
@@ -131,8 +131,8 @@ type displayAdGroupCreate struct {
 // the BIDDING SET, recorded at displayBiddingStrategies with the check that closes it.
 // #473's ad-group income-range and parental-status exclusion shapes, and #462's audience
 // and placement criterion shapes and the ad group's targetingSetting, were since settled
-// by validateOnly probes on 2026-11-03 (see display_targeting.go); the bidding set was
-// not.
+// by validateOnly probes on 2026-11-03 (see display_targeting.go), and the bidding set by
+// one on 2026-11-11 (see displayBiddingStrategies).
 //
 // The partial-result contract is the siblings', unchanged: past the campaign create
 // every failure returns the error ALONGSIDE a non-nil *CampaignResult carrying what

@@ -267,6 +267,37 @@ func TestCreateDisplayCampaign_HappyPath(t *testing.T) {
 // A creative with no call to action must send no callToActionText at all — the field is
 // omitempty precisely so Google supplies its own button rather than seeing an empty
 // string.
+// A Display create with a target CPA sends the standalone `targetCpa` on the campaign
+// mutate (#578). The folded maximizeConversions.targetCpaMicros is what Google refused in
+// prod on 2026-11-11, after the budget already existed.
+func TestCreateDisplayCampaign_TargetCPASendsTheStandaloneStrategy(t *testing.T) {
+	campaignH, readCampaign := capturedMutate(1, displayCampaignResource)
+	adGroupH, _ := capturedMutate(1, displayAdGroupResource)
+	assetH, _ := displayAssets()
+	adH, _ := capturedMutate(1, displayAdResource)
+
+	images := displayImages(t)
+	srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "campaigns:mutate") {
+			campaignH(w, r)
+			return
+		}
+		displayCascade(t, images, adGroupH, assetH, adH)(w, r)
+	})
+	c := demandGenClient(t, srv)
+
+	in := displayInput(srv.URL)
+	in.BiddingStrategy = biddingMaximizeConversions
+	in.TargetCPA = 40
+	if _, err := c.CreateDisplayCampaign(context.Background(), in); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	campaign := readCampaign()
+	if !strings.Contains(campaign, `"targetCpa":{"targetCpaMicros":40000000}`) || strings.Contains(campaign, "maximizeConversions") {
+		t.Errorf("campaign body %s, want exactly the standalone targetCpa strategy", campaign)
+	}
+}
+
 func TestCreateDisplayCampaign_CallToActionIsOptional(t *testing.T) {
 	adGroupH, _ := capturedMutate(1, displayAdGroupResource)
 	assetH, _ := displayAssets()

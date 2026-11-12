@@ -309,6 +309,39 @@ func TestBiddingPlan_DemandGenSendsTheProbedPayload(t *testing.T) {
 	}
 }
 
+// The target CPA form is chosen per channel from the 2026-11-11 validateOnly probe (#578):
+// Display, like Demand Gen, refuses maximizeConversions.targetCpaMicros and takes the
+// standalone `targetCpa`, while Search and Performance Max refuse the standalone form and
+// take the folded one. Display's targetless and ROAS strategies keep their probed shapes.
+func TestBiddingPlan_TargetCPAFormIsPerChannel(t *testing.T) {
+	cases := []struct {
+		kind string
+		in   CampaignInput
+		want string
+	}{
+		{campaignKindDisplay, CampaignInput{BiddingStrategy: biddingMaximizeConversions, TargetCPA: 40}, `{"targetCpa":{"targetCpaMicros":40000000}}`},
+		{campaignKindDisplay, CampaignInput{BiddingStrategy: biddingTargetCPA, TargetCPA: 12.5}, `{"targetCpa":{"targetCpaMicros":12500000}}`},
+		{campaignKindDisplay, CampaignInput{BiddingStrategy: biddingMaximizeConversions}, `{"maximizeConversions":{}}`},
+		{campaignKindDisplay, CampaignInput{BiddingStrategy: biddingMaximizeClicks}, `{"targetSpend":{}}`},
+		{campaignKindDisplay, CampaignInput{BiddingStrategy: biddingTargetROAS, TargetROAS: 4}, `{"maximizeConversionValue":{"targetRoas":4}}`},
+		{campaignKindSearch, CampaignInput{BiddingStrategy: biddingTargetCPA, TargetCPA: 25}, `{"maximizeConversions":{"targetCpaMicros":25000000}}`},
+		{campaignKindPerformanceMax, CampaignInput{BiddingStrategy: biddingTargetCPA, TargetCPA: 25}, `{"maximizeConversions":{"targetCpaMicros":25000000}}`},
+	}
+	for _, tc := range cases {
+		plan, err := validateBiddingPlan(tc.kind, biddingTestCustomer, tc.in)
+		if err != nil {
+			t.Fatalf("%s %+v: %v", tc.kind, tc.in, err)
+		}
+		raw, err := json.Marshal(plan.fields())
+		if err != nil {
+			t.Fatalf("%s %+v: marshal: %v", tc.kind, tc.in, err)
+		}
+		if string(raw) != tc.want {
+			t.Errorf("%s %+v: payload %s, want %s", tc.kind, tc.in, raw, tc.want)
+		}
+	}
+}
+
 // A target ROAS is refused on Demand Gen under maximize-conversion-value as well as under
 // target-roas: only the targetless maximizeConversionValue was probed there.
 func TestBiddingPlan_DemandGenRefusesTargetROAS(t *testing.T) {
