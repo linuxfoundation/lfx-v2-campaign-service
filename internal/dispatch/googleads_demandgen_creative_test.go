@@ -26,7 +26,7 @@ func fullCreativeConfig() *googleAdsDemandGenCreativeConfig {
 		Headlines:             []string{"Join us at KubeCon"},
 		Descriptions:          []string{"Three days of talks."},
 		BusinessName:          "Linux Foundation",
-		CallToActionText:      "Register",
+		CallToActionText:      "Learn more",
 	}
 }
 
@@ -121,7 +121,7 @@ func TestGoogleAdsDemandGenCreative_MapsEachListToItsOwnSlot(t *testing.T) {
 		Headlines:             []string{"h"},
 		Descriptions:          []string{"d"},
 		BusinessName:          "LF",
-		CallToActionText:      "Register",
+		CallToActionText:      "Learn more",
 	}
 	got := googleAdsDemandGenCreative(in)
 	pairs := []struct {
@@ -141,7 +141,7 @@ func TestGoogleAdsDemandGenCreative_MapsEachListToItsOwnSlot(t *testing.T) {
 			t.Errorf("%s = %v, want %v", p.name, p.got, p.want)
 		}
 	}
-	if got.BusinessName != "LF" || got.CallToActionText != "Register" {
+	if got.BusinessName != "LF" || got.CallToActionText != "Learn more" {
 		t.Errorf("scalars did not map: %+v", got)
 	}
 }

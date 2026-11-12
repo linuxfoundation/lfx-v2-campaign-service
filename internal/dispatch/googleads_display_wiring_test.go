@@ -53,7 +53,7 @@ func displayWireCreative() map[string]any {
 		"longHeadline":     "KubeCon + CloudNativeCon Europe 2026, Amsterdam",
 		"descriptions":     []string{"Talks, workshops and hallway track."},
 		"businessName":     "Linux Foundation",
-		"callToActionText": "Register",
+		"callToActionText": "Learn more",
 	}
 }
 

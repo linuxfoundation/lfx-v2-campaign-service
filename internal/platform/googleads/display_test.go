@@ -27,7 +27,7 @@ func displayCreativeAt(base string) DisplayCreative {
 		LongHeadline:          "KubeCon + CloudNativeCon Europe 2026",
 		Descriptions:          []string{"Three days of talks."},
 		BusinessName:          "Linux Foundation",
-		CallToActionText:      "Register",
+		CallToActionText:      "Learn more",
 	}
 }
 
@@ -259,7 +259,7 @@ func TestCreateDisplayCampaign_HappyPath(t *testing.T) {
 	if responsive["businessName"] != "Linux Foundation" {
 		t.Errorf("businessName = %v, want the required brand name", responsive["businessName"])
 	}
-	if responsive["callToActionText"] != "Register" {
+	if responsive["callToActionText"] != "Learn more" {
 		t.Errorf("callToActionText = %v, want the supplied text", responsive["callToActionText"])
 	}
 }

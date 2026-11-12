@@ -17,7 +17,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/creative"
 
@@ -89,12 +88,6 @@ const (
 	// is 25" for business_name, measured in the same double-width units the
 	// headlines and descriptions use.
 	maxDemandGenBusinessNameWeight = 25
-
-	// maxDemandGenCallToActionRunes bounds the optional call-to-action. Google
-	// documents no display width for this field, so this is a payload bound rather
-	// than an upstream limit being mirrored — deliberately generous, because
-	// refusing text Google would have accepted is the costlier mistake.
-	maxDemandGenCallToActionRunes = 30
 
 	// minDemandGenLogos/maxDemandGenLogos are Google's own: "At least 1 and max 5
 	// logo images can be specified." A Demand Gen ad without a logo is refused
@@ -199,6 +192,7 @@ type DemandGenCreative struct {
 	// BusinessName is the advertiser/brand name. Required by Google.
 	BusinessName string
 	// CallToActionText is optional; Google supplies its own default when absent.
+	// When set it must name one of demandGenCallToActions (#575).
 	CallToActionText string
 }
 
@@ -367,9 +361,9 @@ func validateDemandGenCreativeSpec(d DemandGenCreative, resolved map[string][]by
 	}
 	plan.businessName = name
 
-	cta := strings.TrimSpace(d.CallToActionText)
-	if n := utf8.RuneCountInString(cta); n > maxDemandGenCallToActionRunes {
-		return demandGenCreativePlan{}, fmt.Errorf("google-ads Demand Gen call to action %q is %d characters, exceeding the %d limit", capForError(cta), n, maxDemandGenCallToActionRunes)
+	cta, err := resolveCallToActionText("Demand Gen", demandGenCallToActions, d.CallToActionText)
+	if err != nil {
+		return demandGenCreativePlan{}, err
 	}
 	plan.callToActionText = cta
 
