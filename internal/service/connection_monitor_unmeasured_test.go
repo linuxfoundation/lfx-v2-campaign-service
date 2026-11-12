@@ -196,7 +196,7 @@ func TestMonitorGoogleAdsAccount_UnclassifiedRowsCountAsOther(t *testing.T) {
 	o.SetMetrics(rec)
 	svc.SetOrchestrator(o)
 	got, err := svc.MonitorGoogleAdsAccount(context.Background(),
-		&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: "1234567890", Days: 30})
+		&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: strPtr("1234567890"), Days: 30})
 	if err != nil {
 		t.Fatalf("MonitorGoogleAdsAccount: %v", err)
 	}

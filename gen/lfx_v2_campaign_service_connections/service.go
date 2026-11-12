@@ -703,12 +703,19 @@ type Service interface {
 	// because a local delete does not stop the upstream campaign, unless it does
 	// not record account_id as the customer it was created under or another
 	// project has since taken it over; such a campaign is omitted, never a 409.
-	// {project_id} also resolves which stored connection credential reads
-	// account_id. Unlike GET .../connection-google-ads/accounts, this endpoint
-	// resolves the project's OWN connection only and does not fall back to the
-	// shared LF system credential: a project with campaigns but no Google Ads
-	// connection of its own gets a 404, not the LF account's data. A pure read:
-	// nothing is persisted.
+	// account_id is the account to read; omitted, it is the account this project's
+	// campaigns were created under, read from this service's own records: the
+	// response's account_id names it, an empty account_id with no campaigns means
+	// the project has none recorded on the platform (answered without any upstream
+	// call), and campaigns created under more than one account fail with 409 until
+	// account_id names one. account_id is read with the stored credential
+	// configured for it: the project's own connection when that is configured for
+	// account_id, otherwise the shared LF system credential when that is, which is
+	// the account campaigns are created in when a project has no connection of its
+	// own. The LF system credential reads no other account: a project with no
+	// connection of its own configured for account_id, where the LF system
+	// credential is not configured for it either, gets a 404. A pure read: nothing
+	// is persisted.
 	MonitorGoogleAdsAccount(context.Context, *MonitorGoogleAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read every campaign visible on a LinkedIn Ads account, live from the
 	// platform, with pacing and action items derived by this service's ported rule
@@ -2616,8 +2623,9 @@ type MonitorGoogleAdsAccountPayload struct {
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
 	ProjectID string
-	// The Google Ads account to read.
-	AccountID string
+	// The Google Ads account to read. Optional: omitted, the account this
+	// project's campaigns were created under.
+	AccountID *string
 	// Trailing days to read metrics over.
 	Days int
 }

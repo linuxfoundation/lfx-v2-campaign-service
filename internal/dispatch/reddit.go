@@ -885,8 +885,9 @@ func (d *RedditDispatcher) readAccountMonitor(ctx context.Context, projectID str
 // the shared account, including ones dispatched by other projects through the same fallback.
 // resolveOwned closes this the same way it does for Google/LinkedIn/Meta: a project with no
 // connection of its own now gets domain.ErrNotFound (404) before any account-id comparison
-// runs. See resolveOwnedGoogleAdsDiscoveryClient's doc comment (internal/dispatch/googleads.go)
-// for the shared rationale.
+// runs. Google has since dropped the same refusal for its monitor (#591, googleads.go's
+// resolveGoogleAdsMonitorClient) because the read is now reduced to the project's own recorded
+// campaigns; Reddit's is too, and is a candidate for the same change.
 func (d *RedditDispatcher) resolveMonitorClient(ctx context.Context, projectID string, platform model.Provider, accountID string) (*reddit.Client, error) {
 	client, res, err := d.resolveRedditClientWithCreds(ctx, projectID, platform, d.creds.resolveOwned)
 	if err != nil {

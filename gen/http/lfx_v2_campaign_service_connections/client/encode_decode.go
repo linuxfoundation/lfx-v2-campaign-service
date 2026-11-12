@@ -15597,7 +15597,9 @@ func EncodeMonitorGoogleAdsAccountRequest(encoder func(*http.Request) goahttp.En
 			}
 		}
 		values := req.URL.Query()
-		values.Add("account_id", p.AccountID)
+		if p.AccountID != nil {
+			values.Add("account_id", *p.AccountID)
+		}
 		values.Add("days", strconv.Itoa(p.Days))
 		req.URL.RawQuery = values.Encode()
 		return nil

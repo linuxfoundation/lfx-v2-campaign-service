@@ -466,6 +466,19 @@ type AccountMonitorScoper interface {
 	MonitorScopeForAccount(scope []model.ProjectCampaignScope, accountID string) ([]string, error)
 }
 
+// AccountMonitorDefaulter is an OPTIONAL capability of an AccountMonitorScoper: name the account a
+// project's recorded campaigns were created under, for an account-monitor read whose caller names
+// none (#591). A project monitored on the LF system account has no connection of its own to take
+// the account id from, so without this the caller had nothing to ask for.
+//
+// MonitorAccountForScope's scope is never empty. It returns the one account every entry that
+// records one was created under. Entries recording none, or entries recorded under more than one
+// account, fail the call with the same errors MonitorScopeForAccount would return for them, so a
+// caller that omits the account gets the refusal it would have got naming either one.
+type AccountMonitorDefaulter interface {
+	MonitorAccountForScope(scope []model.ProjectCampaignScope) (string, error)
+}
+
 // EmailSearcher is an OPTIONAL dispatcher capability: search the marketing emails reachable
 // through a project's stored connection. Discovered by type assertion like StatusToggler,
 // MetricsReader and AccountLister; a dispatcher that doesn't implement it yields a clean
@@ -3183,6 +3196,38 @@ func (o *Orchestrator) scopeAccountMonitor(ctx context.Context, projectID string
 		}
 	}
 	return ids, true, nil
+}
+
+// DefaultMonitorAccount names the account an account-monitor read covers when its caller names
+// none: the account this project's recorded campaigns on platform were created under, read from
+// this service's own rows (AccountMonitorDefaulter). It contacts no platform.
+//
+// The live campaigns decide it. Only when the project has none are its soft-deleted campaigns
+// consulted, because the monitor still shows a deleted campaign that keeps spending; a deleted one
+// under another account does not override the live ones, since the monitor omits it rather than
+// failing on it. "" with a nil error means the project has no campaigns on platform at all.
+//
+// A platform whose dispatcher does not implement AccountMonitorDefaulter answers
+// ErrAccountMetricsUnsupported: its monitor has no recorded account to fall back on.
+func (o *Orchestrator) DefaultMonitorAccount(ctx context.Context, projectID string, platform model.Provider) (string, error) {
+	defaulter, ok := o.dispatchers[platform].(AccountMonitorDefaulter)
+	if !ok {
+		return "", fmt.Errorf("%w: %s cannot name the account its campaigns were created under", ErrAccountMetricsUnsupported, platform)
+	}
+	scope, err := o.projectCampaignScope(ctx, projectID, platform)
+	if err != nil {
+		return "", err
+	}
+	if len(scope) == 0 {
+		scope, err = o.campaigns.ListProjectPlatformDeletedCampaignIDs(ctx, projectID, platform)
+		if err != nil {
+			return "", fmt.Errorf("resolve deleted campaign scope for project %s on %s: %w", projectID, platform, err)
+		}
+	}
+	if len(scope) == 0 {
+		return "", nil
+	}
+	return defaulter.MonitorAccountForScope(scope)
 }
 
 // revalidateAccountMonitorScope shrinks the initial authorization using ONE fresh database

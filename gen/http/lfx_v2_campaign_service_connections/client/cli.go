@@ -2842,18 +2842,17 @@ func BuildMonitorGoogleAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorG
 		}
 		projectID = *lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountProjectID
 	}
-	var accountID string
+	var accountID *string
 	{
-		if lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID == nil {
-			return nil, fmt.Errorf("missing required flag --account-id")
-		}
-		accountID = *lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID
-		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^[0-9]+$"))
-		if utf8.RuneCountInString(accountID) > 64 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
-		}
-		if err != nil {
-			return nil, err
+		if lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID != nil {
+			accountID = lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID
+			err = goa.MergeErrors(err, goa.ValidatePattern("account_id", *lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID, "^[0-9]+$"))
+			if utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID) > 64 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", *lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID, utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID), 64, false))
+			}
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	var days int

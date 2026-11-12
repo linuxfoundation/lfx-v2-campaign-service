@@ -1585,7 +1585,7 @@ func (c *Client) CreateHubspotCampaign(ctx context.Context, p *CreateHubspotCamp
 // the "lfx-v2-campaign-service-connections" service.
 // MonitorGoogleAdsAccount may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
-//   - "Conflict" (type *AccountMonitorScopeConflictError): A campaign recorded for this project does not fit the monitored account: created under a different customer than account_id, or recording none (see reason)
+//   - "Conflict" (type *AccountMonitorScopeConflictError): A campaign recorded for this project does not fit the monitored account: created under a different customer than account_id, or recording none (see reason); with account_id omitted, the project's campaigns were created under more than one customer, or record none
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large

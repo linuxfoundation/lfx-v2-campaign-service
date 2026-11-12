@@ -826,11 +826,12 @@ func (d *LinkedInDispatcher) resolveLinkedInDiscoveryCredentials(ctx context.Con
 }
 
 // resolveLinkedInOwnedDiscoveryCredentials is resolveLinkedInDiscoveryCredentials WITHOUT the
-// LF system fallback — the monitor read's equivalent of googleads.go's
-// resolveOwnedGoogleAdsDiscoveryClient (see that function's doc comment for the shared
-// rationale: round-16 review escalated the pre-existing credential-scope gap to Critical, and
-// membership-checking against ListAccounts would not have closed it given LinkedIn's own
-// shared-tenancy exposure through the fallback).
+// LF system fallback, for the monitor read. Round-16 review escalated the pre-existing
+// credential-scope gap to Critical, and membership-checking against ListAccounts would not have
+// closed it given LinkedIn's own shared-tenancy exposure through the fallback. LinkedIn's monitor
+// is not campaign-scoped (it does not implement service.AccountMonitorScoper), so the refusal
+// still stands here; Google dropped it in #591 only because its read is (see googleads.go's
+// resolveGoogleAdsMonitorClient).
 //
 // It reuses resolveLinkedInCredentials, the same validation resolveLinkedInDiscoveryCredentials
 // itself calls, but bound to d.creds.resolveOwned instead of d.creds.resolve — so a project with
