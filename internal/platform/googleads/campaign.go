@@ -1045,8 +1045,10 @@ type networkSettings struct {
 
 // googleAdsErrorEnvelope is the error body shape: the machine-readable error codes
 // live at error.details[<GoogleAdsFailure>].errors[].errorCode, which is a
-// single-key object (category -> enum). message/requestId are intentionally NOT
-// captured — only the codes are retained, and only for internal classification.
+// single-key object (category -> enum). errorCode is parsed for internal
+// classification (parseErrorCodes). message and the field path are parsed only for
+// the WARN log (parseErrorSummaries, #577) and never reach Error() or the job result.
+// requestId is not captured.
 type googleAdsErrorEnvelope struct {
 	Error struct {
 		Details []struct {
@@ -1109,6 +1111,9 @@ const (
 	// are short fixed sentences ("Invalid call to action text."); the cap only keeps a hostile
 	// or malformed body from writing an unbounded line.
 	maxLoggedErrorMessageRunes = 200
+	// maxLoggedFieldPathElements bounds the logged field path, for the same reason: each
+	// element is also capped at maxErrorCodeLen, so no part of a summary is unbounded.
+	maxLoggedFieldPathElements = 32
 )
 
 // parseErrorSummaries renders each Google error in a non-2xx body as one log line:
@@ -1151,8 +1156,12 @@ func parseErrorSummaries(body []byte) []string {
 				line += ": " + msg
 			}
 			var path []string
-			for _, el := range e.Location.FieldPathElements {
-				if f := logSafe(el.FieldName); f != "" {
+			for i, el := range e.Location.FieldPathElements {
+				if i == maxLoggedFieldPathElements {
+					path = append(path, "…")
+					break
+				}
+				if f := logSafe(el.FieldName); f != "" && len(f) <= maxErrorCodeLen {
 					path = append(path, f)
 				}
 			}

@@ -107,7 +107,8 @@ ambiguous (`transportError`) vs definite (`apiError`, status-only `Error()`)
 classification. A definite refusal is also LOGGED once where it happens (#577): `doRequest`
 writes "google-ads request refused" with the method, path, status and `google_errors`.
 `parseErrorSummaries` renders each of Google's errors as `<category>.<CODE>: <message> (<field
-path>)`, at most 16, each message capped at 200 runes and stripped of control characters. Before
+path>)`, at most 16, each message capped at 200 runes, the field path capped at 32 elements of at most 128
+bytes each, and everything stripped of control characters. Before
 this, `Error()` named only the method, path and status, and the orchestrator's "platform dispatch
 failed" line said which step failed but never why. Google's text stays in the log only: `Error()`
 and the job result are unchanged (#208). A rate-limited (429) **idempotent** call is retried up to

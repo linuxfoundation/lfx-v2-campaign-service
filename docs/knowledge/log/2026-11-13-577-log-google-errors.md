@@ -10,6 +10,7 @@ by re-running it live.
   `<category>.<CODE>: <message> (<field path>)`.
   - It keeps at most 16 errors.
   - Each message is capped at 200 runes.
+  - The field path is capped at 32 elements, and an over-long element is dropped.
   - Control characters are stripped, so a body cannot forge log lines.
 - `Error()`, the job result and `DispatchFailureMessage` are unchanged. Google's text stays in the
   log (#208).

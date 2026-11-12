@@ -645,6 +645,20 @@ func TestParseErrorSummaries(t *testing.T) {
 		t.Errorf("summary is %d runes, want the message capped at %d", n, maxLoggedErrorMessageRunes)
 	}
 
+	var deep strings.Builder
+	deep.WriteString(`{"error":{"details":[{"@type":"x.GoogleAdsFailure","errors":[{"errorCode":{"a":"B"},"location":{"fieldPathElements":[`)
+	for i := 0; i < 1000; i++ {
+		if i > 0 {
+			deep.WriteString(",")
+		}
+		deep.WriteString(`{"fieldName":"f"},{"fieldName":"` + strings.Repeat("z", maxErrorCodeLen+1) + `"}`)
+	}
+	deep.WriteString(`]}}]}]}}`)
+	got = parseErrorSummaries([]byte(deep.String()))
+	if len(got) != 1 || strings.Contains(got[0], "zzz") || len(got[0]) > 4*maxLoggedFieldPathElements+16 {
+		t.Errorf("deep path summary is %d bytes (%.60q…), want the path capped and over-long names dropped", len(got[0]), got[0])
+	}
+
 	var many strings.Builder
 	many.WriteString(`{"error":{"details":[{"@type":"x.GoogleAdsFailure","errors":[`)
 	for i := 0; i < maxRetainedErrorCodes+5; i++ {
