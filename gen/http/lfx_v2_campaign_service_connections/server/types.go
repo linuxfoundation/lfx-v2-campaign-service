@@ -16096,7 +16096,7 @@ func NewCreateHubspotCampaignPayload(body *CreateHubspotCampaignRequestBody, pro
 // NewMonitorGoogleAdsAccountPayload builds a
 // lfx-v2-campaign-service-connections service monitor-google-ads-account
 // endpoint payload.
-func NewMonitorGoogleAdsAccountPayload(projectID string, accountID string, days int, bearerToken *string) *lfxv2campaignserviceconnections.MonitorGoogleAdsAccountPayload {
+func NewMonitorGoogleAdsAccountPayload(projectID string, accountID *string, days int, bearerToken *string) *lfxv2campaignserviceconnections.MonitorGoogleAdsAccountPayload {
 	v := &lfxv2campaignserviceconnections.MonitorGoogleAdsAccountPayload{}
 	v.ProjectID = projectID
 	v.AccountID = accountID

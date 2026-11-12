@@ -44,6 +44,41 @@ func (d *GoogleAdsDispatcher) MonitorScopeForAccount(scope []model.ProjectCampai
 	return requireRecordedMonitorProvenance(op, "google ads customer", scope, googleAdsCreationCustomerID, ids, err)
 }
 
+var _ service.AccountMonitorDefaulter = (*GoogleAdsDispatcher)(nil)
+
+// MonitorAccountForScope implements service.AccountMonitorDefaulter for Google Ads: the one
+// customer the project's campaigns record as the one they were created under
+// (googleAdsCreationCustomerID). It is then checked by MonitorScopeForAccount like a customer the
+// caller named, so every refusal that applies to a named customer applies to this one.
+//
+// No entry recording a customer leaves nothing to name, and is refused as an unrecorded entry is
+// on a named customer. Entries recorded under more than one customer are refused with
+// ErrCampaignAccountMismatch: the monitor reads one customer, and picking one would report part
+// of the project's campaigns as all of them. Naming either customer is refused the same way
+// (googleAdsScopeForCustomer fails on any mismatch), so the remedy is re-dispatching or
+// reconciling the campaigns onto one customer, not naming one.
+func (d *GoogleAdsDispatcher) MonitorAccountForScope(scope []model.ProjectCampaignScope) (string, error) {
+	const op = "read google ads account monitor"
+	customers := make(map[string]bool, 1)
+	customer := ""
+	for _, s := range scope {
+		if created := googleAdsCreationCustomerID(&model.Campaign{Result: s.Result}); created != "" {
+			customers[created] = true
+			customer = created
+		}
+	}
+	switch len(customers) {
+	case 0:
+		return "", fmt.Errorf("%s: none of this project's %d campaigns record which google ads customer they were created under, so there is no customer to monitor them on: %w",
+			op, len(scope), errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
+	case 1:
+		return customer, nil
+	default:
+		return "", fmt.Errorf("%s: this project's campaigns were created under %d different google ads customers, so no one customer's monitor covers them all: %w",
+			op, len(customers), domain.ErrCampaignAccountMismatch)
+	}
+}
+
 // MonitorScopePrecheck implements service.AccountMonitorScoper for Meta: the same account id shape
 // check ReadAccountMonitor runs before it resolves a credential.
 func (d *MetaDispatcher) MonitorScopePrecheck(accountID string) error {

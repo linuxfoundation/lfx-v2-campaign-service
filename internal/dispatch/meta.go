@@ -1417,11 +1417,12 @@ func (d *MetaDispatcher) resolveMetaDiscoveryClient(ctx context.Context, project
 	return meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{}, d.opts...), nil
 }
 
-// resolveOwnedMetaDiscovery is resolveMetaDiscoveryClient WITHOUT the LF system fallback —
-// the monitor read's equivalent of googleads.go's resolveOwnedGoogleAdsDiscoveryClient (see
-// that function's doc comment for the shared rationale: round-16 review escalated the
-// pre-existing credential-scope gap to Critical, and membership-checking against ListAccounts
-// would not have closed it given the same shared-tenancy exposure through the fallback).
+// resolveOwnedMetaDiscovery is resolveMetaDiscoveryClient WITHOUT the LF system fallback, for
+// the monitor read. Round-16 review escalated the pre-existing credential-scope gap to Critical,
+// and membership-checking against ListAccounts would not have closed it given the shared-tenancy
+// exposure through the fallback. Google has since dropped the same refusal for its monitor
+// (#591, googleads.go's resolveGoogleAdsMonitorClient) because the read is now reduced to the
+// project's own recorded campaigns; Meta's is too, and is a candidate for the same change.
 //
 // It calls resolveMetaCredentials bound to d.creds.resolveOwned instead of d.creds.resolve, so
 // a project with no Meta connection of its own gets domain.ErrNotFound (via noOwnConnection)

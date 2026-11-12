@@ -167,7 +167,7 @@ func TestMonitorAccount_RevalidatesOwnershipAfterUpstreamReads(t *testing.T) {
 					if reportBacked {
 						m, err = monitorTwitter(svc, "a1")
 					} else {
-						m, err = svc.MonitorGoogleAdsAccount(context.Background(), &conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: "1234567890", Days: 7})
+						m, err = svc.MonitorGoogleAdsAccount(context.Background(), &conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: strPtr("1234567890"), Days: 7})
 					}
 					result <- outcome{m, err}
 				}()

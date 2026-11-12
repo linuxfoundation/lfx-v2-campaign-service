@@ -95,7 +95,7 @@ func TestMonitorAccount_Currency(t *testing.T) {
 			model.ProviderGoogleAds: &mockAccountMetricsReaderDispatcher{rows: rows},
 		}})
 		got, err := svc.MonitorGoogleAdsAccount(context.Background(),
-			&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: "a", Days: 30})
+			&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: strPtr("a"), Days: 30})
 		if err != nil {
 			t.Fatalf("MonitorGoogleAdsAccount: %v", err)
 		}
@@ -256,7 +256,7 @@ func TestMonitorAccount_MoneyRulesUseTheReadsCurrency(t *testing.T) {
 				model.ProviderGoogleAds: &mockAccountMonitorReaderDispatcher{rows: rows, currency: tc.currency},
 			}})
 			got, err := svc.MonitorGoogleAdsAccount(context.Background(),
-				&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: "a", Days: 30})
+				&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: strPtr("a"), Days: 30})
 			if err != nil {
 				t.Fatalf("MonitorGoogleAdsAccount: %v", err)
 			}

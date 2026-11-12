@@ -466,6 +466,19 @@ type AccountMonitorScoper interface {
 	MonitorScopeForAccount(scope []model.ProjectCampaignScope, accountID string) ([]string, error)
 }
 
+// AccountMonitorDefaulter is an OPTIONAL capability of an AccountMonitorScoper: name the account a
+// project's recorded campaigns were created under, for an account-monitor read whose caller names
+// none (#591). A project monitored on the LF system account has no connection of its own to take
+// the account id from, so without this the caller had nothing to ask for.
+//
+// MonitorAccountForScope's scope is never empty. It returns the one account every entry that
+// records one was created under. Entries recording none, or entries recorded under more than one
+// account, fail the call with the same errors MonitorScopeForAccount would return for them, so a
+// caller that omits the account gets the refusal it would have got naming either one.
+type AccountMonitorDefaulter interface {
+	MonitorAccountForScope(scope []model.ProjectCampaignScope) (string, error)
+}
+
 // EmailSearcher is an OPTIONAL dispatcher capability: search the marketing emails reachable
 // through a project's stored connection. Discovered by type assertion like StatusToggler,
 // MetricsReader and AccountLister; a dispatcher that doesn't implement it yields a clean
@@ -3183,6 +3196,57 @@ func (o *Orchestrator) scopeAccountMonitor(ctx context.Context, projectID string
 		}
 	}
 	return ids, true, nil
+}
+
+// DefaultMonitorAccount names the account an account-monitor read covers when its caller names
+// none: the account this project's recorded campaigns on platform were created under, read from
+// this service's own rows (AccountMonitorDefaulter). It contacts no platform. "" with a nil error
+// means there is no account to name, and the caller answers with an empty monitor.
+//
+// The live campaigns decide it, strictly: any refusal MonitorAccountForScope returns for them is
+// the refusal the read would return naming an account, and is returned unchanged.
+//
+// Only when the project has no live campaigns are its soft-deleted ones consulted, because the
+// monitor still shows a deleted campaign that keeps spending. They are judged one at a time, as
+// scopeAccountMonitor judges them: a deleted row cannot be re-dispatched or reconciled, so a
+// refusal on it would have no remedy, and one that records no account is skipped instead. When the
+// deleted campaigns record more than one account, the one recording the most is named (ties to the
+// lowest id, so the answer is stable); scopeAccountMonitor then omits the others exactly as it
+// would for a caller naming that account, and a caller can still name another.
+//
+// A platform whose dispatcher does not implement AccountMonitorDefaulter answers
+// ErrAccountMetricsUnsupported: its monitor has no recorded account to fall back on.
+func (o *Orchestrator) DefaultMonitorAccount(ctx context.Context, projectID string, platform model.Provider) (string, error) {
+	defaulter, ok := o.dispatchers[platform].(AccountMonitorDefaulter)
+	if !ok {
+		return "", fmt.Errorf("%w: %s cannot name the account its campaigns were created under", ErrAccountMetricsUnsupported, platform)
+	}
+	scope, err := o.projectCampaignScope(ctx, projectID, platform)
+	if err != nil {
+		return "", err
+	}
+	if len(scope) > 0 {
+		return defaulter.MonitorAccountForScope(scope)
+	}
+	deleted, err := o.campaigns.ListProjectPlatformDeletedCampaignIDs(ctx, projectID, platform)
+	if err != nil {
+		return "", fmt.Errorf("resolve deleted campaign scope for project %s on %s: %w", projectID, platform, err)
+	}
+	counts := make(map[string]int)
+	for _, d := range deleted {
+		account, derr := defaulter.MonitorAccountForScope([]model.ProjectCampaignScope{d})
+		if derr != nil || account == "" {
+			continue
+		}
+		counts[account]++
+	}
+	best := ""
+	for account, n := range counts {
+		if best == "" || n > counts[best] || (n == counts[best] && account < best) {
+			best = account
+		}
+	}
+	return best, nil
 }
 
 // revalidateAccountMonitorScope shrinks the initial authorization using ONE fresh database

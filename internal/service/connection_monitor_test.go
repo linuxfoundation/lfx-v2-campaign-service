@@ -59,7 +59,7 @@ func TestMonitorAccount_RejectsTheReservedSystemScope(t *testing.T) {
 	}{
 		{"google ads", func(s *ConnectionService) error {
 			_, err := s.MonitorGoogleAdsAccount(context.Background(),
-				&conn.MonitorGoogleAdsAccountPayload{ProjectID: model.SystemProjectID, AccountID: "a", Days: 30})
+				&conn.MonitorGoogleAdsAccountPayload{ProjectID: model.SystemProjectID, AccountID: strPtr("a"), Days: 30})
 			return err
 		}},
 		{"linkedin ads", func(s *ConnectionService) error {
@@ -167,7 +167,7 @@ func TestMonitorAccount_ClassifiesDiscoveryError(t *testing.T) {
 			})
 
 			result, err := svc.MonitorGoogleAdsAccount(context.Background(),
-				&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: "a", Days: 30})
+				&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: strPtr("a"), Days: 30})
 			if result != nil {
 				t.Fatalf("expected nil result on error, got %v", result)
 			}
@@ -206,7 +206,7 @@ func TestMonitorAccount_UpstreamFailureNamesAccountMonitor(t *testing.T) {
 	}{
 		{"google ads", model.ProviderGoogleAds, func(svc *ConnectionService) error {
 			_, err := svc.MonitorGoogleAdsAccount(context.Background(),
-				&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: "a", Days: 30})
+				&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: strPtr("a"), Days: 30})
 			return err
 		}},
 		{"linkedin ads", model.ProviderLinkedInAds, func(svc *ConnectionService) error {
@@ -257,7 +257,7 @@ func TestMonitorAccount_TotalsSumTheReturnedRows(t *testing.T) {
 	})
 
 	result, err := svc.MonitorGoogleAdsAccount(context.Background(),
-		&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: "a", Days: 30})
+		&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: strPtr("a"), Days: 30})
 	if err != nil {
 		t.Fatalf("MonitorGoogleAdsAccount failed: %T: %v", err, err)
 	}
@@ -298,7 +298,7 @@ func TestMonitorAccount_TotalsExcludeRowsTheRuleEngineDropped(t *testing.T) {
 	})
 
 	result, err := svc.MonitorGoogleAdsAccount(context.Background(),
-		&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: "a", Days: 30})
+		&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: strPtr("a"), Days: 30})
 	if err != nil {
 		t.Fatalf("MonitorGoogleAdsAccount failed: %T: %v", err, err)
 	}

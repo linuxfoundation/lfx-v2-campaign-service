@@ -11525,7 +11525,7 @@ func DecodeMonitorGoogleAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.
 		var payload *lfxv2campaignserviceconnections.MonitorGoogleAdsAccountPayload
 		var (
 			projectID   string
-			accountID   string
+			accountID   *string
 			days        int
 			bearerToken *string
 			err         error
@@ -11534,13 +11534,17 @@ func DecodeMonitorGoogleAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.
 		)
 		projectID = params["project_id"]
 		qp := r.URL.Query()
-		accountID = qp.Get("account_id")
-		if accountID == "" {
-			err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "query string"))
+		accountIDRaw := qp.Get("account_id")
+		if accountIDRaw != "" {
+			accountID = &accountIDRaw
 		}
-		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^[0-9]+$"))
-		if utf8.RuneCountInString(accountID) > 64 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
+		if accountID != nil {
+			err = goa.MergeErrors(err, goa.ValidatePattern("account_id", *accountID, "^[0-9]+$"))
+		}
+		if accountID != nil {
+			if utf8.RuneCountInString(*accountID) > 64 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", *accountID, utf8.RuneCountInString(*accountID), 64, false))
+			}
 		}
 		{
 			daysRaw := qp.Get("days")
