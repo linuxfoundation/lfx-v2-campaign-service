@@ -31,6 +31,26 @@ both the access and history checks are `campaign_manager` on `project:<projectId
 service has no read-only audience that would justify separate relations. `public` is always
 false: every resource is project-scoped.
 
+**The project is keyed by UID at publish time (#590), behind `INDEXER_RESOLVE_PROJECT_UID`.**
+Briefs and campaigns store the project SLUG, and `NewTransaction` writes `project:<slug>`.
+OpenFGA keys projects by UID, so the Query Service's per-row `campaign_manager` check on
+`project:<slug>` matches no tuple and filters every row out for every reader. The gateway avoids
+this by resolving the slug before its own check (`ruleset.yaml`,
+`project_slug_resolver_contextualizer`). With the flag exactly `"true"`, the container gives the
+relay an `accesscheck.Checker` as its `ProjectUIDResolver` (`Relay.WithProjectUIDResolver`).
+When the relay stamps a row, `keyOnProjectUID` then:
+- resolves the slug over `lfx.projects-api.slug_to_uid`, cached for an hour;
+- sets `access_check_object` and `history_check_object` to `project:<uid>`;
+- sends `parent_refs` as `project:<uid>` followed by `project:<slug>`, so a reader filtering by
+  either parent finds the document.
+
+A message already keyed on a UID is left alone, and so are the stored row and every other field.
+A failed lookup fails the delivery, so the row stays pending and is retried; publishing it
+slug-keyed would index a document nobody can read. Resolving at publish time rather than at
+write time means rows already pending are published correctly without being rewritten. That
+covers every row in an environment whose relay has idled for want of `INDEXER_SERVICE_TOKEN`.
+Documents already indexed slug-keyed are corrected by their next write.
+
 ## Same-resource publishes are serialized
 
 The indexer does NO version comparison — it overwrites the current document with whatever

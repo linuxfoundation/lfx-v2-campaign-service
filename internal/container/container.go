@@ -1152,7 +1152,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// Drain the index outbox: rows co-committed with their resource whose publish never
 	// landed. Without this a dropped message is lost, and a terminal write (archiving a
 	// brief) has no later write to repair the index.
-	c.setIndexRelay(indexer.NewRelay(postgres.NewOutboxRepo(pool), c.rawPublisher(), cfg.IndexerServiceToken))
+	c.setIndexRelay(c.newIndexRelay(cfg, pool))
 
 	// The health service's readiness depends on the database pool (Readyz).
 	c.Service = service.NewCampaignService(pool)
@@ -1245,7 +1245,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 
 			// Same relay as the fast path (see wireLiveBackends). Written under c.mu: this runs
 			// on the init goroutine while Close may be reading the field concurrently.
-			c.setIndexRelay(indexer.NewRelay(postgres.NewOutboxRepo(pool), c.rawPublisher(), cfg.IndexerServiceToken))
+			c.setIndexRelay(c.newIndexRelay(cfg, pool))
 			// Flip readiness LAST, so /readyz only reports healthy after the brief
 			// service is fully wired (avoids a window where /readyz is OK but brief
 			// routes still 503).
@@ -1531,6 +1531,23 @@ func (c *Container) newBriefService(briefs domain.BriefRepository, campaigns dom
 		s.DisableIndexing()
 	}
 	return s
+}
+
+// newIndexRelay builds the index outbox relay. With INDEXER_RESOLVE_PROJECT_UID on, it keys
+// every message's FGA checks on the project UID (#590), resolved over the index publisher's
+// NATS connection. Without a connection there is nothing to publish to either, so the flag is
+// moot and only logged.
+func (c *Container) newIndexRelay(cfg *config.Config, pool *postgres.Pool) *indexer.Relay {
+	relay := indexer.NewRelay(postgres.NewOutboxRepo(pool), c.rawPublisher(), cfg.IndexerServiceToken)
+	if !cfg.IndexerResolveProjectUID {
+		return relay
+	}
+	np, ok := c.indexPublisher.(*indexer.NATSPublisher)
+	if !ok || np.Conn() == nil {
+		slog.Warn("INDEXER_RESOLVE_PROJECT_UID is on but there is no NATS connection; the index relay has nothing to publish to")
+		return relay
+	}
+	return relay.WithProjectUIDResolver(accesscheck.New(np.Conn()))
 }
 
 // marketingOpsChecker returns the global_marketing_ops checker, which shares the index

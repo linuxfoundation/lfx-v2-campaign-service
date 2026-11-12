@@ -103,6 +103,15 @@ func (c *Checker) IsGlobalMarketingOps(ctx context.Context, projectSlug, usernam
 	return c.check(ctx, token)
 }
 
+// ProjectUID resolves a project slug to its UID through lfx.projects-api.slug_to_uid. Every
+// error wraps ErrUnavailable. It satisfies indexer.ProjectUIDResolver (#590).
+func (c *Checker) ProjectUID(ctx context.Context, slug string) (string, error) {
+	if c == nil || c.r == nil {
+		return "", fmt.Errorf("%w: no NATS connection", ErrUnavailable)
+	}
+	return c.projectUID(ctx, slug)
+}
+
 func (c *Checker) check(ctx context.Context, token string) (bool, error) {
 	reply, err := c.request(ctx, AccessCheckSubject, token)
 	if err != nil {

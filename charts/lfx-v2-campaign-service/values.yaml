@@ -776,6 +776,16 @@ app:
           key: indexer-service-token
           optional: true
 
+    # INDEXER_RESOLVE_PROJECT_UID, when exactly "true", makes the index relay key every
+    # indexed brief and campaign on the project UID (#590). OpenFGA keys projects by UID,
+    # so a document whose access_check_object is `project:<slug>` matches no
+    # campaign_manager tuple and the Query Service shows it to nobody. The relay resolves
+    # the slug over NATS (lfx.projects-api.slug_to_uid) at publish time; parent_refs keeps
+    # `project:<slug>` beside `project:<uid>`, so a reader filtering by either finds it. A
+    # failed lookup leaves the row pending. Any other value is off.
+    INDEXER_RESOLVE_PROJECT_UID:
+      value: "false"
+
     # PostgreSQL connection settings from the ExternalSecret-managed secret
     # (keys: host, port, username, password, dbname, engine). The app composes
     # the DSN in-process so the password is not interpolated into the pod spec.
