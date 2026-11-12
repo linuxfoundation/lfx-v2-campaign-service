@@ -104,7 +104,13 @@ own teardown compares identity before clearing so a stale leader cannot erase a 
 (unconditional, on a shallow copy so a supplied client isn't mutated), bounded
 response reads (`maxResponseBytes+1`), and the pre-send (`isPreSendDialError`) vs
 ambiguous (`transportError`) vs definite (`apiError`, status-only `Error()`)
-classification. A rate-limited (429) **idempotent** call is retried up to
+classification. A definite refusal is also LOGGED once where it happens (#577): `doRequest`
+writes "google-ads request refused" with the method, path, status and `google_errors`.
+`parseErrorSummaries` renders each of Google's errors as `<category>.<CODE>: <message> (<field
+path>)`, at most 16, each message capped at 200 runes and stripped of control characters. Before
+this, `Error()` named only the method, path and status, and the orchestrator's "platform dispatch
+failed" line said which step failed but never why. Google's text stays in the log only: `Error()`
+and the job result are unchanged (#208). A rate-limited (429) **idempotent** call is retried up to
 `retryMax` times with a bounded backoff honoring `Retry-After`; retry eligibility
 is an explicit parameter (not the HTTP method) because GAQL `:search` is
 POST-but-read-only — a `:mutate` create must NOT be retried (double-create risk).

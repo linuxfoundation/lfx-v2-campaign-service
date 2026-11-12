@@ -4,10 +4,12 @@
 package googleads
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -611,6 +613,81 @@ func TestParseErrorCodes_BoundsHostileBody(t *testing.T) {
 	codes := parseErrorCodes(body)
 	if len(codes) != 1 || codes[0] != "DUPLICATE_NAME" {
 		t.Errorf("over-long code must be dropped, got %v", codes)
+	}
+}
+
+// #577: each Google error becomes one log line with its category, code, message and field
+// path, and a hostile body cannot forge a line or exceed the bounds.
+func TestParseErrorSummaries(t *testing.T) {
+	body := []byte(`{"error":{"details":[{"@type":"x.GoogleAdsFailure","errors":[` +
+		`{"errorCode":{"adError":"INVALID_CALL_TO_ACTION_TEXT"},"message":"Invalid call to action text.",` +
+		`"location":{"fieldPathElements":[{"fieldName":"operations","index":0},{"fieldName":"create"},` +
+		`{"fieldName":"ad"},{"fieldName":"responsive_display_ad"},{"fieldName":"call_to_action_text"}]}},` +
+		`{"errorCode":{"fieldError":"REQUIRED"}}]}]}}`)
+	want := []string{
+		"adError.INVALID_CALL_TO_ACTION_TEXT: Invalid call to action text. (operations.create.ad.responsive_display_ad.call_to_action_text)",
+		"fieldError.REQUIRED",
+	}
+	if got := parseErrorSummaries(body); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("summaries = %q, want %q", got, want)
+	}
+	if got := parseErrorSummaries([]byte(`not json`)); got != nil {
+		t.Errorf("malformed body = %q, want nil", got)
+	}
+
+	forged := []byte(`{"error":{"details":[{"@type":"x.GoogleAdsFailure","errors":[` +
+		`{"errorCode":{"a":"B"},"message":"line one\nlevel=ERROR msg=forged ` + strings.Repeat("x", 500) + `"}]}]}}`)
+	got := parseErrorSummaries(forged)
+	if len(got) != 1 || strings.ContainsAny(got[0], "\n\r") {
+		t.Fatalf("summaries = %q, want one line with no newline", got)
+	}
+	if n := len([]rune(got[0])); n > maxLoggedErrorMessageRunes+len("a.B: ")+1 {
+		t.Errorf("summary is %d runes, want the message capped at %d", n, maxLoggedErrorMessageRunes)
+	}
+
+	var many strings.Builder
+	many.WriteString(`{"error":{"details":[{"@type":"x.GoogleAdsFailure","errors":[`)
+	for i := 0; i < maxRetainedErrorCodes+5; i++ {
+		if i > 0 {
+			many.WriteString(",")
+		}
+		many.WriteString(`{"errorCode":{"a":"B"}}`)
+	}
+	many.WriteString(`]}]}}`)
+	if n := len(parseErrorSummaries([]byte(many.String()))); n != maxRetainedErrorCodes {
+		t.Errorf("kept %d summaries, want the %d cap", n, maxRetainedErrorCodes)
+	}
+}
+
+// #577 end to end: a refused mutate logs the path, the status and Google's own error, while
+// the returned error still carries none of Google's text.
+func TestDoRequest_LogsGooglesErrorOnRefusal(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	refuse := func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":3,"details":[`+
+			`{"@type":"type.googleapis.com/google.ads.googleads.v23.errors.GoogleAdsFailure",`+
+			`"errors":[{"errorCode":{"campaignError":"OPERATION_NOT_PERMITTED_FOR_CONTEXT"},`+
+			`"message":"The operation is not allowed for the given context."}]}]}}`)
+	}
+	c := newCampaignClient(t, okBudget, refuse)
+	_, err := c.CreateCampaign(context.Background(), sampleInput())
+	if err == nil {
+		t.Fatal("want the refusal")
+	}
+	logged := buf.String()
+	for _, want := range []string{"google-ads request refused", "campaigns:mutate", "status=400",
+		"campaignError.OPERATION_NOT_PERMITTED_FOR_CONTEXT: The operation is not allowed for the given context."} {
+		if !strings.Contains(logged, want) {
+			t.Errorf("log %q does not contain %q", logged, want)
+		}
+	}
+	if strings.Contains(err.Error(), "not allowed for the given context") {
+		t.Errorf("error %q carries Google's text; it must stay in the log", err)
 	}
 }
 

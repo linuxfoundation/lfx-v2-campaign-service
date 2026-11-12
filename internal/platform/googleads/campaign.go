@@ -1053,6 +1053,12 @@ type googleAdsErrorEnvelope struct {
 			Type   string `json:"@type"`
 			Errors []struct {
 				ErrorCode map[string]json.RawMessage `json:"errorCode"`
+				Message   string                     `json:"message"`
+				Location  struct {
+					FieldPathElements []struct {
+						FieldName string `json:"fieldName"`
+					} `json:"fieldPathElements"`
+				} `json:"location"`
 			} `json:"errors"`
 		} `json:"details"`
 	} `json:"error"`
@@ -1099,7 +1105,79 @@ func parseErrorCodes(body []byte) []string {
 const (
 	maxRetainedErrorCodes = 16
 	maxErrorCodeLen       = 128
+	// maxLoggedErrorMessageRunes bounds each logged Google error message. Google's messages
+	// are short fixed sentences ("Invalid call to action text."); the cap only keeps a hostile
+	// or malformed body from writing an unbounded line.
+	maxLoggedErrorMessageRunes = 200
 )
+
+// parseErrorSummaries renders each Google error in a non-2xx body as one log line:
+// "<category>.<CODE>: <message> (<field path>)", e.g.
+// "adError.INVALID_CALL_TO_ACTION_TEXT: Invalid call to action text.
+// (operations.create.ad.responsive_display_ad.call_to_action_text)" (#577).
+//
+// For LOGS only. These are Google's own codes, messages and field paths, which carry no
+// credential; they never reach Error() or the job result, which keep to the fixed sentences
+// of service.DispatchFailureMessage (#208). Bounded like parseErrorCodes: at most
+// maxRetainedErrorCodes entries, each message capped and stripped of control characters so
+// a body cannot forge log lines. Returns nil on a malformed or absent body.
+func parseErrorSummaries(body []byte) []string {
+	if len(body) == 0 {
+		return nil
+	}
+	var env googleAdsErrorEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil
+	}
+	var out []string
+	for _, d := range env.Error.Details {
+		if !strings.HasSuffix(d.Type, "GoogleAdsFailure") {
+			continue
+		}
+		for _, e := range d.Errors {
+			code := "unknown"
+			for category, raw := range e.ErrorCode {
+				var v string
+				if json.Unmarshal(raw, &v) == nil && v != "" && len(category)+len(v) <= maxErrorCodeLen {
+					code = logSafe(category + "." + v)
+				}
+				break
+			}
+			line := code
+			if msg := logSafe(e.Message); msg != "" {
+				if r := []rune(msg); len(r) > maxLoggedErrorMessageRunes {
+					msg = string(r[:maxLoggedErrorMessageRunes]) + "…"
+				}
+				line += ": " + msg
+			}
+			var path []string
+			for _, el := range e.Location.FieldPathElements {
+				if f := logSafe(el.FieldName); f != "" {
+					path = append(path, f)
+				}
+			}
+			if len(path) > 0 {
+				line += " (" + strings.Join(path, ".") + ")"
+			}
+			out = append(out, line)
+			if len(out) >= maxRetainedErrorCodes {
+				return out
+			}
+		}
+	}
+	return out
+}
+
+// logSafe drops control characters (newlines included) and trims, so a value from a
+// response body cannot start a forged log line.
+func logSafe(s string) string {
+	return strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s))
+}
 
 // hasErrorCode reports whether the apiError carried the given Google Ads enum
 // error code. It reads the ErrorCodes parsed from the FULL body in doRequest — NOT

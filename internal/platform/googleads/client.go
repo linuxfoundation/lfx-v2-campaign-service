@@ -32,6 +32,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net"
 	"net/http"
@@ -1200,6 +1201,12 @@ func (c *Client) doRequestValidatedCounted(ctx context.Context, method, path str
 				snap = snap[:maxErrorBodyChars]
 			}
 			text := string(snap)
+			// Log WHY Google refused (#577): Error() deliberately names only the method,
+			// path and status, so without this a refusal could be diagnosed only by a live
+			// re-run. Google's codes, messages and field paths, never the raw body.
+			slog.WarnContext(ctx, "google-ads request refused",
+				"method", method, "path", path, "status", resp.StatusCode,
+				"google_errors", parseErrorSummaries(raw))
 			return nil, attempt, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: text, ErrorCodes: codes}
 		}
 
