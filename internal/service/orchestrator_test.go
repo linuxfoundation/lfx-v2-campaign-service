@@ -2069,19 +2069,24 @@ func (idlessPartialResultDispatcher) Dispatch(_ context.Context, _ *model.Campai
 // A create that fails after the upstream campaign exists names that campaign on the job
 // result (#576), not only the row it was recorded on, so the operator can find the half-built
 // campaign in the ad account. An id-less partial has no id to give, and the field stays absent.
+// When recording the partial fails, no row is named, and the job is the only place the id
+// survives.
 func TestOrchestrator_ARetainedPartialNamesItsUpstreamCampaign(t *testing.T) {
 	cases := []struct {
 		name       string
+		repo       domain.CampaignRepository
 		dispatcher PlatformDispatcher
 		wantID     string
+		wantRowID  bool
 	}{
-		{"with id", partialResultDispatcher{}, "pc-orphan-" + string(model.ProviderGoogleAds)},
-		{"id-less", idlessPartialResultDispatcher{}, ""},
+		{"with id", &fakeCampaignRepo{}, partialResultDispatcher{}, "pc-orphan-" + string(model.ProviderGoogleAds), true},
+		{"id-less", &fakeCampaignRepo{}, idlessPartialResultDispatcher{}, "", true},
+		{"with id, recording fails", &persistErrCampaignRepo{}, partialResultDispatcher{}, "pc-orphan-" + string(model.ProviderGoogleAds), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			jobs := newFakeJobRepo()
-			orch := NewOrchestrator(&fakeCampaignRepo{}, jobs, map[model.Provider]PlatformDispatcher{
+			orch := NewOrchestrator(tc.repo, jobs, map[model.Provider]PlatformDispatcher{
 				model.ProviderGoogleAds: tc.dispatcher,
 			})
 			brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
@@ -2093,8 +2098,8 @@ func TestOrchestrator_ARetainedPartialNamesItsUpstreamCampaign(t *testing.T) {
 			if res[0].CampaignID != tc.wantID {
 				t.Errorf("campaign_id = %q, want %q", res[0].CampaignID, tc.wantID)
 			}
-			if res[0].CampaignRowID == "" {
-				t.Errorf("campaign_row_id is empty, want the row the partial was recorded on")
+			if (res[0].CampaignRowID != "") != tc.wantRowID {
+				t.Errorf("campaign_row_id = %q, want set: %v", res[0].CampaignRowID, tc.wantRowID)
 			}
 		})
 	}
