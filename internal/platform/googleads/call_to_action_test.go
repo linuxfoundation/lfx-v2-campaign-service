@@ -4,6 +4,7 @@
 package googleads
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -32,6 +33,22 @@ func TestCallToActions_AreTheProbedSets(t *testing.T) {
 				t.Errorf("%s %q: err = %v, want it refused before any write", tc.adType, v, err)
 			}
 		}
+	}
+}
+
+// Each list is pinned exactly, so dropping, misspelling or adding a value fails here; a
+// change must come with a probe.
+func TestCallToActions_ArePinnedExactly(t *testing.T) {
+	wantDisplay := []string{"Learn more", "Sign up", "Apply now", "Book now", "Visit site", "Contact us", "Download",
+		"Subscribe", "See more", "Shop now", "Get quote", "Get offer", "Call now", "Install",
+		"Order now", "Try now", "Read more", "Explore"}
+	wantDemandGen := []string{"Learn more", "Sign up", "Apply now", "Book now", "Visit site", "Contact us", "Download",
+		"Subscribe", "See more", "Shop now", "Get quote", "Get offer", "Call now", "Donate now"}
+	if !slices.Equal(displayCallToActions, wantDisplay) {
+		t.Errorf("displayCallToActions = %q, want the probed %q", displayCallToActions, wantDisplay)
+	}
+	if !slices.Equal(demandGenCallToActions, wantDemandGen) {
+		t.Errorf("demandGenCallToActions = %q, want the probed %q", demandGenCallToActions, wantDemandGen)
 	}
 }
 

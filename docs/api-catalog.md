@@ -2258,7 +2258,11 @@ demandGenCreative?:             — OPTIONAL Demand Gen ad (LFXV2-2665). DEMAND 
                                   `headlines` 1-5 (<=30 weighted chars) and `descriptions` 1-5 (<=90).
                                   These are NOT the RSA counts above (3-15 / 2-4) even though the width
                                   limits coincide. `businessName` is REQUIRED, <=25 weighted chars;
-                                  `callToActionText` is optional, <=30 runes. Over-long copy is
+                                  `callToActionText` is optional; when set it must be one of Learn more, Sign up,
+                                  Apply now, Book now, Visit site, Contact us, Download, Subscribe, See more,
+                                  Shop now, Get quote, Get offer, Call now or Donate now (`demandGenCallToActions`;
+                                  NOT the Display set). Matched ignoring case and spacing and sent in that spelling;
+                                  anything else (e.g. Register) is refused before any write. Over-long copy is
                                   REFUSED, not truncated — unlike the RSA `headlines`/`descriptions`
                                   above, because a Demand Gen ad is created from exactly what you named.
 
@@ -2572,8 +2576,13 @@ displayCreative?:               — OPTIONAL Display RESPONSIVE DISPLAY AD (LFXV
                                   take a list of long headlines. It is REQUIRED when a creative is
                                   supplied, ≤90 weighted chars. `headlines` 1-5 (≤30), `descriptions`
                                   1-5 (≤90), `businessName` REQUIRED ≤25 — all weighted chars.
-                                  `callToActionText` is OPTIONAL, ≤30 runes, and ABSENT means Google
-                                  supplies its own button text. Over-long copy is REFUSED, not
+                                  `callToActionText` is OPTIONAL, and ABSENT means Google supplies its own
+                                  button text. When set it must be one of Learn more, Sign up, Apply now, Book now,
+                                  Visit site, Contact us, Download, Subscribe, See more, Shop now, Get quote, Get
+                                  offer, Call now, Install, Order now, Try now, Read more or Explore
+                                  (`displayCallToActions`; NOT the Demand Gen set), matched ignoring case and
+                                  spacing and sent in that spelling; anything else (e.g. Register) is refused
+                                  before any write. Over-long copy is REFUSED, not
                                   truncated.
 
                                   The ad group (every `displayAdGroups[]` entry included) is type
