@@ -200,7 +200,8 @@ type CampaignInput struct {
 	// currency, carried only by the conversion-bidding strategies. 0 means UNSET:
 	// optional under `maximize-conversions`, REQUIRED under `target-cpa`, and
 	// REFUSED under any strategy that cannot bid to it rather than accepted and
-	// discarded. On Demand Gen it is sent as the standalone `targetCpa` strategy (#474).
+	// discarded. On Demand Gen and Display it is sent as the standalone `targetCpa`
+	// strategy (#474, #578).
 	TargetCPA float64
 	// TargetROAS is the target return on ad spend as a RATIO, not a percentage —
 	// 4.0 means four units of conversion value per unit spent. Same unset/required/

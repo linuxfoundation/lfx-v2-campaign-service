@@ -2900,7 +2900,7 @@ conversion at all.
 
 **A campaign carries EXACTLY ONE strategy.** It is a proto `oneof`: the create
 names one of `manualCpc`, `targetSpend`, `maximizeConversions`,
-`maximizeConversionValue` or (Demand Gen only, #474) `targetCpa`, and naming two is
+`maximizeConversionValue` or (Demand Gen, #474, and Display, #578) `targetCpa`, and naming two is
 rejected — AFTER the budget mutate, which is why the resolution happens in the pure
 preflight. `biddingFields` is one
 shared type embedded ANONYMOUSLY into both channel payloads so its keys flatten
@@ -2916,7 +2916,8 @@ reading that UI. `target-cpa`/`target-roas` are where the two vocabularies
 genuinely disagree: Google folded the standalone TargetCpa and TargetRoas
 strategies into MaximizeConversions and MaximizeConversionValue with a target
 set, and the UI still uses the old names. Both spellings resolve to the surviving
-strategy, except on Demand Gen, which sends the standalone `targetCpa` (#474, below); the
+strategy, except on Demand Gen and Display, which send the standalone `targetCpa` (#474,
+#578, below); the
 only difference is that the target is REQUIRED under the
 target-bearing label and optional under the maximize- one.
 
@@ -2934,10 +2935,17 @@ not offered — `target_spend.cpc_bid_ceiling_micros` is marked deprecated.
 `target-cpa` and `maximize-conversion-value`, each accepted by a `validateOnly`
 `campaigns:mutate` on 2026-11-03 (v23) with a NON-shared budget, which is what every LFX
 create makes. Its target CPA is sent as the standalone `targetCpa: {targetCpaMicros}`
-(`targetCPA`, rendered when `biddingPlan.standaloneTargetCPA` is set, on Demand Gen only)
+(`targetCPA`, rendered when `biddingPlan.standaloneTargetCPA` is set, on Demand Gen and Display)
 because the same probe refused `maximizeConversions: {targetCpaMicros}`
 (`OPERATION_NOT_PERMITTED_FOR_CONTEXT`). `target-roas`, and a `TargetROAS` under
 `maximize-conversion-value`, are refused there: only the targetless strategy was probed.
+Display (#578) sends the same standalone form: a `validateOnly` probe on 2026-11-11 (v23)
+found DISPLAY refuses `maximizeConversions: {targetCpaMicros}` with the same error and accepts
+`targetCpa`, `targetSpend`, `maximizeConversions: {}` and `maximizeConversionValue` with and
+without `targetRoas`, after a Display create with a target CPA failed in prod once its budget
+existed. SEARCH and PERFORMANCE_MAX are the opposite, accepting only the folded form, so
+`standaloneTargetCPA` is set per channel (`kind == campaignKindDemandGen || kind ==
+campaignKindDisplay`).
 History: a 2026-08-14 check had DEMAND_GEN reject `maximizeConversions` with
 `BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET`, which fenced the channel to
 `maximize-clicks` until #474 — that refusal was about a shared budget, not the channel.
@@ -3553,8 +3561,8 @@ Display ad group (`{adGroup, userList:{userList}, negative:true}`) and on the ca
 **Named gaps, each a client limitation rather than Google's rule — and said so in place.**
 Google accepts MANUAL CPC on Display; this client refuses it, because the Display ad-group
 payload carries no bid field and `cpcBid` is refused off Search. The five automated
-strategies it does accept are **not live-verified**, on Video's terms and for the same
-reason. `CONNECTED_TV` is the second: Google supports TV screens on Display and Video
+strategies it does accept were live-verified by a validateOnly probe on 2026-11-11 (#578),
+and the refusal message names manual CPC as this client's limitation. `CONNECTED_TV` is the second: Google supports TV screens on Display and Video
 campaigns, so the `deviceTypes` omission that merely restated an upstream rule while Search
 was the only kind reaching that map became this client's own limitation the moment Video
 and Display started reaching it (Demand Gen takes CONNECTED_TV since #474, on its own

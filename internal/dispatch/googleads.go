@@ -401,8 +401,8 @@ type googleAdsConfig struct {
 	// TargetCPA is the target cost per acquisition in whole units of the ad ACCOUNT's
 	// currency (no FX conversion, same as Budget). Optional under
 	// `maximize-conversions`, required under `target-cpa`, refused under any other
-	// strategy rather than accepted and discarded. On "demand-gen" it is sent as the
-	// standalone `targetCpa` strategy (#474).
+	// strategy rather than accepted and discarded. On "demand-gen" and "display" it is
+	// sent as the standalone `targetCpa` strategy (#474, #578).
 	TargetCPA float64 `json:"targetCpa"`
 	// TargetROAS is the target return on ad spend as a RATIO, not a percentage: 4.0
 	// means four units of conversion value per unit spent. Optional under
@@ -3681,8 +3681,8 @@ const (
 	// the comparison would have to map this client's UI vocabulary onto Google's OUTPUT_ONLY
 	// BiddingStrategyTypeEnum, and that mapping is not live-verified at exactly the point it
 	// is ambiguous — `target-cpa` and `maximize-conversions` are both sent as
-	// maximize_conversions (with and without a target), except on Demand Gen, which sends
-	// the standalone targetCpa (#474) — and which enum value Google reports back for the
+	// maximize_conversions (with and without a target), except on Demand Gen and Display,
+	// which send the standalone targetCpa (#474, #578) — and which enum value Google reports back for the
 	// targeted one has not been observed. A mapping guessed wrong reports a
 	// false divergence, which sends an operator to investigate a campaign that is set
 	// exactly as asked. Reporting `unknown` under-informs; a false divergence misinforms,
