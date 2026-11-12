@@ -1539,15 +1539,27 @@ func (c *Container) newBriefService(briefs domain.BriefRepository, campaigns dom
 // moot and only logged.
 func (c *Container) newIndexRelay(cfg *config.Config, pool *postgres.Pool) *indexer.Relay {
 	relay := indexer.NewRelay(postgres.NewOutboxRepo(pool), c.rawPublisher(), cfg.IndexerServiceToken)
-	if !cfg.IndexerResolveProjectUID {
+	var conn accesscheck.Requester
+	if np, ok := c.indexPublisher.(*indexer.NATSPublisher); ok && np.Conn() != nil {
+		conn = np.Conn()
+	}
+	res := indexRelayResolver(cfg.IndexerResolveProjectUID, conn)
+	if res == nil {
+		if cfg.IndexerResolveProjectUID {
+			slog.Warn("INDEXER_RESOLVE_PROJECT_UID is on but there is no NATS connection; the index relay has nothing to publish to")
+		}
 		return relay
 	}
-	np, ok := c.indexPublisher.(*indexer.NATSPublisher)
-	if !ok || np.Conn() == nil {
-		slog.Warn("INDEXER_RESOLVE_PROJECT_UID is on but there is no NATS connection; the index relay has nothing to publish to")
-		return relay
+	return relay.WithProjectUIDResolver(res)
+}
+
+// indexRelayResolver is the relay's project resolver: the access checker over conn when the
+// flag is on and there is a connection, else nil.
+func indexRelayResolver(on bool, conn accesscheck.Requester) indexer.ProjectUIDResolver {
+	if !on || conn == nil {
+		return nil
 	}
-	return relay.WithProjectUIDResolver(accesscheck.New(np.Conn()))
+	return accesscheck.New(conn)
 }
 
 // marketingOpsChecker returns the global_marketing_ops checker, which shares the index

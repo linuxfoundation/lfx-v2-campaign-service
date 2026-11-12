@@ -45,8 +45,14 @@ When the relay stamps a row, `keyOnProjectUID` then:
   either parent finds the document.
 
 A message already keyed on a UID is left alone, and so are the stored row and every other field.
-A failed lookup fails the delivery, so the row stays pending and is retried; publishing it
-slug-keyed would index a document nobody can read. Resolving at publish time rather than at
+A failed lookup, or an answer that is not a UUID, fails the delivery, so the row stays pending and
+is retried; publishing it slug-keyed would index a document nobody can read. A failure is
+remembered for 30 seconds, so the other rows of that project fail fast instead of each waiting
+out the resolver's timeout. A DELETE is never held on the lookup, because the indexer removes by
+object id. The newIndexRelay wiring is pinned by a source-level test, since the live boot path
+needs PostgreSQL and NATS. **Accepted risk:** the slug is resolved at publish time, so a slug
+reassigned between a write and its publish keys the document on the new project. That is no
+wider than the REST path, and the document is corrected by its next write. Resolving at publish time rather than at
 write time means rows already pending are published correctly without being rewritten. That
 covers every row in an environment whose relay has idled for want of `INDEXER_SERVICE_TOKEN`.
 Documents already indexed slug-keyed are corrected by their next write.

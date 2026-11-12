@@ -52,6 +52,12 @@ type ProjectUIDResolver interface {
 // but its slug can be reassigned, so an entry is not kept forever.
 const projectUIDCacheTTL = time.Hour
 
+// projectUIDFailureTTL is how long a FAILED lookup is remembered. Every row of a project whose
+// lookup just failed would otherwise repeat it, each costing up to the resolver's own timeout,
+// and a few such rows would use up the whole pass. Short, so a transient outage is retried on
+// the next pass or two.
+const projectUIDFailureTTL = 30 * time.Second
+
 // relayInterval is how often the relay drains the outbox. Frequent enough that a dropped
 // publish is repaired in seconds rather than at the next write, cheap enough that the partial
 // index makes an empty pass nearly free.
@@ -89,6 +95,7 @@ type Relay struct {
 
 type cachedUID struct {
 	uid     string
+	err     error
 	expires time.Time
 }
 
@@ -112,26 +119,44 @@ func NewRelay(outbox OutboxReader, pub RawPublisher, authorization string) *Rela
 // access_check_object and history_check_object become `project:<uid>`. parent_refs carries
 // BOTH `project:<uid>` and `project:<slug>`, so a reader filtering by either parent finds the
 // document. A failed lookup fails the delivery, which leaves the row pending for a later pass:
-// publishing it slug-keyed would index a document nobody can read. The stored row is never
-// changed. A nil resolver leaves messages as written.
+// publishing it slug-keyed would index a document nobody can read. A DELETE is never held on
+// the lookup: the indexer removes by object id, so its FGA fields decide nothing. The stored
+// row is never changed. A nil resolver leaves messages as written.
+//
+// Accepted risk: the slug is resolved when the row is PUBLISHED, so if a slug moved to another
+// project between the write and the publish, the document is keyed on the new project. That
+// is no wider than the REST path, where the gateway resolves the path slug at request time
+// and the service reads rows by the stored slug; the document is corrected by its next write.
 func (r *Relay) WithProjectUIDResolver(res ProjectUIDResolver) *Relay {
 	r.projects = res
 	r.uidCache = map[string]cachedUID{}
 	return r
 }
 
-// projectUID resolves slug through the resolver, reusing a recent answer.
+// ResolvesProjectUID reports whether a project resolver is configured.
+func (r *Relay) ResolvesProjectUID() bool { return r.projects != nil }
+
+// projectUID resolves slug through the resolver, reusing a recent answer (or a recent failure).
 func (r *Relay) projectUID(ctx context.Context, slug string) (string, error) {
 	now := time.Now()
 	r.uidMu.Lock()
 	if c, ok := r.uidCache[slug]; ok && now.Before(c.expires) {
 		r.uidMu.Unlock()
-		return c.uid, nil
+		return c.uid, c.err
 	}
 	r.uidMu.Unlock()
 	uid, err := r.projects.ProjectUID(ctx, slug)
+	if err == nil && !isUUID(uid) {
+		// The resolver contract does not promise a UUID. Publishing `project:` or another
+		// string would key the document on an object nobody (or the wrong project) holds.
+		err = fmt.Errorf("resolver returned %q, not a UID", uid)
+	}
 	if err != nil {
-		return "", fmt.Errorf("indexer: resolve project %q to its UID: %w", slug, err)
+		err = fmt.Errorf("indexer: resolve project %q to its UID: %w", slug, err)
+		r.uidMu.Lock()
+		r.uidCache[slug] = cachedUID{err: err, expires: now.Add(projectUIDFailureTTL)}
+		r.uidMu.Unlock()
+		return "", err
 	}
 	r.uidMu.Lock()
 	r.uidCache[slug] = cachedUID{uid: uid, expires: now.Add(projectUIDCacheTTL)}
@@ -146,6 +171,10 @@ func (r *Relay) projectUID(ctx context.Context, slug string) (string, error) {
 func (r *Relay) keyOnProjectUID(ctx context.Context, msg map[string]json.RawMessage) error {
 	raw, ok := msg["indexing_config"]
 	if !ok {
+		return nil
+	}
+	var action string
+	if a, ok := msg["action"]; ok && json.Unmarshal(a, &action) == nil && action == ActionDeleted {
 		return nil
 	}
 	var cfg map[string]json.RawMessage

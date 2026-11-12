@@ -8,7 +8,9 @@ tuple matched (lfx-self-serve#5380).
   `lfx.projects-api.slug_to_uid` (`accesscheck.Checker.ProjectUID`, now exported) when it
   publishes. It then sends `access_check_object` and `history_check_object` as `project:<uid>`,
   and `parent_refs` as `project:<uid>` and `project:<slug>`.
-  - A failed lookup leaves the row pending.
+  - A failed lookup, or a non-UUID answer, leaves the row pending. The failure is cached
+    for 30 seconds, so other rows of that project fail fast.
+  - A delete is published without a lookup.
   - A UID-keyed message and the stored row are unchanged.
   - Resolved UIDs are cached for an hour.
 - Behind `INDEXER_RESOLVE_PROJECT_UID`, which is on only when exactly `"true"`. The chart
@@ -22,3 +24,9 @@ tuple matched (lfx-self-serve#5380).
   - `TestRelay_ResolvesEachSlugOnceAndSkipsUIDs`
   - `TestRelay_WithoutAResolverKeepsTheSlug`
   - `TestProjectUID`
+  - `TestRelay_DeletesPublishWithoutALookup`
+  - `TestRelay_RemembersAFailedLookup`
+  - `TestRelay_RefusesANonUIDAnswer`
+  - `TestIndexRelayResolver`, `TestNewIndexRelay_NoResolverWithoutAConnectionOrTheFlag` and
+    `TestIndexRelayIsOnlyBuiltByNewIndexRelay`, which pin the container wiring
+  - `TestLoadIndexerResolveProjectUIDFromEnv`, which pins that only `"true"` turns the flag on

@@ -363,3 +363,69 @@ func TestRelay_WithoutAResolverKeepsTheSlug(t *testing.T) {
 	require.Len(t, pub.payloads, 1)
 	assert.Equal(t, "project:cncf", publishedConfig(t, pub.payloads[0])["access_check_object"])
 }
+
+// A delete is never held on the lookup: the indexer removes by object id, so an archive must
+// reach it even when the project can no longer be resolved.
+func TestRelay_DeletesPublishWithoutALookup(t *testing.T) {
+	out := &fakeOutbox{pending: []*model.OutboxMessage{outboxMsg(1, ObjectTypeBrief)}}
+	pub := &capturingPublisher{}
+	res := &fakeResolver{err: errors.New("not found")}
+
+	NewRelay(out, pub, "Bearer t").WithProjectUIDResolver(res).drain(context.Background())
+
+	require.Len(t, pub.payloads, 1)
+	assert.Equal(t, 0, res.calls)
+	assert.Equal(t, []int64{1}, out.published)
+}
+
+// A failed lookup is remembered briefly, so every row of that project fails fast instead of
+// each spending the resolver's timeout; rows of other projects still publish.
+func TestRelay_RemembersAFailedLookup(t *testing.T) {
+	out := &fakeOutbox{pending: []*model.OutboxMessage{
+		campaignRow(1, "c1", "gone"),
+		campaignRow(2, "c2", "gone"),
+		campaignRow(3, "c3", "cncf"),
+	}}
+	pub := &capturingPublisher{}
+	res := &failingFor{slug: "gone", uid: relayTestUID}
+
+	NewRelay(out, pub, "Bearer t").WithProjectUIDResolver(res).drain(context.Background())
+
+	assert.Equal(t, map[string]int{"gone": 1, "cncf": 1}, res.calls, "one lookup per slug, failures included")
+	assert.Equal(t, []int64{3}, out.published)
+	// The fake has no retry backoff, so the drain loop may try the failed rows again in a
+	// later pass; the cached failure answers those attempts without another lookup.
+	assert.Subset(t, []int64{1, 2}, out.failed)
+	assert.Len(t, out.pending, 2)
+}
+
+type failingFor struct {
+	slug  string
+	uid   string
+	calls map[string]int
+}
+
+func (f *failingFor) ProjectUID(_ context.Context, slug string) (string, error) {
+	if f.calls == nil {
+		f.calls = map[string]int{}
+	}
+	f.calls[slug]++
+	if slug == f.slug {
+		return "", errors.New("unavailable")
+	}
+	return f.uid, nil
+}
+
+// The resolver's answer must be a UID: an empty or non-UUID success leaves the row pending
+// rather than keying the document on `project:` or on some other string.
+func TestRelay_RefusesANonUIDAnswer(t *testing.T) {
+	for _, answer := range []string{"", "cncf", "not-a-uuid"} {
+		out := &fakeOutbox{pending: []*model.OutboxMessage{campaignRow(1, "c1", "cncf")}}
+		pub := &capturingPublisher{}
+
+		NewRelay(out, pub, "Bearer t").WithProjectUIDResolver(&fakeResolver{uids: map[string]string{"cncf": answer}}).drain(context.Background())
+
+		assert.Empty(t, pub.payloads, "answer %q", answer)
+		assert.Equal(t, []int64{1}, out.failed, "answer %q", answer)
+	}
+}
