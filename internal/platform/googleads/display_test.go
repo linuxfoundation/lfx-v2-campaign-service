@@ -264,9 +264,6 @@ func TestCreateDisplayCampaign_HappyPath(t *testing.T) {
 	}
 }
 
-// A creative with no call to action must send no callToActionText at all — the field is
-// omitempty precisely so Google supplies its own button rather than seeing an empty
-// string.
 // A Display create with a target CPA sends the standalone `targetCpa` on the campaign
 // mutate (#578). The folded maximizeConversions.targetCpaMicros is what Google refused in
 // prod on 2026-11-11, after the budget already existed.
@@ -298,6 +295,9 @@ func TestCreateDisplayCampaign_TargetCPASendsTheStandaloneStrategy(t *testing.T)
 	}
 }
 
+// A creative with no call to action must send no callToActionText at all — the field is
+// omitempty precisely so Google supplies its own button rather than seeing an empty
+// string.
 func TestCreateDisplayCampaign_CallToActionIsOptional(t *testing.T) {
 	adGroupH, _ := capturedMutate(1, displayAdGroupResource)
 	assetH, _ := displayAssets()

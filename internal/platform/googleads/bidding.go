@@ -24,8 +24,8 @@ import (
 // vocabularies genuinely disagree: Google folded the standalone TargetCpa and TargetRoas
 // strategies into MaximizeConversions and MaximizeConversionValue with a target set, and the
 // UI still calls them by the old names. So both spellings are accepted and both resolve to
-// the surviving strategy, except on Demand Gen, which sends the standalone targetCpa (see
-// targetCPA) — the difference being only that the target is REQUIRED when the caller names
+// the surviving strategy, except on Demand Gen and Display, which send the standalone
+// targetCpa (see targetCPA) — the difference being only that the target is REQUIRED when the caller names
 // the target-bearing label, and optional when they name the maximize- one.
 const (
 	biddingManualCPC               = "manual-cpc"
@@ -379,7 +379,7 @@ var searchBiddingStrategies = map[string]bool{
 // understates its own evidence rather than claiming a check nobody ran.
 func biddingSetIsLiveVerified(kind string) bool {
 	switch kind {
-	case campaignKindVideo, campaignKindDisplay:
+	case campaignKindVideo:
 		return false
 	default:
 		return true
@@ -469,9 +469,10 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 	if !allowed[strategy] {
 		// The parenthetical differs by channel because the CLAIM behind it does. Some
 		// channels' sets were settled by a live validateOnly mutate, and saying so is
-		// what tells a caller the refusal is evidence rather than caution. Video's and
-		// Display's were not, and repeating the verified sentence there would make this
-		// client assert a check it never ran.
+		// what tells a caller the refusal is evidence rather than caution. Video's was
+		// not, and repeating the verified sentence there would make this client assert a
+		// check it never ran. Display's automated set was (#578), and its one refusal,
+		// manual CPC, is this client's own limitation, so it says that instead.
 		//
 		// A helper rather than a second `if`: the predicate is "has this channel's set
 		// been live-verified", one fact per channel, and a chain of channel tests here
@@ -479,6 +480,9 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 		reason := "which is the only combination verified against the live API; the others were rejected AFTER the budget was created"
 		if kind == campaignKindDemandGen {
 			reason = "the set verified by validateOnly probes; target ROAS was not probed on this channel, and an unverified strategy fails AFTER the budget is created"
+		}
+		if kind == campaignKindDisplay {
+			reason = "the automated strategies verified by a validateOnly probe; manual CPC is refused because this client's Display ad group carries no bid to send, not because Google refuses it"
 		}
 		if !biddingSetIsLiveVerified(kind) {
 			reason = "a set read off Google's published documentation for this channel; this client has NOT yet verified it against the live API, and sending an unverified strategy fails AFTER the budget is created"

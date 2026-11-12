@@ -9,6 +9,11 @@ created: Google refused `maximizeConversions.targetCpaMicros` on DISPLAY with
 - Search and Performance Max keep the folded `maximizeConversions: {targetCpaMicros}`: the
   same validateOnly probe (2026-11-11, v23) found they refuse the standalone form.
 - `displayBiddingStrategies` is now recorded as live-verified for its five automated
-  strategies. Manual CPC stays refused on Display for the client-side reason already recorded.
+  strategies, and `biddingSetIsLiveVerified` returns true for Display. Manual CPC stays
+  refused on Display for the client-side reason already recorded. Its refusal message now
+  says that, instead of calling the set unverified.
+- The "Demand Gen only" wording is updated to "Demand Gen and Display" in godoc,
+  `docs/api-catalog.md` and the `internal-dispatch` concept, including the `/settings`
+  rationale for leaving `bidding_strategy_type` unmapped.
 - Tests: `TestBiddingPlan_TargetCPAFormIsPerChannel` and
   `TestCreateDisplayCampaign_TargetCPASendsTheStandaloneStrategy`.

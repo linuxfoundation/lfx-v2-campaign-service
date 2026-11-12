@@ -124,11 +124,9 @@ type displayAdGroupCreate struct {
 // because a YouTube video is referenced by id; a responsive display ad is built from
 // image BYTES, so this channel pays the fetch cost those two do.
 //
-// NOT LIVE-VERIFIED, on the same terms as Video: the only Google account reachable from
-// here is a production LF account and a validateOnly mutate is still a POST to it. What
-// that leaves open is named rather than hedged — the field shapes below are read off
-// Google's published v23 resources, and the one thing a code reading cannot settle is
-// the BIDDING SET, recorded at displayBiddingStrategies with the check that closes it.
+// The field shapes below were read off Google's published v23 resources; validateOnly
+// probes against the production LF account (still a POST to it, so run sparingly) have
+// since settled the parts a code reading cannot.
 // #473's ad-group income-range and parental-status exclusion shapes, and #462's audience
 // and placement criterion shapes and the ad group's targetingSetting, were since settled
 // by validateOnly probes on 2026-11-03 (see display_targeting.go), and the bidding set by

@@ -3561,8 +3561,8 @@ Display ad group (`{adGroup, userList:{userList}, negative:true}`) and on the ca
 **Named gaps, each a client limitation rather than Google's rule — and said so in place.**
 Google accepts MANUAL CPC on Display; this client refuses it, because the Display ad-group
 payload carries no bid field and `cpcBid` is refused off Search. The five automated
-strategies it does accept are **not live-verified**, on Video's terms and for the same
-reason. `CONNECTED_TV` is the second: Google supports TV screens on Display and Video
+strategies it does accept were live-verified by a validateOnly probe on 2026-11-11 (#578),
+and the refusal message names manual CPC as this client's limitation. `CONNECTED_TV` is the second: Google supports TV screens on Display and Video
 campaigns, so the `deviceTypes` omission that merely restated an upstream rule while Search
 was the only kind reaching that map became this client's own limitation the moment Video
 and Display started reaching it (Demand Gen takes CONNECTED_TV since #474, on its own

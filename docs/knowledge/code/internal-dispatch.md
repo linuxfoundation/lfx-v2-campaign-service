@@ -807,8 +807,8 @@ again:** `googleAdsConfig.BiddingStrategy` now DOES record one, so the recorded 
 and the field is nonetheless left uncompared on purpose. Comparing it would require mapping
 this client's caller vocabulary onto Google's OUTPUT_ONLY `BiddingStrategyTypeEnum`, and
 that mapping is unverified exactly where it is ambiguous — `target-cpa` and
-`maximize-conversions` are both sent as `maximize_conversions` (except on Demand Gen, which
-sends the standalone `targetCpa`, #474), and which enum Google reports back for the
+`maximize-conversions` are both sent as `maximize_conversions` (except on Demand Gen and Display,
+which send the standalone `targetCpa`, #474, #578), and which enum Google reports back for the
 targeted one has not been observed — while on the adopt path the row
 records a strategy that was never pushed upstream, so the two sides are expected to
 disagree. A guessed mapping would report a false divergence on campaigns set exactly as
