@@ -4084,7 +4084,8 @@ BFF's `campaign-metrics.service.ts`. It is a GAQL read over the WHOLE ad account
 resolved credential reaches (including `campaign_url`, an optional field only this
 platform's response carries), not one project's own campaigns. See
 [Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md) for the
-credential-scoping (`resolveOwned`, no system-account fallback), the GAQL query-scope
+credential-scoping (`resolveGoogleAdsMonitorClient`: the row configured for the monitored
+customer, which can be the LF system row since #591), the GAQL query-scope
 fix (missing `advertising_channel_type`/`status`/`impressions>0` filters found during
 differential verification), and the rule engine
 (`internal/service/rules/monitor_google.go`). Its local 50/90/100 pacing literals

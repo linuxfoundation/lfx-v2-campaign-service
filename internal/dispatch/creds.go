@@ -153,10 +153,12 @@ type credsSource struct {
 	// the forced path gates on Provider.IsPaidAds(), so email resolution is untouched
 	// even with the flag on.
 	//
-	// The four account-monitor endpoints (resolveOwned*, see e.g.
-	// resolveGoogleAdsDiscoveryClient's ownership variant) deliberately do NOT consult this
-	// flag — an account-monitor read must never answer with another tenant's spend, so it
-	// resolves only the project's own connection regardless. With the flag on, a project with
+	// The account-monitor endpoints do NOT consult this flag. Google Ads' resolves through
+	// resolveExisting (resolveGoogleAdsMonitorClient, #591), keyed on the monitored customer, so
+	// it behaves the same with the flag on or off: a project on the system account monitors the
+	// system customer, scoped to its own recorded campaigns. The others resolve the project's own
+	// connection only (resolveOwned*) — an account-monitor read must never answer with another
+	// tenant's spend, and theirs are not all campaign-scoped. On those, with the flag on, a project with
 	// no connection of its own gets the monitor endpoint's ordinary no-connection 404 rather
 	// than falling through to the system account the create path uses; a project WITH its own
 	// connection resolves credentials for its own account, which will not see campaigns living

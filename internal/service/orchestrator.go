@@ -3200,12 +3200,19 @@ func (o *Orchestrator) scopeAccountMonitor(ctx context.Context, projectID string
 
 // DefaultMonitorAccount names the account an account-monitor read covers when its caller names
 // none: the account this project's recorded campaigns on platform were created under, read from
-// this service's own rows (AccountMonitorDefaulter). It contacts no platform.
+// this service's own rows (AccountMonitorDefaulter). It contacts no platform. "" with a nil error
+// means there is no account to name, and the caller answers with an empty monitor.
 //
-// The live campaigns decide it. Only when the project has none are its soft-deleted campaigns
-// consulted, because the monitor still shows a deleted campaign that keeps spending; a deleted one
-// under another account does not override the live ones, since the monitor omits it rather than
-// failing on it. "" with a nil error means the project has no campaigns on platform at all.
+// The live campaigns decide it, strictly: any refusal MonitorAccountForScope returns for them is
+// the refusal the read would return naming an account, and is returned unchanged.
+//
+// Only when the project has no live campaigns are its soft-deleted ones consulted, because the
+// monitor still shows a deleted campaign that keeps spending. They are judged one at a time, as
+// scopeAccountMonitor judges them: a deleted row cannot be re-dispatched or reconciled, so a
+// refusal on it would have no remedy, and one that records no account is skipped instead. When the
+// deleted campaigns record more than one account, the one recording the most is named (ties to the
+// lowest id, so the answer is stable); scopeAccountMonitor then omits the others exactly as it
+// would for a caller naming that account, and a caller can still name another.
 //
 // A platform whose dispatcher does not implement AccountMonitorDefaulter answers
 // ErrAccountMetricsUnsupported: its monitor has no recorded account to fall back on.
@@ -3218,16 +3225,28 @@ func (o *Orchestrator) DefaultMonitorAccount(ctx context.Context, projectID stri
 	if err != nil {
 		return "", err
 	}
-	if len(scope) == 0 {
-		scope, err = o.campaigns.ListProjectPlatformDeletedCampaignIDs(ctx, projectID, platform)
-		if err != nil {
-			return "", fmt.Errorf("resolve deleted campaign scope for project %s on %s: %w", projectID, platform, err)
+	if len(scope) > 0 {
+		return defaulter.MonitorAccountForScope(scope)
+	}
+	deleted, err := o.campaigns.ListProjectPlatformDeletedCampaignIDs(ctx, projectID, platform)
+	if err != nil {
+		return "", fmt.Errorf("resolve deleted campaign scope for project %s on %s: %w", projectID, platform, err)
+	}
+	counts := make(map[string]int)
+	for _, d := range deleted {
+		account, derr := defaulter.MonitorAccountForScope([]model.ProjectCampaignScope{d})
+		if derr != nil || account == "" {
+			continue
+		}
+		counts[account]++
+	}
+	best := ""
+	for account, n := range counts {
+		if best == "" || n > counts[best] || (n == counts[best] && account < best) {
+			best = account
 		}
 	}
-	if len(scope) == 0 {
-		return "", nil
-	}
-	return defaulter.MonitorAccountForScope(scope)
+	return best, nil
 }
 
 // revalidateAccountMonitorScope shrinks the initial authorization using ONE fresh database

@@ -14,8 +14,12 @@ had created.
   `filterMonitorRows`). That reduction is why the round-16 refusal is no longer needed.
 - `account_id` is optional on `monitor-google-ads-account`. Omitted,
   `Orchestrator.DefaultMonitorAccount` names the customer the project's campaigns record
-  (`AccountMonitorDefaulter`, Google only). No campaigns gives an empty monitor; campaigns under
-  more than one customer, or none recording one, give the 409 `campaign_account_mismatch`.
+  (`AccountMonitorDefaulter`, Google only). No campaigns gives an empty monitor. Live campaigns
+  under more than one customer, or none recording one, give the 409 `campaign_account_mismatch`.
+  Soft-deleted campaigns, used only when there are no live ones, never cause a 409: unrecorded
+  ones are skipped and the customer recorded most is named.
+- A project that disconnected its own connection can still monitor its own system-created
+  campaigns, as it can already pause them.
 - `resolveOwnedGoogleAdsDiscoveryClient` is removed. `resolveOwnedGoogleAdsDiscovery` remains for
   `ProbeConnection`. The client construction is shared in `googleAdsDiscoveryClientFor`.
 - LinkedIn, Meta and Reddit monitors are unchanged.

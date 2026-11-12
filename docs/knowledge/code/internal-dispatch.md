@@ -3529,8 +3529,8 @@ overlay flip like the cutover flags; the branch stays dormant until an operator 
 | Entry point | Callers | Account resolved |
 | --- | --- | --- |
 | `resolve` | `Dispatch` (creation) and the discovery/`ListAccounts` helpers | system when the flag is on, else project-then-fallback |
-| `resolveExisting` | `ToggleStatus`, `ReadMetrics` — anything holding a `*model.Campaign` | **the account the campaign RECORDS being created under** |
-| `resolveOwned` | adoption, and every provider's account-monitor read (`ListAccountCampaignMetrics` and LinkedIn's, Meta's and Reddit's `ReadAccountMonitor`, which it wraps; Microsoft's and X's report-backed `ListAccountCampaigns`/`SubmitAccountReport`/`CheckAccountReport`/`ReadAccountCurrency` in `microsoft_monitor.go` and `twitter_monitor.go`, and Microsoft's report-backed keyword read in `microsoft_keyword_report.go`; round-16/17 review — see `account-monitor-endpoints.md`'s Trust boundary section) | project only (never forced, never fell back) |
+| `resolveExisting` | `ToggleStatus`, `ReadMetrics` — anything holding a `*model.Campaign` — and Google Ads' account-monitor read (`resolveGoogleAdsMonitorClient`, keyed on the monitored customer, #591) | **the account the campaign RECORDS being created under** |
+| `resolveOwned` | adoption, and every other provider's account-monitor read (LinkedIn's, Meta's and Reddit's `ReadAccountMonitor` and the `ListAccountCampaignMetrics` it wraps; Microsoft's and X's report-backed `ListAccountCampaigns`/`SubmitAccountReport`/`CheckAccountReport`/`ReadAccountCurrency` in `microsoft_monitor.go` and `twitter_monitor.go`, and Microsoft's report-backed keyword read in `microsoft_keyword_report.go`; round-16/17 review — see `account-monitor-endpoints.md`'s Trust boundary section) | project only (never forced, never fell back) |
 
 The rule for an existing campaign is NOT "never forced". It is "follow the recorded creation
 account", and the difference is the whole point: those two agree for a campaign created before the

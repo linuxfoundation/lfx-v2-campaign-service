@@ -58,6 +58,16 @@ func (d *defaultingLiveDispatcher) MonitorAccountForScope(scope []model.ProjectC
 	}
 }
 
+// MonitorScopePrecheck mirrors the Google adapter's on the one input that matters here: an empty
+// customer id is malformed (googleads.ValidateCustomerID). Without it the handler's early return
+// for "no account to name" would be absorbed by a precheck that accepts anything.
+func (d *defaultingLiveDispatcher) MonitorScopePrecheck(accountID string) error {
+	if accountID == "" {
+		return fmt.Errorf("fake: empty account id: %w", domain.ErrAccountIDMalformed)
+	}
+	return nil
+}
+
 func newDefaultingDispatcher() *defaultingLiveDispatcher {
 	return &defaultingLiveDispatcher{scopedLiveDispatcher: scopedLiveDispatcher{
 		mockAccountMetricsReaderDispatcher: mockAccountMetricsReaderDispatcher{rows: []model.AccountCampaignMetrics{
@@ -103,6 +113,41 @@ func TestMonitorGoogleAdsAccount_OmittedAccountFallsBackToDeletedCampaigns(t *te
 	if got.AccountID != "8666746580" || len(d.readAccounts) != 1 || d.readAccounts[0] != "8666746580" {
 		t.Errorf("account_id = %q, upstream reads %v; want the deleted campaign's customer 8666746580, read once",
 			got.AccountID, d.readAccounts)
+	}
+}
+
+// Deleted campaigns are judged one at a time, as the monitor judges them: one recording no account
+// is skipped rather than refused, and when they record more than one account the one recording
+// the most is named (ties to the lowest id). A deleted row cannot be re-dispatched, so a 409 on it
+// would have no remedy.
+func TestMonitorGoogleAdsAccount_OmittedAccountDeletedOnlyNeverRefuses(t *testing.T) {
+	cases := []struct {
+		name     string
+		deleted  []string
+		accounts map[string]string
+		want     string
+	}{
+		{"one recording none beside one recording a customer", []string{"c1", "c2"}, map[string]string{"c1": "8666746580"}, "8666746580"},
+		{"the customer recorded most", []string{"c1", "c2", "c3"}, map[string]string{"c1": "2222222222", "c2": "1111111111", "c3": "2222222222"}, "2222222222"},
+		{"a tie goes to the lowest id", []string{"c1", "c2"}, map[string]string{"c1": "2222222222", "c2": "1111111111"}, "1111111111"},
+		{"none recording a customer", []string{"c1", "c2"}, nil, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newDefaultingDispatcher()
+			repo := scopeRepo([]string{}, tc.accounts)
+			repo.deletedScopeIDs = tc.deleted
+			got, err := monitorGoogleWithoutAccount(liveScopeService(model.ProviderGoogleAds, d, repo))
+			if err != nil {
+				t.Fatalf("MonitorGoogleAdsAccount without account_id: %v", err)
+			}
+			if got.AccountID != tc.want {
+				t.Errorf("account_id = %q, want %q", got.AccountID, tc.want)
+			}
+			if wantReads := map[bool]int{true: 0, false: 1}[tc.want == ""]; len(d.readAccounts) != wantReads {
+				t.Errorf("upstream reads %v, want %d", d.readAccounts, wantReads)
+			}
+		})
 	}
 }
 

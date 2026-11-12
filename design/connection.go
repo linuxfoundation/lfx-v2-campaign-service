@@ -2621,15 +2621,16 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"or another project has since taken it over; such a campaign is omitted, never a 409. " +
 			"account_id is the account to read; omitted, it is the account this project's campaigns were " +
 			"created under, read from this service's own records: the response's account_id names it, " +
-			"an empty account_id with no campaigns means the project has none recorded on the platform " +
-			"(answered without any upstream call), and campaigns created under more than one account " +
-			"fail with 409 until account_id names one. " +
-			"account_id is read with the stored credential configured for it: the project's own " +
-			"connection when that is configured for account_id, otherwise the shared LF system " +
-			"credential when that is, which is the account campaigns are created in when a project has " +
-			"no connection of its own. The LF system credential reads no other account: a project " +
-			"with no connection of its own configured for account_id, where the LF system credential " +
-			"is not configured for it either, gets a 404. A pure read: nothing is persisted.")
+			"and an empty account_id with no campaigns means the project has none recorded on the " +
+			"platform (answered without any upstream call). Live campaigns created under more than one " +
+			"account, or none recording one, fail with 409 whether or not account_id is given, until " +
+			"they are re-dispatched or reconciled onto one account. " +
+			"account_id is read with the project's own connection when that is configured for it, or " +
+			"when the shared LF system credential is not; otherwise with the LF system credential, which " +
+			"is the account campaigns are created in when a project has no connection of its own (or has " +
+			"disconnected it). The LF system credential reads only the account it is configured for: a " +
+			"project with no usable connection of its own, naming any other account, gets a 404. " +
+			"A pure read: nothing is persisted.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -2647,7 +2648,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 		Result(AccountMonitor)
 		Error("NotFound", NotFoundError, "Resource not found")
-		Error("Conflict", AccountMonitorScopeConflictError, "A campaign recorded for this project does not fit the monitored account: created under a different customer than account_id, or recording none (see reason); with account_id omitted, the project's campaigns were created under more than one customer, or record none")
+		Error("Conflict", AccountMonitorScopeConflictError, "A campaign recorded for this project does not fit the monitored account: created under a different customer than account_id, or recording none (see reason); the same for account_id omitted")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")

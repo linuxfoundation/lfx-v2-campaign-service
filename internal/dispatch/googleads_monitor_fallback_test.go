@@ -113,6 +113,9 @@ func TestGoogleAds_ReadAccountMonitor_ReadsWithTheRowConfiguredForTheCustomer(t 
 	}{
 		{"the project's own customer", "1234567890", "cid"},
 		{"the LF system customer, with a connection of its own elsewhere", "8666746580", "system-cid"},
+		// Neither row is configured for it: the project's own credential reads it, as before
+		// #591, and the orchestrator's scope decides what comes back. Not a 404.
+		{"a customer neither row is configured for", "5555555555", "cid"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

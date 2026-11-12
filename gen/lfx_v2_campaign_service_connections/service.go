@@ -705,17 +705,18 @@ type Service interface {
 	// project has since taken it over; such a campaign is omitted, never a 409.
 	// account_id is the account to read; omitted, it is the account this project's
 	// campaigns were created under, read from this service's own records: the
-	// response's account_id names it, an empty account_id with no campaigns means
-	// the project has none recorded on the platform (answered without any upstream
-	// call), and campaigns created under more than one account fail with 409 until
-	// account_id names one. account_id is read with the stored credential
-	// configured for it: the project's own connection when that is configured for
-	// account_id, otherwise the shared LF system credential when that is, which is
-	// the account campaigns are created in when a project has no connection of its
-	// own. The LF system credential reads no other account: a project with no
-	// connection of its own configured for account_id, where the LF system
-	// credential is not configured for it either, gets a 404. A pure read: nothing
-	// is persisted.
+	// response's account_id names it, and an empty account_id with no campaigns
+	// means the project has none recorded on the platform (answered without any
+	// upstream call). Live campaigns created under more than one account, or none
+	// recording one, fail with 409 whether or not account_id is given, until they
+	// are re-dispatched or reconciled onto one account. account_id is read with
+	// the project's own connection when that is configured for it, or when the
+	// shared LF system credential is not; otherwise with the LF system credential,
+	// which is the account campaigns are created in when a project has no
+	// connection of its own (or has disconnected it). The LF system credential
+	// reads only the account it is configured for: a project with no usable
+	// connection of its own, naming any other account, gets a 404. A pure read:
+	// nothing is persisted.
 	MonitorGoogleAdsAccount(context.Context, *MonitorGoogleAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read every campaign visible on a LinkedIn Ads account, live from the
 	// platform, with pacing and action items derived by this service's ported rule

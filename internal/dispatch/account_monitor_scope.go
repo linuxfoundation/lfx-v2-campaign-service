@@ -54,7 +54,9 @@ var _ service.AccountMonitorDefaulter = (*GoogleAdsDispatcher)(nil)
 // No entry recording a customer leaves nothing to name, and is refused as an unrecorded entry is
 // on a named customer. Entries recorded under more than one customer are refused with
 // ErrCampaignAccountMismatch: the monitor reads one customer, and picking one would report part
-// of the project's campaigns as all of them.
+// of the project's campaigns as all of them. Naming either customer is refused the same way
+// (googleAdsScopeForCustomer fails on any mismatch), so the remedy is re-dispatching or
+// reconciling the campaigns onto one customer, not naming one.
 func (d *GoogleAdsDispatcher) MonitorAccountForScope(scope []model.ProjectCampaignScope) (string, error) {
 	const op = "read google ads account monitor"
 	customers := make(map[string]bool, 1)
@@ -72,7 +74,7 @@ func (d *GoogleAdsDispatcher) MonitorAccountForScope(scope []model.ProjectCampai
 	case 1:
 		return customer, nil
 	default:
-		return "", fmt.Errorf("%s: this project's campaigns were created under %d different google ads customers; name the one to monitor: %w",
+		return "", fmt.Errorf("%s: this project's campaigns were created under %d different google ads customers, so no one customer's monitor covers them all: %w",
 			op, len(customers), domain.ErrCampaignAccountMismatch)
 	}
 }

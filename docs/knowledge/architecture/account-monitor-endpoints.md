@@ -510,6 +510,9 @@ not the primary gate for two of them.
 
 ## Trust boundary: `{project_id}` no longer means "or the system fallback"
 
+Google Ads is the exception since #591: see "Google Ads: read with the credential configured
+for the account" below.
+
 Round 15 documented, without fixing, a credential-scope gap: `{project_id}`
 in these URLs meant "whose credential resolves the platform client," and
 that resolution walked the same fallback chain (`resolve` →
@@ -547,7 +550,8 @@ monitor reads only. `ListAccountCampaignMetrics`'s sibling paths — dispatch
 system fallback on every platform, so a project operating entirely on the LF
 system ad account can still create campaigns and read their per-campaign
 metrics; it is only the account-wide monitor read that now refuses to serve
-that project at all, rather than scoping to what it created. This mirrors
+that project at all, rather than scoping to what it created (except on Google
+Ads since #591, which scopes to what it created instead). This mirrors
 the adoption flow's own precedent and its stated limit: a project on a
 shared credential has no "own" account to monitor, the same way it has no
 "own" account to adopt into. Google Ads carries a further, unavoidable
@@ -678,12 +682,18 @@ read is reduced to the campaigns this service recorded for the project, and
 - **Credential.** `resolveGoogleAdsMonitorClient` resolves through
   `credsSource.resolveExisting` with `account_id` as the creation account, the
   rule every operation on an existing campaign follows: the project's own row
-  when it is configured for `account_id`, otherwise the LF system row when that
-  one is. The system credential reads no other customer: when the fallback row is
-  returned for a customer it is not configured for, the read keeps the 404 and
-  makes no upstream call. Because `resolveExisting` does not consult
+  when it is configured for `account_id`; otherwise the LF system row when that
+  one is; otherwise the project's own row again, as before #591 (scoped like any
+  read). The system credential reads no other customer: when the fallback row is
+  what resolved, for a customer it is not configured for, the read keeps the 404
+  and makes no upstream call. Because `resolveExisting` does not consult
   `forceSystemPaidAds`, the same customer resolves the same way with the flag on
   or off.
+- **Disconnected projects.** `resolveExisting` falls back to the system row when
+  it is configured for `account_id` even after a project explicitly disconnected
+  its own connection, so such a project can still monitor its own
+  system-created campaigns. Pause and per-campaign metrics already behave this
+  way, and the read is still reduced to the project's own campaigns.
 - **Optional `account_id`.** Self-serve takes the account id from the project's
   connection, which a project on the system account does not have. Omitted,
   `Orchestrator.DefaultMonitorAccount` names it from this service's own rows: the
@@ -691,8 +701,13 @@ read is reduced to the campaigns this service recorded for the project, and
   when it has no live ones), through the optional `AccountMonitorDefaulter`
   capability, which only Google Ads implements. The response's `account_id`
   names it. No campaigns gives an empty monitor with an empty `account_id` and no
-  upstream call; campaigns under more than one customer, or none recording one,
-  give the 409 `campaign_account_mismatch`.
+  upstream call. Live campaigns under more than one customer, or none recording
+  one, give the 409 `campaign_account_mismatch` — the same 409 naming either
+  customer gives, so the remedy is re-dispatching or reconciling them onto one.
+  Soft-deleted campaigns (consulted only when there are no live ones) are judged
+  one at a time, as `scopeAccountMonitor` judges them: one recording no customer
+  is skipped, and with several customers the one recorded most is named (ties to
+  the lowest id). A deleted row cannot be re-dispatched, so it never causes a 409.
 - LinkedIn keeps its refusal: its monitor is not campaign-scoped. Meta and
   Reddit are scoped and are candidates for the same change.
 

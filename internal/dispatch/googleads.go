@@ -2663,14 +2663,16 @@ func (d *GoogleAdsDispatcher) googleAdsDiscoveryClientFor(projectID string, res 
 }
 
 // resolveGoogleAdsMonitorClient builds the account-agnostic client for the account-monitor read
-// of accountID, authenticated as the account that owns accountID (#591).
+// of accountID (#591).
 //
 // It resolves through resolveExisting with accountID as the creation account, the same rule
 // every operation on an already-created campaign follows: the project's own connection when it
-// is configured for accountID, otherwise the LF system row when THAT is configured for it. So a
-// project whose campaigns were created on the LF system account — every project with no
-// connection of its own, and every project while forced-system creation is on — can monitor
-// them, which it could not while this read refused the system fallback outright.
+// is configured for accountID; otherwise the LF system row when THAT is configured for it;
+// otherwise the project's own connection again, as before #591, scoped by the orchestrator like
+// any other read. So a project whose campaigns were created on the LF system account — every
+// project with no connection of its own, every project that has disconnected its own, and every
+// project while forced-system creation is on — can monitor them, which it could not while this
+// read refused the system fallback outright.
 //
 // That refusal (round-16 review) predates the monitor's campaign scope. The read used to return
 // every campaign on the account, so serving it from the shared LF credential would have shown
