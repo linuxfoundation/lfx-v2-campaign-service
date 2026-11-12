@@ -3408,8 +3408,22 @@ campaign and the ad group existed.
 
 Text counts are Display's own: 1–5 headlines (≤30 weighted), 1–5 descriptions (≤90), a
 REQUIRED long headline (≤90) and a REQUIRED business name (≤25). `callToActionText` is
-optional and ≤30 runes — a payload bound this client sets, not an upstream limit, and the
-comment says so. Over-long copy is REFUSED, not truncated.
+optional and, when set, must name one of `displayCallToActions` (#575); see "Call-to-action
+text" below. Over-long copy is REFUSED, not truncated.
+
+**Call-to-action text (#575).** `callToActionText` on a responsive display ad and on a Demand
+Gen image (multi-asset) ad is free text in the API, but Google accepts only a fixed, unpublished
+set of phrases and refuses anything else at `adGroupAds:mutate` with
+`INVALID_CALL_TO_ACTION_TEXT`, after the budget, campaign, ad group and images exist ("Register"
+left a half-built paused campaign on 2026-11-07). `displayCallToActions` and
+`demandGenCallToActions` (`call_to_action.go`) are exactly what a validateOnly probe on
+2026-11-13 (v23, account 8666746580) accepted, and they differ: Display alone takes Install,
+Order now, Try now, Read more and Explore; Demand Gen alone takes Donate now. Both refuse
+Register, Get started, Watch now, Buy tickets, Join now and the enum spellings.
+`resolveCallToActionText` matches the caller's text ignoring case and runs of spaces and sends
+the PROBED spelling, because Google's own matching is irregular ("learn more" refused on both,
+"LEARN MORE" accepted on Display only). An unaccepted value fails the pure preflight; blank
+sends none. This replaces the earlier 30-rune bound on both ad types.
 
 **Targeting is the un-narrowed Search set, as on Video.** Campaign-level geo INCLUDING
 proximity, and all five campaign-criteria kinds. Conversion actions are ACCEPTED and become

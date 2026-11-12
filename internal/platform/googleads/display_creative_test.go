@@ -68,7 +68,7 @@ func TestValidateDisplayCreative_HappyPath(t *testing.T) {
 	d := fullDisplayCreative()
 	d.LogoImages = []string{"https://cdn.example.org/logo.png"}
 	d.SquareLogoImages = []string{"https://cdn.example.org/sqlogo.png"}
-	d.CallToActionText = "Register"
+	d.CallToActionText = "Learn more"
 
 	plan, err := validateDisplay(t, d)
 	if err != nil {
@@ -90,7 +90,7 @@ func TestValidateDisplayCreative_HappyPath(t *testing.T) {
 	if plan.longHeadline != d.LongHeadline {
 		t.Errorf("longHeadline = %q, want %q", plan.longHeadline, d.LongHeadline)
 	}
-	if plan.businessName != "Linux Foundation" || plan.callToActionText != "Register" {
+	if plan.businessName != "Linux Foundation" || plan.callToActionText != "Learn more" {
 		t.Errorf("business name %q / cta %q", plan.businessName, plan.callToActionText)
 	}
 }
@@ -297,10 +297,10 @@ func TestValidateDisplayCreative_BusinessNameAndCallToAction(t *testing.T) {
 		t.Errorf("callToActionText = %q, want empty — Google supplies its own button text", plan.callToActionText)
 	}
 
-	longCTA := fullDisplayCreative()
-	longCTA.CallToActionText = strings.Repeat("a", maxDisplayCallToActionRunes+1)
-	if _, err := validateDisplay(t, longCTA); err == nil {
-		t.Errorf("a call to action longer than %d runes must be refused", maxDisplayCallToActionRunes)
+	refused := fullDisplayCreative()
+	refused.CallToActionText = "Register"
+	if _, err := validateDisplay(t, refused); err == nil || !strings.Contains(err.Error(), "not one Google accepts") {
+		t.Errorf("err = %v, want Register refused before any write (#575)", err)
 	}
 }
 
