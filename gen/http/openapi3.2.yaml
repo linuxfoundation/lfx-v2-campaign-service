@@ -27857,7 +27857,7 @@ components:
             properties:
                 campaign_id:
                     type: string
-                    description: Upstream platform campaign id. Present when ok; also set on the specific failure where the upstream campaign was created but recording it failed, so the orphaned id isn't lost.
+                    description: Upstream platform campaign id. Present when ok; also set on a failure whenever the upstream campaign is known to exist — a later setup step failed after the campaign was created (e.g. a Google Ads `campaign_created_setup_incomplete`), or recording it failed — so the operator can find the campaign to verify or clean up. Absent when the failure created no campaign or its id was never captured.
                     example: Expedita id soluta minus quaerat ullam voluptas.
                 campaign_row_id:
                     type: string

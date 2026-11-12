@@ -2691,9 +2691,12 @@ type PlatformResult struct {
 	Platform string
 	// Whether the campaign was created (or reused) successfully
 	OK bool
-	// Upstream platform campaign id. Present when ok; also set on the specific
-	// failure where the upstream campaign was created but recording it failed, so
-	// the orphaned id isn't lost.
+	// Upstream platform campaign id. Present when ok; also set on a failure
+	// whenever the upstream campaign is known to exist — a later setup step failed
+	// after the campaign was created (e.g. a Google Ads
+	// `campaign_created_setup_incomplete`), or recording it failed — so the
+	// operator can find the campaign to verify or clean up. Absent when the
+	// failure created no campaign or its id was never captured.
 	CampaignID *string
 	// Failure reason (present when not ok). For a failed campaign dispatch it says
 	// WHY without quoting the platform: a refusal this service raised before

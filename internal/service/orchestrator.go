@@ -2249,12 +2249,19 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				case perr != nil:
 					slog.ErrorContext(ctx, "failed to record partial upstream campaign on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", perr)
+					// The row was not written, so the job is the only place the id survives.
+					res.CampaignID = campaign.PlatformCampaignID
 				default:
 					slog.ErrorContext(ctx, "platform dispatch failed after (possible) upstream create; recorded orphan on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", derr)
 					// Name the row the partial was recorded on, so a caller can tell WHICH of
 					// the platform's campaigns needs reconciling when the platform holds several.
 					identifyRow(&res, partial)
+					// And name the upstream campaign itself (#576): the row holds it, but the
+					// caller reads the job, and without it an operator has to search the ad
+					// account for the half-built campaign to verify or clean it up. Empty on an
+					// id-less partial, which the omitempty tag then leaves out.
+					res.CampaignID = campaign.PlatformCampaignID
 				}
 				cancelPersist()
 			} else {
