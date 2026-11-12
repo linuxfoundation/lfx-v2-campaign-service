@@ -31,6 +31,7 @@ package accesscheck
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -60,6 +61,11 @@ const (
 
 // ErrUnavailable wraps every failure to obtain a definite answer.
 var ErrUnavailable = errors.New("access check unavailable")
+
+// ErrProjectNotFound marks a slug_to_uid reply that DEFINITELY names no project (its
+// RPCError code is "not_found"), as opposed to an outage. It is always wrapped together with
+// ErrUnavailable, so a caller that only checks ErrUnavailable is unaffected.
+var ErrProjectNotFound = errors.New("project not found")
 
 // Requester is the one NATS capability the checker needs. *nats.Conn satisfies it.
 type Requester interface {
@@ -129,6 +135,12 @@ func (c *Checker) projectUID(ctx context.Context, slug string) (string, error) {
 	// and an empty body, is not an answer.
 	uid := strings.TrimSpace(reply)
 	if _, perr := uuid.Parse(uid); perr != nil || len(uid) != 36 {
+		var rpc struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal([]byte(uid), &rpc) == nil && rpc.Code == "not_found" {
+			return "", fmt.Errorf("%w: %w", ErrUnavailable, ErrProjectNotFound)
+		}
 		return "", fmt.Errorf("%w: project lookup did not return a UID", ErrUnavailable)
 	}
 	return uid, nil

@@ -7,10 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/accesscheck"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -428,4 +430,28 @@ func TestRelay_RefusesANonUIDAnswer(t *testing.T) {
 		assert.Empty(t, pub.payloads, "answer %q", answer)
 		assert.Equal(t, []int64{1}, out.failed, "answer %q", answer)
 	}
+}
+
+// A slug the project service definitely does not know will not resolve on retry, and a row held
+// pending would also hold the later delete for the same resource behind it (#590 review). Such a
+// message is published as written, slug-keyed and readable by nobody, so the delete follows.
+func TestRelay_UnknownProjectPublishesSlugKeyedAndUnblocksTheDelete(t *testing.T) {
+	update := campaignRow(1, "c1", "gone")
+	rawDelete, _ := json.Marshal(NewTransaction(ActionDeleted, ObjectTypeCampaign, "c1", "gone", "", "c1"))
+	del := &model.OutboxMessage{ID: 2, ObjectType: ObjectTypeCampaign, ObjectID: "c1", Payload: rawDelete}
+	out := &fakeOutbox{pending: []*model.OutboxMessage{update, del}}
+	pub := &capturingPublisher{}
+	res := &fakeResolver{err: fmt.Errorf("%w: %w", accesscheck.ErrUnavailable, accesscheck.ErrProjectNotFound)}
+
+	NewRelay(out, pub, "Bearer t").WithProjectUIDResolver(res).drain(context.Background())
+
+	assert.Equal(t, []int64{1, 2}, out.published, "the update and then the delete both publish")
+	require.Len(t, pub.payloads, 2)
+	assert.Equal(t, "project:gone", publishedConfig(t, pub.payloads[0])["access_check_object"], "fail closed: slug-keyed")
+}
+
+// A resolved UID is reused for about one pass, not longer: a message published from a stale
+// entry is retired, so expiry cannot repair it (#590 review).
+func TestRelay_ProjectUIDCacheLastsAboutOnePass(t *testing.T) {
+	assert.LessOrEqual(t, projectUIDCacheTTL, relayPassTimeout)
 }

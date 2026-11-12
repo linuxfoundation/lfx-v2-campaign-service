@@ -39,7 +39,8 @@ this by resolving the slug before its own check (`ruleset.yaml`,
 `project_slug_resolver_contextualizer`). With the flag exactly `"true"`, the container gives the
 relay an `accesscheck.Checker` as its `ProjectUIDResolver` (`Relay.WithProjectUIDResolver`).
 When the relay stamps a row, `keyOnProjectUID` then:
-- resolves the slug over `lfx.projects-api.slug_to_uid`, cached for an hour;
+- resolves the slug over `lfx.projects-api.slug_to_uid`, cached for 30 seconds (about one pass,
+  because a message published from a stale entry is retired and cannot be repaired);
 - sets `access_check_object` and `history_check_object` to `project:<uid>`;
 - sends `parent_refs` as `project:<uid>` followed by `project:<slug>`, so a reader filtering by
   either parent finds the document.
@@ -48,7 +49,12 @@ A message already keyed on a UID is left alone, and so are the stored row and ev
 A failed lookup, or an answer that is not a UUID, fails the delivery, so the row stays pending and
 is retried; publishing it slug-keyed would index a document nobody can read. A failure is
 remembered for 30 seconds, so the other rows of that project fail fast instead of each waiting
-out the resolver's timeout. A DELETE is never held on the lookup, because the indexer removes by
+out the resolver's timeout. A slug the project service DEFINITELY does not know
+(`accesscheck.ErrProjectNotFound`, a `not_found` reply) is published as written instead. It would
+never resolve, and holding it would also hold that resource's later delete, so it is published
+slug-keyed, which fails closed. **Rollout:** turn the flag on before `INDEXER_SERVICE_TOKEN` exists.
+The relay retires the backlog as soon as it has a token, so rows drained with the flag off stay
+slug-keyed. The container warns when it has a token and the flag is off. A DELETE is never held on the lookup, because the indexer removes by
 object id. The newIndexRelay wiring is pinned by a source-level test, since the live boot path
 needs PostgreSQL and NATS. **Accepted risk:** the slug is resolved at publish time, so a slug
 reassigned between a write and its publish keys the document on the new project. That is no

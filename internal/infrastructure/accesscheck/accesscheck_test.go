@@ -190,6 +190,10 @@ func TestProjectUID(t *testing.T) {
 			if !errors.Is(err, ErrUnavailable) {
 				t.Errorf("err = %v, want ErrUnavailable", err)
 			}
+			// Only a definite not_found is ErrProjectNotFound; an outage or a junk reply is not.
+			if got := errors.Is(err, ErrProjectNotFound); got != (tc.name == "not found") {
+				t.Errorf("errors.Is(err, ErrProjectNotFound) = %v for %s", got, tc.name)
+			}
 		})
 	}
 	if _, err := New(nil).ProjectUID(context.Background(), "cncf"); !errors.Is(err, ErrUnavailable) {

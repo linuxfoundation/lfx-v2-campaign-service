@@ -1543,6 +1543,12 @@ func (c *Container) newIndexRelay(cfg *config.Config, pool *postgres.Pool) *inde
 	if np, ok := c.indexPublisher.(*indexer.NATSPublisher); ok && np.Conn() != nil {
 		conn = np.Conn()
 	}
+	if !cfg.IndexerResolveProjectUID && strings.TrimSpace(cfg.IndexerServiceToken) != "" {
+		// The relay publishes and RETIRES the outbox as soon as it has a token, so a backlog
+		// drained with the flag off is indexed slug-keyed (readable by nobody) and turning the
+		// flag on later does not replay it (#590). The flag must be on before the token.
+		slog.Warn("the index relay has a service token but INDEXER_RESOLVE_PROJECT_UID is off; it will index briefs and campaigns slug-keyed, readable by nobody")
+	}
 	res := indexRelayResolver(cfg.IndexerResolveProjectUID, conn)
 	if res == nil {
 		if cfg.IndexerResolveProjectUID {

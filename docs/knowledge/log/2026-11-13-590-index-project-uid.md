@@ -12,7 +12,10 @@ tuple matched (lfx-self-serve#5380).
     for 30 seconds, so other rows of that project fail fast.
   - A delete is published without a lookup.
   - A UID-keyed message and the stored row are unchanged.
-  - Resolved UIDs are cached for an hour.
+  - Resolved UIDs are cached for 30 seconds, about one pass.
+  - A definite `not_found` is published as written (slug-keyed, readable by nobody), so the
+    resource's later delete is not held behind it.
+  - Rollout order: flag on, then token. The container warns when it has a token and the flag is off.
 - Behind `INDEXER_RESOLVE_PROJECT_UID`, which is on only when exactly `"true"`. The chart
   defaults it to `"false"`.
 - Rows already pending (all of them in an environment whose relay is idle for want of

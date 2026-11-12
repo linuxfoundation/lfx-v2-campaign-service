@@ -6,6 +6,7 @@ package indexer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -16,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/accesscheck"
 )
 
 // OutboxReader is the outbox slice the relay needs. An interface so the relay is testable
@@ -49,8 +51,10 @@ type ProjectUIDResolver interface {
 }
 
 // projectUIDCacheTTL bounds how long a resolved UID is reused. A project's UID never changes,
-// but its slug can be reassigned, so an entry is not kept forever.
-const projectUIDCacheTTL = time.Hour
+// but its slug can be reassigned, and a message published from a stale entry is RETIRED, so
+// expiry cannot repair it. The TTL is therefore about one pass: a backlog still costs one
+// lookup per slug per pass, while a reassignment is picked up within seconds.
+const projectUIDCacheTTL = 30 * time.Second
 
 // projectUIDFailureTTL is how long a FAILED lookup is remembered. Every row of a project whose
 // lookup just failed would otherwise repeat it, each costing up to the resolver's own timeout,
@@ -119,8 +123,13 @@ func NewRelay(outbox OutboxReader, pub RawPublisher, authorization string) *Rela
 // access_check_object and history_check_object become `project:<uid>`. parent_refs carries
 // BOTH `project:<uid>` and `project:<slug>`, so a reader filtering by either parent finds the
 // document. A failed lookup fails the delivery, which leaves the row pending for a later pass:
-// publishing it slug-keyed would index a document nobody can read. A DELETE is never held on
-// the lookup: the indexer removes by object id, so its FGA fields decide nothing. The stored
+// publishing it slug-keyed would index a document nobody can read. The exception is a slug the
+// project service DEFINITELY does not know (accesscheck.ErrProjectNotFound): that will not
+// change on retry, and a row held pending forever would also hold every later row for the
+// same resource (the claim is per-resource ordered), including the delete that removes it from
+// search. Such a message is published as written: slug-keyed, readable by nobody, which fails
+// closed. A DELETE is never held on the lookup: the indexer removes by object id, so its FGA
+// fields decide nothing. The stored
 // row is never changed. A nil resolver leaves messages as written.
 //
 // Accepted risk: the slug is resolved when the row is PUBLISHED, so if a slug moved to another
@@ -190,6 +199,11 @@ func (r *Relay) keyOnProjectUID(ctx context.Context, msg map[string]json.RawMess
 		return nil
 	}
 	uid, err := r.projectUID(ctx, slug)
+	if errors.Is(err, accesscheck.ErrProjectNotFound) {
+		slog.WarnContext(ctx, "index relay: project slug resolves to no project; publishing the message slug-keyed (readable by nobody)",
+			"project_slug", slug)
+		return nil
+	}
 	if err != nil {
 		return err
 	}
