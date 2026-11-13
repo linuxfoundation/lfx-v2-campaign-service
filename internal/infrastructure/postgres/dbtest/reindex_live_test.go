@@ -41,8 +41,10 @@ func TestLiveReindexEnqueuesEveryResourceOnce(t *testing.T) {
 		}
 		return id
 	}
-	liveCampaign := seedCampaign("created", "123", nil)
-	deletedCampaign := seedCampaign("deleted", "456", nil)
+	// Upstream ids are unique per run: migration 000020 enforces (platform, platform_campaign_id)
+	// uniqueness across every project for live Google campaigns, and the schema is shared.
+	liveCampaign := seedCampaign("created", dbtest.UniqueID(t, "upstream-live"), nil)
+	deletedCampaign := seedCampaign("deleted", dbtest.UniqueID(t, "upstream-deleted"), nil)
 	bareClaim := seedCampaign("pending", "", nil) // a bare claim
 	t.Cleanup(func() {
 		cctx, cancel := dbtest.CleanupContext()

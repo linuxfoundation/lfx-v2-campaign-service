@@ -55,15 +55,15 @@ type ReindexRepo struct{ db *Pool }
 // NewReindexRepo returns a ReindexRepo over db.
 func NewReindexRepo(db *Pool) *ReindexRepo { return &ReindexRepo{db: db} }
 
-const reindexBriefsQuery = `SELECT ` + briefCols + ` FROM campaign_briefs
-	WHERE ($1 = '' OR project_id = $1) AND ($2 = '' OR id > $2::uuid)
-	ORDER BY id LIMIT $3 FOR SHARE`
+const reindexBriefsQuery = `SELECT ` + briefCols + ` FROM campaign_briefs b
+	WHERE ($1 = '' OR b.project_id = $1) AND ($2 = '' OR b.id > $2::uuid)
+	ORDER BY b.id LIMIT $3 FOR SHARE`
 
 // reindexCampaignsQuery excludes nothing: a bare dispatch claim is filtered in Go
 // (isBareClaim) so the decision is counted as a skip rather than silently absent.
-const reindexCampaignsQuery = `SELECT ` + campaignCols + ` FROM campaigns
-	WHERE ($1 = '' OR project_id = $1) AND ($2 = '' OR id > $2::uuid)
-	ORDER BY id LIMIT $3 FOR SHARE`
+const reindexCampaignsQuery = `SELECT ` + campaignCols + ` FROM campaigns c
+	WHERE ($1 = '' OR c.project_id = $1) AND ($2 = '' OR c.id > $2::uuid)
+	ORDER BY c.id LIMIT $3 FOR SHARE`
 
 // ReindexBriefs reads up to limit briefs after afterID (optionally only projectID's) and, when
 // apply is set, enqueues one message each: "deleted" for an archived brief, "updated"
