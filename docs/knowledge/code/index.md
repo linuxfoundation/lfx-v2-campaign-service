@@ -1,6 +1,7 @@
 # Code
 
 * [cmd/campaign-service](cmd-campaign-service.md) - The LFX V2 Campaign Service.
+* [cmd/reindex](cmd-reindex.md) - Operator CLI that re-enqueues search-index outbox messages for existing briefs and campaigns, built by the service's own payload builders and delivered by the running relay; dry run by default, -apply to write, batched and idempotent (#590).
 * [cmd/verify-metrics](cmd-verify-metrics.md) - Local, read-only operator CLI and runbook for verifying every gated read before its flag is flipped: campaign metrics (Reddit, Microsoft, X; also LinkedIn and Meta), the Reddit, Microsoft and X audience reads, the Reddit and Microsoft keyword reports, and the Microsoft and X account monitors, each run against a live account through the service's own connection resolution and the method its endpoint calls, with the flag forced on in-process only and every secret redacted.
 * [internal/bootstrap](internal-bootstrap.md) - Installs and rotates the LF-owned system credentials -- paid-ads accounts and the shared HubSpot portal -- that projects with no connection of their own fall back to.
 * [internal/container](internal-container.md) - Dependency injection: opens the PostgreSQL pool, runs migrations, and wires Readyz to the pool.

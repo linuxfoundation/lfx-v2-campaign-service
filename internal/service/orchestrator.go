@@ -1032,11 +1032,7 @@ func (o *Orchestrator) campaignIndexPayload(action string) domain.CampaignIndexP
 		return nil
 	}
 	return func(c *model.Campaign) ([]byte, error) {
-		return json.Marshal(indexer.NewTransaction(
-			action, indexer.ObjectTypeCampaign,
-			c.ID, c.ProjectID, "",
-			campaignDoc(campaignResult(c)), c.CampaignName,
-		))
+		return CampaignIndexPayload(action, c)
 	}
 }
 
