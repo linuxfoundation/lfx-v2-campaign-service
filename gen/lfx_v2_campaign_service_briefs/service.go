@@ -1230,19 +1230,19 @@ type CampaignCreateInput struct {
 	// as the campaign's targetingCriteria: each include entry (1 to 10) is one
 	// ANDed clause whose facets are ORed, after the geoTargets clause, and exclude
 	// is ORed. Facets: skills, groups, industries, titles, seniorities,
-	// jobFunctions, employers, staffCountRanges, interfaceLocales,
+	// jobFunctions, employers, staffCountRanges, interfaceLocales, interests,
 	// audienceMatchingSegments and dynamicSegments, with LinkedIn's URN values
-	// (urn:li:skill:<id>, urn:li:adSegment:<id>, ...); groups and interfaceLocales
-	// only under include. Set, it replaces targetingProfile and the fixed
-	// job-function and seniority targeting; the config's employerExclusions still
-	// join exclude.employers. Refused with a 400 before any job exists: an unknown
-	// facet, a malformed value, an empty clause or facet, more than 100 values in
-	// a facet (200 for employers), a value both included and excluded,
-	// staffCountRanges both included and excluded, titles included with
-	// seniorities or jobFunctions, employers included with industries or
-	// staffCountRanges, and any targeting while the deployment has not set
-	// LINKEDIN_ADS_TARGETING_ENABLED. audienceMatchingSegments and dynamicSegments
-	// name ad segments on the ad account, so they also require
+	// (urn:li:skill:<id>, urn:li:interest:<id>, urn:li:adSegment:<id>, ...);
+	// groups and interfaceLocales only under include. Set, it replaces
+	// targetingProfile and the fixed job-function and seniority targeting; the
+	// config's employerExclusions still join exclude.employers. Refused with a 400
+	// before any job exists: an unknown facet, a malformed value, an empty clause
+	// or facet, more than 100 values in a facet (200 for employers), a value both
+	// included and excluded, staffCountRanges both included and excluded, titles
+	// included with seniorities or jobFunctions, employers included with
+	// industries or staffCountRanges, and any targeting while the deployment has
+	// not set LINKEDIN_ADS_TARGETING_ENABLED. audienceMatchingSegments and
+	// dynamicSegments name ad segments on the ad account, so they also require
 	// global_marketing_ops on the project (403; 503 when the check cannot be
 	// made). LINKEDIN CONVERSIONS (#552): linkedInConfig takes an optional
 	// `conversions` list of LinkedIn conversion rule ids as numeric strings, e.g.

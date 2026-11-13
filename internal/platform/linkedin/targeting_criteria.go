@@ -87,15 +87,17 @@ type targetingFacet struct {
 }
 
 var targetingFacets = map[string]targetingFacet{
-	"skills":                      {pattern: regexp.MustCompile(`^urn:li:skill:` + numericIDTail + `$`), max: maxFacetValues, shape: "urn:li:skill:<id>"},
-	"groups":                      {pattern: regexp.MustCompile(`^urn:li:group:` + numericIDTail + `$`), includeOnly: true, max: maxFacetValues, shape: "urn:li:group:<id>"},
-	"industries":                  {pattern: regexp.MustCompile(`^urn:li:industry:` + numericIDTail + `$`), max: maxFacetValues, shape: "urn:li:industry:<id>"},
-	"titles":                      {pattern: regexp.MustCompile(`^urn:li:title:` + numericIDTail + `$`), max: maxFacetValues, shape: "urn:li:title:<id>"},
-	"seniorities":                 {pattern: regexp.MustCompile(`^urn:li:seniority:` + numericIDTail + `$`), max: maxFacetValues, shape: "urn:li:seniority:<id>"},
-	"jobFunctions":                {pattern: regexp.MustCompile(`^urn:li:function:` + numericIDTail + `$`), max: maxFacetValues, shape: "urn:li:function:<id>"},
-	"employers":                   {pattern: regexp.MustCompile(`^urn:li:(organization|company):` + numericIDTail + `$`), max: maxEmployerFacetValues, shape: "urn:li:organization:<id> or urn:li:company:<id>"},
-	"staffCountRanges":            {enum: staffCountRangeValues, max: maxFacetValues, shape: "one of LinkedIn's staffCountRange values, e.g. urn:li:staffCountRange:(201,500)"},
-	"interfaceLocales":            {pattern: regexp.MustCompile(`^urn:li:locale:[a-z]{2}_[A-Z]{2}$`), includeOnly: true, max: maxFacetValues, shape: "urn:li:locale:<ll>_<CC>"},
+	"skills":           {pattern: regexp.MustCompile(`^urn:li:skill:` + numericIDTail + `$`), max: maxFacetValues, shape: "urn:li:skill:<id>"},
+	"groups":           {pattern: regexp.MustCompile(`^urn:li:group:` + numericIDTail + `$`), includeOnly: true, max: maxFacetValues, shape: "urn:li:group:<id>"},
+	"industries":       {pattern: regexp.MustCompile(`^urn:li:industry:` + numericIDTail + `$`), max: maxFacetValues, shape: "urn:li:industry:<id>"},
+	"titles":           {pattern: regexp.MustCompile(`^urn:li:title:` + numericIDTail + `$`), max: maxFacetValues, shape: "urn:li:title:<id>"},
+	"seniorities":      {pattern: regexp.MustCompile(`^urn:li:seniority:` + numericIDTail + `$`), max: maxFacetValues, shape: "urn:li:seniority:<id>"},
+	"jobFunctions":     {pattern: regexp.MustCompile(`^urn:li:function:` + numericIDTail + `$`), max: maxFacetValues, shape: "urn:li:function:<id>"},
+	"employers":        {pattern: regexp.MustCompile(`^urn:li:(organization|company):` + numericIDTail + `$`), max: maxEmployerFacetValues, shape: "urn:li:organization:<id> or urn:li:company:<id>"},
+	"staffCountRanges": {enum: staffCountRangeValues, max: maxFacetValues, shape: "one of LinkedIn's staffCountRange values, e.g. urn:li:staffCountRange:(201,500)"},
+	"interfaceLocales": {pattern: regexp.MustCompile(`^urn:li:locale:[a-z]{2}_[A-Z]{2}$`), includeOnly: true, max: maxFacetValues, shape: "urn:li:locale:<ll>_<CC>"},
+	// Member interests (#585). Not on LinkedIn's include-only list, so it may be excluded too.
+	"interests":                   {pattern: regexp.MustCompile(`^urn:li:interest:` + numericIDTail + `$`), max: maxFacetValues, shape: "urn:li:interest:<id>"},
 	FacetAudienceMatchingSegments: {pattern: regexp.MustCompile(`^urn:li:adSegment:` + numericIDTail + `$`), max: maxFacetValues, shape: "urn:li:adSegment:<id>"},
 	FacetDynamicSegments:          {pattern: regexp.MustCompile(`^urn:li:adSegment:` + numericIDTail + `$`), max: maxFacetValues, shape: "urn:li:adSegment:<id>"},
 }
