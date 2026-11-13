@@ -9,7 +9,8 @@
 //
 //   - lfx.projects-api.slug_to_uid (lfx-v2-project-service HandleProjectSlugToUID): the
 //     request body is the slug; a success reply is the project UID as plain text, and a
-//     failure reply is a JSON RPCError ({"code":"not_found"|"internal","message":...}).
+//     failure reply is a JSON RPCError ({"error":"not_found"|"internal","message":...}; the
+//     code is under the "error" key, per lfx-v2-project-service pkg/events.RPCError).
 //   - lfx.access_check.request (lfx-v2-fga-sync accessCheckHandler, docs/fga-sync-contract.md):
 //     the request body is one `object#relation@user` line per check; the reply is one
 //     `{request}\t{true|false}` line per check, in no guaranteed order. A failure reply is a
@@ -135,8 +136,9 @@ func (c *Checker) projectUID(ctx context.Context, slug string) (string, error) {
 	// and an empty body, is not an answer.
 	uid := strings.TrimSpace(reply)
 	if _, perr := uuid.Parse(uid); perr != nil || len(uid) != 36 {
+		// lfx-v2-project-service pkg/events.RPCError: the code is under "error".
 		var rpc struct {
-			Code string `json:"code"`
+			Code string `json:"error"`
 		}
 		if json.Unmarshal([]byte(uid), &rpc) == nil && rpc.Code == "not_found" {
 			return "", fmt.Errorf("%w: %w", ErrUnavailable, ErrProjectNotFound)
