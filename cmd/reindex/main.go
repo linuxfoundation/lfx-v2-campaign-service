@@ -134,7 +134,7 @@ func run(ctx context.Context, o options, s store, out io.Writer) error {
 	if o.project != "" {
 		scope = "project " + o.project
 	}
-	fmt.Fprintf(out, "reindex: %s, %s, batch %d\n", mode, scope, o.batch)
+	_, _ = fmt.Fprintf(out, "reindex: %s, %s, batch %d\n", mode, scope, o.batch)
 
 	if o.kind == "all" || o.kind == "briefs" {
 		t, err := loop(ctx, o, func(after string) (postgres.ReindexBatch, error) {
@@ -189,6 +189,6 @@ func loop(ctx context.Context, o options, next func(after string) (postgres.Rein
 }
 
 func report(out io.Writer, what string, t totals) {
-	fmt.Fprintf(out, "%s: read %d, live %d, deleted %d, skipped %d (%d batches)\n",
+	_, _ = fmt.Fprintf(out, "%s: read %d, live %d, deleted %d, skipped %d (%d batches)\n",
 		what, t.read, t.live, t.deleted, t.skipped, t.batches)
 }
