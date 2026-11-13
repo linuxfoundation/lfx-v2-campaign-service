@@ -1058,6 +1058,7 @@ is targeted exactly as before (profile skills/groups, fixed job functions and se
 | `employers` | `urn:li:organization:<id>` / `urn:li:company:<id>` | yes | yes |
 | `staffCountRanges` | one of LinkedIn's nine, e.g. `urn:li:staffCountRange:(201,500)` | yes | yes |
 | `interfaceLocales` | `urn:li:locale:<ll>_<CC>` | yes | no |
+| `interests` | `urn:li:interest:<id>` (member interests, #585) | yes | yes |
 | `audienceMatchingSegments` | `urn:li:adSegment:<id>` (contact/company lists) | yes | yes |
 | `dynamicSegments` | `urn:li:adSegment:<id>` (website/engagement retargeting) | yes | yes |
 
