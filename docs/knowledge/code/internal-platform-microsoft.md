@@ -1024,6 +1024,13 @@ decoded with `encoding/json` and no `identityjson` check. Tests in `keyword_leve
 `_InvalidInputSendsNothing`, `_ZeroCollectionCodeIsAbsent`, `_EntityCodeWithAnIDFallsThrough` and
 `_AlreadyExistsIsMatchedStrictly`. The dispatcher's are in `internal/dispatch/microsoft_keywords_test.go`.
 
+**Also at create (#563).** `AddCampaignNegativeKeywords` is also called by the create path,
+right after a confirmed `CreateCampaign`, for `microsoftConfig.negativeKeywords` (see
+[internal/dispatch](internal-dispatch.md), "Microsoft negative keywords at create"). The
+dispatcher records its positional outcomes on `CampaignResult.NegativeKeywords`, which is why
+`NegativeKeywordOutcome` carries camelCase JSON tags (`text`, `matchType`, `outcome`,
+`negativeKeywordId`, `errorCode`). `CreateCampaign` itself never sets the field.
+
 ## Ad-group max CPC bid read + write (LFXV2-2665)
 
 `bid.go` backs `MicrosoftDispatcher.WriteBid`. The bid lives on the AD GROUP (`AdGroup.CpcBid`,
@@ -1447,6 +1454,30 @@ is not mistaken for an ambiguous mutation. `CampaignResult.ImageMediaID`/`ImageA
 are set by the dispatcher, never by `CreateCampaign`. See
 [Microsoft Creative Image Assets](../architecture/microsoft-creative-assets.md).
 
+## Campaign sitelink and callout extensions (#563)
+
+`AttachCampaignTextExtensions` (`text_extensions.go`) attaches caller sitelinks and callouts to a
+campaign this client created, as campaign-level `SitelinkAdExtension` and `CalloutAdExtension`
+entries. `ValidateTextExtensions` (also run by the dispatcher's preflight and Dispatch, behind
+`MICROSOFT_AD_EXTENSIONS_ENABLED`) holds the v13 limits: sitelinks 1–20, text 25 with a
+description and 35 without, both descriptions or neither at 35 each, an absolute http/https
+`FinalUrls` entry of at most 2,048 characters (code points) with no userinfo, its control
+characters checked before the trim; callouts 2–20 at 25 each. Any double-width
+character switches a field to the reduced limits (11/15, 15, 12), applied conservatively as the
+RSA caps are. Every refusal is a `*TextExtensionError` naming the `microsoftConfig` field.
+
+Per type: one `AdExtensionsAssociations/Query` filtered to that type (`findCampaignExtension`,
+the image lookup generalised by type) — an extension of the type already on the campaign skips
+the type, and a failed lookup adds nothing of it. Then, per extension, one `AdExtensions` add
+(classified by `adExtensionIdentity`) and one `AdExtensionsAssociations/Set`
+(`associateCampaignExtension`, now shared with the image attach). One item per call keeps every
+response on the single-item Index-0 classifiers. A failure never stops the run: each extension
+is counted `Failed` or `Unconfirmed` and named in `Steps`, and `Degraded()` tells the dispatcher
+to mark the campaign `created_degraded`. So does `CalloutsBelowMinimum`: fewer than two callouts
+on the campaign, after this run or as a retry's lookup counted them (`findCampaignExtension`
+returns the count), serve none. `CampaignResult.SitelinkAdExtensionIDs` /
+`CalloutAdExtensionIDs` are set by the dispatcher. Not verified live.
+
 ## Create-time campaign bid strategy (`CampaignInput.BiddingScheme`, LFXV2-2665)
 
 `BiddingScheme` sets the CAMPAIGN's `BiddingScheme` (`msBiddingScheme`, `{"Type": ...}`) on the
@@ -1464,3 +1495,127 @@ keeps its existing scheme.
 the ad group (the bid); a reused campaign — found by name or by the duplicate-name self-heal — or a
 reused ad group sets it false and adds the step "Warning: bid NOT applied to reused campaign|ad group
 <id>; its existing bidding is unchanged".
+
+## Caller ad copy and display paths (`ad_copy.go`, #563)
+
+`CampaignInput.Headlines` / `Descriptions` have always been accepted leniently (an empty entry is
+skipped and a short list is padded by `composeAdCopy`). Since #563 the dispatcher forwards
+`microsoftConfig.headlines` / `descriptions` / `path1` / `path2`, and holds them first to the
+STRICT caller rules in the exported `ValidateCallerAdCopy`: a supplied list must have 3–15
+headlines / 2–4 descriptions, an empty or whitespace-only entry is refused rather than skipped
+(a placeholder beside approved copy is worse than a refusal), and `checkAdCopyList`'s width-aware
+caps, control-character and case-insensitive-uniqueness rules apply. Each refusal is an
+`*AdCopyError` naming the request field, which the dispatcher turns into the synchronous 400.
+
+`CampaignInput.Path1` / `Path2` are sent on the ResponsiveSearchAd as `Path1` / `Path2`
+(`omitempty`, so an ad without paths sends the pre-#563 body). `validatePaths` runs in the
+`CreateCampaign` prologue, before any request: one segment each (no `/`), trimmed, a letter or
+digit, at most 15 characters (7 with a double-width character), and Path2 only with Path1 — the
+v13 ResponsiveSearchAd element rules. The display-URL check that already held the final URL's
+host to 67 characters (33 wide) now measures `displayURL(host, Path1, Path2)` — the host plus
+`/Path1/Path2`, separators counted, the conservative reading of "the domain portion of the URL in
+combination with the path 1 and path 2 strings cannot exceed 67 characters" — and refuses an
+overflow as a `PreflightRefusal` with nothing created.
+
+A responsive search ad REUSED by its final URL on a retry keeps the copy it was created with (as a
+reused ad group keeps its bid); when the caller sent copy the result carries the step "Warning:
+caller ad copy NOT applied to reused ad <id>". The whole input is behind
+`MICROSOFT_AD_COPY_ENABLED` in the dispatcher (`internal/dispatch/microsoft_ad_copy.go`), off by
+default: no live create has sent caller copy or Path1/Path2.
+
+**Withheld error codes (#565 review).** `indexedErrorItem.code()` and `meaningfulCode` pass every
+code through `outputCode`: a value that is not code-shaped (`[A-Za-z0-9_.-]+`, i.e. a symbolic
+name or a number) is replaced by `withheldErrorCode`. The codes reach persisted steps, the
+positional outcomes and logs, and they come from the response body, so a URL or token there is
+never passed on. Classification (`isNegativeKeywordAlreadyExists`, `isError`, the entity-level
+"was there a code") still reads the raw values, and the replacement is non-empty, so an entity
+refusal stays definite and an item stays FAILED.
+
+## Remarketing lists at create (`audiences.go`, #563 gap 4)
+
+`microsoftConfig.audienceIds` (observed), `excludedAudienceIds` and `audienceBidAdjustment` put
+remarketing lists on the ad group a create makes or reuses. `ValidateAudiences` holds the pure
+rules once: each id is the canonical spelling of a positive int64, compared exactly; at most 50
+per list; no repeat; no id in both lists; an adjustment is a whole percent from -90 to 900
+(Microsoft's `BidMultiplier` range) and is accepted only with observed lists.
+
+`CheckRemarketingLists` runs BEFORE anything is created. The dispatcher calls it after the client
+is built and before `CreateCampaign`. It is ONE `POST Audiences/QueryByIds` (`GetAudiencesByIds`,
+at most 100 ids, which is why each list is capped at 50) with `Type: "RemarketingList"`, exclusions
+first. Every id must come back, index-aligned, as a `RemarketingList`. A null slot, a partial
+error or another type is a `PreflightRefusal` naming the field, the id and Microsoft's code (or
+the type, rendered only if code-shaped). An answer that cannot be believed is a plain error: too
+many entries, no `Audiences` array at all, an id other than the one asked for, or an error with
+no usable index. Microsoft
+documents that the system lists (All Visitors, All Converters, Smart lists) are not returned by
+`GetAudiencesByIds`, so they cannot pass this check.
+
+`AttachAdGroupAudiences` runs on the CONFIRMED ad group after the keywords. It makes two
+`POST AdGroupCriterions` calls with `CriterionType: "Audience"`: the exclusions as
+`NegativeAdGroupCriterion` first, then the observed lists as `BiddableAdGroupCriterion` with a
+`BidMultiplier`. No `TargetSetting` is ever sent, and Microsoft's documented default for the
+Audience group is then bid only, so an observed list never narrows who sees the ad. Each list
+gets a positional `AudienceOutcome`:
+- `APPLIED` when it has an id.
+- `ALREADY_PRESENT` when every error naming it is 4152 (`CampaignServiceDuplicateAdGroupCriterion`,
+  matched strictly as the negative-keyword 4335 is) and the error evidence is complete, which means
+  the ad group already carries it. With incomplete evidence it is `UNCONFIRMED` instead. It is a
+  defensive case: the dispatcher sends no list to a reused ad group.
+- `FAILED` when a `NestedPartialErrors` collection names its index, when the call was refused, or
+  when it was `NOT_SENT` because the context ended.
+- `UNCONFIRMED` otherwise, including an ambiguous call or an unreadable 2xx, and every list
+  without an error of its own when the evidence cannot cover all of them: an outer or nested
+  error array was truncated, or an error carried no usable index (the rule geo.go's criterion add
+  follows). Codes are read with `audienceErrorCode`: a zero, empty or null default is not an error,
+  and a present code this client cannot read still counts as one (rendered `withheld`). In the
+  lookup, such an unreadable code makes the whole answer unreadable.
+
+The calls are not retried on 429, like every add here. `CampaignResult.AdGroupReused` reports an
+ad group found by name rather than created by this run. On such an ad group the dispatcher sends
+NO list (`NOT_SENT_REUSED_AD_GROUP`): its status and audience setting are not read, it may already
+be serving, and target-and-bid would turn an observed list into a restriction. The dispatcher
+(`applyMicrosoftAudiences`) records the outcomes as `CampaignResult.Audiences`. Anything but
+APPLIED or ALREADY_PRESENT makes the campaign
+`created_degraded`, with a step, and an extra "do not enable" step when an exclusion is short. It
+never fails the job.
+
+Not verified live: no Microsoft call was made. The dispatcher keeps all three fields behind
+`MICROSOFT_AUDIENCES_ENABLED` (default off). The lists belong to the shared LF account, so they
+also need `global_marketing_ops` (`service.MicrosoftMarketingOpsInputs`).
+
+## Excluded countries, radius targets and campaign languages (`create_targeting.go`, #563 gaps 5-6)
+
+`ValidateCreateTargeting` holds the pure rules once, so the dispatcher's synchronous preflight and
+`CreateCampaign` agree:
+- `excludedGeoTargets` follows the geoTargets rules (`validateGeoTargets`) and may not repeat a
+  geoTargets code. Microsoft applies exclusions after inclusions, so a repeated code would never
+  serve.
+- `proximityTargets`: at most 10. Latitude -85..85, longitude -180..180, a whole radius of 1-500
+  Miles or 1-800 Kilometers (Microsoft's `RadiusCriterion` bounds), an optional name of at most 50
+  characters. The dispatcher decodes the coordinates as pointers and refuses a missing or null
+  one, because 0 is a real place. The name is reduced (`redact.SnapshotText`) in the persisted
+  step and in the config snapshot, and sent to Microsoft as given.
+- `languages`: 1-10 of Microsoft's Search `Campaign.Languages` values, or `All` alone, matched
+  ignoring case and sent in Microsoft's spelling.
+
+In `CreateCampaign`, the excluded codes resolve through `resolveGeoTargets` with the positive ones,
+before anything is created. On a campaign this run created, the exclusions
+(`NegativeCampaignCriterion` with `LocationCriterion`) and then the radii
+(`BiddableCampaignCriterion` with `RadiusCriterion`) are attached right after the positive
+locations and before the ad group, one `AddCampaignCriterions` call each (`CriterionType:
+Targets`). The positive locations and both new kinds share `postCampaignCriterions`, so their
+outcome rules cannot drift: a truncated or rejecting error array, a short id array or an id-less
+slot never reads as success. `criterionStepError` classifies a failure the way the positive geo is
+classified (UNCONFIRMED, aborted, partially attached, rejected), and the create stops with the
+campaign as a partial. `languages` goes on the new campaign's `Languages`. The ad group is then
+created with no `Language`, which `msAdGroup.Language` now omits when empty, because an ad group
+language overrides the campaign's. Without `languages` the ad group is English, as before.
+
+All three apply only to a campaign this run creates. A create that finds its campaign by name
+stops before the ad group, with a step naming the fields and the campaign as a partial. A
+possibly live campaign's exclusions, radii and languages are an operator's to change, and an ad
+group created under it could be left without a language or could mask its languages.
+
+Not verified live: no Microsoft call was made. The dispatcher keeps all three behind
+`MICROSOFT_CREATE_TARGETING_ENABLED` (default off). They name no account resource and are not
+role-gated.

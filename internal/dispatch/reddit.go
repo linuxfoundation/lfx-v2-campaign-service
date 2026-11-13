@@ -327,6 +327,21 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		imageURLSource = d.lateAssetURL(brief, assetID, &signedURL)
 	}
 
+	// Community and interest resolution (#549 gaps 4 and 8), before anything is created and
+	// fail-closed: a value Reddit does not offer, or a lookup that cannot be read, fails the job
+	// with nothing created. The create then sends Reddit's community spelling and interest ids.
+	subreddits, interests := cfg.Subreddits, cfg.Interests
+	if needsRedditTargetingResolution(cfg) {
+		subreddits, interests, err = resolveRedditTargeting(ctx, client, cfg)
+		if err != nil {
+			var refusal *domain.PreflightRefusal
+			if errors.As(err, &refusal) {
+				return nil, notCreated(err)
+			}
+			return nil, notCreated(fmt.Errorf("reddit targeting could not be confirmed (nothing was created): %w", err))
+		}
+	}
+
 	stageToken, tacticToken := model.DispatchLabels(ctx).NameTokens()
 	in := reddit.CampaignInput{
 		EventName:       bf.EventName,
@@ -343,8 +358,8 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		EndDate:            cfg.EndDate,
 		Objective:          cfg.Objective,
 		GeoTargets:         cfg.GeoTargets,
-		Subreddits:         cfg.Subreddits,
-		Interests:          cfg.Interests,
+		Subreddits:         subreddits,
+		Interests:          interests,
 		Keywords:           cfg.Keywords,
 		ExcludedSubreddits: cfg.ExcludedSubreddits,
 		ExcludedGeoTargets: cfg.ExcludedGeoTargets,
@@ -870,8 +885,9 @@ func (d *RedditDispatcher) readAccountMonitor(ctx context.Context, projectID str
 // the shared account, including ones dispatched by other projects through the same fallback.
 // resolveOwned closes this the same way it does for Google/LinkedIn/Meta: a project with no
 // connection of its own now gets domain.ErrNotFound (404) before any account-id comparison
-// runs. See resolveOwnedGoogleAdsDiscoveryClient's doc comment (internal/dispatch/googleads.go)
-// for the shared rationale.
+// runs. Google has since dropped the same refusal for its monitor (#591, googleads.go's
+// resolveGoogleAdsMonitorClient) because the read is now reduced to the project's own recorded
+// campaigns; Reddit's is too, and is a candidate for the same change.
 func (d *RedditDispatcher) resolveMonitorClient(ctx context.Context, projectID string, platform model.Provider, accountID string) (*reddit.Client, error) {
 	client, res, err := d.resolveRedditClientWithCreds(ctx, projectID, platform, d.creds.resolveOwned)
 	if err != nil {

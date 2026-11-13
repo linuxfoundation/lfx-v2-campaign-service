@@ -807,8 +807,8 @@ again:** `googleAdsConfig.BiddingStrategy` now DOES record one, so the recorded 
 and the field is nonetheless left uncompared on purpose. Comparing it would require mapping
 this client's caller vocabulary onto Google's OUTPUT_ONLY `BiddingStrategyTypeEnum`, and
 that mapping is unverified exactly where it is ambiguous — `target-cpa` and
-`maximize-conversions` are both sent as `maximize_conversions` (except on Demand Gen, which
-sends the standalone `targetCpa`, #474), and which enum Google reports back for the
+`maximize-conversions` are both sent as `maximize_conversions` (except on Demand Gen and Display,
+which send the standalone `targetCpa`, #474, #578), and which enum Google reports back for the
 targeted one has not been observed — while on the adopt path the row
 records a strategy that was never pushed upstream, so the two sides are expected to
 disagree. A guessed mapping would report a false divergence on campaigns set exactly as
@@ -1976,7 +1976,7 @@ published reference rather than inferred from what the clients happened to reque
 | Google Ads | Yes | `metrics.conversions` (added to the GAQL SELECT) | `DOUBLE` — a bare JSON number, unlike the int64 metrics Google encodes as strings |
 | LinkedIn | Yes | `externalWebsiteConversions`, named in the request's `fields` list | `long` |
 | Microsoft | Yes | `ConversionsQualified` report column | `double` |
-| Meta | **No scalar** | conversions live in the Insights `actions` array as `{action_type, value}` | — |
+| Meta | **Recorded event only** (#550) | conversions live in the Insights `actions` array as `{action_type, value}`; only for a campaign whose create result records a conversion event, and only while `META_CONVERSIONS_METRICS_ENABLED` is on, is that event's action type read (otherwise unavailable) | the `value` string, parsed as a non-negative float |
 | X (Twitter) | **No scalar** | split across `conversion_purchases`, `conversion_sign_ups`, … each a JSON object, under metric groups this client does not request | — |
 | Reddit | **Not requested** | the v3 report request names only `IMPRESSIONS`, `CLICKS` and `SPEND` | — |
 | HubSpot (email) | **No such concept** | the statistics counter vocabulary contains no conversion counter | — |
@@ -3529,8 +3529,8 @@ overlay flip like the cutover flags; the branch stays dormant until an operator 
 | Entry point | Callers | Account resolved |
 | --- | --- | --- |
 | `resolve` | `Dispatch` (creation) and the discovery/`ListAccounts` helpers | system when the flag is on, else project-then-fallback |
-| `resolveExisting` | `ToggleStatus`, `ReadMetrics` — anything holding a `*model.Campaign` | **the account the campaign RECORDS being created under** |
-| `resolveOwned` | adoption, and every provider's account-monitor read (`ListAccountCampaignMetrics` and LinkedIn's, Meta's and Reddit's `ReadAccountMonitor`, which it wraps; Microsoft's and X's report-backed `ListAccountCampaigns`/`SubmitAccountReport`/`CheckAccountReport`/`ReadAccountCurrency` in `microsoft_monitor.go` and `twitter_monitor.go`, and Microsoft's report-backed keyword read in `microsoft_keyword_report.go`; round-16/17 review — see `account-monitor-endpoints.md`'s Trust boundary section) | project only (never forced, never fell back) |
+| `resolveExisting` | `ToggleStatus`, `ReadMetrics` — anything holding a `*model.Campaign` — and Google Ads' account-monitor read (`resolveGoogleAdsMonitorClient`, keyed on the monitored customer, #591) | **the account the campaign RECORDS being created under** |
+| `resolveOwned` | adoption, and every other provider's account-monitor read (LinkedIn's, Meta's and Reddit's `ReadAccountMonitor` and the `ListAccountCampaignMetrics` it wraps; Microsoft's and X's report-backed `ListAccountCampaigns`/`SubmitAccountReport`/`CheckAccountReport`/`ReadAccountCurrency` in `microsoft_monitor.go` and `twitter_monitor.go`, and Microsoft's report-backed keyword read in `microsoft_keyword_report.go`; round-16/17 review — see `account-monitor-endpoints.md`'s Trust boundary section) | project only (never forced, never fell back) |
 
 The rule for an existing campaign is NOT "never forced". It is "follow the recorded creation
 account", and the difference is the whole point: those two agree for a campaign created before the
@@ -4599,6 +4599,37 @@ here; the operator remedy is to pause the keyword again after activating.
 (`MICROSOFT_METRICS_ENABLED`) gates only the unverified Reporting reads, and no Microsoft WRITE —
 create, toggle, budget — is gated. Both levers follow the writes.
 
+## Microsoft negative keywords at create (`microsoft_negative_keywords.go`, #563)
+
+`microsoftConfig.negativeKeywords` attaches campaign-level negatives to a Microsoft campaign the
+dispatch just created, through the client call the lever above makes
+(`AddCampaignNegativeKeywords`), so the rules are held once, in
+`microsoft.ValidateNegativeKeywords`.
+
+- **Gate first.** `MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED` must be exactly `"true"`; off, a
+  non-empty list is refused naming the flag, whatever its values. An absent, empty or `null`
+  list is not "set".
+- **Synchronous 400.** `PreflightCreate` runs `checkMicrosoftNegativeKeywordsShape` (a value that
+  is not an array of `{text, matchType}` objects, under any key casing encoding/json would match)
+  and then `checkMicrosoftNegativeKeywords` on the best-effort decode, so an unrelated mistyped
+  field cannot turn a gated or invalid list into an accepted job. Both refusals are
+  `ErrCreateConfigInvalid` wrapped as a `PreflightRefusal`, worded
+  `microsoftConfig.negativeKeywords: …` without the client's `microsoft-ads:` prefix. `Dispatch`
+  re-checks before any Microsoft call (`notCreated`, claim released).
+- **After a CONFIRMED create only**, after the image extension. An UNCONFIRMED create skips it.
+  `applyMicrosoftNegativeKeywords` records the positional outcomes on
+  `CampaignResult.NegativeKeywords` and a count step. Any FAILED or UNCONFIRMED keyword, or a
+  failed call ("NOT attached" / "UNCONFIRMED", status-only error text), degrades the campaign to
+  `created_degraded`; it never fails the job, for the reason `attachMicrosoftImage` gives.
+  Repeating the create does not re-run it: the orchestrator returns a `created` or
+  `created_degraded` campaign as it is, so a shortfall is fixed with `add-negative-keywords`
+  (the steps say so). Only a dispatch that reuses a campaign by name — one whose earlier
+  attempt was never confirmed — re-sends the list, and gets `ALREADY_PRESENT` (4335) for the
+  ones already there, which is not a shortfall.
+- **Snapshot.** Dispatch replaces the list with the validated one before the snapshot is built,
+  so it records what was sent (`jobs`/`Phrase`, not `  jobs `/`PHRASE`). That text cannot carry a
+  link (no `:` or `/` passes validation), so it needs no `sanitizeSnapshotText`.
+
 ## Google Ads negative keywords (`googleads_negative_keywords.go`, LFXV2-2665)
 
 `GoogleAdsDispatcher` implements `service.NegativeKeywordAdder`, attaching CAMPAIGN-level
@@ -5563,3 +5594,19 @@ sent; a real Meta 4xx/5xx whose body carries a secret query; a real Reddit token
 `linkedin.ValidateTargeting` in `linkedinTargeting`, which both `PreflightCreate` (synchronous
 400) and `Dispatch` (not-created refusal, before any upstream call) run. `Dispatch` replaces the
 request's targeting with the normalised copy, so the client and the stored snapshot both see it.
+
+**LinkedIn picker lookups (#552).** `LinkedInDispatcher` implements `service.AudienceReader` (kind
+`ad_segment` only; any other kind is `ErrTargetingLookupUnsupported` before any request) and
+`service.ConversionActionReader`, through `createLookupClient`: the CREATE path's resolution
+(`creds.resolve`), so the ids are on the account the create uses. A malformed bound account is
+refused there with `ErrConnectionNotUsable` before any request (so it is not recorded as an
+upstream call); a credential defect is the connection's (`linkedInLookupError`); anything else is
+the platform's.
+
+**LinkedIn conversions (#552).** `linkedinConfig.Conversions` is gated by
+`linkedinConversionsEnabled` (`LINKEDIN_ADS_CONVERSIONS_ENABLED`, off by default) and validated by
+`linkedin.ValidateConversions` in `linkedinConversions`, which `PreflightCreate` (synchronous 400)
+and `Dispatch` (not-created refusal) both run, after `checkConversionsShape` refuses entries that
+are not JSON strings (encoding/json would decode a number to `""`); `Dispatch` keeps the de-duplicated copy for the
+client and the snapshot. `campaignFromLinkedIn` reports a result with `ConversionsFailed` as
+`created_degraded`.

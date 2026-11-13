@@ -1566,3 +1566,135 @@ by its campaign. An over-long labelled name is the same `PreflightRefusal` as an
 with zero requests sent. Pinned by `TestBuildTwitterCampaignName_LabelTokens` and
 `TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest`; see the dispatch concept for the
 dispatcher side.
+
+## Create-time location and language targeting (`create_targeting.go`, #564)
+
+Before #564 the line item was created with NO targeting criteria, and X documents that a line
+item with none "will target all users worldwide". `CampaignInput.GeoTargets` (ISO 3166-1
+alpha-2) and `CampaignInput.Languages` (X language values such as `en`) now add `LOCATION` and
+`LANGUAGE` criteria to the line item THIS call creates. `NormalizeCreateTargeting` holds the
+pure rules once (trim, case-fold, shape, de-duplicate, caps of 50 and 20), so the dispatcher's
+synchronous preflight and `CreateCampaign` cannot disagree.
+
+Resolution is a READ and runs in the pre-create block, after `verifyAccount` and before the
+media upload and the campaign POST, so a value X does not offer is refused with nothing created.
+A country is looked up with `GET targeting_criteria/locations?location_type=COUNTRIES&country_code=XX`
+(not account-scoped) and must answer exactly ONE country-level entry for that code. Both
+spellings of the level are accepted (`COUNTRIES`, the lookup enum; `COUNTRY`, the singular form
+X's criterion echo uses). A city-only answer, two different values, or a second page are refused,
+never guessed. Languages are checked against `GET targeting_criteria/languages`, walked to the end
+under the same short-page rule `findByName` uses. A full page with no usable cursor, the page cap
+or a repeated cursor fails the read rather than reading as "not offered". A lookup that cannot
+be read is a plain error, not a refusal.
+
+The criteria are POSTed one at a time (`createTargetingCriterion`), not through the batch
+endpoint, which needs a JSON body this client does not send. Each one is paced, sent ONCE with
+`operator_type=EQ` and checked against its echo, like the negative-keyword create. They go after
+the line item and BEFORE the promoted tweet. A failure therefore stops the create before the
+one irreversible artifact, a published tweet. It returns the partial result with an error giving
+how many criteria were applied, and says not to enable the line item until its targeting is
+completed. An ambiguous failure (429, 5xx, transport) is worded UNCONFIRMED. The single-create
+example omits `operator_type`, so an absent one reads as EQ.
+
+Because the job message never carries the error's text (`service.DispatchFailureMessage`), every
+targeting stop also appends a step to the partial result, in this client's own words: the applied
+count, the failed criterion's label and state, and the do-not-enable warning (or, on a reused line
+item, why its targeting was not changed). The error wraps `ErrCreateTargetingIncomplete`, which the
+dispatcher maps to `domain.CreateOutcomeCampaignCreatedSetupIncomplete`, so the job reads "created
+the campaign but could not confirm its setup finished" instead of the generic unconfirmed sentence.
+
+A partial create is RETAINED by the orchestrator. Repeating the API request does not re-dispatch
+it; the request answers "reconciliation required". The client-level REUSE path below is therefore
+reached only when a create finds a same-name line item another way, for example after an operator
+reconciles. That path is NOT skipped, because skipping it would promote a tweet on a line item
+that serves worldwide, the outcome this ordering exists to prevent. It works in three steps:
+
+1. Read the line item's `entity_status` (`lineItemEntityStatus`). Reuse does not reset the
+   status, so a reused line item may already be serving, and changing its audience is not this
+   create's to do. A line item that is not `PAUSED`, or whose status cannot be read, stops the
+   create before the tweet with its targeting unchanged. The error names only a documented
+   status (`ACTIVE`, `DRAFT`, `DELETED`), never X's raw text.
+2. Read its live criteria (`ListLineItemTargetingCriteria`). If that read fails, the create also
+   stops before the tweet.
+3. Post only the missing criteria (`missingCriteria`: same type and value, not negated), still
+   before the tweet.
+
+Criteria the line item holds beyond the requested ones are left alone, and `Reused` still makes
+the row `created_degraded`. A country lookup whose FULL page carries no usable cursor is an
+unreadable lookup, not a confirmed "exactly one", which is the language walk's rule too.
+
+Not verified live: no X call was made. The dispatcher keeps both lists behind
+`TWITTER_CREATE_TARGETING_ENABLED` (default off).
+
+## Custom audiences (`custom_audiences.go`, #564 gap 3)
+
+`CampaignInput.CustomAudienceIDs` and `ExcludedCustomAudienceIDs` add `CUSTOM_AUDIENCE` criteria
+to the line item a create makes: `EQ` to target, `NE` to exclude. `ValidateCustomAudienceIDs`
+holds the pure rules once (1-32 letters or digits, compared exactly and never trimmed, at most
+60 per list, no repeat, no id in both lists), so the dispatcher's synchronous preflight and
+`CreateCampaign` cannot disagree.
+
+`CheckCreateCriteriaCount` caps the criteria ONE create posts across all four targeting lists
+(`MaxCreateTargetingCriteria`, 60, counted after de-duplication). Each criterion is its own
+write, paced at one per second, and the whole create runs inside the orchestrator's two-minute
+dispatch budget (`service.providerCallTimeout`). A larger request could not finish and would
+leave a retained PAUSED partial. `TestCreateTargetingCriteriaFitTheDispatchBudget` pins the
+margin against a mirrored copy of that budget.
+
+Before anything is created, `checkCustomAudiences` reads every id in one
+`GET accounts/:id/custom_audiences?custom_audience_ids=…&with_deleted=true` (200 ids per call,
+X's maximum). Every id must come back live and `targetable`. X says a custom audience must be
+targetable to be targeted. A missing, deleted or non-targetable audience is a `PreflightRefusal`
+naming the list and the id, plus X's `reasons_not_targetable` when they are enum-shaped
+(`TOO_SMALL`, `PROCESSING`); any other reason text is dropped. A read that fails or cannot be
+believed is a plain error, and that includes an audience returned without its `deleted` or
+`targetable` flag (absent or null), since the lookup asks for deleted audiences too and a missing
+flag confirms neither. Either way nothing is created.
+
+The criteria go through the same per-criterion POST as the location and language criteria.
+`createCriterion` now carries an operator (`""` reads as EQ). The order is: exclusions first of
+all the criteria, so a create that stops part-way has applied the suppression before any
+inclusion, then locations, languages, and the inclusions last. An `NE` criterion must be echoed
+as `NE`. An echo without `operator_type` reads as X's default EQ, the opposite of the exclusion
+sent, so it is UNCONFIRMED, which is the negative-keyword path's rule. `missingCriteria` compares
+the operator too, and compares a custom audience id exactly (location values and language codes
+still compare ignoring case).
+
+`ListCustomAudiences` backs `GET /projects/{project_id}/twitter-ads/custom-audiences`. It walks
+`custom_audiences?count=1000` by `next_cursor` for at most 10 pages, then returns what it read
+with `truncated` set. Deleted audiences are skipped. An unusable or repeated id, a missing data
+list, a full page with no usable cursor or a repeated cursor (checked before the page cap, so a
+loop on the last allowed page is refused too) fails the whole read
+(`ErrCustomAudiencesMalformed`, a 503), never a partial list.
+
+Not verified live: no X call was made. The dispatcher keeps both the create inputs and the read
+behind `TWITTER_CUSTOM_AUDIENCES_ENABLED` (default off). The audiences belong to the shared LF ad
+account, so the create inputs need `global_marketing_ops` (`service.TwitterMarketingOpsInputs`)
+and the read sits in the gateway's `marketing-ops-api` rule.
+
+## Create-time keywords and interests (`create_targeting.go`, #564 gap 4)
+
+`CampaignInput.Keywords` and `InterestIDs` add `BROAD_KEYWORD` and `INTEREST` criteria (EQ) to
+the line item, through the same per-criterion POST, failure handling and reuse rules as the
+location and language criteria. The order of all criteria is: excluded audiences, locations,
+languages, keywords, interests, included audiences.
+
+`NormalizeKeywordInterestTargeting` holds the pure rules:
+- A keyword is trimmed and must be 1-80 characters with no control character. Duplicates under
+  Unicode simple case folding (`foldKey`, the comparison `strings.EqualFold` makes in the echo
+  and reuse checks) are dropped, so `Σ` and `ς` count once.
+- An interest id is 1-19 decimal digits. Duplicates are dropped.
+- Each list is capped at 60, and the per-create total (`CheckCreateCriteriaCount`) counts them
+  with the other lists.
+
+Interest ids are checked before anything is created against `GET targeting_criteria/interests`.
+The list is walked to its end by `listTargetingValues`, which the language check now shares: a
+full page with no usable cursor, the page cap or a repeated cursor fails the read. An id the list
+does not hold is a refusal, and nothing is created in either case. Keywords need no lookup, since
+the criterion's value is the keyword text. A step names a keyword by its number, never its text
+(the steps are persisted), and the dispatcher reduces a link in a keyword in the stored config
+snapshot.
+
+`followerLookalikeUserIds` from the gap 4 shape is deferred: X has no user lookup to check an id
+before create. Everything here is behind `TWITTER_CREATE_TARGETING_ENABLED` (default off) and is
+not verified live.

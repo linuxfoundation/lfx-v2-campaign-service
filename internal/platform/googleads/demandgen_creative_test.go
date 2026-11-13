@@ -713,7 +713,7 @@ func creativeAt(base string) DemandGenCreative {
 		Headlines:        []string{"Join us at KubeCon"},
 		Descriptions:     []string{"Three days of talks."},
 		BusinessName:     "Linux Foundation",
-		CallToActionText: "Register",
+		CallToActionText: "Learn more",
 	}
 }
 
@@ -786,7 +786,7 @@ func TestCreateDemandGenCampaign_WithCreative(t *testing.T) {
 	if !strings.Contains(adReq, `"businessName":"Linux Foundation"`) {
 		t.Errorf("ad is missing the required business name: %s", adReq)
 	}
-	if !strings.Contains(adReq, `"callToActionText":"Register"`) {
+	if !strings.Contains(adReq, `"callToActionText":"Learn more"`) {
 		t.Errorf("ad is missing the call to action: %s", adReq)
 	}
 	// Created PAUSED like the Search ad, because the status cascade flips it with the

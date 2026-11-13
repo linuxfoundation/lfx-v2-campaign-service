@@ -40,6 +40,10 @@ const (
 	// messages. Optional: with it unset the relay leaves rows pending rather than publishing
 	// messages the indexer would reject for a missing authorization header.
 	EnvIndexerServiceToken = "INDEXER_SERVICE_TOKEN"
+	// EnvIndexerResolveProjectUID, when exactly "true", makes the index relay key each
+	// message's FGA checks on the project UID instead of the slug (#590): OpenFGA keys
+	// projects by UID, so a slug-keyed document is readable by nobody. Default-off.
+	EnvIndexerResolveProjectUID = "INDEXER_RESOLVE_PROJECT_UID"
 	// EnvDatabaseURL is an optional PostgreSQL connection string (DSN).
 	// Prefer composing from PG* variables when running in-cluster.
 	EnvDatabaseURL = "DATABASE_URL"
@@ -108,6 +112,29 @@ const (
 	// default flips and this constant goes away.
 	EnvMicrosoftMetricsEnabled = "MICROSOFT_METRICS_ENABLED"
 
+	// EnvMicrosoftAdCopyEnabled opts a deployment IN to microsoftConfig.headlines, descriptions,
+	// path1 and path2 (#563), the caller copy of the responsive search ad sent instead of the
+	// auto-composed copy. Only the exact value "true" enables them; unset or any other value fails
+	// closed, and a create naming any of them is refused with a 400 before any job exists (and
+	// again at dispatch, before anything upstream).
+	//
+	// It names no account resource: it keeps an UNVERIFIED request shape (built from the v13
+	// ResponsiveSearchAd reference; no live create has sent caller copy or Path1/Path2) off the
+	// shared ad account until a live create confirms it. Turn it on per environment, in
+	// lfx-v2-argocd.
+	EnvMicrosoftAdCopyEnabled = "MICROSOFT_AD_COPY_ENABLED"
+
+	// EnvMicrosoftCreateNegativeKeywordsEnabled opts a deployment IN to
+	// microsoftConfig.negativeKeywords (#563): campaign-level negative keywords attached right
+	// after a Microsoft Advertising campaign is created, through the same AddNegativeKeywordsToEntities
+	// call the add-negative-keywords lever makes. Only the exact value "true" enables it; unset or
+	// any other value fails closed, and a create naming a non-empty list is refused with a 400
+	// before any job exists (and again at dispatch, before anything upstream).
+	//
+	// It names no account resource: it keeps a create-path call that no live create has made off
+	// the shared ad account until one confirms it. Turn it on per environment, in lfx-v2-argocd.
+	EnvMicrosoftCreateNegativeKeywordsEnabled = "MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED"
+
 	// EnvRedditKeywordTargetingWritesEnabled opts a deployment IN to BOTH Reddit ad-group targeting
 	// writes (LFXV2-2665): REMOVING keywords (remove-keyword-targeting) and ADDING negative keywords
 	// to excluded_keywords (add-negative-keywords) — the same whole-targeting PATCH, so one switch.
@@ -162,6 +189,88 @@ const (
 	// sent either field) off the shared ad account until a live create confirms it. Turn it on per
 	// environment, in lfx-v2-argocd.
 	EnvRedditTargetingExclusionsEnabled = "REDDIT_TARGETING_EXCLUSIONS_ENABLED"
+
+	// EnvRedditTargetingResolutionEnabled opts a deployment IN to resolving redditConfig.subreddits
+	// and redditConfig.interests before create (#549 gaps 4 and 8): each community is confirmed
+	// with GET /targeting/communities and each interest resolved to its id with
+	// GET /targeting/interests, as a synchronous 400 for an unknown value (the pre-check fails open
+	// when the lookup cannot run) and again at dispatch, fail-closed, before anything is created.
+	// Only the exact value "true" enables it; unset or any other value keeps the create as before
+	// (values sent as given, with the ad-group 400 fallback). Default off because neither read has
+	// been exercised against a live account; the issue asks for a probe of the interests shape.
+	EnvRedditTargetingResolutionEnabled = "REDDIT_TARGETING_RESOLUTION_ENABLED"
+
+	// EnvTwitterCreateTargetingEnabled opts a deployment IN to twitterConfig.geoTargets and
+	// twitterConfig.languages (#564): country and language targeting criteria added to the line
+	// item an X create makes. Only the exact value "true" enables them; unset or any other value
+	// fails closed, and a create naming either is refused with a 400 before any job exists (and
+	// again at dispatch, before anything upstream).
+	//
+	// It names no account resource: it keeps an UNVERIFIED request shape (built from X's published
+	// v12 reference; no live create has sent a targeting criterion or read the location and
+	// language lookups) off the shared ad account until a live create confirms it. Turn it on per
+	// environment, in lfx-v2-argocd.
+	EnvTwitterCreateTargetingEnabled = "TWITTER_CREATE_TARGETING_ENABLED"
+
+	// EnvTwitterCustomAudiencesEnabled opts a deployment IN to X custom audiences (#564 gap 3): the
+	// create inputs twitterConfig.customAudienceIds / excludedCustomAudienceIds (CUSTOM_AUDIENCE
+	// targeting criteria, EQ and NE, on the new line item) and the picker read
+	// GET /projects/{project_id}/twitter-ads/custom-audiences. Only the exact value "true" enables
+	// them; unset or any other value fails closed: a create that sets either list is refused with
+	// 400 before any job exists, and the read answers 400 "not supported".
+	//
+	// Both shapes come from X's published Ads API v12 reference and have NOT been exercised
+	// against a live ad account. Turn it on in lfx-v2-argocd only after a live create confirms
+	// them. Independent of it, an audience names a resource of the LF ad account every foundation
+	// shares, so the create inputs also require global_marketing_ops
+	// (service.TwitterMarketingOpsInputs) and the read sits in the gateway's marketing-ops-api rule.
+	EnvTwitterCustomAudiencesEnabled = "TWITTER_CUSTOM_AUDIENCES_ENABLED"
+
+	// EnvMetaConversionsMetricsEnabled opts a deployment IN to conversions in the Meta metrics read
+	// (#550 gap 6): for a campaign whose create result records a conversion event (the
+	// conversions objective, #559), the Insights read also requests `actions` and reports the
+	// matching action type's count as conversions. Only the exact value "true" enables it; unset
+	// or any other value keeps the read exactly as before (conversions unavailable, no `actions`
+	// requested). A read-only change, but the event-to-action-type mapping comes from Meta's
+	// reference and has not been checked against a live account, and a wrong mapping would
+	// publish a false zero. Turn it on per environment, in lfx-v2-argocd.
+	EnvMetaConversionsMetricsEnabled = "META_CONVERSIONS_METRICS_ENABLED"
+
+	// EnvMicrosoftAudiencesEnabled opts a deployment IN to microsoftConfig.audienceIds,
+	// excludedAudienceIds and audienceBidAdjustment (#563 gap 4): remarketing lists observed (bid
+	// only) and excluded on the ad group a Microsoft create makes. Only the exact value "true"
+	// enables them; unset or any other value fails closed, and a create naming any of the three is
+	// refused with a 400 before any job exists (and again at dispatch, before anything upstream).
+	//
+	// The shapes come from Microsoft's published Campaign Management v13 reference and have NOT
+	// been exercised against a live account. Independent of it, a remarketing list is a resource of
+	// the LF Microsoft Advertising account every foundation shares, so the lists also require
+	// global_marketing_ops (service.MicrosoftMarketingOpsInputs). Turn it on in lfx-v2-argocd only
+	// after a live create confirms the lookup and the criterion shapes.
+	EnvMicrosoftAudiencesEnabled = "MICROSOFT_AUDIENCES_ENABLED"
+
+	// EnvMicrosoftCreateTargetingEnabled opts a deployment IN to microsoftConfig.excludedGeoTargets,
+	// proximityTargets and languages (#563 gaps 5-6): negative location and radius criteria on the
+	// new campaign, and its ad languages. Only the exact value "true" enables them; unset or any
+	// other value fails closed, and a create naming any of the three is refused with a 400 before
+	// any job exists (and again at dispatch, before anything upstream).
+	//
+	// It names no account resource: it keeps UNVERIFIED request shapes (built from Microsoft's
+	// published Campaign Management v13 reference; no live create has sent them) off the shared
+	// account until a live create confirms them. Turn it on per environment, in lfx-v2-argocd.
+	EnvMicrosoftCreateTargetingEnabled = "MICROSOFT_CREATE_TARGETING_ENABLED"
+
+	// EnvMicrosoftAdExtensionsEnabled opts a deployment IN to microsoftConfig.sitelinks and
+	// microsoftConfig.callouts (#563), created at create time as SitelinkAdExtension and
+	// CalloutAdExtension entries and associated with the new Search campaign. Only the exact value
+	// "true" enables them; unset or any other value fails closed, and a create naming either is
+	// refused with a 400 before any job exists (and again at dispatch, before anything upstream).
+	//
+	// It names no account resource (the extensions are created new for the campaign): it keeps an
+	// UNVERIFIED request shape, built from the v13 Campaign Management reference with no live
+	// create having sent it, off the shared ad account until a live create confirms it. Turn it on
+	// per environment, in lfx-v2-argocd.
+	EnvMicrosoftAdExtensionsEnabled = "MICROSOFT_AD_EXTENSIONS_ENABLED"
 
 	// EnvTwitterMetricsEnabled opts a deployment IN to the two X (Twitter) Ads features built on
 	// X's asynchronous stats-jobs API: the ACCOUNT MONITOR
@@ -286,6 +395,14 @@ const (
 	// off the live ad account until the probe in the field's docs passes. Its ad-segment facets
 	// also require global_marketing_ops on the project (service.LinkedInMarketingOpsInputs).
 	EnvLinkedInAdsTargetingEnabled = "LINKEDIN_ADS_TARGETING_ENABLED"
+
+	// EnvLinkedInAdsConversionsEnabled opts a deployment IN to linkedInConfig.conversions (#552):
+	// conversion rule ids associated with the campaign through Campaign Conversions once it exists.
+	// Only the exact value "true" enables it; unset or any other value fails closed, and a create
+	// naming conversions is refused before a job exists. It keeps an UNVERIFIED request (the
+	// campaignConversions PUT) off the live ad account until the probe in the field's docs passes.
+	// The ids also require global_marketing_ops on the project (service.LinkedInMarketingOpsInputs).
+	EnvLinkedInAdsConversionsEnabled = "LINKEDIN_ADS_CONVERSIONS_ENABLED"
 
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,

@@ -194,7 +194,10 @@ name byte for byte. Every `platformResult` now names its row (`reuseResult` / `i
 `campaign_row_id`, `slot_version`, `variant`, the stored `funnel_stage` / `tactic`, and `reused`
 (true on every reuse path: a retry, a stale new_version, a claim lost to a completed row), and a
 retained partial names the row it was recorded on too;
-`campaign_id` stays the platform's id. `campaignResult` and the indexed `CampaignDoc` gain
+`campaign_id` stays the platform's id, and a retained partial that carries one (a Google Ads
+`campaign_created_setup_incomplete`, say) now reports it on the failed result as well (#576),
+so the operator can find the half-built campaign without searching the ad account; an id-less
+partial leaves it absent (`TestOrchestrator_ARetainedPartialNamesItsUpstreamCampaign`). `campaignResult` and the indexed `CampaignDoc` gain
 `variant`, `funnel_stage`, `tactic` and `created_at`. Pinned by
 `orchestrator_multi_campaign_test.go`, `create_multi_campaign_test.go` and, live,
 `TestLiveRepeatedNewVersionRequestsCreateExactlyOne`.

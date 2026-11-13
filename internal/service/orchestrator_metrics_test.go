@@ -423,11 +423,25 @@ func (d upstreamCapableDispatcher) ListAudiences(context.Context, string, model.
 	return &model.AudienceResources{Audiences: []model.AudienceResource{}}, true, nil
 }
 
+func (d upstreamCapableDispatcher) ListMetaCustomAudiences(context.Context, string, model.Provider) (*model.MetaCustomAudiences, bool, error) {
+	if d.err != nil {
+		return nil, true, d.err
+	}
+	return &model.MetaCustomAudiences{Audiences: []model.MetaCustomAudience{}}, true, nil
+}
+
 func (d upstreamCapableDispatcher) ListRedditCustomAudiences(context.Context, string, model.Provider) (*model.RedditCustomAudiences, bool, error) {
 	if d.err != nil {
 		return nil, true, d.err
 	}
 	return &model.RedditCustomAudiences{Audiences: []model.RedditCustomAudience{}}, true, nil
+}
+
+func (d upstreamCapableDispatcher) ListTwitterCustomAudiences(context.Context, string, model.Provider) (*model.TwitterCustomAudiences, bool, error) {
+	if d.err != nil {
+		return nil, true, d.err
+	}
+	return &model.TwitterCustomAudiences{Audiences: []model.TwitterCustomAudience{}}, true, nil
 }
 
 func (d upstreamCapableDispatcher) SearchEmails(context.Context, string, model.Provider, string) ([]model.MarketingEmail, error) {
@@ -690,10 +704,26 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			},
 		},
 		{
+			name: "list meta custom audiences",
+			op:   opListMetaCustomAudiences,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadMetaCustomAudiences(ctx, "p1", platform)
+				return err
+			},
+		},
+		{
 			name: "list reddit custom audiences",
 			op:   opListRedditCustomAudiences,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ReadRedditCustomAudiences(ctx, "p1", platform)
+				return err
+			},
+		},
+		{
+			name: "list twitter custom audiences",
+			op:   opListTwitterCustomAudiences,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadTwitterCustomAudiences(ctx, "p1", platform)
 				return err
 			},
 		},

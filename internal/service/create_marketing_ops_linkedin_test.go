@@ -21,7 +21,7 @@ func TestLinkedInMarketingOpsInputs(t *testing.T) {
 	}{
 		{"empty", ``, nil},
 		{"no linkedin config", `{"googleAdsConfig":{"demandGenAudience":"a"}}`, nil},
-		{"no targeting", `{"linkedInConfig":{"targetingProfile":"cloud-native"}}`, nil},
+		{"no targeting or conversions", `{"linkedInConfig":{"targetingProfile":"cloud-native"}}`, nil},
 		{"facets only are not gated", `{"linkedInConfig":{"targeting":{"include":[{"skills":["urn:li:skill:1"],"titles":["urn:li:title:2"]}],"exclude":{"employers":["urn:li:organization:3"]}}}}`, nil},
 		{"included matched audience", `{"linkedInConfig":{"targeting":{"include":[{"skills":["urn:li:skill:1"]},{"audienceMatchingSegments":["urn:li:adSegment:9"]}]}}}`,
 			[]string{"linkedInConfig.targeting.include[1].audienceMatchingSegments"}},
@@ -38,6 +38,13 @@ func TestLinkedInMarketingOpsInputs(t *testing.T) {
 		{"envelope key is exact", `{"LinkedInConfig":{"targeting":{"include":[{"dynamicSegments":["urn:li:adSegment:9"]}]}}}`, nil},
 		{"segments around a type error", `{"linkedInConfig":{"budgetUsd":"x","targeting":{"include":[{"dynamicSegments":["urn:li:adSegment:9"]}]}}}`,
 			[]string{"linkedInConfig.targeting.include[0].dynamicSegments"}},
+		{"conversions", `{"linkedInConfig":{"conversions":["104012"]}}`, []string{"linkedInConfig.conversions"}},
+		{"a blank conversion counts", `{"linkedInConfig":{"conversions":[""]}}`, []string{"linkedInConfig.conversions"}},
+		{"an empty conversions list does not count", `{"linkedInConfig":{"conversions":[]}}`, nil},
+		{"case variant conversions key", `{"linkedInConfig":{"Conversions":["1"]}}`, []string{"linkedInConfig.conversions"}},
+		{"conversions around a type error", `{"linkedInConfig":{"budgetUsd":"x","conversions":["1"]}}`, []string{"linkedInConfig.conversions"}},
+		{"conversions and segments are both named", `{"linkedInConfig":{"conversions":["1"],"targeting":{"include":[{"dynamicSegments":["urn:li:adSegment:9"]}]}}}`,
+			[]string{"linkedInConfig.conversions", "linkedInConfig.targeting.include[0].dynamicSegments"}},
 		{"malformed envelope", `{`, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -81,6 +88,70 @@ func TestBriefService_CreateCampaigns_LinkedInSegmentsNeedMarketingOps(t *testin
 		{"both platforms, one check, both named", []string{"google-ads", "linkedin-ads"}, both, &fakeMarketingOps{}, "403", 1,
 			marketingOpsForbiddenMessage([]string{"conversionActions"}) + "; " +
 				linkedInMarketingOpsForbiddenMessage([]string{"linkedInConfig.targeting.exclude.audienceMatchingSegments"})},
+		{"google only keeps its message", []string{"google-ads"}, both, &fakeMarketingOps{}, "403", 1,
+			marketingOpsForbiddenMessage([]string{"conversionActions"})},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, jobs, _ := approvedPaidBriefService(t)
+			s.SetMarketingOpsChecker(tc.checker)
+			_, err := s.CreateCampaigns(ctxWithActor(testActor), &briefs.CreateCampaignsPayload{
+				ProjectID: "cncf", BriefID: "b1",
+				Input: &briefs.CampaignCreateInput{Platforms: tc.platforms, Config: tc.config},
+			})
+			switch tc.wantErr {
+			case "":
+				if err != nil {
+					t.Fatalf("CreateCampaigns = %v, want accepted", err)
+				}
+			case "403":
+				var forbidden *briefs.ForbiddenError
+				if !errors.As(err, &forbidden) || forbidden.Message != tc.wantMsg {
+					t.Fatalf("CreateCampaigns = %T (%v), want a 403 %q", err, err, tc.wantMsg)
+				}
+			case "503":
+				var unavailable *briefs.ConnServiceUnavailableError
+				if !errors.As(err, &unavailable) || !strings.Contains(unavailable.Message, "linkedInConfig") {
+					t.Fatalf("CreateCampaigns = %T (%v), want a 503 naming linkedInConfig", err, err)
+				}
+			}
+			if tc.wantErr != "" && len(jobs.jobs) != 0 {
+				t.Fatalf("%d job(s) created for a refused request", len(jobs.jobs))
+			}
+			if got := len(tc.checker.calls); got != tc.wantCalls {
+				t.Fatalf("checker called %d time(s), want %d", got, tc.wantCalls)
+			}
+		})
+	}
+}
+
+// TestBriefService_CreateCampaigns_LinkedInConversionsNeedMarketingOps drives the #552 gate through
+// CreateCampaigns: linkedInConfig.conversions needs global_marketing_ops, and a request carrying
+// both Google and LinkedIn gated inputs is checked once and names both.
+func TestBriefService_CreateCampaigns_LinkedInConversionsNeedMarketingOps(t *testing.T) {
+	conv := map[string]any{"linkedInConfig": map[string]any{"conversions": []any{"104012"}}}
+	noConv := map[string]any{"linkedInConfig": map[string]any{"targetingProfile": "cloud-native"}}
+	both := map[string]any{
+		"googleAdsConfig": map[string]any{"channel": "search", "conversionActions": []any{"customers/1/conversionActions/2"}},
+		"linkedInConfig":  map[string]any{"conversions": []any{"104012"}},
+	}
+	for _, tc := range []struct {
+		name      string
+		platforms []string
+		config    map[string]any
+		checker   *fakeMarketingOps
+		wantErr   string
+		wantCalls int
+		wantMsg   string
+	}{
+		{"marketing ops may", []string{"linkedin-ads"}, conv, &fakeMarketingOps{allow: true}, "", 1, ""},
+		{"an executive director may not", []string{"linkedin-ads"}, conv, &fakeMarketingOps{}, "403", 1,
+			linkedInMarketingOpsForbiddenMessage([]string{"linkedInConfig.conversions"})},
+		{"no conversions is not checked", []string{"linkedin-ads"}, noConv, &fakeMarketingOps{}, "", 0, ""},
+		{"another platform is not checked", []string{"reddit-ads"}, conv, &fakeMarketingOps{}, "", 0, ""},
+		{"a failed check is unavailable", []string{"linkedin-ads"}, conv, &fakeMarketingOps{allow: true, err: errors.New("nats: timeout")}, "503", 1, ""},
+		{"both platforms, one check, both named", []string{"google-ads", "linkedin-ads"}, both, &fakeMarketingOps{}, "403", 1,
+			marketingOpsForbiddenMessage([]string{"conversionActions"}) + "; " +
+				linkedInMarketingOpsForbiddenMessage([]string{"linkedInConfig.conversions"})},
 		{"google only keeps its message", []string{"google-ads"}, both, &fakeMarketingOps{}, "403", 1,
 			marketingOpsForbiddenMessage([]string{"conversionActions"})},
 	} {

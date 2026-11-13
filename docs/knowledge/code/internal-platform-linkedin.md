@@ -1035,3 +1035,39 @@ read at all — `validatePrerequisites` is skipped, but the org and the employer
 still validated, since both still reach the wire. `SegmentFacetsSet` reports an ad segment
 anywhere; the create path's role gate (`service.LinkedInMarketingOpsInputs`) is pinned to agree
 with the facet list by `TestEveryLinkedInFacetIsClassifiedForTheMarketingOpsGate`.
+
+## Picker lookups (`lookups.go`, #552)
+
+`ListAdSegments` and `ListConversionRules` read the ad segments and conversion rules on the
+client's account for the create-form pickers. Both go through `offsetWalk`, which pages a finder
+by `start`/`count` (100) and NEVER truncates: a short page that still carries a non-empty
+`metadata.nextPageToken` (LinkedIn advertising more results this offset walk would not fetch), a
+page whose first id was already seen (a finder ignoring `start`), a duplicate id, an id that is not a positive long, an element whose `account`
+names another ad account (only when the optional `account` field is present; an absent one is accepted, and the request's account filter is then the only scoping), or more than `MaxLookupRows` (1000) entries fails the read
+(`ErrLookupTooLarge` for the last). The `accounts=List(urn%3Ali%3A…)` value is a Rest.li literal,
+so `accounts` joins `preEncodedParams`. A segment's `facet` is the `linkedInConfig.targeting` key
+it goes under, from its type (RETARGETING → `dynamicSegments`; BULK, MARKET_AUTOMATION and
+BUSINESS_OBJECTIVE_BASED_AUDIENCE → `audienceMatchingSegments`; anything else unclassified).
+EXPIRED and FAILED segments are dropped; ARCHIVED stays, since LinkedIn documents it as usable
+until it expires. The offset parameters are LinkedIn's documented ones but not verified live.
+
+## Conversion association (`conversions.go`, #552)
+
+`CampaignInput.Conversions` carries `linkedInConfig.conversions`, conversion rule ids.
+`ValidateConversions` is the one authority (positive int64 without a leading zero via
+`isPositiveLong`, the URN form refused so there is one spelling, at most `MaxConversions` = 20,
+duplicates dropped); `CreateCampaign` runs it before the campaign group, and the dispatcher's
+`PreflightCreate` runs it for the synchronous 400.
+
+Once the campaign is ensured — created or reused by name — and before images and dark posts,
+`associateConversions` sends one `PUT campaignConversions/(campaign:<urn>,conversion:<urn>)` per
+id, with both URNs percent-encoded by `encodeURNForPath` and `noResponseBody` (LinkedIn answers
+204). `pathValidRE` admits `(`, `)` and `,` for that one Rest.li compound key. A PUT on the key is
+idempotent, so a retry re-associates safely, and `doRequest` retries a PUT's 429 like a GET's. A
+failure does not stop the create: discarding the campaign would orphan one that exists. A campaign
+this run created is PAUSED, so the step says to associate before activating; one reused by name
+keeps its own status, possibly ACTIVE, so its step says it may already be serving without the
+conversion. Each failure is a step naming the
+id and only the HTTP status or transport class (`associationFailureClass`), never LinkedIn's text,
+and the split lands on every later result through `withConversions` as `ConversionsAssociated` /
+`ConversionsFailed`; the dispatcher reports a non-empty `ConversionsFailed` as `created_degraded`.

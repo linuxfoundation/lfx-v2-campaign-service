@@ -309,6 +309,39 @@ func TestBiddingPlan_DemandGenSendsTheProbedPayload(t *testing.T) {
 	}
 }
 
+// The target CPA form is chosen per channel from the 2026-11-11 validateOnly probe (#578):
+// Display, like Demand Gen, refuses maximizeConversions.targetCpaMicros and takes the
+// standalone `targetCpa`, while Search and Performance Max refuse the standalone form and
+// take the folded one. Display's targetless and ROAS strategies keep their probed shapes.
+func TestBiddingPlan_TargetCPAFormIsPerChannel(t *testing.T) {
+	cases := []struct {
+		kind string
+		in   CampaignInput
+		want string
+	}{
+		{campaignKindDisplay, CampaignInput{BiddingStrategy: biddingMaximizeConversions, TargetCPA: 40}, `{"targetCpa":{"targetCpaMicros":40000000}}`},
+		{campaignKindDisplay, CampaignInput{BiddingStrategy: biddingTargetCPA, TargetCPA: 12.5}, `{"targetCpa":{"targetCpaMicros":12500000}}`},
+		{campaignKindDisplay, CampaignInput{BiddingStrategy: biddingMaximizeConversions}, `{"maximizeConversions":{}}`},
+		{campaignKindDisplay, CampaignInput{BiddingStrategy: biddingMaximizeClicks}, `{"targetSpend":{}}`},
+		{campaignKindDisplay, CampaignInput{BiddingStrategy: biddingTargetROAS, TargetROAS: 4}, `{"maximizeConversionValue":{"targetRoas":4}}`},
+		{campaignKindSearch, CampaignInput{BiddingStrategy: biddingTargetCPA, TargetCPA: 25}, `{"maximizeConversions":{"targetCpaMicros":25000000}}`},
+		{campaignKindPerformanceMax, CampaignInput{BiddingStrategy: biddingTargetCPA, TargetCPA: 25}, `{"maximizeConversions":{"targetCpaMicros":25000000}}`},
+	}
+	for _, tc := range cases {
+		plan, err := validateBiddingPlan(tc.kind, biddingTestCustomer, tc.in)
+		if err != nil {
+			t.Fatalf("%s %+v: %v", tc.kind, tc.in, err)
+		}
+		raw, err := json.Marshal(plan.fields())
+		if err != nil {
+			t.Fatalf("%s %+v: marshal: %v", tc.kind, tc.in, err)
+		}
+		if string(raw) != tc.want {
+			t.Errorf("%s %+v: payload %s, want %s", tc.kind, tc.in, raw, tc.want)
+		}
+	}
+}
+
 // A target ROAS is refused on Demand Gen under maximize-conversion-value as well as under
 // target-roas: only the targetless maximizeConversionValue was probed there.
 func TestBiddingPlan_DemandGenRefusesTargetROAS(t *testing.T) {
@@ -399,9 +432,28 @@ func TestBiddingPlan_VideoAcceptsOnlyTheDocumentedPair(t *testing.T) {
 	}
 }
 
+// Display's set was live-verified (#578), and its one refusal, manual CPC, is this client's
+// own limitation: the message says that, and claims neither an unverified set nor a Google
+// refusal that never happened.
+func TestBiddingPlan_DisplayManualCPCRefusalNamesTheClientLimitation(t *testing.T) {
+	_, err := validateBiddingPlan(campaignKindDisplay, biddingTestCustomer, CampaignInput{BiddingStrategy: biddingManualCPC})
+	if err == nil {
+		t.Fatal("accepted manual CPC on Display")
+	}
+	if !strings.Contains(err.Error(), "this client's Display ad group carries no bid to send") {
+		t.Errorf("refusal %v does not name the client limitation", err)
+	}
+	for _, wrong := range []string{"NOT yet verified", "were rejected AFTER the budget was created"} {
+		if strings.Contains(err.Error(), wrong) {
+			t.Errorf("refusal %v says %q, which is not true of Display", err, wrong)
+		}
+	}
+}
+
 // The refusal must say WHY, and the unverified channels' why is not the other channels'.
-// Demand Gen's and Performance Max's sets were settled by a live validateOnly mutate;
-// claiming that for Video or Display would make this client assert a check it never ran.
+// Demand Gen's, Performance Max's and (#578) Display's sets were settled by a live
+// validateOnly mutate; claiming that for Video would make this client assert a check it
+// never ran. Display's one refusal is this client's own limitation and says so.
 // The second half of this test is the regression guard: the unverified clause must not have
 // been swapped IN for the channels that earned the verified one.
 func TestBiddingPlan_UnverifiedRefusalsDoNotClaimLiveVerification(t *testing.T) {
@@ -413,12 +465,10 @@ func TestBiddingPlan_UnverifiedRefusalsDoNotClaimLiveVerification(t *testing.T) 
 	// Keyed by channel so a new unverified channel is added in one place, and so the
 	// listed-set check below runs against that channel's own set rather than a copy.
 	unverifiedChannels := map[string]map[string]bool{
-		campaignKindVideo:   videoBiddingStrategies,
-		campaignKindDisplay: displayBiddingStrategies,
+		campaignKindVideo: videoBiddingStrategies,
 	}
 	for kind, allowed := range unverifiedChannels {
-		// manualCpc is refused on both: Video has no manual bidding at all, and Display
-		// has one Google accepts but this client's ad group carries no bid to send.
+		// manualCpc is refused: Video has no manual bidding at all.
 		_, err := validateBiddingPlan(kind, biddingTestCustomer, CampaignInput{BiddingStrategy: biddingManualCPC})
 		if err == nil {
 			t.Fatalf("accepted manual CPC on %s", kind)

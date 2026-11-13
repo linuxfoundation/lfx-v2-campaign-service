@@ -254,9 +254,19 @@ func ListGoogleAdsAudiencesLfxV2CampaignServiceConnectionsPath(projectID string)
 	return fmt.Sprintf("/projects/%v/google-ads/audiences", projectID)
 }
 
+// ListMetaCustomAudiencesLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-meta-custom-audiences HTTP endpoint.
+func ListMetaCustomAudiencesLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/meta-ads/custom-audiences", projectID)
+}
+
 // ListRedditAdsCustomAudiencesLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-reddit-ads-custom-audiences HTTP endpoint.
 func ListRedditAdsCustomAudiencesLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/reddit-ads/custom-audiences", projectID)
+}
+
+// ListTwitterAdsCustomAudiencesLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-twitter-ads-custom-audiences HTTP endpoint.
+func ListTwitterAdsCustomAudiencesLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/twitter-ads/custom-audiences", projectID)
 }
 
 // GetMetaAdsAudienceLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service get-meta-ads-audience HTTP endpoint.
@@ -272,6 +282,16 @@ func GetTwitterAdsAudienceLfxV2CampaignServiceConnectionsPath(projectID string) 
 // GetLinkedinAdsAudienceLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service get-linkedin-ads-audience HTTP endpoint.
 func GetLinkedinAdsAudienceLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/linkedin-ads/audience", projectID)
+}
+
+// ListLinkedinAdsAudiencesLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-linkedin-ads-audiences HTTP endpoint.
+func ListLinkedinAdsAudiencesLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/linkedin-ads/audiences", projectID)
+}
+
+// ListLinkedinAdsConversionsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-linkedin-ads-conversions HTTP endpoint.
+func ListLinkedinAdsConversionsLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/linkedin-ads/conversions", projectID)
 }
 
 // GetMicrosoftAdsKeywordsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service get-microsoft-ads-keywords HTTP endpoint.

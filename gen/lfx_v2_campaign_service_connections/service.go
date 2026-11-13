@@ -229,6 +229,20 @@ type Service interface {
 	// pure read: the only upstream call is googleAds:search, and nothing is
 	// persisted.
 	ListGoogleAdsAudiences(context.Context, *ListGoogleAdsAudiencesPayload) (res *GoogleAdsAudienceResources, err error)
+	// List the custom audiences (lookalikes included) of the Meta ad account a
+	// Meta create for this project uses, live from the ad account's
+	// customaudiences edge, for picking metaConfig.targeting.customAudiences and
+	// excludedCustomAudiences (#550). Credentials resolve as for a create, so
+	// every id is one the create accepts. q keeps audiences whose name contains
+	// it, ignoring case. Sorted by name, capped at 500 after the q filter, with
+	// `truncated` set when more matched. More than 2000 audiences on the account
+	// fails the read with 503 rather than truncating it, and that 503 does not
+	// clear on retry. The Meta ad account is shared by every foundation, so the
+	// response lists EVERY foundation's audiences, not only this project's; like
+	// list-google-ads-audiences it is therefore gated on global_marketing_ops of
+	// {project_id} (the LF marketing team), not campaign_manager, which also
+	// admits a foundation's executive director. A pure read: nothing is persisted.
+	ListMetaCustomAudiences(context.Context, *ListMetaCustomAudiencesPayload) (res *MetaCustomAudiences, err error)
 	// List the custom audiences on the Reddit ad account a Reddit create for this
 	// project uses, live from Reddit Ads API v3 GET
 	// /ad_accounts/{ad_account_id}/custom_audiences, for picking
@@ -247,6 +261,26 @@ type Service interface {
 	// or repeated id) is 503 with nothing partial. A pure read: nothing is
 	// persisted.
 	ListRedditAdsCustomAudiences(context.Context, *ListRedditAdsCustomAudiencesPayload) (res *RedditAdsCustomAudiences, err error)
+	// List the custom audiences on the X ad account an X create for this project
+	// uses, live from X Ads API v12 GET accounts/:account_id/custom_audiences
+	// (count=1000), for picking twitterConfig.customAudienceIds and
+	// excludedCustomAudienceIds (#564). Follows next_cursor for at most 10 pages;
+	// `truncated` is set when more remained. Deleted audiences are left out; every
+	// other audience is listed, targetable or not, with X's
+	// reasons_not_targetable. Sorted by name, ignoring case, then id. Credentials
+	// resolve as for a create: the project's own X connection, or the LF system
+	// account when the deployment forces it. The X ad account is shared by every
+	// foundation, so the response lists EVERY foundation's audiences; like
+	// list-reddit-ads-custom-audiences it is therefore gated on
+	// global_marketing_ops of {project_id} (the LF marketing team), not
+	// campaign_manager, which also admits a foundation's executive director.
+	// Disabled (400 not supported) unless TWITTER_CUSTOM_AUDIENCES_ENABLED is
+	// "true": the read is built from X's published reference and has not been
+	// exercised against a live ad account. An answer this service cannot believe
+	// (no data list, an unusable or repeated id, a full page with no usable
+	// cursor, a repeated cursor) is 503 with nothing partial. A pure read: nothing
+	// is persisted.
+	ListTwitterAdsCustomAudiences(context.Context, *ListTwitterAdsCustomAudiencesPayload) (res *TwitterAdsCustomAudiences, err error)
 	// Read Meta audience insights — age and gender (one combined breakdown) and
 	// placement (publisher_platform and platform_position) — for this project's
 	// own campaigns, live from the Meta Marketing API Insights edge of the
@@ -307,6 +341,37 @@ type Service interface {
 	// per day, and delays demographics 12-24 hours. Cost is USD (costInUsd). No
 	// conversions. Not gated: LinkedIn has no metrics feature flag.
 	GetLinkedinAdsAudience(context.Context, *GetLinkedinAdsAudiencePayload) (res *LinkedinAdsAudience, err error)
+	// List the ad segments (matched and retargeting audiences) on the LinkedIn ad
+	// account a create for this project uses, live from LinkedIn's Ad Segments
+	// finder, for picking linkedInConfig.targeting audienceMatchingSegments and
+	// dynamicSegments (#552). EXPIRED and FAILED segments are left out.
+	// Credentials resolve as for a LinkedIn create: the project's own connection,
+	// or the shared LF system account when it has none (or when the deployment
+	// forces the LF account), so the ids are on the account the create sends them
+	// to. The LF system account is the fallback of every project without its own
+	// connection, so the read can list resources built for other foundations; it
+	// is therefore gated on global_marketing_ops of {project_id} (the LF marketing
+	// team), not campaign_manager, which also admits a foundation's executive
+	// director. The read pages LinkedIn's finder 100 at a time and never
+	// truncates: more than 1000 entries, a page that repeats an earlier one, or an
+	// entry of another ad account fails it with 503. A pure read: nothing is
+	// persisted.
+	ListLinkedinAdsAudiences(context.Context, *ListLinkedinAdsAudiencesPayload) (res *LinkedinAdsAudienceSegments, err error)
+	// List the conversion rules on the LinkedIn ad account a create for this
+	// project uses, live from LinkedIn's Conversions finder, for picking
+	// linkedInConfig.conversions (#552). Disabled rules are listed with enabled
+	// false. Credentials resolve as for a LinkedIn create: the project's own
+	// connection, or the shared LF system account when it has none (or when the
+	// deployment forces the LF account), so the ids are on the account the create
+	// sends them to. The LF system account is the fallback of every project
+	// without its own connection, so the read can list resources built for other
+	// foundations; it is therefore gated on global_marketing_ops of {project_id}
+	// (the LF marketing team), not campaign_manager, which also admits a
+	// foundation's executive director. The read pages LinkedIn's finder 100 at a
+	// time and never truncates: more than 1000 entries, a page that repeats an
+	// earlier one, or an entry of another ad account fails it with 503. A pure
+	// read: nothing is persisted.
+	ListLinkedinAdsConversions(context.Context, *ListLinkedinAdsConversionsPayload) (res *LinkedinAdsConversionRules, err error)
 	// Read Microsoft Advertising keyword performance for this project's own
 	// campaigns, in the same row shape as get-google-ads-keywords. Scoped to the
 	// campaigns this service holds for the project, NOT to the connected ad
@@ -638,11 +703,19 @@ type Service interface {
 	// because a local delete does not stop the upstream campaign, unless it does
 	// not record account_id as the customer it was created under or another
 	// project has since taken it over; such a campaign is omitted, never a 409.
-	// {project_id} also resolves which stored connection credential reads
-	// account_id. Unlike GET .../connection-google-ads/accounts, this endpoint
-	// resolves the project's OWN connection only and does not fall back to the
-	// shared LF system credential: a project with campaigns but no Google Ads
-	// connection of its own gets a 404, not the LF account's data. A pure read:
+	// account_id is the account to read; omitted, it is the account this project's
+	// campaigns were created under, read from this service's own records: the
+	// response's account_id names it, and an empty account_id with no campaigns
+	// means the project has none recorded on the platform (answered without any
+	// upstream call). Live campaigns created under more than one account, or none
+	// recording one, fail with 409 whether or not account_id is given, until they
+	// are re-dispatched or reconciled onto one account. account_id is read with
+	// the project's own connection when that is configured for it, or when the
+	// shared LF system credential is not; otherwise with the LF system credential,
+	// which is the account campaigns are created in when a project has no
+	// connection of its own (or has disconnected it). The LF system credential
+	// reads only the account it is configured for: a project with no usable
+	// connection of its own, naming any other account, gets a 404. A pure read:
 	// nothing is persisted.
 	MonitorGoogleAdsAccount(context.Context, *MonitorGoogleAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read every campaign visible on a LinkedIn Ads account, live from the
@@ -769,7 +842,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [78]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "list-google-ads-audiences", "list-reddit-ads-custom-audiences", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
+var MethodNames = [82]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "list-google-ads-audiences", "list-meta-custom-audiences", "list-reddit-ads-custom-audiences", "list-twitter-ads-custom-audiences", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "list-linkedin-ads-audiences", "list-linkedin-ads-conversions", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -1938,6 +2011,46 @@ type LinkedinAdsAudienceBucket struct {
 	Ctr float64
 }
 
+type LinkedinAdsAudienceSegment struct {
+	// The ad segment's numeric id
+	ID string
+	// urn:li:adSegment:{id}, in exactly the form linkedInConfig.targeting takes
+	Urn string
+	// The segment's display name. Not an identifier.
+	Name string
+	// LinkedIn's AdSegmentType, verbatim (BULK, RETARGETING, MARKET_AUTOMATION,
+	// BUSINESS_OBJECTIVE_BASED_AUDIENCE, or another LinkedIn adds)
+	Type string
+	// LinkedIn's AdSegmentStatus, verbatim. EXPIRED and FAILED segments are not
+	// listed; BUILDING, UPDATING and ARCHIVED ones are, and only READY serves
+	// today.
+	Status string
+	// The linkedInConfig.targeting key the segment goes under: dynamicSegments for
+	// RETARGETING, audienceMatchingSegments for BULK, MARKET_AUTOMATION and
+	// BUSINESS_OBJECTIVE_BASED_AUDIENCE. Absent for any other type, which this
+	// service does not classify.
+	Facet *string
+	// LinkedIn's approximate member count. Absent when LinkedIn reported none; a
+	// campaign's audience can differ widely once other facets apply.
+	ApproximateMemberCount *int64
+}
+
+// LinkedinAdsAudienceSegments is the result type of the
+// lfx-v2-campaign-service-connections service list-linkedin-ads-audiences
+// method.
+type LinkedinAdsAudienceSegments struct {
+	// The LinkedIn ad account the segments were read from: the account a LinkedIn
+	// create for this project uses
+	AccountID string
+	// The account's targetable segments, sorted by name (ignoring case)
+	Audiences []*LinkedinAdsAudienceSegment
+	// How many segments are in `audiences`
+	AudienceCount int
+	// Always false: the read never truncates (more than 1000 segments fails it
+	// with 503). Kept for shape parity with the Google audience picker.
+	Truncated bool
+}
+
 // LinkedinAdsConnection is the result type of the
 // lfx-v2-campaign-service-connections service create-linkedin-ads method.
 type LinkedinAdsConnection struct {
@@ -1970,6 +2083,35 @@ type LinkedinAdsConnectionConfig struct {
 	// LinkedIn organization ID (the bare NUMERIC id, e.g. 208777 — not the full
 	// urn:li:organization: URN)
 	OrgID string
+}
+
+type LinkedinAdsConversionRule struct {
+	// The conversion rule's numeric id, in exactly the form
+	// linkedInConfig.conversions takes
+	ID string
+	// urn:lla:llaPartnerConversion:{id}
+	Urn string
+	// The rule's display name. Not an identifier.
+	Name string
+	// LinkedIn's conversion type, verbatim (e.g. REGISTRATION, LEAD, PURCHASE);
+	// empty when LinkedIn sent none
+	Type string
+	// Whether the rule is enabled; false when LinkedIn did not say
+	Enabled bool
+}
+
+// LinkedinAdsConversionRules is the result type of the
+// lfx-v2-campaign-service-connections service list-linkedin-ads-conversions
+// method.
+type LinkedinAdsConversionRules struct {
+	// The LinkedIn ad account the rules were read from: the account a LinkedIn
+	// create for this project uses
+	AccountID string
+	// The account's conversion rules, enabled or not, sorted by name (ignoring
+	// case)
+	Conversions []*LinkedinAdsConversionRule
+	// How many rules are in `conversions`
+	ConversionCount int
 }
 
 // LinkedIn Ads credential. Write-only; never returned.
@@ -2078,6 +2220,26 @@ type ListLinkedinAdsAccountsResult struct {
 	Accounts []*AccessibleAccount
 }
 
+// ListLinkedinAdsAudiencesPayload is the payload type of the
+// lfx-v2-campaign-service-connections service list-linkedin-ads-audiences
+// method.
+type ListLinkedinAdsAudiencesPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// ListLinkedinAdsConversionsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service list-linkedin-ads-conversions
+// method.
+type ListLinkedinAdsConversionsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
 // ListMetaAdsAccountsPayload is the payload type of the
 // lfx-v2-campaign-service-connections service list-meta-ads-accounts method.
 type ListMetaAdsAccountsPayload struct {
@@ -2091,6 +2253,18 @@ type ListMetaAdsAccountsPayload struct {
 // lfx-v2-campaign-service-connections service list-meta-ads-accounts method.
 type ListMetaAdsAccountsResult struct {
 	Accounts []*AccessibleAccount
+}
+
+// ListMetaCustomAudiencesPayload is the payload type of the
+// lfx-v2-campaign-service-connections service list-meta-custom-audiences
+// method.
+type ListMetaCustomAudiencesPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Optional case-insensitive name substring to keep
+	Q *string
 }
 
 // ListMicrosoftAdsAccountsPayload is the payload type of the
@@ -2148,6 +2322,16 @@ type ListTwitterAdsAccountsPayload struct {
 // lfx-v2-campaign-service-connections service list-twitter-ads-accounts method.
 type ListTwitterAdsAccountsResult struct {
 	Accounts []*AccessibleAccount
+}
+
+// ListTwitterAdsCustomAudiencesPayload is the payload type of the
+// lfx-v2-campaign-service-connections service
+// list-twitter-ads-custom-audiences method.
+type ListTwitterAdsCustomAudiencesPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
 }
 
 type MarketingEmail struct {
@@ -2258,6 +2442,38 @@ type MetaAdsCredentials struct {
 	AccessToken string
 	// Meta app secret
 	AppSecret string
+}
+
+type MetaCustomAudience struct {
+	// The audience id, exactly what metaConfig.targeting.customAudiences and
+	// excludedCustomAudiences take
+	ID string
+	// The audience's display name. Not an identifier.
+	Name string
+	// Meta's own kind, verbatim (CUSTOM, WEBSITE, LOOKALIKE, ENGAGEMENT, …)
+	Subtype string
+	// The audience's description. Absent when Meta sent none.
+	Description *string
+	// Meta's estimated audience size, lower bound. Absent when Meta reported none.
+	ApproximateCountLowerBound *int64
+	// Meta's estimated audience size, upper bound. Absent when Meta reported none.
+	ApproximateCountUpperBound *int64
+}
+
+// MetaCustomAudiences is the result type of the
+// lfx-v2-campaign-service-connections service list-meta-custom-audiences
+// method.
+type MetaCustomAudiences struct {
+	// The Meta ad account the audiences were read from: the account a Meta create
+	// for this project uses
+	AccountID string
+	// Matching audiences sorted by name (ignoring case), capped at 500 (see
+	// `truncated`)
+	Audiences []*MetaCustomAudience
+	// How many audiences are in `audiences`
+	AudienceCount int
+	// True when more audiences matched than were returned; narrow the search with q
+	Truncated bool
 }
 
 // MicrosoftAdsAudience is the result type of the
@@ -2408,8 +2624,9 @@ type MonitorGoogleAdsAccountPayload struct {
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
 	ProjectID string
-	// The Google Ads account to read.
-	AccountID string
+	// The Google Ads account to read. Optional: omitted, the account this
+	// project's campaigns were created under.
+	AccountID *string
 	// Trailing days to read metrics over.
 	Days int
 }
@@ -3063,6 +3280,41 @@ type TwitterAdsCredentials struct {
 	AccessToken string
 	// OAuth 1.0a access token secret
 	AccessTokenSecret string
+}
+
+type TwitterAdsCustomAudience struct {
+	// The audience id, in exactly the form twitterConfig.customAudienceIds and
+	// excludedCustomAudienceIds accept. Send it as-is.
+	ID string
+	// The audience's display name. Not an identifier; may be empty.
+	Name string
+	// X's audience_type, verbatim (for example WEB, LIST or MOBILE); may be empty.
+	AudienceType string
+	// X's targetable flag. Only a targetable audience is accepted at create; every
+	// audience is listed, so a picker can show why one is not usable yet.
+	Targetable bool
+	// X's audience_size. Absent when X sent none, which is not a size of 0.
+	AudienceSize *int64
+	// X's reasons_not_targetable (for example TOO_SMALL or PROCESSING); only
+	// enum-shaped values are passed through. Empty when targetable.
+	ReasonsNotTargetable []string
+}
+
+// TwitterAdsCustomAudiences is the result type of the
+// lfx-v2-campaign-service-connections service
+// list-twitter-ads-custom-audiences method.
+type TwitterAdsCustomAudiences struct {
+	// The X ad account the audiences were read from: the account an X create for
+	// this project uses
+	AccountID string
+	// The account's non-deleted custom audiences, sorted by name (ignoring case),
+	// then id
+	Audiences []*TwitterAdsCustomAudience
+	// How many audiences are in `audiences`
+	AudienceCount int
+	// True when X still had more pages after the 10 this read follows; the list is
+	// then incomplete
+	Truncated bool
 }
 
 type UnauthorizedError struct {

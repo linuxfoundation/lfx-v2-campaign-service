@@ -1013,6 +1013,13 @@ func isPreSendDialError(err error) bool {
 	return false
 }
 
+// ErrCreateTargetingIncomplete marks a CreateCampaign that stopped at the create-time targeting
+// criteria (#564): the campaign and line item exist, but the line item's targeting was not
+// applied, not confirmed or only partly applied, and nothing was authored or promoted. The partial
+// result's Steps say which, in this client's own words; the marker lets the dispatcher classify
+// the failure without reading the error's text, which can carry an upstream body.
+var ErrCreateTargetingIncomplete = errors.New("twitter: the line item's create-time targeting is incomplete")
+
 // createOutcomeAmbiguous reports whether a failed MUTATING request MAY have been
 // applied by X despite the error — i.e. the request plausibly reached the server
 // and its outcome is unknowable. Callers on the create path use it to decide
@@ -3305,6 +3312,31 @@ type CampaignInput struct {
 	StageToken string
 	Tactic     string
 	SlotToken  string
+	// GeoTargets (ISO 3166-1 alpha-2 country codes) and Languages (X language values) target the
+	// line item THIS call creates (#564; create_targeting.go). Both are normalized by
+	// NormalizeCreateTargeting and resolved against X's targeting_criteria lookups before anything
+	// is created, then sent as LOCATION / LANGUAGE criteria after the line item and before the
+	// promoted tweet. Empty means no criterion of that type: the line item serves worldwide / in
+	// every language, exactly as before. A REUSED line item that is still PAUSED gets only the
+	// requested criteria it does not already hold, before the tweet; one that is not PAUSED, or
+	// whose status or criteria cannot be read, stops the create before the tweet.
+	GeoTargets []string
+	Languages  []string
+	// CustomAudienceIDs and ExcludedCustomAudienceIDs (#564 gap 3; custom_audiences.go) are X
+	// custom audience ids, sent as CUSTOM_AUDIENCE criteria on the line item: EQ to target, NE to
+	// exclude. Checked by ValidateCustomAudienceIDs and confirmed live and targetable on the ad
+	// account before anything is created. The exclusions are posted first of all the criteria,
+	// and the inclusions last, after the location and language criteria. Empty means no custom
+	// audience criterion, as before.
+	CustomAudienceIDs         []string
+	ExcludedCustomAudienceIDs []string
+	// Keywords and InterestIDs (#564 gap 4) add BROAD_KEYWORD and INTEREST criteria (EQ) to the
+	// line item, after the languages and before the included custom audiences. They are checked
+	// by NormalizeKeywordInterestTargeting; each interest id must be listed by
+	// GET targeting_criteria/interests before anything is created. Empty means no criterion of
+	// that type, as before.
+	Keywords    []string
+	InterestIDs []string
 }
 
 // manualMaxBidMicros encodes a create-time manual bid in micro-units, refusing (never rounding)
@@ -3587,6 +3619,29 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
+	// Create-time targeting (#564): the pure rules first, here, with the other caller checks;
+	// X's lookups run below, once the account config is known to be usable.
+	geoTargets, languages, terr := NormalizeCreateTargeting(in.GeoTargets, in.Languages)
+	if terr != nil {
+		// Fixed text plus CallerValue-rendered entries: operator-safe.
+		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", terr.Error())
+	}
+	// Custom audiences (#564 gap 3): the id rules here; the live check runs below with the lookups.
+	if aerr := ValidateCustomAudienceIDs(in.CustomAudienceIDs, in.ExcludedCustomAudienceIDs); aerr != nil {
+		// Fixed text naming the list and a position, never a value: operator-safe.
+		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", aerr.Error())
+	}
+	// Keywords and interests (#564 gap 4), the same way.
+	keywords, interestIDs, kerr := NormalizeKeywordInterestTargeting(in.Keywords, in.InterestIDs)
+	if kerr != nil {
+		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", kerr.Error())
+	}
+	// And all the criteria together must fit the paced-write budget (MaxCreateTargetingCriteria).
+	if cerr := CheckCreateCriteriaCount(len(geoTargets) + len(languages) + len(keywords) + len(interestIDs) + len(in.CustomAudienceIDs) + len(in.ExcludedCustomAudienceIDs)); cerr != nil {
+		// Fixed text and counts only: operator-safe.
+		return nil, domain.PreflightRefusalf("invalid twitterConfig: %s", cerr.Error())
+	}
+
 	// Validate required account config before any mutating call. account_id and
 	// funding_instrument_id are both required by the X Ads campaign-create
 	// contract, but a stored connection may persist them as empty (or
@@ -3637,6 +3692,23 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	// Step 1: verify account (non-fatal).
 	c.verifyAccount(ctx, &steps)
+
+	// Step 1a: resolve the create-time targeting against X's lookups (reads). A value X does not
+	// offer, or a lookup that could not be read, stops the create HERE, with nothing created.
+	criteria, err := c.resolveCreateTargeting(ctx, geoTargets, languages, keywords, interestIDs)
+	if err != nil {
+		return nil, err
+	}
+	// Step 1a': the custom audiences (#564 gap 3) must each be live and targetable on this ad
+	// account, also before anything is created. Exclusions go first among all the criteria, so a
+	// create that stops part-way has applied the suppression before any inclusion.
+	if len(in.CustomAudienceIDs) > 0 || len(in.ExcludedCustomAudienceIDs) > 0 {
+		if err := c.checkCustomAudiences(ctx, in.CustomAudienceIDs, in.ExcludedCustomAudienceIDs); err != nil {
+			return nil, err
+		}
+		excluded, included := customAudienceCriteria(in.CustomAudienceIDs, in.ExcludedCustomAudienceIDs)
+		criteria = append(append(excluded, criteria...), included...)
+	}
 
 	// Step 1b: the creative image, BEFORE anything billable exists (media.go). A failure here
 	// is (nil, err): no campaign, line item or tweet has been created, and a library entry this
@@ -3856,6 +3928,62 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			steps = append(steps, fmt.Sprintf("Line item created: %s (PAUSED, ALL_ON_TWITTER, MAX bid %s per link click)", lineItemID, strconv.FormatFloat(in.MaxBid, 'f', -1, 64)))
 		} else {
 			steps = append(steps, fmt.Sprintf("Line item created: %s (PAUSED, ALL_ON_TWITTER, AUTO bid)", lineItemID))
+		}
+	}
+
+	// Step 3b: the create-time targeting criteria (#564), BEFORE any tweet is authored or
+	// promoted: a create whose targeting failed must not publish a tweet, the one artifact a retry
+	// cannot take back. On a REUSED line item — typically the retry of a create whose targeting
+	// stopped part-way — the criteria it already holds are read back first and only the missing
+	// ones are posted, so the retry finishes the targeting instead of promoting a tweet on a line
+	// item that serves worldwide. A read that fails stops the create here, before the tweet.
+	if len(criteria) > 0 {
+		pending := criteria
+		if lineItemReused {
+			// Only a PAUSED line item is re-targeted. Reuse does not reset entity_status, so a
+			// reused line item may already be serving its earlier promoted tweet; adding criteria
+			// to it changes a live audience, and a failure part-way would leave that audience
+			// half-changed. Not PAUSED, or a status that cannot be read, is for an operator.
+			status, serr := c.lineItemEntityStatus(ctx, lineItemID)
+			if serr != nil {
+				steps = append(steps, fmt.Sprintf("Targeting NOT applied to reused line item %s: its status could not be read, so its targeting was not changed and nothing was authored or promoted; verify the line item in X Ads Manager", lineItemID))
+				return partialResult(), fmt.Errorf("x targeting not confirmed (%s, %s; its status could not be read, so its targeting was not changed and nothing was authored or promoted): verify the line item in X Ads Manager: %w: %w",
+					campaignStatus(), lineItemStatus(), ErrCreateTargetingIncomplete, serr)
+			}
+			if status != "PAUSED" {
+				// X's status is upstream text: only a value from X's documented set is named.
+				shown := "in an unrecognised state"
+				switch status {
+				case "ACTIVE", "DRAFT", "DELETED":
+					shown = status
+				}
+				steps = append(steps, fmt.Sprintf("Targeting NOT applied to reused line item %s: it is %s, not PAUSED, so its targeting was not changed and nothing was authored or promoted; reconcile its targeting in X Ads Manager", lineItemID, shown))
+				return partialResult(), fmt.Errorf("x targeting not applied (%s, %s; it is %s, not PAUSED, so its targeting was not changed and nothing was authored or promoted): reconcile the line item's targeting in X Ads Manager: %w",
+					campaignStatus(), lineItemStatus(), shown, ErrCreateTargetingIncomplete)
+			}
+			live, lerr := c.ListLineItemTargetingCriteria(ctx, lineItemID)
+			if lerr != nil {
+				steps = append(steps, fmt.Sprintf("Targeting NOT confirmed on reused line item %s: its existing targeting criteria could not be read, so nothing was authored or promoted; verify its targeting in X Ads Manager before retrying", lineItemID))
+				return partialResult(), fmt.Errorf("x targeting not confirmed (%s, %s; its existing targeting criteria could not be read, so nothing was authored or promoted): verify the line item's targeting in X Ads Manager before retrying: %w: %w",
+					campaignStatus(), lineItemStatus(), ErrCreateTargetingIncomplete, lerr)
+			}
+			pending = missingCriteria(criteria, live)
+			if have := len(criteria) - len(pending); have > 0 {
+				steps = append(steps, fmt.Sprintf("Reused line item %s already holds %d of the %d requested targeting criteria; adding the other %d", lineItemID, have, len(criteria), len(pending)))
+			}
+		}
+		for i, cr := range pending {
+			if err := c.createTargetingCriterion(ctx, lineItemID, cr); err != nil {
+				state := "failed"
+				if createOutcomeAmbiguous(err) {
+					state = "UNCONFIRMED (it may have been applied)"
+				}
+				applied := len(criteria) - len(pending) + i
+				steps = append(steps, fmt.Sprintf("Targeting INCOMPLETE on line item %s: %d of %d criteria applied, %s %s; nothing was authored or promoted. Do not enable the line item until its targeting is completed in X Ads Manager", lineItemID, applied, len(criteria), cr.label, state))
+				return partialResult(), fmt.Errorf("x targeting incomplete (%s, %s; %d of %d criteria applied, %s %s): do not enable the line item until its targeting is completed in X Ads Manager: %w: %w",
+					campaignStatus(), lineItemStatus(), applied, len(criteria), cr.label, state, ErrCreateTargetingIncomplete, err)
+			}
+			steps = append(steps, fmt.Sprintf("Targeting added to line item %s: %s", lineItemID, cr.label))
 		}
 	}
 

@@ -91,7 +91,7 @@ func (d *RedditDispatcher) checkRedditAssetChoice(cfg redditConfig) (string, err
 // never calls Reddit, so every other outcome is ErrPreflightNotApplicable. Whether the asset belongs to the brief cannot be checked here (the
 // pre-check is not given the brief); Dispatch checks it before any upstream call. A config that does
 // not decode is left to Dispatch, except a wrong-typed `bidding` (checkBiddingShape).
-func (d *RedditDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
+func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string, platform model.Provider, config json.RawMessage) error {
 	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
 	if err := checkBiddingShape(config, "redditConfig"); err != nil {
 		return err
@@ -136,6 +136,12 @@ func (d *RedditDispatcher) PreflightCreate(_ context.Context, _ string, _ model.
 	}
 	if _, err := d.checkRedditAssetChoice(cfg); err != nil {
 		return err
+	}
+	// Community and interest resolution (#549 gaps 4 and 8): the one check here that reads
+	// Reddit, so it runs last, after every refusal decidable from the config alone. Behind
+	// REDDIT_TARGETING_RESOLUTION_ENABLED; see reddit_targeting_resolution.go.
+	if needsRedditTargetingResolution(cfg) {
+		return d.preflightRedditTargeting(ctx, projectID, platform, cfg)
 	}
 	return domain.ErrPreflightNotApplicable
 }

@@ -150,6 +150,13 @@ type CampaignInput struct {
 	// the minimum, not rejected. Leave both slices empty to auto-compose entirely.
 	Headlines    []string
 	Descriptions []string
+	// Path1 and Path2 are the OPTIONAL display-URL path segments of the responsive search ad
+	// (#563), appended to the final URL's domain in the shown URL. At most 15 characters each (7
+	// with a double-width character), one segment each (no "/"), Path2 only with Path1, and the
+	// domain plus "/Path1/Path2" at most 67 characters (33 with a double-width character) — see
+	// validatePaths and displayURL. Empty sends neither, the ad this client always created.
+	Path1 string
+	Path2 string
 	// Keywords are the positive Search keywords attached to the created ad group (MS-4).
 	// WITHOUT AT LEAST ONE, THE CAMPAIGN CAN NEVER SERVE: a Search ad group with no keywords
 	// has nothing to match a query against, so the tree is structurally complete and
@@ -191,6 +198,17 @@ type CampaignInput struct {
 	// Validated before anything is created — see validateFlightDates.
 	StartDate string
 	EndDate   string
+	// ExcludedGeoTargets (ISO 3166-1 alpha-2), ProximityTargets (radius targets) and Languages
+	// (Search campaign languages) are the create-time targeting of #563 gaps 5 and 6
+	// (create_targeting.go), checked by ValidateCreateTargeting. The excluded codes are resolved to
+	// LocationIds before anything is created; the exclusions and radii are attached to the campaign
+	// right after the positive geoTargets, under the same fail-closed rules; Languages is set on the
+	// new campaign, and its ad group is then created without a Language. All three apply only to a
+	// campaign this run creates: on a campaign found by name the create stops before the ad group.
+	// Empty keeps the earlier behaviour exactly.
+	ExcludedGeoTargets []string
+	ProximityTargets   []ProximityTarget
+	Languages          []string
 }
 
 // CampaignResult reports what CreateCampaign created (or found). The campaign NAME
@@ -213,6 +231,10 @@ type CampaignResult struct {
 	// id is known is reconcilable by name (scoped to the campaign).
 	AdGroupName string `json:"adGroupName,omitempty"`
 	AdGroupID   string `json:"adGroupId,omitempty"`
+	// AdGroupReused is true when the ad group was FOUND by name (an earlier attempt made it)
+	// rather than created by this run. Its settings are then whatever they are now, which is why
+	// the create-time observed remarketing lists (#563) are not attached to it.
+	AdGroupReused bool `json:"adGroupReused,omitempty"`
 	// AdID identifies the Responsive Search Ad created under the ad group.
 	AdID string `json:"adId,omitempty"`
 	// KeywordIDs are the ids of the keywords THIS RUN attached to the ad group by the MS-4
@@ -249,6 +271,10 @@ type CampaignResult struct {
 	// targeting — and that case cannot reach a successful result, because a geo attach failure
 	// on a created campaign is returned as an error with a partial, never as a clean success.
 	GeoCriterionIDs []string `json:"geoCriterionIds,omitempty"`
+	// ExcludedGeoCriterionIDs and RadiusCriterionIDs are the negative location and radius
+	// criteria THIS RUN attached to the campaign (#563), set like GeoCriterionIDs.
+	ExcludedGeoCriterionIDs []string `json:"excludedGeoCriterionIds,omitempty"`
+	RadiusCriterionIDs      []string `json:"radiusCriterionIds,omitempty"`
 	// AlreadyExisted is true ONLY when this run created NOTHING — i.e. the campaign, the ad
 	// group, AND the ad were all matched as pre-existing (by name / by destination) and no
 	// create was issued at any level. If ANY level was created this run, it is false, even
@@ -273,10 +299,26 @@ type CampaignResult struct {
 	// MediaID is "" when nothing was uploaded (no image requested, or an extension was
 	// already associated), and either may be set alongside a degraded outcome so a
 	// partially-built extension can be found.
-	ImageMediaID       string   `json:"imageMediaId,omitempty"`
-	ImageAdExtensionID string   `json:"imageAdExtensionId,omitempty"`
-	MicrosoftAdsURL    string   `json:"microsoftAdsUrl"`
-	Steps              []string `json:"steps"`
+	ImageMediaID       string `json:"imageMediaId,omitempty"`
+	ImageAdExtensionID string `json:"imageAdExtensionId,omitempty"`
+	// SitelinkAdExtensionIDs / CalloutAdExtensionIDs are the sitelink and callout extensions
+	// THIS RUN created and associated with the campaign (#563), set by the DISPATCHER after
+	// AttachCampaignTextExtensions. Empty does not mean the campaign has none: a type it
+	// already had is skipped, and the Steps entry says so.
+	SitelinkAdExtensionIDs []string `json:"sitelinkAdExtensionIds,omitempty"`
+	CalloutAdExtensionIDs  []string `json:"calloutAdExtensionIds,omitempty"`
+	// NegativeKeywords is the positional outcome of the create-time campaign negatives
+	// (microsoftConfig.negativeKeywords, #563), one entry per requested keyword in request
+	// order. Like the image ids it is set by the DISPATCHER after AddCampaignNegativeKeywords —
+	// CreateCampaign never sets it — and it is empty when none were requested or the call
+	// failed as a whole (the Steps entry then says why).
+	NegativeKeywords []NegativeKeywordOutcome `json:"negativeKeywords,omitempty"`
+	// Audiences is the positional outcome of the create-time remarketing lists
+	// (microsoftConfig.excludedAudienceIds then audienceIds, #563 gap 4) on the ad group. Set by
+	// the DISPATCHER after AttachAdGroupAudiences; empty when none were requested.
+	Audiences       []AudienceOutcome `json:"audiences,omitempty"`
+	MicrosoftAdsURL string            `json:"microsoftAdsUrl"`
+	Steps           []string          `json:"steps"`
 }
 
 // msCampaign is one Campaign in the POST CampaignManagement/v13/Campaigns body. Only
@@ -294,8 +336,9 @@ type msCampaign struct {
 	// BiddingScheme is omitted when nil, leaving Microsoft's Search default (EnhancedCpc) — the
 	// exact body this client sent before LFXV2-2665.
 	BiddingScheme *msBiddingScheme `json:"BiddingScheme,omitempty"`
-	// Languages and other targeting are intentionally omitted for the PAUSED shell;
-	// they are set in a later slice.
+	// Languages is the campaign's ad languages (#563), omitted unless the caller sent
+	// microsoftConfig.languages; the ad group then carries no Language of its own.
+	Languages []string `json:"Languages,omitempty"`
 }
 
 // msBiddingScheme is the campaign's BiddingScheme as the REST JSON names it: a polymorphic object
@@ -536,6 +579,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// near-impossibility (validateAdURL already accepted the raw URL and buildAdFinalURL only
 	// re-encoded the query), but fail CLOSED rather than silently skip the display-domain cap:
 	// a skipped check is the exact orphan-after-AddAds risk this block exists to prevent.
+	// The display paths are checked before the display domain, which they extend.
+	path1, path2, err := validatePaths(in.Path1, in.Path2)
+	if err != nil {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("microsoft-ads campaign ad copy invalid: %w", err))
+	}
+	in.Path1, in.Path2 = path1, path2
 	u, perr := url.Parse(finalURL)
 	if perr != nil {
 		return nil, fmt.Errorf("microsoft-ads could not parse the composed ad final URL to validate its display domain: %w", perr)
@@ -575,6 +624,22 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if n := utf8.RuneCountInString(authority); n > limit {
 			return nil, fmt.Errorf("microsoft-ads ad display domain %q is %d characters, exceeding the %d limit (use a shorter registration URL host)", truncate(authority, maxErrorBodyChars), n, limit)
 		}
+		// The display paths (#563) share the same budget: Microsoft measures the domain WITH
+		// "/Path1/Path2", so a host that fits alone can still overflow once paths are added and
+		// be refused only at AddAds, after the campaign and ad group exist.
+		if path1 != "" {
+			shown := displayURL(authority, path1, path2)
+			pathLimit := maxDisplayDomainRunes
+			if hasDoubleWidth(shown) {
+				pathLimit = maxDisplayDomainRunesWide
+			}
+			if n := utf8.RuneCountInString(shown); n > pathLimit {
+				// The host is caller-supplied, so it is quoted only through domain.CallerValue: this
+				// sentence reaches the job result verbatim, and a host label can carry a token.
+				return nil, domain.PreflightRefusalf("microsoft-ads ad display URL (domain %s plus path1/path2) is %d characters, exceeding the %d limit; shorten path1/path2",
+					domain.CallerValue(authority), n, pathLimit)
+			}
+		}
 	}
 	// Validate caller-supplied ad copy up front too (over-count / over-long headlines or
 	// descriptions), so a bad copy input fails cleanly before the campaign is created rather
@@ -605,6 +670,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	geoCodes, err := validateGeoTargets(in.GeoTargets)
 	if err != nil {
 		return nil, domain.WrapPreflightRefusal(fmt.Errorf("microsoft-ads campaign geo targets invalid: %w", err))
+	}
+	// The excluded countries, radius targets and languages (#563), likewise pure and offline.
+	extra, err := ValidateCreateTargeting(in.GeoTargets, in.ExcludedGeoTargets, in.ProximityTargets, in.Languages)
+	if err != nil {
+		return nil, domain.PreflightRefusalf("invalid microsoftConfig.%s", err.Error())
 	}
 
 	// Flight dates go on the ad group, which is created only AFTER the campaign, so a date that
@@ -652,6 +722,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	geoLocationIDs, err := c.resolveGeoTargets(ctx, geoCodes)
 	if err != nil {
 		return nil, fmt.Errorf("microsoft-ads campaign geo targeting could not be resolved (nothing was created): %w", err)
+	}
+	// The excluded countries resolve through the same file, also before anything is created, so a
+	// code that does not resolve leaves no campaign to reconcile.
+	excludedLocationIDs, err := c.resolveGeoTargets(ctx, extra.ExcludedGeoTargets)
+	if err != nil {
+		return nil, fmt.Errorf("microsoft-ads campaign geo exclusions could not be resolved (nothing was created): %w", err)
 	}
 
 	// Step 1: idempotency lookup by the deterministic (case-insensitively unique) name,
@@ -709,6 +785,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				Status:        campaignStatusPaused,
 				TimeZone:      timeZone,
 				BiddingScheme: biddingScheme,
+				Languages:     extra.Languages,
 			}},
 		}
 		respBody, err := c.doRequest(ctx, http.MethodPost, "Campaigns", req, false)
@@ -769,12 +846,36 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// clean success path sets AlreadyExisted, and only when ALL three levels pre-existed.
 	// geoCriterionIDs accumulates the ids of the location criteria attached below, so a later
 	// ad-group/ad failure still reports the targeting this run put on the campaign.
-	var geoCriterionIDs []string
+	var geoCriterionIDs, excludedCriterionIDs, radiusCriterionIDs []string
 	campaignPartial := func() *CampaignResult {
 		r := namePartial()
 		r.CampaignID = campaignID
 		r.GeoCriterionIDs = geoCriterionIDs
+		r.ExcludedGeoCriterionIDs = excludedCriterionIDs
+		r.RadiusCriterionIDs = radiusCriterionIDs
 		return r
+	}
+
+	// Step 2.4 (#563): the excluded countries, radius targets and languages are applied only to a
+	// campaign THIS RUN created. A campaign found by name may be serving, and its exclusions,
+	// radii and languages are whatever an operator left; changing them is not a retry's call, and
+	// creating an ad group under it with no Language could leave the ad group languageless or
+	// (with English) mask the campaign's languages. So the create stops here, before the ad group,
+	// with the campaign reported for reconciliation.
+	if alreadyExisted && !extra.Empty() {
+		var fields []string
+		if len(extra.ExcludedGeoTargets) > 0 {
+			fields = append(fields, FieldExcludedGeoTargets)
+		}
+		if len(extra.ProximityTargets) > 0 {
+			fields = append(fields, FieldProximityTargets)
+		}
+		if len(extra.Languages) > 0 {
+			fields = append(fields, FieldLanguages)
+		}
+		steps = append(steps, fmt.Sprintf("Stopped before the ad group: campaign %s was found by name (an earlier attempt made it), and %s are applied only to a campaign this run creates; check its exclusions, radius targets and languages in Microsoft Advertising and finish the campaign there", campaignID, strings.Join(fields, ", ")))
+		return campaignPartial(), fmt.Errorf("microsoft-ads create-time targeting NOT applied to reused campaign %s (%s are set only on a campaign this run creates; nothing below the campaign was created): verify the campaign in Microsoft Advertising",
+			campaignID, strings.Join(fields, ", "))
 	}
 
 	// Step 2.5: attach the CAMPAIGN-level location criteria, before the ad-group cascade.
@@ -883,6 +984,30 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
+	// Step 2.6 (#563): the exclusions, then the radius targets, on the campaign this run created
+	// (a reused one stopped above), before the ad group. Fail-closed like the positive geo: a
+	// campaign whose exclusions did not land would serve where the caller excluded, so any failure
+	// is an error with the partial, never a warning.
+	if len(excludedLocationIDs) > 0 {
+		ids, xerr := c.createExcludedLocationCriterions(ctx, campaignID, excludedLocationIDs)
+		excludedCriterionIDs = ids
+		if xerr != nil {
+			return campaignPartial(), criterionStepError(campaignID, "geo exclusions", "would serve in the excluded countries if enabled", len(ids), len(excludedLocationIDs), xerr)
+		}
+		steps = append(steps, fmt.Sprintf("Geo exclusions attached: %d excluded location criteria (%s)", len(ids), strings.Join(extra.ExcludedGeoTargets, ", ")))
+	}
+	if len(extra.ProximityTargets) > 0 {
+		ids, rerr := c.createRadiusCriterions(ctx, campaignID, extra.ProximityTargets)
+		radiusCriterionIDs = ids
+		if rerr != nil {
+			return campaignPartial(), criterionStepError(campaignID, "radius targeting", "would not serve in the requested radii (or would serve more widely) if enabled", len(ids), len(extra.ProximityTargets), rerr)
+		}
+		steps = append(steps, fmt.Sprintf("Radius targeting attached: %d radius criteria (%s)", len(ids), proximityLabel(extra.ProximityTargets)))
+	}
+	if len(extra.Languages) > 0 {
+		steps = append(steps, fmt.Sprintf("Campaign languages set: %s (the ad group carries no language of its own, so these apply)", strings.Join(extra.Languages, ", ")))
+	}
+
 	// Steps 3-4: complete the Campaign -> AdGroup -> Ad hierarchy (all PAUSED) so the
 	// result is a usable paused campaign rather than an empty shell.
 	// The VALIDATED targeting values are threaded through rather than re-derived downstream:
@@ -890,7 +1015,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// up-front check and the sent value drift apart, and the up-front check is the one that
 	// guarantees nothing is orphaned.
 	return c.createAdGroupAndAd(ctx, in, campaignID, alreadyExisted, &steps, campaignPartial,
-		targeting{keywords: keywords, cpcBid: cpcBid, cpcBidSet: cpcBidSet, flight: flightDates})
+		targeting{keywords: keywords, cpcBid: cpcBid, cpcBidSet: cpcBidSet, flight: flightDates, campaignLanguages: len(extra.Languages) > 0})
 }
 
 // findCampaignByName returns the id of the campaign whose Name matches name, or "" if

@@ -677,3 +677,22 @@ func TestLoadCampaignJobRetentionFromEnv(t *testing.T) {
 	assert.Equal(t, time.Duration(0), loadConfig().CampaignJobRetention,
 		"an unparseable window must fall back to the repository default, never to a short window")
 }
+
+// INDEXER_RESOLVE_PROJECT_UID reaches Config through LoadConfig, and only the exact string
+// "true" turns it on (#590): any other value is off, so a typo cannot enable it.
+func TestLoadIndexerResolveProjectUIDFromEnv(t *testing.T) {
+	loadConfig := func() *Config {
+		t.Helper()
+		orig := flag.CommandLine
+		origArgs := os.Args
+		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+		os.Args = []string{origArgs[0]}
+		defer func() { flag.CommandLine, os.Args = orig, origArgs }()
+		return LoadConfig()
+	}
+	assert.Equal(t, "INDEXER_RESOLVE_PROJECT_UID", constants.EnvIndexerResolveProjectUID)
+	for value, want := range map[string]bool{"true": true, "TRUE": false, "1": false, "": false, "false": false} {
+		t.Setenv(constants.EnvIndexerResolveProjectUID, value)
+		assert.Equal(t, want, loadConfig().IndexerResolveProjectUID, "value %q", value)
+	}
+}

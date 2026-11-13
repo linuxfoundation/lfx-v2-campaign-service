@@ -51,7 +51,14 @@ func TestMonitorAccountIDPatterns_MatchPlatformValidators(t *testing.T) {
 	t.Run("google ads", func(t *testing.T) {
 		decodeOK := monitorDecoderChecker(t, "/connection-google-ads/account-monitor",
 			connsrv.MountMonitorGoogleAdsAccountHandler, connsrv.DecodeMonitorGoogleAdsAccountRequest)
-		cases := []string{"8666746580", "0", "", "12-34", "abc123", "8666746580 ", " 8666746580", "123abc", "8666746580/", "\t8666746580", "8666746580\n"}
+		// "" is not compared: account_id is optional on this endpoint (#591), and the decoder
+		// reads an empty query value as the parameter being absent, which the handler answers by
+		// naming the customer the project's campaigns record. It never reaches
+		// googleads.ValidateCustomerID as "".
+		if !decodeOK("") {
+			t.Errorf(`account_id "": design decoder refused it, want it read as absent (account_id is optional)`)
+		}
+		cases := []string{"8666746580", "0", "12-34", "abc123", "8666746580 ", " 8666746580", "123abc", "8666746580/", "\t8666746580", "8666746580\n"}
 		for _, id := range cases {
 			designOK := decodeOK(id)
 			platformOK := googleads.ValidateCustomerID(id) == nil

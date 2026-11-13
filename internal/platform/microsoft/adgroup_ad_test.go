@@ -1496,6 +1496,11 @@ func TestCreateCampaign_DuplicateAdGroupReconciledAsExisting(t *testing.T) {
 	if res.AdGroupID != "111" {
 		t.Errorf("AdGroupID = %q, want the reconciled 111", res.AdGroupID)
 	}
+	// A reconciled (found) ad group is reported as reused, so the create-time observed
+	// remarketing lists (#563) are not attached to settings this run never set.
+	if !res.AdGroupReused {
+		t.Error("AdGroupReused = false for an ad group found by name, want true")
+	}
 }
 
 // TestCreateCampaign_DuplicateAdGroupReLookupErrorSurfacesCause: when the 1214 reconcile
@@ -1551,8 +1556,12 @@ func TestCreateCampaign_CreateBodiesCarryV13Contract(t *testing.T) {
 	var ad createAdsRequest
 	api := &campaignsAPI{adGroupSeen: &group, adSeen: &ad}
 	c := newAPIClient(t, api.handler(t))
-	if _, err := c.CreateCampaign(context.Background(), validInput()); err != nil {
+	res, err := c.CreateCampaign(context.Background(), validInput())
+	if err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if res.AdGroupReused {
+		t.Error("AdGroupReused = true for an ad group this run created, want false")
 	}
 	if len(group.AdGroups) != 1 {
 		t.Fatalf("ad group request carried %d groups, want 1", len(group.AdGroups))

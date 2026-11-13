@@ -214,9 +214,17 @@ type Client struct {
 	// list-google-ads-audiences endpoint.
 	ListGoogleAdsAudiencesDoer goahttp.Doer
 
+	// ListMetaCustomAudiences Doer is the HTTP client used to make requests to the
+	// list-meta-custom-audiences endpoint.
+	ListMetaCustomAudiencesDoer goahttp.Doer
+
 	// ListRedditAdsCustomAudiences Doer is the HTTP client used to make requests
 	// to the list-reddit-ads-custom-audiences endpoint.
 	ListRedditAdsCustomAudiencesDoer goahttp.Doer
+
+	// ListTwitterAdsCustomAudiences Doer is the HTTP client used to make requests
+	// to the list-twitter-ads-custom-audiences endpoint.
+	ListTwitterAdsCustomAudiencesDoer goahttp.Doer
 
 	// GetMetaAdsAudience Doer is the HTTP client used to make requests to the
 	// get-meta-ads-audience endpoint.
@@ -229,6 +237,14 @@ type Client struct {
 	// GetLinkedinAdsAudience Doer is the HTTP client used to make requests to the
 	// get-linkedin-ads-audience endpoint.
 	GetLinkedinAdsAudienceDoer goahttp.Doer
+
+	// ListLinkedinAdsAudiences Doer is the HTTP client used to make requests to
+	// the list-linkedin-ads-audiences endpoint.
+	ListLinkedinAdsAudiencesDoer goahttp.Doer
+
+	// ListLinkedinAdsConversions Doer is the HTTP client used to make requests to
+	// the list-linkedin-ads-conversions endpoint.
+	ListLinkedinAdsConversionsDoer goahttp.Doer
 
 	// GetMicrosoftAdsKeywords Doer is the HTTP client used to make requests to the
 	// get-microsoft-ads-keywords endpoint.
@@ -400,10 +416,14 @@ func NewClient(
 		ListGoogleAdsUserListsDoer:         doer,
 		ListGoogleAdsConversionActionsDoer: doer,
 		ListGoogleAdsAudiencesDoer:         doer,
+		ListMetaCustomAudiencesDoer:        doer,
 		ListRedditAdsCustomAudiencesDoer:   doer,
+		ListTwitterAdsCustomAudiencesDoer:  doer,
 		GetMetaAdsAudienceDoer:             doer,
 		GetTwitterAdsAudienceDoer:          doer,
 		GetLinkedinAdsAudienceDoer:         doer,
+		ListLinkedinAdsAudiencesDoer:       doer,
+		ListLinkedinAdsConversionsDoer:     doer,
 		GetMicrosoftAdsKeywordsDoer:        doer,
 		GetMicrosoftAdsAudienceDoer:        doer,
 		GetRedditAdsAudienceDoer:           doer,
@@ -1619,6 +1639,31 @@ func (c *Client) ListGoogleAdsAudiences() goa.Endpoint {
 	}
 }
 
+// ListMetaCustomAudiences returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service list-meta-custom-audiences
+// server.
+func (c *Client) ListMetaCustomAudiences() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeListMetaCustomAudiencesRequest(c.encoder)
+		decodeResponse = DecodeListMetaCustomAudiencesResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildListMetaCustomAudiencesRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ListMetaCustomAudiencesDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-meta-custom-audiences", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
 // ListRedditAdsCustomAudiences returns an endpoint that makes HTTP requests to
 // the lfx-v2-campaign-service-connections service
 // list-reddit-ads-custom-audiences server.
@@ -1639,6 +1684,31 @@ func (c *Client) ListRedditAdsCustomAudiences() goa.Endpoint {
 		resp, err := c.ListRedditAdsCustomAudiencesDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-reddit-ads-custom-audiences", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ListTwitterAdsCustomAudiences returns an endpoint that makes HTTP requests
+// to the lfx-v2-campaign-service-connections service
+// list-twitter-ads-custom-audiences server.
+func (c *Client) ListTwitterAdsCustomAudiences() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeListTwitterAdsCustomAudiencesRequest(c.encoder)
+		decodeResponse = DecodeListTwitterAdsCustomAudiencesResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildListTwitterAdsCustomAudiencesRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ListTwitterAdsCustomAudiencesDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-twitter-ads-custom-audiences", err)
 		}
 		return decodeResponse(resp)
 	}
@@ -1711,6 +1781,56 @@ func (c *Client) GetLinkedinAdsAudience() goa.Endpoint {
 		resp, err := c.GetLinkedinAdsAudienceDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "get-linkedin-ads-audience", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ListLinkedinAdsAudiences returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service list-linkedin-ads-audiences
+// server.
+func (c *Client) ListLinkedinAdsAudiences() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeListLinkedinAdsAudiencesRequest(c.encoder)
+		decodeResponse = DecodeListLinkedinAdsAudiencesResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildListLinkedinAdsAudiencesRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ListLinkedinAdsAudiencesDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-linkedin-ads-audiences", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ListLinkedinAdsConversions returns an endpoint that makes HTTP requests to
+// the lfx-v2-campaign-service-connections service
+// list-linkedin-ads-conversions server.
+func (c *Client) ListLinkedinAdsConversions() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeListLinkedinAdsConversionsRequest(c.encoder)
+		decodeResponse = DecodeListLinkedinAdsConversionsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildListLinkedinAdsConversionsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ListLinkedinAdsConversionsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-linkedin-ads-conversions", err)
 		}
 		return decodeResponse(resp)
 	}

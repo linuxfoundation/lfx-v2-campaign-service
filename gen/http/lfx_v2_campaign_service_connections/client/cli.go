@@ -1948,6 +1948,48 @@ func BuildListGoogleAdsAudiencesPayload(lfxV2CampaignServiceConnectionsListGoogl
 	return v, nil
 }
 
+// BuildListMetaCustomAudiencesPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-meta-custom-audiences endpoint from
+// CLI flags.
+func BuildListMetaCustomAudiencesPayload(lfxV2CampaignServiceConnectionsListMetaCustomAudiencesProjectID *string, lfxV2CampaignServiceConnectionsListMetaCustomAudiencesQ *string, lfxV2CampaignServiceConnectionsListMetaCustomAudiencesBearerToken *string) (*lfxv2campaignserviceconnections.ListMetaCustomAudiencesPayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsListMetaCustomAudiencesProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsListMetaCustomAudiencesProjectID
+	}
+	var q *string
+	{
+		if lfxV2CampaignServiceConnectionsListMetaCustomAudiencesQ != nil {
+			q = lfxV2CampaignServiceConnectionsListMetaCustomAudiencesQ
+			err = goa.MergeErrors(err, goa.ValidatePattern("q", *lfxV2CampaignServiceConnectionsListMetaCustomAudiencesQ, "\\S"))
+			if utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsListMetaCustomAudiencesQ) < 1 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("q", *lfxV2CampaignServiceConnectionsListMetaCustomAudiencesQ, utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsListMetaCustomAudiencesQ), 1, true))
+			}
+			if utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsListMetaCustomAudiencesQ) > 100 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("q", *lfxV2CampaignServiceConnectionsListMetaCustomAudiencesQ, utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsListMetaCustomAudiencesQ), 100, false))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListMetaCustomAudiencesBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsListMetaCustomAudiencesBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListMetaCustomAudiencesPayload{}
+	v.ProjectID = projectID
+	v.Q = q
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildListRedditAdsCustomAudiencesPayload builds the payload for the
 // lfx-v2-campaign-service-connections list-reddit-ads-custom-audiences
 // endpoint from CLI flags.
@@ -1966,6 +2008,30 @@ func BuildListRedditAdsCustomAudiencesPayload(lfxV2CampaignServiceConnectionsLis
 		}
 	}
 	v := &lfxv2campaignserviceconnections.ListRedditAdsCustomAudiencesPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildListTwitterAdsCustomAudiencesPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-twitter-ads-custom-audiences
+// endpoint from CLI flags.
+func BuildListTwitterAdsCustomAudiencesPayload(lfxV2CampaignServiceConnectionsListTwitterAdsCustomAudiencesProjectID *string, lfxV2CampaignServiceConnectionsListTwitterAdsCustomAudiencesBearerToken *string) (*lfxv2campaignserviceconnections.ListTwitterAdsCustomAudiencesPayload, error) {
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsListTwitterAdsCustomAudiencesProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsListTwitterAdsCustomAudiencesProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListTwitterAdsCustomAudiencesBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsListTwitterAdsCustomAudiencesBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListTwitterAdsCustomAudiencesPayload{}
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken
 
@@ -2081,6 +2147,54 @@ func BuildGetLinkedinAdsAudiencePayload(lfxV2CampaignServiceConnectionsGetLinked
 	v := &lfxv2campaignserviceconnections.GetLinkedinAdsAudiencePayload{}
 	v.ProjectID = projectID
 	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildListLinkedinAdsAudiencesPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-linkedin-ads-audiences endpoint
+// from CLI flags.
+func BuildListLinkedinAdsAudiencesPayload(lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesProjectID *string, lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesBearerToken *string) (*lfxv2campaignserviceconnections.ListLinkedinAdsAudiencesPayload, error) {
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListLinkedinAdsAudiencesPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildListLinkedinAdsConversionsPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-linkedin-ads-conversions endpoint
+// from CLI flags.
+func BuildListLinkedinAdsConversionsPayload(lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsProjectID *string, lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsBearerToken *string) (*lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload, error) {
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload{}
+	v.ProjectID = projectID
 	v.BearerToken = bearerToken
 
 	return v, nil
@@ -2728,18 +2842,17 @@ func BuildMonitorGoogleAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorG
 		}
 		projectID = *lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountProjectID
 	}
-	var accountID string
+	var accountID *string
 	{
-		if lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID == nil {
-			return nil, fmt.Errorf("missing required flag --account-id")
-		}
-		accountID = *lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID
-		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^[0-9]+$"))
-		if utf8.RuneCountInString(accountID) > 64 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
-		}
-		if err != nil {
-			return nil, err
+		if lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID != nil {
+			accountID = lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID
+			err = goa.MergeErrors(err, goa.ValidatePattern("account_id", *lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID, "^[0-9]+$"))
+			if utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID) > 64 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", *lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID, utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID), 64, false))
+			}
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	var days int

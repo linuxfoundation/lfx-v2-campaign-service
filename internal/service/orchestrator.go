@@ -466,6 +466,19 @@ type AccountMonitorScoper interface {
 	MonitorScopeForAccount(scope []model.ProjectCampaignScope, accountID string) ([]string, error)
 }
 
+// AccountMonitorDefaulter is an OPTIONAL capability of an AccountMonitorScoper: name the account a
+// project's recorded campaigns were created under, for an account-monitor read whose caller names
+// none (#591). A project monitored on the LF system account has no connection of its own to take
+// the account id from, so without this the caller had nothing to ask for.
+//
+// MonitorAccountForScope's scope is never empty. It returns the one account every entry that
+// records one was created under. Entries recording none, or entries recorded under more than one
+// account, fail the call with the same errors MonitorScopeForAccount would return for them, so a
+// caller that omits the account gets the refusal it would have got naming either one.
+type AccountMonitorDefaulter interface {
+	MonitorAccountForScope(scope []model.ProjectCampaignScope) (string, error)
+}
+
 // EmailSearcher is an OPTIONAL dispatcher capability: search the marketing emails reachable
 // through a project's stored connection. Discovered by type assertion like StatusToggler,
 // MetricsReader and AccountLister; a dispatcher that doesn't implement it yields a clean
@@ -1019,11 +1032,7 @@ func (o *Orchestrator) campaignIndexPayload(action string) domain.CampaignIndexP
 		return nil
 	}
 	return func(c *model.Campaign) ([]byte, error) {
-		return json.Marshal(indexer.NewTransaction(
-			action, indexer.ObjectTypeCampaign,
-			c.ID, c.ProjectID, "",
-			campaignDoc(campaignResult(c)), c.CampaignName,
-		))
+		return CampaignIndexPayload(action, c)
 	}
 }
 
@@ -2236,12 +2245,19 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				case perr != nil:
 					slog.ErrorContext(ctx, "failed to record partial upstream campaign on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", perr)
+					// The row was not written, so the job is the only place the id survives.
+					res.CampaignID = campaign.PlatformCampaignID
 				default:
 					slog.ErrorContext(ctx, "platform dispatch failed after (possible) upstream create; recorded orphan on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", derr)
 					// Name the row the partial was recorded on, so a caller can tell WHICH of
 					// the platform's campaigns needs reconciling when the platform holds several.
 					identifyRow(&res, partial)
+					// And name the upstream campaign itself (#576): the row holds it, but the
+					// caller reads the job, and without it an operator has to search the ad
+					// account for the half-built campaign to verify or clean it up. Empty on an
+					// id-less partial, which the omitempty tag then leaves out.
+					res.CampaignID = campaign.PlatformCampaignID
 				}
 				cancelPersist()
 			} else {
@@ -3185,6 +3201,57 @@ func (o *Orchestrator) scopeAccountMonitor(ctx context.Context, projectID string
 	return ids, true, nil
 }
 
+// DefaultMonitorAccount names the account an account-monitor read covers when its caller names
+// none: the account this project's recorded campaigns on platform were created under, read from
+// this service's own rows (AccountMonitorDefaulter). It contacts no platform. "" with a nil error
+// means there is no account to name, and the caller answers with an empty monitor.
+//
+// The live campaigns decide it, strictly: any refusal MonitorAccountForScope returns for them is
+// the refusal the read would return naming an account, and is returned unchanged.
+//
+// Only when the project has no live campaigns are its soft-deleted ones consulted, because the
+// monitor still shows a deleted campaign that keeps spending. They are judged one at a time, as
+// scopeAccountMonitor judges them: a deleted row cannot be re-dispatched or reconciled, so a
+// refusal on it would have no remedy, and one that records no account is skipped instead. When the
+// deleted campaigns record more than one account, the one recording the most is named (ties to the
+// lowest id, so the answer is stable); scopeAccountMonitor then omits the others exactly as it
+// would for a caller naming that account, and a caller can still name another.
+//
+// A platform whose dispatcher does not implement AccountMonitorDefaulter answers
+// ErrAccountMetricsUnsupported: its monitor has no recorded account to fall back on.
+func (o *Orchestrator) DefaultMonitorAccount(ctx context.Context, projectID string, platform model.Provider) (string, error) {
+	defaulter, ok := o.dispatchers[platform].(AccountMonitorDefaulter)
+	if !ok {
+		return "", fmt.Errorf("%w: %s cannot name the account its campaigns were created under", ErrAccountMetricsUnsupported, platform)
+	}
+	scope, err := o.projectCampaignScope(ctx, projectID, platform)
+	if err != nil {
+		return "", err
+	}
+	if len(scope) > 0 {
+		return defaulter.MonitorAccountForScope(scope)
+	}
+	deleted, err := o.campaigns.ListProjectPlatformDeletedCampaignIDs(ctx, projectID, platform)
+	if err != nil {
+		return "", fmt.Errorf("resolve deleted campaign scope for project %s on %s: %w", projectID, platform, err)
+	}
+	counts := make(map[string]int)
+	for _, d := range deleted {
+		account, derr := defaulter.MonitorAccountForScope([]model.ProjectCampaignScope{d})
+		if derr != nil || account == "" {
+			continue
+		}
+		counts[account]++
+	}
+	best := ""
+	for account, n := range counts {
+		if best == "" || n > counts[best] || (n == counts[best] && account < best) {
+			best = account
+		}
+	}
+	return best, nil
+}
+
 // revalidateAccountMonitorScope shrinks the initial authorization using ONE fresh database
 // snapshot after all platform work. It never admits a newly acquired id, and a database
 // failure returns no data. This catches takeovers committed during either precheck query
@@ -3528,8 +3595,14 @@ func (o *Orchestrator) PreflightCreate(ctx context.Context, projectID string, pl
 			continue
 		}
 		if errors.Is(perr, ErrCreateConfigInvalid) {
-			// Refused on the config alone: nothing left the process, so — like
-			// ErrPreflightNotApplicable — there is no upstream call to record.
+			// Usually refused on the config alone: nothing left the process, so — like
+			// ErrPreflightNotApplicable — there is no upstream call to record. A refusal a
+			// platform read produced (the Reddit community and interest lookups, #549) says so
+			// with UpstreamConsulted, and is recorded as the successful read it was.
+			var consulted interface{ UpstreamConsulted() bool }
+			if errors.As(perr, &consulted) && consulted.UpstreamConsulted() {
+				o.recordUpstream(ctx, platform, opPreflightCreate, start, nil)
+			}
 			return perr
 		}
 		// A refusal is a read that SUCCEEDED and gave an answer we act on -- the platform replied

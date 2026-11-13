@@ -606,7 +606,8 @@ now shares). The counters are decoded RAW: an ABSENT `impressions`/`clicks`/`spe
 value fails the read rather than publishing an authoritative zero. Rows are summed per segment
 across campaigns with an overflow check; CTR is computed after aggregation; order is impressions
 descending then values. Any failure — including either breakdown's — returns no rows. No
-conversions: Meta has no scalar conversions metric.
+conversions: Meta has no scalar conversions metric (the campaign metrics read takes them from a
+recorded event's action type; see below).
 
 The whole call runs under the orchestrator's `metricsCallTimeout` (20s) — both breakdowns, up to
 2×20 sequential pages and any 429 backoff — the same budget as the Google audience read, so a very
@@ -1030,6 +1031,23 @@ cannot be represented (`bidCapMinor > MaxInt64/5`) before forming the product; u
 bound no encoded bid reaches it, so it is a backstop against a later change to that bound
 (PR #332 review).
 
+## Custom audience listing (`custom_audiences.go`, #550)
+
+`Client.ListCustomAudiences` backs `GET /projects/{project_id}/meta-ads/custom-audiences`
+(`list-meta-custom-audiences`), the picker for `metaConfig.targeting.customAudiences` and
+`excludedCustomAudiences`: `GET /act_<id>/customaudiences?fields=id,name,subtype,description,
+approximate_count_lower_bound,approximate_count_upper_bound,account_id&limit=100`, all or nothing. It
+follows the opaque `after` cursor (never the token-bearing `paging.next` URL) for at most 20 pages
+and fails with `ErrCustomAudienceListTooLarge` past that rather than truncating. Each page passes
+`identityjson` on its raw bytes (`getChecked`), and each row must carry a numeric id, an audience
+`subtype` token and the requested account (`canonicalAccountID`), and appear once. A missing `data`
+field, a next page without a cursor or a repeated cursor fails the read. `MetaDispatcher` resolves
+with the create's credential resolution (`creds.resolve`), so every id is on the account a create
+reads its audiences from. The service filters by `q`, sorts by name and caps at 500 with
+`truncated`. The route is on the gateway's `marketing-ops-api` rule (`global_marketing_ops`),
+because the LF Meta ad account is shared by every foundation. Not verified live: the edge's field
+names and default population.
+
 ## Call-to-action and conversion event (`creative_options.go`, #550)
 
 `CampaignInput.CallToAction` sets every variant creative's `link_data.call_to_action.type`
@@ -1101,3 +1119,34 @@ each checked per row; another account is `ErrAdAccountMismatch`), the account cu
 (`getChecked`). The listing is capped at `adListMaxPages` pages and reports `Truncated` past it;
 the Insights walk fails past `adInsightsMaxPages`. The caller proves the ad set is the campaign's
 first (`GetAdSetState`). See [Meta Ad Read Under an Ad Set](../architecture/meta-ads.md).
+
+## Conversions in the metrics read (`metrics.go`, #550 gap 6)
+
+`GetCampaignMetricsWithConversions` is `GetCampaignMetrics` with `actions` added to the Insights
+`fields`. Its body is decoded only after `identityjson` accepts it (`getChecked`), so a duplicated
+key (a second `value`, `action_type` or `actions`, case variants included) fails the read instead
+of being resolved last-wins into a false zero. It reports, in `Conversions`, the `value` (Meta's default attribution window) of the ONE
+entry whose `action_type` is the one asked for. `ConversionActionType` maps a recorded
+`custom_event_type` to that action type, using Meta's Ads Action Stats reference:
+- PURCHASE: `offsite_conversion.fb_pixel_purchase`
+- COMPLETE_REGISTRATION: `offsite_conversion.fb_pixel_complete_registration`
+- LEAD: `offsite_conversion.fb_pixel_lead`
+- SUBMIT_APPLICATION: `offsite_conversion.fb_pixel_submit_application`
+- SUBSCRIBE: `subscribe_website`
+
+The following are a measured zero: a row with no matching entry, a row with no `actions` (Meta
+omits empty lists), and no delivery (`data: []`). These fail the read as a malformed row
+(`transportError`) and never publish a number: two entries for the type, a null or non-list
+`actions`, a null entry or one whose `action_type` is missing, null, not a string or blank (an
+entry this client cannot identify could be the conversion itself), and a value that is not a JSON
+string holding a non-negative finite number. The error
+text never echoes a value.
+
+`MetaDispatcher.ReadMetrics` uses it only for a campaign whose stored create result records a
+conversion event (`CampaignResult.ConversionEvent`, set when this service created the ad set with
+the conversions objective), and only while `META_CONVERSIONS_METRICS_ENABLED` is `"true"`. It
+then sets `ConversionsReported`, and `ResolvedConversionsStatus` turns a zero against zero clicks
+into `no_conversions` as for every channel. Any other Meta campaign reads as before: no
+`actions` requested, `ConversionsUnavailable`.
+
+Not verified live: no Meta call was made, and the action-type mapping is from the reference.

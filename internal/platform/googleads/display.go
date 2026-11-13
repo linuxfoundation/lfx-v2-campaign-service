@@ -60,7 +60,7 @@ type displayCampaignCreate struct {
 	// biddingFields is embedded ANONYMOUSLY, as on all four sibling payloads, so the
 	// oneof invariant keeps one definition. Which strategies may be sent is
 	// channel-specific and lives in validateBiddingPlan — here, the four portfolio
-	// strategies, with the live-verification caveat recorded there. Manual CPC is
+	// strategies, with the probe that settled them recorded there. Manual CPC is
 	// refused on this channel even though Google accepts it; see
 	// displayBiddingStrategies for why.
 	biddingFields
@@ -124,15 +124,13 @@ type displayAdGroupCreate struct {
 // because a YouTube video is referenced by id; a responsive display ad is built from
 // image BYTES, so this channel pays the fetch cost those two do.
 //
-// NOT LIVE-VERIFIED, on the same terms as Video: the only Google account reachable from
-// here is a production LF account and a validateOnly mutate is still a POST to it. What
-// that leaves open is named rather than hedged — the field shapes below are read off
-// Google's published v23 resources, and the one thing a code reading cannot settle is
-// the BIDDING SET, recorded at displayBiddingStrategies with the check that closes it.
+// The field shapes below were read off Google's published v23 resources; validateOnly
+// probes against the production LF account (still a POST to it, so run sparingly) have
+// since settled the parts a code reading cannot.
 // #473's ad-group income-range and parental-status exclusion shapes, and #462's audience
 // and placement criterion shapes and the ad group's targetingSetting, were since settled
-// by validateOnly probes on 2026-11-03 (see display_targeting.go); the bidding set was
-// not.
+// by validateOnly probes on 2026-11-03 (see display_targeting.go), and the bidding set by
+// one on 2026-11-11 (see displayBiddingStrategies).
 //
 // The partial-result contract is the siblings', unchanged: past the campaign create
 // every failure returns the error ALONGSIDE a non-nil *CampaignResult carrying what
