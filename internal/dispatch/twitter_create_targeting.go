@@ -1,0 +1,130 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package dispatch
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
+)
+
+// X create-time location and language targeting (#564): twitterConfig.geoTargets and
+// twitterConfig.languages, sent as LOCATION and LANGUAGE criteria on the new line item. The rules
+// live once, in twitter.NormalizeCreateTargeting; this file adds the deployment gate and the
+// JSON-type check, and turns a refusal into the synchronous 400 shape
+// ("invalid campaign config: twitterConfig.<field>: ..."). Resolving the values against X's
+// lookups needs the connection, so it happens at dispatch (twitter.Client.CreateCampaign), still
+// before anything is created.
+
+// twitterCreateTargetingEnabled reports whether this deployment opted in. Read per call, like
+// redditTargetingExclusionsEnabled, so it flips without a rebuild.
+func twitterCreateTargetingEnabled() bool {
+	return os.Getenv(constants.EnvTwitterCreateTargetingEnabled) == "true"
+}
+
+// twitterTargetingFields are the gated twitterConfig keys, in config order.
+var twitterTargetingFields = []string{twitter.FieldGeoTargets, twitter.FieldLanguages, twitter.FieldKeywords, twitter.FieldInterestIDs}
+
+// twitterCreateTargeting is the normalized create-time targeting behind
+// TWITTER_CREATE_TARGETING_ENABLED: countries and languages (#564 gaps 1-2), keywords and
+// interest ids (gap 4).
+type twitterCreateTargeting struct {
+	geo, langs, keywords, interests []string
+}
+
+// count is how many criteria these lists post (the custom audiences are counted separately).
+func (t twitterCreateTargeting) count() int {
+	return len(t.geo) + len(t.langs) + len(t.keywords) + len(t.interests)
+}
+
+// checkTwitterCreateTargeting refuses a config that sets any of the lists while the deployment
+// gate is off, or whose lists break NormalizeCreateTargeting / NormalizeKeywordInterestTargeting,
+// and otherwise returns the normalized lists. Every refusal is a domain.ErrCreateConfigInvalid (a
+// 400 from PreflightCreate) wrapped as a PreflightRefusal (so a job that reached Dispatch copies
+// the sentence verbatim). Any non-empty list counts as set, so the gate never depends on the
+// values' own validity.
+func checkTwitterCreateTargeting(cfg twitterConfig) (twitterCreateTargeting, error) {
+	var set []string
+	for _, f := range []struct {
+		name string
+		n    int
+	}{
+		{twitter.FieldGeoTargets, len(cfg.GeoTargets)},
+		{twitter.FieldLanguages, len(cfg.Languages)},
+		{twitter.FieldKeywords, len(cfg.Keywords)},
+		{twitter.FieldInterestIDs, len(cfg.InterestIDs)},
+	} {
+		if f.n > 0 {
+			set = append(set, f.name)
+		}
+	}
+	if len(set) == 0 {
+		return twitterCreateTargeting{}, nil
+	}
+	if !twitterCreateTargetingEnabled() {
+		env := constants.EnvTwitterCreateTargetingEnabled
+		fields := strings.Join(set, " and ")
+		return twitterCreateTargeting{}, domain.WrapPreflightRefusal(fmt.Errorf(
+			"%w: twitterConfig: %s disabled on this deployment (%s is not \"true\"); omit %s, or ask an operator to set %s to \"true\"",
+			domain.ErrCreateConfigInvalid, fields, env, fields, env))
+	}
+	var t twitterCreateTargeting
+	var err error
+	t.geo, t.langs, err = twitter.NormalizeCreateTargeting(cfg.GeoTargets, cfg.Languages)
+	if err == nil {
+		t.keywords, t.interests, err = twitter.NormalizeKeywordInterestTargeting(cfg.Keywords, cfg.InterestIDs)
+	}
+	if err != nil {
+		var tErr *twitter.TargetingError
+		if errors.As(err, &tErr) {
+			return twitterCreateTargeting{}, domain.WrapPreflightRefusal(fmt.Errorf("%w: twitterConfig.%s: %s", domain.ErrCreateConfigInvalid, tErr.Field, tErr.Msg))
+		}
+		return twitterCreateTargeting{}, domain.WrapPreflightRefusal(fmt.Errorf("%w: twitterConfig: %w", domain.ErrCreateConfigInvalid, err))
+	}
+	return t, nil
+}
+
+// checkTwitterTargetingShape refuses a targeting list that is not a JSON array of strings, so a
+// wrong type is the synchronous 400 rather than a job failure (encoding/json would otherwise fail
+// the whole twitterConfig decode, which PreflightCreate leaves to Dispatch). null counts as absent,
+// as encoding/json reads it. Keys are matched case-insensitively, as encoding/json matches them,
+// and visited in sorted order so the refusal is deterministic.
+func checkTwitterTargetingShape(config json.RawMessage) error {
+	if len(config) == 0 {
+		return nil
+	}
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(config, &envelope) != nil {
+		return nil
+	}
+	var platformCfg map[string]json.RawMessage
+	if json.Unmarshal(envelope["twitterConfig"], &platformCfg) != nil {
+		return nil
+	}
+	keys := make([]string, 0, len(platformCfg))
+	for k := range platformCfg {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		raw := platformCfg[k]
+		for _, field := range twitterTargetingFields {
+			if !strings.EqualFold(k, field) || isJSONNull(raw) {
+				continue
+			}
+			var list []string
+			if json.Unmarshal(raw, &list) != nil {
+				return domain.WrapPreflightRefusal(fmt.Errorf("%w: twitterConfig.%s: must be an array of strings", domain.ErrCreateConfigInvalid, field))
+			}
+		}
+	}
+	return nil
+}

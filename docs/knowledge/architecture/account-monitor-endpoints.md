@@ -63,13 +63,15 @@ response to the campaigns this service recorded for the project — see
 - `internal/service/orchestrator.go`'s `AccountMetricsReader` capability +
   `Orchestrator.ReadAccountCampaignMetrics` follow the same optional-capability,
   type-assertion pattern as `AccountLister`/`MetricsReader`.
-- Each monitor dispatcher (`internal/dispatch/{googleads,linkedin,meta,reddit,microsoft_monitor,twitter_monitor}.go`)
+- Each monitor dispatcher except Google Ads (`internal/dispatch/{linkedin,meta,reddit,microsoft_monitor,twitter_monitor}.go`)
   resolves its monitor read's credential via `credsSource.resolveOwned` —
   the project's own connection only, never the LF system-account fallback
   chain (`resolve` → `resolveWithFallback` → `systemConn` → forced-system)
   that account discovery still uses. This is deliberately narrower than
   discovery: see the Trust boundary section below for why (round-16/17
-  review). Google Ads builds an account-agnostic client the same way
+  review). Google Ads (`internal/dispatch/googleads.go`) instead reads
+  `account_id` with the stored credential configured for it, which can be the
+  LF system row (#591, below), and builds an account-agnostic client the same way
   discovery does; Reddit, LinkedIn, Meta, Microsoft and X additionally scope
   the requested `account_id` to their own resolved connection's single account. A
   connection is bound to exactly one ad account (`account_id TEXT NOT NULL` on
@@ -508,6 +510,9 @@ not the primary gate for two of them.
 
 ## Trust boundary: `{project_id}` no longer means "or the system fallback"
 
+Google Ads is the exception since #591: see "Google Ads: read with the credential configured
+for the account" below.
+
 Round 15 documented, without fixing, a credential-scope gap: `{project_id}`
 in these URLs meant "whose credential resolves the platform client," and
 that resolution walked the same fallback chain (`resolve` →
@@ -518,8 +523,9 @@ any account id that credential reaches. Round 16 escalated this to Critical
 because these four endpoints are externally routed (this branch's
 `httproute.yaml`/`ruleset.yaml` chart changes), and fixed it for
 Google/LinkedIn/Meta by adding a parallel "owned discovery" resolver per
-platform (`resolveOwnedGoogleAdsDiscoveryClient`,
-`resolveLinkedInOwnedDiscoveryCredentials`, `resolveOwnedMetaDiscovery`)
+platform (`resolveOwnedGoogleAdsDiscoveryClient`, since replaced by
+`resolveGoogleAdsMonitorClient` in #591, `resolveLinkedInOwnedDiscoveryCredentials`,
+`resolveOwnedMetaDiscovery`)
 that refuses the system fallback the way `resolveOwned`
 (`internal/dispatch/creds.go`) already does for the adoption flow. A project
 with no connection of its own now gets `domain.ErrNotFound` → 404 via the
@@ -544,16 +550,16 @@ monitor reads only. `ListAccountCampaignMetrics`'s sibling paths — dispatch
 system fallback on every platform, so a project operating entirely on the LF
 system ad account can still create campaigns and read their per-campaign
 metrics; it is only the account-wide monitor read that now refuses to serve
-that project at all, rather than scoping to what it created. This mirrors
+that project at all, rather than scoping to what it created (except on Google
+Ads since #591, which scopes to what it created instead). This mirrors
 the adoption flow's own precedent and its stated limit: a project on a
 shared credential has no "own" account to monitor, the same way it has no
 "own" account to adopt into. Google Ads carries a further, unavoidable
-residual even for a project WITH its own connection — see
-`resolveOwnedGoogleAdsDiscoveryClient`'s doc comment
-(`internal/dispatch/googleads.go`): Google Ads is one shared customer across
-every foundation, so the fix closes the system-fallback gap but cannot by
-itself make the endpoint project-scoped. Project scoping, below, is what
-closes that residual.
+residual even for a project WITH its own connection: Google Ads is one shared
+customer across every foundation, so the fix closes the system-fallback gap but
+cannot by itself make the endpoint project-scoped. Project scoping, below, is
+what closes that residual — and, once it existed, what let Google Ads drop the
+refusal again (#591, below).
 
 ### Project scoping on shared accounts (lfx-self-serve-ops#897)
 
@@ -661,7 +667,54 @@ so both keep the account-wide read. X's saved report
 response is filtered, and the report's `metrics_as_of`, window and
 `metrics_pending` are returned unchanged.
 
+### Google Ads: read with the credential configured for the account (#591)
+
+The refusal above left every campaign created through the LF system account —
+every campaign of a project with no Google Ads connection of its own, and every
+campaign while `LFX_FORCE_SYSTEM_ADS_ACCOUNT` is on — impossible to monitor: the
+create used the system row, the monitor refused it, and a project with campaigns
+got a 404. Project scoping removed the reason for the refusal on Google Ads: the
+read is reduced to the campaigns this service recorded for the project, and
+`MonitorScopeForAccount` refuses any recorded under a different customer than
+`account_id` or under none. That is the footing `ReadKeywordPerformance` and
+`ReadAudienceInsights` already accept the fallback on.
+
+- **Credential.** `resolveGoogleAdsMonitorClient` resolves through
+  `credsSource.resolveExisting` with `account_id` as the creation account, the
+  rule every operation on an existing campaign follows: the project's own row
+  when it is configured for `account_id`; otherwise the LF system row when that
+  one is; otherwise the project's own row again, as before #591 (scoped like any
+  read). The system credential reads no other customer: when the fallback row is
+  what resolved, for a customer it is not configured for, the read keeps the 404
+  and makes no upstream call. Because `resolveExisting` does not consult
+  `forceSystemPaidAds`, the same customer resolves the same way with the flag on
+  or off.
+- **Disconnected projects.** `resolveExisting` falls back to the system row when
+  it is configured for `account_id` even after a project explicitly disconnected
+  its own connection, so such a project can still monitor its own
+  system-created campaigns. Pause and per-campaign metrics already behave this
+  way, and the read is still reduced to the project's own campaigns.
+- **Optional `account_id`.** Self-serve takes the account id from the project's
+  connection, which a project on the system account does not have. Omitted,
+  `Orchestrator.DefaultMonitorAccount` names it from this service's own rows: the
+  one customer the project's live campaigns record (its soft-deleted ones only
+  when it has no live ones), through the optional `AccountMonitorDefaulter`
+  capability, which only Google Ads implements. The response's `account_id`
+  names it. No campaigns gives an empty monitor with an empty `account_id` and no
+  upstream call. Live campaigns under more than one customer, or none recording
+  one, give the 409 `campaign_account_mismatch` — the same 409 naming either
+  customer gives, so the remedy is re-dispatching or reconciling them onto one.
+  Soft-deleted campaigns (consulted only when there are no live ones) are judged
+  one at a time, as `scopeAccountMonitor` judges them: one recording no customer
+  is skipped, and with several customers the one recorded most is named (ties to
+  the lowest id). A deleted row cannot be re-dispatched, so it never causes a 409.
+- LinkedIn keeps its refusal: its monitor is not campaign-scoped. Meta and
+  Reddit are scoped and are candidates for the same change.
+
 ### Expected interaction with `LFX_FORCE_SYSTEM_ADS_ACCOUNT`
+
+Google Ads no longer behaves this way since #591 (above); the rest of this
+section applies to the other platforms.
 
 The `resolveOwned*` resolvers above never consult `forceSystemPaidAds`
 (`internal/dispatch/creds.go`) — deliberately: an account-monitor read must

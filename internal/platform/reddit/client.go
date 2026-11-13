@@ -2161,26 +2161,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// (reddit-ads.service.ts sends the r/-stripped names directly). If Reddit
 	// rejects any name the POST below falls back to keyword/geo-only targeting
 	// with a warning step, so a bad name never orphans a PAUSED campaign.
-	communityNames := make([]string, 0, len(in.Subreddits))
-	seenCommunity := make(map[string]struct{}, len(in.Subreddits))
-	for _, s := range in.Subreddits {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
-		}
-		name := strings.TrimSpace(stripSubredditPrefix(s))
-		if name == "" {
-			continue
-		}
-		// De-duplicate case-insensitively (subreddit names are case-insensitive);
-		// preserve the first-seen casing for the payload/warnings.
-		key := strings.ToLower(name)
-		if _, dup := seenCommunity[key]; dup {
-			continue
-		}
-		seenCommunity[key] = struct{}{}
-		communityNames = append(communityNames, name)
-	}
+	// NormalizeSubreddits (targeting_resolution.go) holds the rules once, so the dispatcher's
+	// pre-create community lookup (#549) resolves exactly the names sent here.
+	communityNames := NormalizeSubreddits(in.Subreddits)
 
 	campaignData := map[string]any{
 		"name":                            campaignName,

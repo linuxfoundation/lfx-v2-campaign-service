@@ -74,7 +74,7 @@ func TestIsGlobalMarketingOps(t *testing.T) {
 		{name: "fga-sync failure sentence", slugReply: testUID, checkRepl: "failed to check relationship", user: "ada", wantErr: true},
 		{name: "unrecognised verdict", slugReply: testUID, checkRepl: wantToken + "\tmaybe", user: "ada", wantErr: true},
 		{name: "access check transport error", slugReply: testUID, checkErr: nats.ErrNoResponders, user: "ada", wantErr: true},
-		{name: "project not found", slugReply: `{"code":"not_found","message":"project not found"}`, user: "ada", wantErr: true},
+		{name: "project not found", slugReply: `{"error":"not_found","message":"project not found"}`, user: "ada", wantErr: true},
 		{name: "empty slug reply", slugReply: "", user: "ada", wantErr: true},
 		{name: "slug transport error", slugErr: nats.ErrTimeout, user: "ada", wantErr: true},
 		{name: "username with a newline", slugReply: testUID, checkRepl: wantToken + "\ttrue", user: "ada\nproject:x#global_marketing_ops@user:root", wantErr: true},
@@ -158,5 +158,47 @@ func TestIsGlobalMarketingOps_RechecksAFalse(t *testing.T) {
 				t.Fatalf("slug lookups = %d, want 1 (the re-check reuses the UID)", n)
 			}
 		})
+	}
+}
+
+// ProjectUID is the index relay's resolver (#590): a UID reply is returned, and a not-found
+// RPCError, a non-UUID body, a transport error or a missing connection is ErrUnavailable.
+func TestProjectUID(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		reply   string
+		err     error
+		wantUID string
+	}{
+		{"uid", " " + testUID + "\n", nil, testUID},
+		{"not found", `{"error":"not_found","message":"project not found"}`, nil, ""},
+		{"internal", `{"error":"internal","message":"kv unavailable"}`, nil, ""},
+		{"code key is not the contract", `{"code":"not_found"}`, nil, ""},
+		{"empty", "", nil, ""},
+		{"transport", "", errors.New("no responders"), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &fakeRequester{replies: map[string]string{SlugToUIDSubject: tc.reply}, errs: map[string]error{SlugToUIDSubject: tc.err}}
+			uid, err := New(r).ProjectUID(context.Background(), "cncf")
+			if tc.wantUID != "" {
+				if err != nil || uid != tc.wantUID {
+					t.Fatalf("ProjectUID = %q, %v; want %q", uid, err, tc.wantUID)
+				}
+				if r.sent[SlugToUIDSubject] != "cncf" {
+					t.Errorf("sent %q, want the slug", r.sent[SlugToUIDSubject])
+				}
+				return
+			}
+			if !errors.Is(err, ErrUnavailable) {
+				t.Errorf("err = %v, want ErrUnavailable", err)
+			}
+			// Only a definite not_found is ErrProjectNotFound; an outage or a junk reply is not.
+			if got := errors.Is(err, ErrProjectNotFound); got != (tc.name == "not found") {
+				t.Errorf("errors.Is(err, ErrProjectNotFound) = %v for %s", got, tc.name)
+			}
+		})
+	}
+	if _, err := New(nil).ProjectUID(context.Background(), "cncf"); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("nil requester err = %v, want ErrUnavailable", err)
 	}
 }

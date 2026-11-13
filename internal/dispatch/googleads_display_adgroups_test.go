@@ -29,7 +29,7 @@ func TestGoogleAdsDisplayAdGroups_MapsEveryField(t *testing.T) {
 	var cfg googleAdsConfig
 	raw := `{"displayAdGroups":[{"name":"Retargeting",
 		"creative":{"marketingImages":["https://cdn.example.org/m.png"],"squareMarketingImages":[{"imageAssetId":"11111111-1111-4111-8111-111111111111"}],
-			"headlines":["H"],"longHeadline":"LH","descriptions":["D"],"businessName":"LF","callToActionText":"Go"},
+			"headlines":["H"],"longHeadline":"LH","descriptions":["D"],"businessName":"LF","callToActionText":"Learn more"},
 		"audienceSegments":["customers/1/userLists/11"],"customAudiences":["customers/1/customAudiences/22"],
 		"customAffinities":["customers/1/customInterests/33"],"userInterests":["customers/1/userInterests/44"],
 		"excludedAudienceSegments":["customers/1/userLists/70"]},{"name":"Prospecting"}],
@@ -45,7 +45,7 @@ func TestGoogleAdsDisplayAdGroups_MapsEveryField(t *testing.T) {
 				MarketingImages:       []string{"https://cdn.example.org/m.png"},
 				SquareMarketingImages: []string{googleAdsImageRefScheme + "11111111-1111-4111-8111-111111111111"},
 				Headlines:             []string{"H"}, LongHeadline: "LH", Descriptions: []string{"D"},
-				BusinessName: "LF", CallToActionText: "Go",
+				BusinessName: "LF", CallToActionText: "Learn more",
 			},
 			AudienceSegments:         []string{"customers/1/userLists/11"},
 			CustomAudiences:          []string{"customers/1/customAudiences/22"},

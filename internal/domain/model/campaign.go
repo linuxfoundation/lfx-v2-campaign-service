@@ -671,8 +671,8 @@ type CampaignMetrics struct {
 	// consumer publishes the total only through ReportedConversions. The cases that reach nil:
 	//
 	//   - ConversionsUnavailable: the channel reports no campaign-level conversion count at all
-	//     (Meta, X, Reddit, HubSpot — see the four entries below), or this account on it does
-	//     not (LinkedIn when no returned element carried externalWebsiteConversions; Microsoft
+	//     (X, Reddit, HubSpot — see the entries below; Meta unless its conversions read applies),
+	//     or this account on it does not (LinkedIn when no returned element carried externalWebsiteConversions; Microsoft
 	//     when the ConversionsQualified column is missing or every cell is blank, typically no
 	//     Universal Event Tracking);
 	//   - ConversionsIncomplete: a conversion-capable channel reported the metric for part of
@@ -688,8 +688,8 @@ type CampaignMetrics struct {
 	// Reading nil as "this platform cannot measure conversions" is therefore wrong for the
 	// last two; read ConversionsStatus instead of special-casing the channel.
 	//
-	// Only three of the seven adapters set it, and which three is a statement about the
-	// VENDOR APIS, verified field by field against each vendor's published reference rather
+	// Three of the seven adapters set it for every campaign (Meta, below, for some), and which
+	// three is a statement about the VENDOR APIS, verified field by field against each vendor's published reference rather
 	// than inferred from what this repo's clients happen to request today:
 	//
 	//   - Google Ads populates it from metrics.conversions, which the field reference types
@@ -723,17 +723,22 @@ type CampaignMetrics struct {
 	//     Unlike Google's, the column is only present for accounts using Universal Event
 	//     Tracking, so an ABSENT column here really does mean unmeasured and stays nil.
 	//
-	// The other four leave it nil, and each for a reason that is a property of the platform
+	// Meta sets it for SOME campaigns (#550 gap 6). It reports conversions inside the Insights
+	// `actions` array as {action_type, value} objects, with no scalar campaign-level field, so
+	// collapsing that array into one number requires choosing WHICH action type counts. That
+	// choice is recorded for a campaign this service created with the conversions objective
+	// (meta.CampaignResult.ConversionEvent), and only for such a campaign, while
+	// META_CONVERSIONS_METRICS_ENABLED is "true", is the matching action type's value read. A
+	// row with no matching entry is a measured zero (Meta omits empty action lists). Every other
+	// Meta campaign leaves it nil with ConversionsUnavailable.
+	//
+	// The other three leave it nil, and each for a reason that is a property of the platform
 	// rather than an unfinished task here:
 	//
-	//   - Meta reports conversions inside the Insights `actions` array as {action_type,
-	//     value} objects, with no scalar campaign-level conversions field. Collapsing that
-	//     array into one number requires choosing WHICH action types count as a conversion,
-	//     which is a per-advertiser configuration decision this service has no input for.
 	//   - X splits conversions across per-event-type metrics (conversion_purchases,
 	//     conversion_sign_ups, and so on), each a JSON object rather than a count, and only
-	//     under the WEB_CONVERSION/MOBILE_CONVERSION metric groups. Same problem as Meta:
-	//     there is no single number to read.
+	//     under the WEB_CONVERSION/MOBILE_CONVERSION metric groups. There is no single number to
+	//     read, and no recorded event to choose one by.
 	//   - Reddit's v3 reporting contract has no public documentation at all (see the banner
 	//     on reddit.GetCampaignMetrics), so a conversions field name here would be a guess
 	//     dressed as a measurement.
@@ -1128,15 +1133,16 @@ type LocalCampaignRef struct {
 //
 // It exists because a nil Conversions used to carry two meanings — "this channel cannot report a
 // campaign-level count" and "this read came back incomplete" — and a consumer could not tell a
-// conversion-capable LinkedIn campaign with one incomplete element from Meta, which never reports
-// one. The status names each case, and the total is published only when it is ConversionsReported.
+// conversion-capable LinkedIn campaign with one incomplete element from an X campaign, which never
+// reports one. The status names each case, and the total is published only when it is ConversionsReported.
 type ConversionsStatus string
 
 const (
 	// ConversionsReported: a complete measurement; Conversions holds it (a 0 is a measured 0).
 	ConversionsReported ConversionsStatus = "reported"
 	// ConversionsUnavailable: the channel, or this account on it, does not report a
-	// campaign-level conversion count (Meta, X, Reddit, email; LinkedIn when no returned element
+	// campaign-level conversion count (X, Reddit, email; Meta without a recorded conversion event or
+	// with META_CONVERSIONS_METRICS_ENABLED off; LinkedIn when no returned element
 	// carried the metric; Microsoft without the ConversionsQualified column or with every cell
 	// blank). No total.
 	ConversionsUnavailable ConversionsStatus = "unavailable"

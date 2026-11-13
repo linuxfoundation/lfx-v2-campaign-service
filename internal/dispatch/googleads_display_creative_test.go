@@ -21,7 +21,7 @@ func fullDisplayCreativeConfig() *googleAdsDisplayCreativeConfig {
 		LongHeadline:          "KubeCon + CloudNativeCon Europe 2026",
 		Descriptions:          []string{"Talks, workshops and hallway track."},
 		BusinessName:          "Linux Foundation",
-		CallToActionText:      "Register",
+		CallToActionText:      "Learn more",
 	}
 }
 
@@ -110,7 +110,7 @@ func TestGoogleAdsDisplayCreative_MapsEachFieldToItsOwnSlot(t *testing.T) {
 		LongHeadline:          "lh",
 		Descriptions:          []string{"d"},
 		BusinessName:          "LF",
-		CallToActionText:      "Register",
+		CallToActionText:      "Learn more",
 	}
 	got := googleAdsDisplayCreative(in)
 	pairs := []struct {
@@ -129,7 +129,7 @@ func TestGoogleAdsDisplayCreative_MapsEachFieldToItsOwnSlot(t *testing.T) {
 			t.Errorf("%s = %v, want %v", p.name, p.got, p.want)
 		}
 	}
-	if got.LongHeadline != "lh" || got.BusinessName != "LF" || got.CallToActionText != "Register" {
+	if got.LongHeadline != "lh" || got.BusinessName != "LF" || got.CallToActionText != "Learn more" {
 		t.Errorf("scalars did not map: %+v", got)
 	}
 }

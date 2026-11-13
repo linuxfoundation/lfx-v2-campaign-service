@@ -258,6 +258,14 @@ openssl rand -base64 32
   the create inputs also need `global_marketing_ops` on the project (403
   otherwise) and the read is gated on it at the gateway. The chart sets it to
   `"false"`.
+- `REDDIT_TARGETING_RESOLUTION_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to resolving `redditConfig.subreddits` and `interests` before
+  create (#549): each community is confirmed with `GET /targeting/communities`
+  and each interest resolved to its id with `GET /targeting/interests`. An
+  unknown value is a synchronous 400 (the pre-check fails open when the read
+  cannot run) and, at dispatch, a job failure with nothing created (fail
+  closed). Only the exact value `true` enables it; anything else keeps the
+  create as before. Not role-gated. The chart sets it to `"false"`.
 - `REDDIT_TARGETING_EXCLUSIONS_ENABLED` (default unset, i.e. OFF) — opts
   a deployment IN to `redditConfig.excludedSubreddits` and
   `redditConfig.excludedGeoTargets` (#549), sent at create time as the ad
@@ -268,6 +276,69 @@ openssl rand -base64 32
   off the shared ad account. The chart sets it to `"false"`
   (`app.environment.REDDIT_TARGETING_EXCLUSIONS_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once a live create confirms it.
+- `TWITTER_CREATE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `twitterConfig.geoTargets`, `languages`, `keywords` and
+  `interestIds` (#564), country, language, broad keyword and interest
+  targeting criteria added to the line item an X create makes. Only the
+  exact value `true` enables them; anything else fails closed, and a create
+  naming any of them is refused with a 400
+  before any job exists. It names no account resource; it keeps a shape no
+  live create has sent off the shared ad account. The chart sets it to
+  `"false"` (`app.environment.TWITTER_CREATE_TARGETING_ENABLED.value`);
+  enable it per-environment in the ArgoCD overlay once a live create
+  confirms it.
+- `META_CONVERSIONS_METRICS_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to conversions in the Meta metrics read (#550): for a
+  campaign this service created with the conversions objective, the Insights
+  read also requests `actions` and reports the recorded conversion event's
+  action type as `conversions` (#175 statuses). Only the exact value `true`
+  enables it; anything else keeps the read as before (conversions
+  `unavailable`, no `actions` requested). Read-only, but the event-to-action
+  mapping is unverified live and a wrong one would publish a false zero. The
+  chart sets it to `"false"`.
+- `TWITTER_CUSTOM_AUDIENCES_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to X custom audiences (#564): the create inputs
+  `twitterConfig.customAudienceIds` / `excludedCustomAudienceIds`
+  (`CUSTOM_AUDIENCE` targeting criteria, `EQ` and `NE`, on the new line item)
+  and the picker read `GET /projects/{project_id}/twitter-ads/custom-audiences`.
+  Only the exact value `true` enables them; anything else fails closed: a
+  create setting either list is refused with 400 before any job exists, and
+  the read answers 400. Off by default because both shapes come from X's
+  published v12 reference and have not been exercised against a live ad
+  account. The audiences live on the ad account every foundation shares, so
+  the create inputs also need `global_marketing_ops` on the project (403
+  otherwise) and the read is gated on it at the gateway. The chart sets it to
+  `"false"`.
+- `MICROSOFT_AD_EXTENSIONS_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `microsoftConfig.sitelinks` and `microsoftConfig.callouts`
+  (#563), created at create time as `SitelinkAdExtension` and
+  `CalloutAdExtension` entries associated with the new Search campaign. Only
+  the exact value `true` enables them; anything else fails closed, and a
+  create naming either is refused with a 400 before any job exists. It names
+  no account resource; it keeps a shape no live create has sent off the
+  shared ad account. The chart sets it to `"false"`
+  (`app.environment.MICROSOFT_AD_EXTENSIONS_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once a live create confirms it.
+- `MICROSOFT_AUDIENCES_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `microsoftConfig.audienceIds`, `excludedAudienceIds` and
+  `audienceBidAdjustment` (#563): remarketing lists checked with
+  `GetAudiencesByIds` before anything is created, then attached to the new ad
+  group as observed (bid-only) and excluded audience criteria. Only the exact
+  value `true` enables them; anything else fails closed, and a create naming
+  any of the three is refused with a 400 before any job exists. The lists live
+  on the account every foundation shares, so they also need
+  `global_marketing_ops` on the project (403 otherwise). The chart sets it to
+  `"false"` (`app.environment.MICROSOFT_AUDIENCES_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once a live create confirms it.
+- `MICROSOFT_CREATE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `microsoftConfig.excludedGeoTargets`, `proximityTargets`
+  and `languages` (#563): excluded countries (negative location criteria) and
+  radius targets attached to the new campaign before its ad group, and the
+  campaign's ad languages. Only the exact value `true` enables them; anything
+  else fails closed, and a create naming any of the three is refused with a
+  400 before any job exists. They name no account resource; the flag keeps a
+  shape no live create has sent off the shared account. The chart sets it to
+  `"false"` (`app.environment.MICROSOFT_CREATE_TARGETING_ENABLED.value`).
 - `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.demandGenAudience`, one
   existing Google Ads Audience on a Demand Gen ad group (#459). Only the
@@ -383,6 +454,14 @@ openssl rand -base64 32
   `dynamicSegments` also require `global_marketing_ops`. The chart sets it to
   `"false"` (`app.environment.LINKEDIN_ADS_TARGETING_ENABLED.value`); enable
   it per-environment in the ArgoCD overlay once the probe passes.
+- `LINKEDIN_ADS_CONVERSIONS_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `linkedInConfig.conversions` (#552), conversion rule ids
+  associated with the campaign through Campaign Conversions once it exists.
+  Only the exact value `true` enables it; anything else fails closed, and a
+  create naming it is refused with a 400 before a job exists. The ids also
+  require `global_marketing_ops`. The chart sets it to `"false"`
+  (`app.environment.LINKEDIN_ADS_CONVERSIONS_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once the probe passes.
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request
   names no `source_workflow_url`. Unset or empty selects the in-code
@@ -403,6 +482,30 @@ openssl rand -base64 32
   to `"false"` (`charts/lfx-v2-campaign-service/values.yaml`); flip it
   only after the contract is verified against a live Microsoft ad
   account.
+- `MICROSOFT_AD_COPY_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `microsoftConfig.headlines`, `descriptions`, `path1`
+  and `path2` (#563), the caller copy of the responsive search ad sent
+  instead of the auto-composed copy. Only the exact value `true` enables
+  them; anything else fails closed, and a create naming any of them is
+  refused with a 400 before any job exists. It names no account
+  resource; it keeps a shape no live create has sent off the shared ad
+  account. The chart sets it to `"false"`
+  (`app.environment.MICROSOFT_AD_COPY_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once a live create confirms it.
+
+- `MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED` (default unset, i.e.
+  OFF) — opts a deployment IN to `microsoftConfig.negativeKeywords`
+  (#563), campaign-level negative keywords attached right after a
+  Microsoft Advertising campaign is created, through the same
+  `AddNegativeKeywordsToEntities` call the `add-negative-keywords`
+  lever makes. Only the exact value `true` enables it; anything else
+  fails closed, and a create naming a non-empty list is refused with a
+  400 before any job exists. It names no account resource; it keeps a
+  create-path call no live create has made off the shared ad account.
+  The chart sets it to `"false"`
+  (`app.environment.MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED.value`);
+  enable it per-environment in the ArgoCD overlay once a live create
+  confirms it.
 
 - `TWITTER_METRICS_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to BOTH X (Twitter) Ads features built on X's

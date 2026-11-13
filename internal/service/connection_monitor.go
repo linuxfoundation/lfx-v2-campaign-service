@@ -449,8 +449,38 @@ func (s *ConnectionService) monitorReportedAccount(
 // the platform, with pacing and action items derived by the ported rule engine. The customer is
 // shared across foundations, so the read is scoped to the campaigns this service recorded for the
 // project (Orchestrator.ReadAccountCampaignMetrics).
+//
+// account_id is optional (#591). Omitted, it is the customer the project's recorded campaigns were
+// created under (Orchestrator.DefaultMonitorAccount), which is the only way a project with no
+// connection of its own — monitored on the LF system account — can name it. A project with no
+// campaigns recorded on Google Ads gets an empty monitor with an empty account_id, without any
+// upstream call, as it would naming any customer.
 func (s *ConnectionService) MonitorGoogleAdsAccount(ctx context.Context, p *conn.MonitorGoogleAdsAccountPayload) (*conn.AccountMonitor, error) {
-	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderGoogleAds, googleAdsMonitorDiscovery,
+	accountID := ""
+	if p.AccountID != nil {
+		accountID = *p.AccountID
+	} else {
+		// The same refusals monitorAccount runs first, so a system-scope project or an
+		// out-of-range days gets its 400 before the project's campaigns are read.
+		if err := rejectSystemScope(p.ProjectID); err != nil {
+			return nil, err
+		}
+		if err := validateMonitorDays(p.Days); err != nil {
+			return nil, err
+		}
+		_, _, orch, err := s.resolveBackendWithOrch(googleAdsMonitorDiscovery.label())
+		if err != nil {
+			return nil, err
+		}
+		accountID, err = orch.DefaultMonitorAccount(ctx, p.ProjectID, model.ProviderGoogleAds)
+		if err != nil {
+			return nil, s.classifyMonitorError(ctx, p.ProjectID, model.ProviderGoogleAds, googleAdsMonitorDiscovery, err)
+		}
+		if accountID == "" {
+			return buildAccountMonitor("", p.Days, nil, nil, ""), nil
+		}
+	}
+	return s.monitorAccount(ctx, p.ProjectID, accountID, p.Days, model.ProviderGoogleAds, googleAdsMonitorDiscovery,
 		func(read *model.AccountMonitorRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 			return rules.EvaluateGoogleMonitor(read.Rows, p.Days, read.Currency)
 		})

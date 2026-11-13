@@ -204,6 +204,9 @@ type linkedinConfig struct {
 	// LINKEDIN_ADS_TARGETING_ENABLED. Set, it replaces TargetingProfile and the hard-coded
 	// job functions and seniority exclusions. See linkedin.Targeting.
 	Targeting *linkedin.Targeting `json:"targeting,omitempty"`
+	// Conversions are conversion rule ids associated with the campaign once it exists (#552),
+	// behind LINKEDIN_ADS_CONVERSIONS_ENABLED. See linkedin.ValidateConversions.
+	Conversions []string `json:"conversions,omitempty"`
 }
 
 // linkedinTargetingEnabled reports whether this deployment opted in to linkedInConfig.targeting
@@ -293,6 +296,65 @@ func linkedinTargeting(cfg linkedinConfig) (*linkedin.Targeting, error) {
 	return t, nil
 }
 
+// linkedinConversionsEnabled reports whether this deployment opted in to
+// linkedInConfig.conversions (#552). Read per call so it flips without a rebuild. Off by default:
+// the Campaign Conversions PUT has not been exercised against a live LinkedIn account.
+func linkedinConversionsEnabled() bool {
+	return os.Getenv(constants.EnvLinkedInAdsConversionsEnabled) == "true"
+}
+
+// checkConversionsShape refuses a linkedInConfig.conversions that is not a JSON array of strings
+// (#552), explicit null included. encoding/json decodes a number entry into a []string as "" and the best-effort
+// pre-flight decode keeps going, so without this a caller sending [104012] would be told "" is
+// not an id. Anything it cannot attribute to `conversions` is left to the ordinary decode.
+func checkConversionsShape(config json.RawMessage) error {
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(config, &envelope) != nil {
+		return nil
+	}
+	var platformCfg map[string]json.RawMessage
+	if json.Unmarshal(envelope["linkedInConfig"], &platformCfg) != nil {
+		return nil
+	}
+	for k, raw := range platformCfg {
+		if !strings.EqualFold(k, "conversions") {
+			continue
+		}
+		var entries []json.RawMessage
+		// An explicit null decodes to a nil slice without error, which would read as "omitted";
+		// it is refused instead, as a non-array is.
+		if isJSONNull(raw) || json.Unmarshal(raw, &entries) != nil {
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.conversions must be an array of conversion rule id strings, e.g. [\"104012\"]", domain.ErrCreateConfigInvalid))
+		}
+		for _, e := range entries {
+			var str string
+			if json.Unmarshal(e, &str) != nil {
+				return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.conversions entries must be strings, e.g. [\"104012\"]", domain.ErrCreateConfigInvalid))
+			}
+		}
+	}
+	return nil
+}
+
+// linkedinConversions checks linkedInConfig.conversions before any job or request: refused while
+// the deployment gate is off, and refused when linkedin.ValidateConversions refuses it. Both are
+// ErrCreateConfigInvalid pre-flight refusals, so PreflightCreate answers them with a synchronous
+// 400 and Dispatch fails the job with the same sentence. Returns the de-duplicated copy.
+func linkedinConversions(cfg linkedinConfig) ([]string, error) {
+	if cfg.Conversions == nil {
+		return nil, nil
+	}
+	if !linkedinConversionsEnabled() {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.conversions is disabled on this deployment (%s is not \"true\"); omit it, or ask an operator to set %s to \"true\"",
+			domain.ErrCreateConfigInvalid, constants.EnvLinkedInAdsConversionsEnabled, constants.EnvLinkedInAdsConversionsEnabled))
+	}
+	ids, err := linkedin.ValidateConversions(cfg.Conversions)
+	if err != nil {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.conversions: %w", domain.ErrCreateConfigInvalid, err))
+	}
+	return ids, nil
+}
+
 // linkedinBidPlan resolves linkedInConfig's bidding choice. The OBJECTIVE follows it (decision
 // 2026-10-13, Misha): automatic — the default — creates a WEBSITE_VISIT campaign optimising for
 // clicks (MAX_CLICK), because MAX_CONVERSION, the only automated target WEBSITE_CONVERSION allows,
@@ -346,6 +408,14 @@ func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ mode
 		return err
 	}
 	if _, err := linkedinTargeting(cfg); err != nil {
+		return err
+	}
+	// linkedInConfig.conversions (#552) is promised as a synchronous 400 too, a wrong JSON type
+	// included.
+	if err := checkConversionsShape(config); err != nil {
+		return err
+	}
+	if _, err := linkedinConversions(cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -449,6 +519,14 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if cfg.Targeting, err = linkedinTargeting(cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// Conversion rule ids (#552), gated and validated before any upstream call; the
+	// de-duplicated copy replaces the request's, for the client and the stored snapshot.
+	if err := checkConversionsShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	if cfg.Conversions, err = linkedinConversions(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
 	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
 	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
@@ -532,6 +610,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		Images:           images,
 		ManualCPCBid:     plan.amount,
 		Targeting:        cfg.Targeting,
+		Conversions:      cfg.Conversions,
 
 		// The name labels of the CLAIMED row (multi-campaign cs-4): its stored funnel stage and
 		// tactic (model.DispatchLabels) and its slot version, never the request's. A retry of
@@ -857,11 +936,12 @@ func (d *LinkedInDispatcher) resolveLinkedInDiscoveryCredentials(ctx context.Con
 }
 
 // resolveLinkedInOwnedDiscoveryCredentials is resolveLinkedInDiscoveryCredentials WITHOUT the
-// LF system fallback — the monitor read's equivalent of googleads.go's
-// resolveOwnedGoogleAdsDiscoveryClient (see that function's doc comment for the shared
-// rationale: round-16 review escalated the pre-existing credential-scope gap to Critical, and
-// membership-checking against ListAccounts would not have closed it given LinkedIn's own
-// shared-tenancy exposure through the fallback).
+// LF system fallback, for the monitor read. Round-16 review escalated the pre-existing
+// credential-scope gap to Critical, and membership-checking against ListAccounts would not have
+// closed it given LinkedIn's own shared-tenancy exposure through the fallback. LinkedIn's monitor
+// is not campaign-scoped (it does not implement service.AccountMonitorScoper), so the refusal
+// still stands here; Google dropped it in #591 only because its read is (see googleads.go's
+// resolveGoogleAdsMonitorClient).
 //
 // It reuses resolveLinkedInCredentials, the same validation resolveLinkedInDiscoveryCredentials
 // itself calls, but bound to d.creds.resolveOwned instead of d.creds.resolve — so a project with
@@ -1459,6 +1539,13 @@ func campaignFromLinkedIn(ctx context.Context, r *linkedin.CampaignResult, reque
 			// CreativeCount == requested; this guard is defensive so a shortfall is never
 			// silently reported as a clean `created` (and flags the count on the
 			// retained-error path).
+			c.Status = campaignStatusCreatedDegraded
+		}
+		if len(r.ConversionsFailed) > 0 {
+			// A conversion rule the caller asked for is not associated (#552): the campaign
+			// exists (PAUSED when this run created it; a campaign reused by name keeps its own
+			// status) but would not report those conversions. The steps name each id to
+			// associate in Campaign Manager.
 			c.Status = campaignStatusCreatedDegraded
 		}
 	case r.CampaignGroupID != "":

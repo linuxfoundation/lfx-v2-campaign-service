@@ -841,69 +841,10 @@ func (c *Client) createCampaignCriterions(ctx context.Context, campaignID string
 		})
 	}
 
-	body, err := c.doRequest(ctx, http.MethodPost, "CampaignCriterions", createCampaignCriterionsRequest{
+	return c.postCampaignCriterions(ctx, campaignID, "geo targeting", "location criteria", createCampaignCriterionsRequest{
 		CampaignCriterions: criterions,
 		CriterionType:      criterionTypeTargets,
-	}, false)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp createCampaignCriterionsResponse
-	if uErr := json.Unmarshal(body, &resp); uErr != nil {
-		// A 2xx whose body will not parse is UNCONFIRMED: the criteria may have been attached
-		// and a blind retry would duplicate them. errNoID is the sentinel the call site maps to
-		// UNCONFIRMED.
-		return nil, fmt.Errorf("decode CampaignCriterionIds response (%v): %w", uErr, errNoID)
-	}
-
-	// A TRUNCATED error array is NOT evidence of success. boundedNestedErrorItems retains
-	// maxDecodedErrorItems entries while this call sends up to maxGeoTargets, so a rejection
-	// past the cap was DISCARDED during decode and the surviving prefix can read as clean.
-	// Absence of a rejection in a truncated array is not absence of a rejection — refusing
-	// beats reporting an untargeted campaign as targeted. (Same invariant the keyword path
-	// applies via PartialErrors.Truncated.)
-	if resp.NestedPartialErrors.Truncated || nestedTruncated(resp.NestedPartialErrors.Items) {
-		return nil, fmt.Errorf("microsoft-ads geo targeting returned a truncated error array for campaign %s, so the outcome cannot be classified: %w", campaignID, errNoID)
-	}
-	if nestedErrorsHaveAny(resp.NestedPartialErrors.Items) {
-		created := make([]string, 0, len(resp.CampaignCriterionIds))
-		for _, raw := range resp.CampaignCriterionIds {
-			if id := numberID(raw); id != "" {
-				created = append(created, id)
-			}
-		}
-		// ANY rejected location criterion fails the whole step. Unlike keywords — where a
-		// duplicate is Microsoft confirming the desired state already holds — a rejected
-		// LOCATION leaves the campaign targeting a SMALLER area than asked for, and a campaign
-		// that serves in fewer countries than intended is still a campaign spending money on a
-		// targeting shape nobody approved. There is no benign rejection here to special-case.
-		if len(created) == 0 {
-			return nil, fmt.Errorf("%w: %s", errPartialFailure, nestedErrorCodes(resp.NestedPartialErrors.Items))
-		}
-		return created, fmt.Errorf("%w (%d of %d location criteria were created): %s",
-			errPartialFailure, len(created), len(criterions), nestedErrorCodes(resp.NestedPartialErrors.Items))
-	}
-
-	// The id array is index-aligned with the request. A SHORT array means the response does
-	// not describe what was sent, so which criteria exist upstream is unknown → UNCONFIRMED.
-	want := len(criterions)
-	if len(resp.CampaignCriterionIds) < want {
-		return nil, fmt.Errorf("microsoft-ads geo targeting returned %d ids for %d location criteria (campaign %s): %w",
-			len(resp.CampaignCriterionIds), want, campaignID, errNoID)
-	}
-
-	ids := make([]string, 0, want)
-	for i := 0; i < want; i++ {
-		id := numberID(resp.CampaignCriterionIds[i])
-		if id == "" {
-			// A null/malformed id slot with NO error explaining it is the malformed-200 case:
-			// the criterion may exist but cannot be identified → UNCONFIRMED.
-			return nil, fmt.Errorf("microsoft-ads geo targeting returned no usable id at index %d (campaign %s): %w", i, campaignID, errNoID)
-		}
-		ids = append(ids, id)
-	}
-	return ids, nil
+	}, len(criterions))
 }
 
 // ---------------------------------------------------------------------------
@@ -1099,4 +1040,81 @@ func unrequestedTargets(existing map[string]struct{}, wanted []string) []string 
 	}
 	sort.Strings(out)
 	return out
+}
+
+// postCampaignCriterions sends ONE AddCampaignCriterions call (POST CampaignCriterions) of n
+// criteria and returns the created criterion ids in request order, under the outcome rules
+// createCampaignCriterions documents: a truncated or rejecting error array, a short id array or
+// an id-less slot is a failure (errPartialFailure, with the ids that WERE created) or
+// UNCONFIRMED (errNoID), never a success. what and noun name the step and its criteria in error
+// text ("geo targeting", "location criteria"). Shared by the positive locations, the excluded
+// locations and the radius targets (create_targeting.go), so the three cannot drift apart.
+// NOT RETRIED ON 429.
+func (c *Client) postCampaignCriterions(ctx context.Context, campaignID, what, noun string, req any, n int) ([]string, error) {
+	if n == 0 {
+		return nil, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, fmt.Errorf("microsoft-ads %s aborted before any request (context already done; campaign %s has none of these %s yet): %w", what, campaignID, noun, ctxErr)
+	}
+	body, err := c.doRequest(ctx, http.MethodPost, "CampaignCriterions", req, false)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp createCampaignCriterionsResponse
+	if uErr := json.Unmarshal(body, &resp); uErr != nil {
+		// A 2xx whose body will not parse is UNCONFIRMED: the criteria may have been attached
+		// and a blind retry would duplicate them. errNoID is the sentinel the call site maps to
+		// UNCONFIRMED.
+		return nil, fmt.Errorf("decode CampaignCriterionIds response (%v): %w", uErr, errNoID)
+	}
+
+	// A TRUNCATED error array is NOT evidence of success. boundedNestedErrorItems retains
+	// maxDecodedErrorItems entries while this call sends up to maxGeoTargets, so a rejection
+	// past the cap was DISCARDED during decode and the surviving prefix can read as clean.
+	// Absence of a rejection in a truncated array is not absence of a rejection — refusing
+	// beats reporting an untargeted campaign as targeted. (Same invariant the keyword path
+	// applies via PartialErrors.Truncated.)
+	if resp.NestedPartialErrors.Truncated || nestedTruncated(resp.NestedPartialErrors.Items) {
+		return nil, fmt.Errorf("microsoft-ads %s returned a truncated error array for campaign %s, so the outcome cannot be classified: %w", what, campaignID, errNoID)
+	}
+	if nestedErrorsHaveAny(resp.NestedPartialErrors.Items) {
+		created := make([]string, 0, len(resp.CampaignCriterionIds))
+		for _, raw := range resp.CampaignCriterionIds {
+			if id := numberID(raw); id != "" {
+				created = append(created, id)
+			}
+		}
+		// ANY rejected location criterion fails the whole step. Unlike keywords — where a
+		// duplicate is Microsoft confirming the desired state already holds — a rejected
+		// LOCATION leaves the campaign targeting a SMALLER area than asked for, and a campaign
+		// that serves in fewer countries than intended is still a campaign spending money on a
+		// targeting shape nobody approved. There is no benign rejection here to special-case.
+		if len(created) == 0 {
+			return nil, fmt.Errorf("%w: %s", errPartialFailure, nestedErrorCodes(resp.NestedPartialErrors.Items))
+		}
+		return created, fmt.Errorf("%w (%d of %d %s were created): %s",
+			errPartialFailure, len(created), n, noun, nestedErrorCodes(resp.NestedPartialErrors.Items))
+	}
+
+	// The id array is index-aligned with the request. A SHORT array means the response does
+	// not describe what was sent, so which criteria exist upstream is unknown → UNCONFIRMED.
+	want := n
+	if len(resp.CampaignCriterionIds) < want {
+		return nil, fmt.Errorf("microsoft-ads %s returned %d ids for %d %s (campaign %s): %w",
+			what, len(resp.CampaignCriterionIds), want, noun, campaignID, errNoID)
+	}
+
+	ids := make([]string, 0, want)
+	for i := 0; i < want; i++ {
+		id := numberID(resp.CampaignCriterionIds[i])
+		if id == "" {
+			// A null/malformed id slot with NO error explaining it is the malformed-200 case:
+			// the criterion may exist but cannot be identified → UNCONFIRMED.
+			return nil, fmt.Errorf("microsoft-ads %s returned no usable id at index %d (campaign %s): %w", what, i, campaignID, errNoID)
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }

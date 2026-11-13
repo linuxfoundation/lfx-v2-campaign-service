@@ -119,6 +119,60 @@ func TestRedditMarketingOpsInputs(t *testing.T) {
 	}
 }
 
+func TestMicrosoftMarketingOpsInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		config string
+		want   []string
+	}{
+		{"empty", ``, nil},
+		{"no microsoft config", `{"twitterConfig":{"customAudienceIds":["x"]}}`, nil},
+		{"microsoft config without gated input", `{"microsoftConfig":{"budget":5,"audienceBidAdjustment":25,"geoTargets":["US"]}}`, nil},
+		{"observed lists", `{"microsoftConfig":{"audienceIds":["11"]}}`, []string{"audienceIds"}},
+		{"excluded lists", `{"microsoftConfig":{"excludedAudienceIds":["77"]}}`, []string{"excludedAudienceIds"}},
+		{"both, in config order", `{"microsoftConfig":{"excludedAudienceIds":["2"],"audienceIds":["1"]}}`, []string{"audienceIds", "excludedAudienceIds"}},
+		{"a list of blanks counts", `{"microsoftConfig":{"audienceIds":[""]}}`, []string{"audienceIds"}},
+		{"empty and null lists do not count", `{"microsoftConfig":{"audienceIds":[],"excludedAudienceIds":null}}`, nil},
+		{"case variant key", `{"microsoftConfig":{"AUDIENCEIDS":["1"]}}`, []string{"audienceIds"}},
+		{"inputs around a type error", `{"microsoftConfig":{"budget":"x","audienceIds":["1"]}}`, []string{"audienceIds"}},
+		{"envelope key is exact", `{"MicrosoftConfig":{"audienceIds":["1"]}}`, nil},
+		{"malformed envelope", `{`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := MicrosoftMarketingOpsInputs(json.RawMessage(tc.config)); !slices.Equal(got, tc.want) {
+				t.Fatalf("MicrosoftMarketingOpsInputs(%s) = %q, want %q", tc.config, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTwitterMarketingOpsInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		config string
+		want   []string
+	}{
+		{"empty", ``, nil},
+		{"no twitter config", `{"redditConfig":{"customAudienceIds":["x"]}}`, nil},
+		{"twitter config without gated input", `{"twitterConfig":{"geoTargets":["US"],"languages":["en"],"tweetId":"1"}}`, nil},
+		{"custom audiences", `{"twitterConfig":{"customAudienceIds":["1nmth"]}}`, []string{"customAudienceIds"}},
+		{"excluded custom audiences", `{"twitterConfig":{"excludedCustomAudienceIds":["2906h"]}}`, []string{"excludedCustomAudienceIds"}},
+		{"both, in config order", `{"twitterConfig":{"excludedCustomAudienceIds":["2"],"customAudienceIds":["1"]}}`, []string{"customAudienceIds", "excludedCustomAudienceIds"}},
+		{"a list of blanks counts", `{"twitterConfig":{"customAudienceIds":[""]}}`, []string{"customAudienceIds"}},
+		{"empty and null lists do not count", `{"twitterConfig":{"customAudienceIds":[],"excludedCustomAudienceIds":null}}`, nil},
+		{"case variant key", `{"twitterConfig":{"CUSTOMAUDIENCEIDS":["1"]}}`, []string{"customAudienceIds"}},
+		{"inputs around a type error", `{"twitterConfig":{"budgetAmount":"x","customAudienceIds":["1"]}}`, []string{"customAudienceIds"}},
+		{"envelope key is exact", `{"TwitterConfig":{"customAudienceIds":["1"]}}`, nil},
+		{"malformed envelope", `{`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := TwitterMarketingOpsInputs(json.RawMessage(tc.config)); !slices.Equal(got, tc.want) {
+				t.Fatalf("TwitterMarketingOpsInputs(%s) = %q, want %q", tc.config, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps drives the gate through
 // CreateCampaigns: a refusal arrives before any job exists, and a grant creates the job.
 func TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps(t *testing.T) {
@@ -140,6 +194,15 @@ func TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps(t *tes
 	redditAudiences := map[string]any{"redditConfig": map[string]any{
 		"budgetUsd": 50, "customAudienceIds": []any{"1"}, "excludedCustomAudienceIds": []any{"2"}}}
 	redditPlain := map[string]any{"redditConfig": map[string]any{"budgetUsd": 50}}
+	twitterAudiences := map[string]any{"twitterConfig": map[string]any{
+		"budgetAmount": 50, "customAudienceIds": []any{"1nmth"}, "excludedCustomAudienceIds": []any{"2906h"}}}
+	microsoftAudiences := map[string]any{"microsoftConfig": map[string]any{
+		"budget": 50, "audienceIds": []any{"11"}, "excludedAudienceIds": []any{"77"}, "audienceBidAdjustment": 25}}
+	microsoftPlain := map[string]any{"microsoftConfig": map[string]any{"budget": 50, "audienceBidAdjustment": 25}}
+	twitterPlain := map[string]any{"twitterConfig": map[string]any{"budgetAmount": 50, "geoTargets": []any{"US"}}}
+	redditAndTwitter := map[string]any{
+		"redditConfig":  map[string]any{"customAudienceIds": []any{"1"}},
+		"twitterConfig": map[string]any{"excludedCustomAudienceIds": []any{"2906h"}}}
 	both := map[string]any{
 		"googleAdsConfig": map[string]any{"channel": "search", "conversionActions": []any{"customers/1/conversionActions/2"}},
 		"redditConfig":    map[string]any{"customAudienceIds": []any{"1"}}}
@@ -159,6 +222,8 @@ func TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps(t *tes
 			"require the global_marketing_ops role on this project: conversionActions; metaConfig inputs",
 		"google and reddit inputs, one check, both named": "googleAdsConfig inputs that name a resource on the shared Google Ads account " +
 			"require the global_marketing_ops role on this project: conversionActions; redditConfig inputs",
+		"reddit and twitter inputs, one check, both named": "redditConfig inputs that name a resource on the shared Reddit Ads account " +
+			"require the global_marketing_ops role on this project: customAudienceIds; twitterConfig inputs that name a resource on the shared X ad account",
 	}
 	for _, tc := range []struct {
 		name      string
@@ -209,6 +274,21 @@ func TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps(t *tes
 		{"a failed check on reddit audiences is unavailable", []string{"reddit-ads"}, redditAudiences,
 			&fakeMarketingOps{allow: true, err: errors.New("nats: timeout")}, testActor, "503", 1, ""},
 		{"google and reddit inputs, one check, both named", []string{"google-ads", "reddit-ads"}, both, &fakeMarketingOps{}, testActor, "403", 1, "customAudienceIds"},
+		// #564: X custom audiences name the shared X ad account's audiences.
+		{"twitter custom audiences are checked", []string{"twitter-ads"}, twitterAudiences, &fakeMarketingOps{}, testActor, "403", 1, "customAudienceIds, excludedCustomAudienceIds"},
+		{"marketing ops may send twitter custom audiences", []string{"twitter-ads"}, twitterAudiences, &fakeMarketingOps{allow: true}, testActor, "", 1, ""},
+		{"twitter without custom audiences is not checked", []string{"twitter-ads"}, twitterPlain, &fakeMarketingOps{}, testActor, "", 0, ""},
+		{"a twitter config on a reddit create is not checked", []string{"reddit-ads"}, twitterAudiences, &fakeMarketingOps{}, testActor, "", 0, ""},
+		{"a failed check on twitter audiences is unavailable", []string{"twitter-ads"}, twitterAudiences,
+			&fakeMarketingOps{allow: true, err: errors.New("nats: timeout")}, testActor, "503", 1, ""},
+		// #563: Microsoft remarketing lists name the shared Microsoft Advertising account's lists.
+		{"microsoft remarketing lists are checked", []string{"microsoft-ads"}, microsoftAudiences, &fakeMarketingOps{}, testActor, "403", 1, "audienceIds, excludedAudienceIds"},
+		{"marketing ops may send microsoft remarketing lists", []string{"microsoft-ads"}, microsoftAudiences, &fakeMarketingOps{allow: true}, testActor, "", 1, ""},
+		{"a microsoft bid adjustment alone is not checked", []string{"microsoft-ads"}, microsoftPlain, &fakeMarketingOps{}, testActor, "", 0, ""},
+		{"a microsoft config on a google create is not checked", []string{"google-ads"}, microsoftAudiences, &fakeMarketingOps{}, testActor, "", 0, ""},
+		{"a failed check on microsoft lists is unavailable", []string{"microsoft-ads"}, microsoftAudiences,
+			&fakeMarketingOps{allow: true, err: errors.New("nats: timeout")}, testActor, "503", 1, ""},
+		{"reddit and twitter inputs, one check, both named", []string{"reddit-ads", "twitter-ads"}, redditAndTwitter, &fakeMarketingOps{}, testActor, "403", 1, "excludedCustomAudienceIds"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, jobs, _ := approvedPaidBriefService(t)

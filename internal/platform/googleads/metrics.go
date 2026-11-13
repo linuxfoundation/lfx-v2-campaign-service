@@ -344,7 +344,7 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	// same treatment parseMetricInt already gives an omitted impressions/clicks value.
 	//
 	// nil is reserved for adapters whose PLATFORM cannot report a campaign-level conversion
-	// count at all (Meta, X, Reddit, email), which is a different fact and the reason the
+	// count at all (X, Reddit, email; Meta outside its #550 read), which is a different fact and the reason the
 	// domain field is a pointer. Leaving Google nil on a zero would have meant no_conversions
 	// never fired for a Google campaign that genuinely converted nobody — the rule's whole
 	// purpose.

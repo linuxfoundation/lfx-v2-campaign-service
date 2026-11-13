@@ -889,6 +889,22 @@ type ListGoogleAdsAudiencesResponseBody struct {
 	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
 }
 
+// ListMetaCustomAudiencesResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body.
+type ListMetaCustomAudiencesResponseBody struct {
+	// The Meta ad account the audiences were read from: the account a Meta create
+	// for this project uses
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Matching audiences sorted by name (ignoring case), capped at 500 (see
+	// `truncated`)
+	Audiences []*MetaCustomAudienceResponseBody `form:"audiences" json:"audiences" xml:"audiences"`
+	// How many audiences are in `audiences`
+	AudienceCount int `form:"audience_count" json:"audience_count" xml:"audience_count"`
+	// True when more audiences matched than were returned; narrow the search with q
+	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
+}
+
 // ListRedditAdsCustomAudiencesResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-reddit-ads-custom-audiences" endpoint HTTP response body.
@@ -902,6 +918,23 @@ type ListRedditAdsCustomAudiencesResponseBody struct {
 	AudienceCount int `form:"audience_count" json:"audience_count" xml:"audience_count"`
 	// True when Reddit still had more pages after the 10 this read follows; the
 	// list is then incomplete
+	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
+}
+
+// ListTwitterAdsCustomAudiencesResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body.
+type ListTwitterAdsCustomAudiencesResponseBody struct {
+	// The X ad account the audiences were read from: the account an X create for
+	// this project uses
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The account's non-deleted custom audiences, sorted by name (ignoring case),
+	// then id
+	Audiences []*TwitterAdsCustomAudienceResponseBody `form:"audiences" json:"audiences" xml:"audiences"`
+	// How many audiences are in `audiences`
+	AudienceCount int `form:"audience_count" json:"audience_count" xml:"audience_count"`
+	// True when X still had more pages after the 10 this read follows; the list is
+	// then incomplete
 	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
 }
 
@@ -976,6 +1009,36 @@ type GetLinkedinAdsAudienceResponseBody struct {
 	// estimate, never as an exact measurement, and do not reconcile it against the
 	// campaign metrics read.
 	Approximate bool `form:"approximate" json:"approximate" xml:"approximate"`
+}
+
+// ListLinkedinAdsAudiencesResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-audiences"
+// endpoint HTTP response body.
+type ListLinkedinAdsAudiencesResponseBody struct {
+	// The LinkedIn ad account the segments were read from: the account a LinkedIn
+	// create for this project uses
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The account's targetable segments, sorted by name (ignoring case)
+	Audiences []*LinkedinAdsAudienceSegmentResponseBody `form:"audiences" json:"audiences" xml:"audiences"`
+	// How many segments are in `audiences`
+	AudienceCount int `form:"audience_count" json:"audience_count" xml:"audience_count"`
+	// Always false: the read never truncates (more than 1000 segments fails it
+	// with 503). Kept for shape parity with the Google audience picker.
+	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
+}
+
+// ListLinkedinAdsConversionsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-linkedin-ads-conversions" endpoint HTTP response body.
+type ListLinkedinAdsConversionsResponseBody struct {
+	// The LinkedIn ad account the rules were read from: the account a LinkedIn
+	// create for this project uses
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The account's conversion rules, enabled or not, sorted by name (ignoring
+	// case)
+	Conversions []*LinkedinAdsConversionRuleResponseBody `form:"conversions" json:"conversions" xml:"conversions"`
+	// How many rules are in `conversions`
+	ConversionCount int `form:"conversion_count" json:"conversion_count" xml:"conversion_count"`
 }
 
 // GetMicrosoftAdsKeywordsResponseBody is the type of the
@@ -4484,6 +4547,66 @@ type ListGoogleAdsAudiencesUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListMetaCustomAudiencesBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListMetaCustomAudiencesBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaCustomAudiencesServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListMetaCustomAudiencesServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaCustomAudiencesInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListMetaCustomAudiencesInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaCustomAudiencesNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body for the "NotFound" error.
+type ListMetaCustomAudiencesNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaCustomAudiencesPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListMetaCustomAudiencesPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaCustomAudiencesUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-custom-audiences"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListMetaCustomAudiencesUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ListRedditAdsCustomAudiencesBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-reddit-ads-custom-audiences" endpoint HTTP response body for the
@@ -4544,6 +4667,72 @@ type ListRedditAdsCustomAudiencesPayloadTooLargeResponseBody struct {
 // "list-reddit-ads-custom-audiences" endpoint HTTP response body for the
 // "Unauthorized" error.
 type ListRedditAdsCustomAudiencesUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListTwitterAdsCustomAudiencesBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
+// "BadRequest" error.
+type ListTwitterAdsCustomAudiencesBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListTwitterAdsCustomAudiencesServiceUnavailableResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type ListTwitterAdsCustomAudiencesServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListTwitterAdsCustomAudiencesInternalServerErrorResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
+// "InternalServerError" error.
+type ListTwitterAdsCustomAudiencesInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListTwitterAdsCustomAudiencesNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
+// "NotFound" error.
+type ListTwitterAdsCustomAudiencesNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListTwitterAdsCustomAudiencesPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type ListTwitterAdsCustomAudiencesPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListTwitterAdsCustomAudiencesUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
+// "Unauthorized" error.
+type ListTwitterAdsCustomAudiencesUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -4763,6 +4952,132 @@ type GetLinkedinAdsAudiencePayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-linkedin-ads-audience"
 // endpoint HTTP response body for the "Unauthorized" error.
 type GetLinkedinAdsAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsAudiencesBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-audiences"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListLinkedinAdsAudiencesBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsAudiencesServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-audiences"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListLinkedinAdsAudiencesServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsAudiencesInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-audiences"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListLinkedinAdsAudiencesInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsAudiencesNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-audiences"
+// endpoint HTTP response body for the "NotFound" error.
+type ListLinkedinAdsAudiencesNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsAudiencesPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-audiences"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListLinkedinAdsAudiencesPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsAudiencesUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-audiences"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListLinkedinAdsAudiencesUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsConversionsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-linkedin-ads-conversions" endpoint HTTP response body for the
+// "BadRequest" error.
+type ListLinkedinAdsConversionsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsConversionsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-linkedin-ads-conversions" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type ListLinkedinAdsConversionsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsConversionsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-linkedin-ads-conversions" endpoint HTTP response body for the
+// "InternalServerError" error.
+type ListLinkedinAdsConversionsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsConversionsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-linkedin-ads-conversions" endpoint HTTP response body for the
+// "NotFound" error.
+type ListLinkedinAdsConversionsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsConversionsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-linkedin-ads-conversions" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type ListLinkedinAdsConversionsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsConversionsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-linkedin-ads-conversions" endpoint HTTP response body for the
+// "Unauthorized" error.
+type ListLinkedinAdsConversionsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -6609,6 +6924,24 @@ type GoogleAdsAudienceResourceResponseBody struct {
 	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
 }
 
+// MetaCustomAudienceResponseBody is used to define fields on response body
+// types.
+type MetaCustomAudienceResponseBody struct {
+	// The audience id, exactly what metaConfig.targeting.customAudiences and
+	// excludedCustomAudiences take
+	ID string `form:"id" json:"id" xml:"id"`
+	// The audience's display name. Not an identifier.
+	Name string `form:"name" json:"name" xml:"name"`
+	// Meta's own kind, verbatim (CUSTOM, WEBSITE, LOOKALIKE, ENGAGEMENT, …)
+	Subtype string `form:"subtype" json:"subtype" xml:"subtype"`
+	// The audience's description. Absent when Meta sent none.
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Meta's estimated audience size, lower bound. Absent when Meta reported none.
+	ApproximateCountLowerBound *int64 `form:"approximate_count_lower_bound,omitempty" json:"approximate_count_lower_bound,omitempty" xml:"approximate_count_lower_bound,omitempty"`
+	// Meta's estimated audience size, upper bound. Absent when Meta reported none.
+	ApproximateCountUpperBound *int64 `form:"approximate_count_upper_bound,omitempty" json:"approximate_count_upper_bound,omitempty" xml:"approximate_count_upper_bound,omitempty"`
+}
+
 // RedditAdsCustomAudienceResponseBody is used to define fields on response
 // body types.
 type RedditAdsCustomAudienceResponseBody struct {
@@ -6630,6 +6963,26 @@ type RedditAdsCustomAudienceResponseBody struct {
 	SizeLower *int64 `form:"size_lower,omitempty" json:"size_lower,omitempty" xml:"size_lower,omitempty"`
 	// Reddit's upper bound on the matched users. Absent when Reddit sent none.
 	SizeUpper *int64 `form:"size_upper,omitempty" json:"size_upper,omitempty" xml:"size_upper,omitempty"`
+}
+
+// TwitterAdsCustomAudienceResponseBody is used to define fields on response
+// body types.
+type TwitterAdsCustomAudienceResponseBody struct {
+	// The audience id, in exactly the form twitterConfig.customAudienceIds and
+	// excludedCustomAudienceIds accept. Send it as-is.
+	ID string `form:"id" json:"id" xml:"id"`
+	// The audience's display name. Not an identifier; may be empty.
+	Name string `form:"name" json:"name" xml:"name"`
+	// X's audience_type, verbatim (for example WEB, LIST or MOBILE); may be empty.
+	AudienceType string `form:"audience_type" json:"audience_type" xml:"audience_type"`
+	// X's targetable flag. Only a targetable audience is accepted at create; every
+	// audience is listed, so a picker can show why one is not usable yet.
+	Targetable bool `form:"targetable" json:"targetable" xml:"targetable"`
+	// X's audience_size. Absent when X sent none, which is not a size of 0.
+	AudienceSize *int64 `form:"audience_size,omitempty" json:"audience_size,omitempty" xml:"audience_size,omitempty"`
+	// X's reasons_not_targetable (for example TOO_SMALL or PROCESSING); only
+	// enum-shaped values are passed through. Empty when targetable.
+	ReasonsNotTargetable []string `form:"reasons_not_targetable" json:"reasons_not_targetable" xml:"reasons_not_targetable"`
 }
 
 // MetaAdsAudienceBucketResponseBody is used to define fields on response body
@@ -6711,6 +7064,49 @@ type LinkedinAdsAudienceBucketResponseBody struct {
 	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
 	// Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
 	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+}
+
+// LinkedinAdsAudienceSegmentResponseBody is used to define fields on response
+// body types.
+type LinkedinAdsAudienceSegmentResponseBody struct {
+	// The ad segment's numeric id
+	ID string `form:"id" json:"id" xml:"id"`
+	// urn:li:adSegment:{id}, in exactly the form linkedInConfig.targeting takes
+	Urn string `form:"urn" json:"urn" xml:"urn"`
+	// The segment's display name. Not an identifier.
+	Name string `form:"name" json:"name" xml:"name"`
+	// LinkedIn's AdSegmentType, verbatim (BULK, RETARGETING, MARKET_AUTOMATION,
+	// BUSINESS_OBJECTIVE_BASED_AUDIENCE, or another LinkedIn adds)
+	Type string `form:"type" json:"type" xml:"type"`
+	// LinkedIn's AdSegmentStatus, verbatim. EXPIRED and FAILED segments are not
+	// listed; BUILDING, UPDATING and ARCHIVED ones are, and only READY serves
+	// today.
+	Status string `form:"status" json:"status" xml:"status"`
+	// The linkedInConfig.targeting key the segment goes under: dynamicSegments for
+	// RETARGETING, audienceMatchingSegments for BULK, MARKET_AUTOMATION and
+	// BUSINESS_OBJECTIVE_BASED_AUDIENCE. Absent for any other type, which this
+	// service does not classify.
+	Facet *string `form:"facet,omitempty" json:"facet,omitempty" xml:"facet,omitempty"`
+	// LinkedIn's approximate member count. Absent when LinkedIn reported none; a
+	// campaign's audience can differ widely once other facets apply.
+	ApproximateMemberCount *int64 `form:"approximate_member_count,omitempty" json:"approximate_member_count,omitempty" xml:"approximate_member_count,omitempty"`
+}
+
+// LinkedinAdsConversionRuleResponseBody is used to define fields on response
+// body types.
+type LinkedinAdsConversionRuleResponseBody struct {
+	// The conversion rule's numeric id, in exactly the form
+	// linkedInConfig.conversions takes
+	ID string `form:"id" json:"id" xml:"id"`
+	// urn:lla:llaPartnerConversion:{id}
+	Urn string `form:"urn" json:"urn" xml:"urn"`
+	// The rule's display name. Not an identifier.
+	Name string `form:"name" json:"name" xml:"name"`
+	// LinkedIn's conversion type, verbatim (e.g. REGISTRATION, LEAD, PURCHASE);
+	// empty when LinkedIn sent none
+	Type string `form:"type" json:"type" xml:"type"`
+	// Whether the rule is enabled; false when LinkedIn did not say
+	Enabled bool `form:"enabled" json:"enabled" xml:"enabled"`
 }
 
 // MicrosoftAdsAudienceBucketResponseBody is used to define fields on response
@@ -8237,6 +8633,30 @@ func NewListGoogleAdsAudiencesResponseBody(res *lfxv2campaignserviceconnections.
 	return body
 }
 
+// NewListMetaCustomAudiencesResponseBody builds the HTTP response body from
+// the result of the "list-meta-custom-audiences" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaCustomAudiencesResponseBody(res *lfxv2campaignserviceconnections.MetaCustomAudiences) *ListMetaCustomAudiencesResponseBody {
+	body := &ListMetaCustomAudiencesResponseBody{
+		AccountID:     res.AccountID,
+		AudienceCount: res.AudienceCount,
+		Truncated:     res.Truncated,
+	}
+	if res.Audiences != nil {
+		body.Audiences = make([]*MetaCustomAudienceResponseBody, len(res.Audiences))
+		for i, val := range res.Audiences {
+			if val == nil {
+				body.Audiences[i] = nil
+				continue
+			}
+			body.Audiences[i] = marshalLfxv2campaignserviceconnectionsMetaCustomAudienceToMetaCustomAudienceResponseBody(val)
+		}
+	} else {
+		body.Audiences = []*MetaCustomAudienceResponseBody{}
+	}
+	return body
+}
+
 // NewListRedditAdsCustomAudiencesResponseBody builds the HTTP response body
 // from the result of the "list-reddit-ads-custom-audiences" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -8257,6 +8677,30 @@ func NewListRedditAdsCustomAudiencesResponseBody(res *lfxv2campaignserviceconnec
 		}
 	} else {
 		body.Audiences = []*RedditAdsCustomAudienceResponseBody{}
+	}
+	return body
+}
+
+// NewListTwitterAdsCustomAudiencesResponseBody builds the HTTP response body
+// from the result of the "list-twitter-ads-custom-audiences" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsCustomAudiencesResponseBody(res *lfxv2campaignserviceconnections.TwitterAdsCustomAudiences) *ListTwitterAdsCustomAudiencesResponseBody {
+	body := &ListTwitterAdsCustomAudiencesResponseBody{
+		AccountID:     res.AccountID,
+		AudienceCount: res.AudienceCount,
+		Truncated:     res.Truncated,
+	}
+	if res.Audiences != nil {
+		body.Audiences = make([]*TwitterAdsCustomAudienceResponseBody, len(res.Audiences))
+		for i, val := range res.Audiences {
+			if val == nil {
+				body.Audiences[i] = nil
+				continue
+			}
+			body.Audiences[i] = marshalLfxv2campaignserviceconnectionsTwitterAdsCustomAudienceToTwitterAdsCustomAudienceResponseBody(val)
+		}
+	} else {
+		body.Audiences = []*TwitterAdsCustomAudienceResponseBody{}
 	}
 	return body
 }
@@ -8330,6 +8774,53 @@ func NewGetLinkedinAdsAudienceResponseBody(res *lfxv2campaignserviceconnections.
 		}
 	} else {
 		body.Buckets = []*LinkedinAdsAudienceBucketResponseBody{}
+	}
+	return body
+}
+
+// NewListLinkedinAdsAudiencesResponseBody builds the HTTP response body from
+// the result of the "list-linkedin-ads-audiences" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsAudiencesResponseBody(res *lfxv2campaignserviceconnections.LinkedinAdsAudienceSegments) *ListLinkedinAdsAudiencesResponseBody {
+	body := &ListLinkedinAdsAudiencesResponseBody{
+		AccountID:     res.AccountID,
+		AudienceCount: res.AudienceCount,
+		Truncated:     res.Truncated,
+	}
+	if res.Audiences != nil {
+		body.Audiences = make([]*LinkedinAdsAudienceSegmentResponseBody, len(res.Audiences))
+		for i, val := range res.Audiences {
+			if val == nil {
+				body.Audiences[i] = nil
+				continue
+			}
+			body.Audiences[i] = marshalLfxv2campaignserviceconnectionsLinkedinAdsAudienceSegmentToLinkedinAdsAudienceSegmentResponseBody(val)
+		}
+	} else {
+		body.Audiences = []*LinkedinAdsAudienceSegmentResponseBody{}
+	}
+	return body
+}
+
+// NewListLinkedinAdsConversionsResponseBody builds the HTTP response body from
+// the result of the "list-linkedin-ads-conversions" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsConversionsResponseBody(res *lfxv2campaignserviceconnections.LinkedinAdsConversionRules) *ListLinkedinAdsConversionsResponseBody {
+	body := &ListLinkedinAdsConversionsResponseBody{
+		AccountID:       res.AccountID,
+		ConversionCount: res.ConversionCount,
+	}
+	if res.Conversions != nil {
+		body.Conversions = make([]*LinkedinAdsConversionRuleResponseBody, len(res.Conversions))
+		for i, val := range res.Conversions {
+			if val == nil {
+				body.Conversions[i] = nil
+				continue
+			}
+			body.Conversions[i] = marshalLfxv2campaignserviceconnectionsLinkedinAdsConversionRuleToLinkedinAdsConversionRuleResponseBody(val)
+		}
+	} else {
+		body.Conversions = []*LinkedinAdsConversionRuleResponseBody{}
 	}
 	return body
 }
@@ -12451,6 +12942,72 @@ func NewListGoogleAdsAudiencesUnauthorizedResponseBody(res *lfxv2campaignservice
 	return body
 }
 
+// NewListMetaCustomAudiencesBadRequestResponseBody builds the HTTP response
+// body from the result of the "list-meta-custom-audiences" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaCustomAudiencesBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListMetaCustomAudiencesBadRequestResponseBody {
+	body := &ListMetaCustomAudiencesBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaCustomAudiencesServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "list-meta-custom-audiences" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListMetaCustomAudiencesServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListMetaCustomAudiencesServiceUnavailableResponseBody {
+	body := &ListMetaCustomAudiencesServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaCustomAudiencesInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "list-meta-custom-audiences" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListMetaCustomAudiencesInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListMetaCustomAudiencesInternalServerErrorResponseBody {
+	body := &ListMetaCustomAudiencesInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaCustomAudiencesNotFoundResponseBody builds the HTTP response body
+// from the result of the "list-meta-custom-audiences" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaCustomAudiencesNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListMetaCustomAudiencesNotFoundResponseBody {
+	body := &ListMetaCustomAudiencesNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaCustomAudiencesPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "list-meta-custom-audiences" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListMetaCustomAudiencesPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListMetaCustomAudiencesPayloadTooLargeResponseBody {
+	body := &ListMetaCustomAudiencesPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaCustomAudiencesUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "list-meta-custom-audiences" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaCustomAudiencesUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListMetaCustomAudiencesUnauthorizedResponseBody {
+	body := &ListMetaCustomAudiencesUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewListRedditAdsCustomAudiencesBadRequestResponseBody builds the HTTP
 // response body from the result of the "list-reddit-ads-custom-audiences"
 // endpoint of the "lfx-v2-campaign-service-connections" service.
@@ -12511,6 +13068,74 @@ func NewListRedditAdsCustomAudiencesPayloadTooLargeResponseBody(res *lfxv2campai
 // endpoint of the "lfx-v2-campaign-service-connections" service.
 func NewListRedditAdsCustomAudiencesUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListRedditAdsCustomAudiencesUnauthorizedResponseBody {
 	body := &ListRedditAdsCustomAudiencesUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListTwitterAdsCustomAudiencesBadRequestResponseBody builds the HTTP
+// response body from the result of the "list-twitter-ads-custom-audiences"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsCustomAudiencesBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListTwitterAdsCustomAudiencesBadRequestResponseBody {
+	body := &ListTwitterAdsCustomAudiencesBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListTwitterAdsCustomAudiencesServiceUnavailableResponseBody builds the
+// HTTP response body from the result of the
+// "list-twitter-ads-custom-audiences" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsCustomAudiencesServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListTwitterAdsCustomAudiencesServiceUnavailableResponseBody {
+	body := &ListTwitterAdsCustomAudiencesServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListTwitterAdsCustomAudiencesInternalServerErrorResponseBody builds the
+// HTTP response body from the result of the
+// "list-twitter-ads-custom-audiences" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsCustomAudiencesInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListTwitterAdsCustomAudiencesInternalServerErrorResponseBody {
+	body := &ListTwitterAdsCustomAudiencesInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListTwitterAdsCustomAudiencesNotFoundResponseBody builds the HTTP
+// response body from the result of the "list-twitter-ads-custom-audiences"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsCustomAudiencesNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListTwitterAdsCustomAudiencesNotFoundResponseBody {
+	body := &ListTwitterAdsCustomAudiencesNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListTwitterAdsCustomAudiencesPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "list-twitter-ads-custom-audiences"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsCustomAudiencesPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListTwitterAdsCustomAudiencesPayloadTooLargeResponseBody {
+	body := &ListTwitterAdsCustomAudiencesPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListTwitterAdsCustomAudiencesUnauthorizedResponseBody builds the HTTP
+// response body from the result of the "list-twitter-ads-custom-audiences"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsCustomAudiencesUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListTwitterAdsCustomAudiencesUnauthorizedResponseBody {
+	body := &ListTwitterAdsCustomAudiencesUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -12745,6 +13370,138 @@ func NewGetLinkedinAdsAudiencePayloadTooLargeResponseBody(res *lfxv2campaignserv
 // "lfx-v2-campaign-service-connections" service.
 func NewGetLinkedinAdsAudienceUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetLinkedinAdsAudienceUnauthorizedResponseBody {
 	body := &GetLinkedinAdsAudienceUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsAudiencesBadRequestResponseBody builds the HTTP response
+// body from the result of the "list-linkedin-ads-audiences" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsAudiencesBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListLinkedinAdsAudiencesBadRequestResponseBody {
+	body := &ListLinkedinAdsAudiencesBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsAudiencesServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "list-linkedin-ads-audiences" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsAudiencesServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListLinkedinAdsAudiencesServiceUnavailableResponseBody {
+	body := &ListLinkedinAdsAudiencesServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsAudiencesInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "list-linkedin-ads-audiences" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsAudiencesInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListLinkedinAdsAudiencesInternalServerErrorResponseBody {
+	body := &ListLinkedinAdsAudiencesInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsAudiencesNotFoundResponseBody builds the HTTP response
+// body from the result of the "list-linkedin-ads-audiences" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsAudiencesNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListLinkedinAdsAudiencesNotFoundResponseBody {
+	body := &ListLinkedinAdsAudiencesNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsAudiencesPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "list-linkedin-ads-audiences" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsAudiencesPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListLinkedinAdsAudiencesPayloadTooLargeResponseBody {
+	body := &ListLinkedinAdsAudiencesPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsAudiencesUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "list-linkedin-ads-audiences" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsAudiencesUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListLinkedinAdsAudiencesUnauthorizedResponseBody {
+	body := &ListLinkedinAdsAudiencesUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsConversionsBadRequestResponseBody builds the HTTP response
+// body from the result of the "list-linkedin-ads-conversions" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsConversionsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListLinkedinAdsConversionsBadRequestResponseBody {
+	body := &ListLinkedinAdsConversionsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsConversionsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "list-linkedin-ads-conversions"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsConversionsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListLinkedinAdsConversionsServiceUnavailableResponseBody {
+	body := &ListLinkedinAdsConversionsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsConversionsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "list-linkedin-ads-conversions"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsConversionsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListLinkedinAdsConversionsInternalServerErrorResponseBody {
+	body := &ListLinkedinAdsConversionsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsConversionsNotFoundResponseBody builds the HTTP response
+// body from the result of the "list-linkedin-ads-conversions" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsConversionsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListLinkedinAdsConversionsNotFoundResponseBody {
+	body := &ListLinkedinAdsConversionsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsConversionsPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "list-linkedin-ads-conversions"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsConversionsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListLinkedinAdsConversionsPayloadTooLargeResponseBody {
+	body := &ListLinkedinAdsConversionsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsConversionsUnauthorizedResponseBody builds the HTTP
+// response body from the result of the "list-linkedin-ads-conversions"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsConversionsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListLinkedinAdsConversionsUnauthorizedResponseBody {
+	body := &ListLinkedinAdsConversionsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -15040,11 +15797,34 @@ func NewListGoogleAdsAudiencesPayload(projectID string, type_ string, q *string,
 	return v
 }
 
+// NewListMetaCustomAudiencesPayload builds a
+// lfx-v2-campaign-service-connections service list-meta-custom-audiences
+// endpoint payload.
+func NewListMetaCustomAudiencesPayload(projectID string, q *string, bearerToken *string) *lfxv2campaignserviceconnections.ListMetaCustomAudiencesPayload {
+	v := &lfxv2campaignserviceconnections.ListMetaCustomAudiencesPayload{}
+	v.ProjectID = projectID
+	v.Q = q
+	v.BearerToken = bearerToken
+
+	return v
+}
+
 // NewListRedditAdsCustomAudiencesPayload builds a
 // lfx-v2-campaign-service-connections service list-reddit-ads-custom-audiences
 // endpoint payload.
 func NewListRedditAdsCustomAudiencesPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListRedditAdsCustomAudiencesPayload {
 	v := &lfxv2campaignserviceconnections.ListRedditAdsCustomAudiencesPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListTwitterAdsCustomAudiencesPayload builds a
+// lfx-v2-campaign-service-connections service
+// list-twitter-ads-custom-audiences endpoint payload.
+func NewListTwitterAdsCustomAudiencesPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListTwitterAdsCustomAudiencesPayload {
+	v := &lfxv2campaignserviceconnections.ListTwitterAdsCustomAudiencesPayload{}
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken
 
@@ -15080,6 +15860,28 @@ func NewGetLinkedinAdsAudiencePayload(projectID string, window *string, bearerTo
 	v := &lfxv2campaignserviceconnections.GetLinkedinAdsAudiencePayload{}
 	v.ProjectID = projectID
 	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListLinkedinAdsAudiencesPayload builds a
+// lfx-v2-campaign-service-connections service list-linkedin-ads-audiences
+// endpoint payload.
+func NewListLinkedinAdsAudiencesPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListLinkedinAdsAudiencesPayload {
+	v := &lfxv2campaignserviceconnections.ListLinkedinAdsAudiencesPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListLinkedinAdsConversionsPayload builds a
+// lfx-v2-campaign-service-connections service list-linkedin-ads-conversions
+// endpoint payload.
+func NewListLinkedinAdsConversionsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload {
+	v := &lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload{}
+	v.ProjectID = projectID
 	v.BearerToken = bearerToken
 
 	return v
@@ -15294,7 +16096,7 @@ func NewCreateHubspotCampaignPayload(body *CreateHubspotCampaignRequestBody, pro
 // NewMonitorGoogleAdsAccountPayload builds a
 // lfx-v2-campaign-service-connections service monitor-google-ads-account
 // endpoint payload.
-func NewMonitorGoogleAdsAccountPayload(projectID string, accountID string, days int, bearerToken *string) *lfxv2campaignserviceconnections.MonitorGoogleAdsAccountPayload {
+func NewMonitorGoogleAdsAccountPayload(projectID string, accountID *string, days int, bearerToken *string) *lfxv2campaignserviceconnections.MonitorGoogleAdsAccountPayload {
 	v := &lfxv2campaignserviceconnections.MonitorGoogleAdsAccountPayload{}
 	v.ProjectID = projectID
 	v.AccountID = accountID

@@ -72,6 +72,9 @@ type Config struct {
 	// JWT written there would persist as a live credential — and the indexer requires a
 	// non-empty authorization header on every message.
 	IndexerServiceToken string
+	// IndexerResolveProjectUID keys indexed documents' FGA checks on the project UID (#590);
+	// see indexer.Relay.WithProjectUIDResolver. True only when the env value is exactly "true".
+	IndexerResolveProjectUID bool
 
 	// DatabaseURL is the PostgreSQL DSN. Empty disables the database layer
 	// (e.g. for tests or a metadata-only run). Prefer composing from PG*
@@ -189,11 +192,12 @@ func LoadConfig() *Config {
 		CreativeAssetPublicBaseURL: os.Getenv(constants.EnvCreativeAssetPublicBaseURL),
 		CreativeAssetURLTTL:        os.Getenv(constants.EnvCreativeAssetURLTTL),
 
-		IndexerServiceToken:     os.Getenv(constants.EnvIndexerServiceToken),
-		DatabaseURL:             os.Getenv(constants.EnvDatabaseURL),
-		CredentialEncryptionKey: os.Getenv(constants.EnvCredentialEncryptionKey),
-		EventURLNAT64Prefixes:   splitCSV(os.Getenv(constants.EnvEventURLNAT64Prefixes)),
-		CampaignJobRetention:    parseRetention(os.Getenv(constants.EnvCampaignJobRetention)),
+		IndexerServiceToken:      os.Getenv(constants.EnvIndexerServiceToken),
+		IndexerResolveProjectUID: os.Getenv(constants.EnvIndexerResolveProjectUID) == "true",
+		DatabaseURL:              os.Getenv(constants.EnvDatabaseURL),
+		CredentialEncryptionKey:  os.Getenv(constants.EnvCredentialEncryptionKey),
+		EventURLNAT64Prefixes:    splitCSV(os.Getenv(constants.EnvEventURLNAT64Prefixes)),
+		CampaignJobRetention:     parseRetention(os.Getenv(constants.EnvCampaignJobRetention)),
 	}
 
 	if os.Getenv(constants.EnvDebug) == "true" {

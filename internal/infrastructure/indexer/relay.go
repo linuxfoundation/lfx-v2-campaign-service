@@ -6,13 +6,18 @@ package indexer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/accesscheck"
 )
 
 // OutboxReader is the outbox slice the relay needs. An interface so the relay is testable
@@ -38,6 +43,24 @@ type OutboxReader interface {
 type RawPublisher interface {
 	PublishRaw(ctx context.Context, subject, objectID string, payload []byte) error
 }
+
+// ProjectUIDResolver resolves a project slug to its UID (lfx-v2-project-service's
+// lfx.projects-api.slug_to_uid). accesscheck.Checker satisfies it.
+type ProjectUIDResolver interface {
+	ProjectUID(ctx context.Context, slug string) (string, error)
+}
+
+// projectUIDCacheTTL bounds how long a resolved UID is reused. A project's UID never changes,
+// but its slug can be reassigned, and a message published from a stale entry is RETIRED, so
+// expiry cannot repair it. The TTL is therefore about one pass: a backlog still costs one
+// lookup per slug per pass, while a reassignment is picked up within seconds.
+const projectUIDCacheTTL = 30 * time.Second
+
+// projectUIDFailureTTL is how long a FAILED lookup is remembered. Every row of a project whose
+// lookup just failed would otherwise repeat it, each costing up to the resolver's own timeout,
+// and a few such rows would use up the whole pass. Short, so a transient outage is retried on
+// the next pass or two.
+const projectUIDFailureTTL = 30 * time.Second
 
 // relayInterval is how often the relay drains the outbox. Frequent enough that a dropped
 // publish is repaired in seconds rather than at the next write, cheap enough that the partial
@@ -66,6 +89,18 @@ type Relay struct {
 	once   sync.Once
 	// warnOnce keeps the missing-credential warning to a single line rather than one per pass.
 	warnOnce sync.Once
+
+	// projects, when set, keys each message's FGA checks on the project UID (#590). See
+	// WithProjectUIDResolver.
+	projects ProjectUIDResolver
+	uidMu    sync.Mutex
+	uidCache map[string]cachedUID
+}
+
+type cachedUID struct {
+	uid     string
+	err     error
+	expires time.Time
 }
 
 // NewRelay constructs a Relay. authorization is the service credential stamped onto every
@@ -73,6 +108,141 @@ type Relay struct {
 // without one.
 func NewRelay(outbox OutboxReader, pub RawPublisher, authorization string) *Relay {
 	return &Relay{outbox: outbox, pub: pub, authorization: authorization}
+}
+
+// WithProjectUIDResolver makes the relay key every message's FGA checks on the project UID
+// rather than the slug the outbox row was written with (#590).
+//
+// OpenFGA keys projects by UID, so a document whose access_check_object is `project:<slug>`
+// matches no campaign_manager tuple and the Query Service filters it out for every reader. The
+// gateway resolves the slug before its own openfga_check for the same reason (ruleset.yaml,
+// project_slug_resolver_contextualizer). Resolving HERE, at publish time, rather than when the
+// row is written means rows already pending (every row in an environment whose relay has been
+// idle) are published correctly without being rewritten.
+//
+// access_check_object and history_check_object become `project:<uid>`. parent_refs carries
+// BOTH `project:<uid>` and `project:<slug>`, so a reader filtering by either parent finds the
+// document. A failed lookup fails the delivery, which leaves the row pending for a later pass:
+// publishing it slug-keyed would index a document nobody can read. The exception is a slug the
+// project service DEFINITELY does not know (accesscheck.ErrProjectNotFound): that will not
+// change on retry, and a row held pending forever would also hold every later row for the
+// same resource (the claim is per-resource ordered), including the delete that removes it from
+// search. Such a message is published as written: slug-keyed, readable by nobody, which fails
+// closed. A DELETE is never held on the lookup: the indexer removes by object id, so its FGA
+// fields decide nothing. The stored
+// row is never changed. A nil resolver leaves messages as written.
+//
+// Accepted risk: the slug is resolved when the row is PUBLISHED, so if a slug moved to another
+// project between the write and the publish, the document is keyed on the new project. That
+// is no wider than the REST path, where the gateway resolves the path slug at request time
+// and the service reads rows by the stored slug; the document is corrected by its next write.
+func (r *Relay) WithProjectUIDResolver(res ProjectUIDResolver) *Relay {
+	r.projects = res
+	r.uidCache = map[string]cachedUID{}
+	return r
+}
+
+// ResolvesProjectUID reports whether a project resolver is configured.
+func (r *Relay) ResolvesProjectUID() bool { return r.projects != nil }
+
+// projectUID resolves slug through the resolver, reusing a recent answer (or a recent failure).
+func (r *Relay) projectUID(ctx context.Context, slug string) (string, error) {
+	now := time.Now()
+	r.uidMu.Lock()
+	if c, ok := r.uidCache[slug]; ok && now.Before(c.expires) {
+		r.uidMu.Unlock()
+		return c.uid, c.err
+	}
+	r.uidMu.Unlock()
+	uid, err := r.projects.ProjectUID(ctx, slug)
+	if err == nil && !isUUID(uid) {
+		// The resolver contract does not promise a UUID. Publishing `project:` or another
+		// string would key the document on an object nobody (or the wrong project) holds.
+		err = fmt.Errorf("resolver returned %q, not a UID", uid)
+	}
+	if err != nil {
+		err = fmt.Errorf("indexer: resolve project %q to its UID: %w", slug, err)
+		r.uidMu.Lock()
+		r.uidCache[slug] = cachedUID{err: err, expires: now.Add(projectUIDFailureTTL)}
+		r.uidMu.Unlock()
+		return "", err
+	}
+	r.uidMu.Lock()
+	r.uidCache[slug] = cachedUID{uid: uid, expires: now.Add(projectUIDCacheTTL)}
+	r.uidMu.Unlock()
+	return uid, nil
+}
+
+// keyOnProjectUID rewrites the FGA fields of a decoded message's indexing_config from
+// `project:<slug>` to `project:<uid>` (see WithProjectUIDResolver). A message already keyed on
+// a UID, or with no project-scoped access object, is left alone. Unknown indexing_config
+// fields survive unchanged.
+func (r *Relay) keyOnProjectUID(ctx context.Context, msg map[string]json.RawMessage) error {
+	raw, ok := msg["indexing_config"]
+	if !ok {
+		return nil
+	}
+	var action string
+	if a, ok := msg["action"]; ok && json.Unmarshal(a, &action) == nil && action == ActionDeleted {
+		return nil
+	}
+	var cfg map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return fmt.Errorf("indexer: unparseable indexing_config: %w", err)
+	}
+	var access string
+	if err := json.Unmarshal(cfg["access_check_object"], &access); err != nil {
+		return nil
+	}
+	slug, ok := strings.CutPrefix(access, "project:")
+	if !ok || slug == "" || isUUID(slug) {
+		return nil
+	}
+	uid, err := r.projectUID(ctx, slug)
+	if errors.Is(err, accesscheck.ErrProjectNotFound) {
+		slog.WarnContext(ctx, "index relay: project slug resolves to no project; publishing the message slug-keyed (readable by nobody)",
+			"project_slug", slug)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	object := "project:" + uid
+	var parents []string
+	if pr, ok := cfg["parent_refs"]; ok {
+		_ = json.Unmarshal(pr, &parents)
+	}
+	refs := []string{object}
+	for _, p := range parents {
+		if p != object {
+			refs = append(refs, p)
+		}
+	}
+	if !slices.Contains(refs, access) {
+		refs = append(refs, access)
+	}
+	for key, value := range map[string]any{
+		"access_check_object":  object,
+		"history_check_object": object,
+		"parent_refs":          refs,
+	} {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return fmt.Errorf("indexer: encode %s: %w", key, err)
+		}
+		cfg[key] = encoded
+	}
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("indexer: encode indexing_config: %w", err)
+	}
+	msg["indexing_config"] = encoded
+	return nil
+}
+
+func isUUID(s string) bool {
+	_, err := uuid.Parse(s)
+	return err == nil && len(s) == 36
 }
 
 // Start begins draining in the background. Safe to call once; Stop ends it.
@@ -128,8 +298,9 @@ func (r *Relay) warnNoToken() {
 
 // stamp injects the service credential into a stored payload. The stored message deliberately
 // carries no authorization (see Relay.authorization), and the indexer drops any message whose
-// header is missing or empty.
-func (r *Relay) stamp(payload []byte) ([]byte, error) {
+// header is missing or empty. With a project resolver configured it also keys the message's FGA
+// checks on the project UID (see WithProjectUIDResolver).
+func (r *Relay) stamp(ctx context.Context, payload []byte) ([]byte, error) {
 	// Decode into a MAP, not a Transaction. objectType is unexported and never serialized (the
 	// indexer derives it from the subject), so a Transaction round-trip silently loses it — and
 	// anything later reading ObjectType() off the result would route to "lfx.index.". The relay
@@ -150,6 +321,11 @@ func (r *Relay) stamp(payload []byte) ([]byte, error) {
 		return nil, fmt.Errorf("indexer: encode outbox headers: %w", err)
 	}
 	msg["headers"] = encoded
+	if r.projects != nil {
+		if err := r.keyOnProjectUID(ctx, msg); err != nil {
+			return nil, err
+		}
+	}
 	return json.Marshal(msg)
 }
 
@@ -233,10 +409,11 @@ func (r *Relay) prune(ctx context.Context, parent context.Context) {
 // drainOnce runs a single claim-and-publish pass.
 func (r *Relay) drainOnce(ctx context.Context) (int, error) {
 	return r.outbox.DrainPendingIndexMessages(ctx, 0, func(ctx context.Context, m *model.OutboxMessage) error {
-		payload, aerr := r.stamp(m.Payload)
+		payload, aerr := r.stamp(ctx, m.Payload)
 		if aerr != nil {
-			// A row we cannot parse can never be published. Returning the error records it on
-			// the row rather than retrying it silently forever.
+			// A row we cannot parse can never be published, and one whose project could not be
+			// resolved must not be published slug-keyed. Returning the error records it on the
+			// row and leaves it pending rather than retiring it.
 			return aerr
 		}
 		return r.pub.PublishRaw(ctx, Subject(m.ObjectType), m.ObjectID, payload)

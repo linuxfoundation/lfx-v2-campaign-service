@@ -279,12 +279,15 @@ measured" — the platform cannot report it, or (LinkedIn, Microsoft) the read w
 LinkedIn withdraws the whole total when any returned element omits `externalWebsiteConversions`,
 and Microsoft does so on a missing column or a blank `ConversionsQualified` cell. Neither case may
 fire: a platform that cannot report has no measurement to be zero, and a partial read says nothing
-about whether the campaign converted. Only Google Ads, LinkedIn and Microsoft populate it;
-Meta and X expose conversions solely as per-action-type structures with no scalar to read,
+about whether the campaign converted. Google Ads, LinkedIn and Microsoft populate it, and Meta
+does for a campaign this service created with the conversions objective while
+`META_CONVERSIONS_METRICS_ENABLED` is on (it reads the recorded event's action type, #550); X
+exposes conversions solely as per-action-type structures with no scalar to read, Meta does
+likewise for every other campaign,
 Reddit's reporting read does not request a conversion field at all, and the email channel has no
 conversion concept.
-Flattening a nil to 0 anywhere along the path would flag **every** campaign on those four
-platforms, forever — reporting the absence of measurement as a campaign defect, which is the
+Flattening a nil to 0 anywhere along the path would flag **every** campaign on X, Reddit and
+email, and every Meta campaign outside the #550 read, forever — reporting the absence of measurement as a campaign defect, which is the
 failure mode the whole pointer exists to prevent.
 
 `isActive` is an allow-list of the statuses where the campaign is meant to be spending, and it

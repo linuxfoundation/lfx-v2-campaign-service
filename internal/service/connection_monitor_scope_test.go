@@ -132,7 +132,7 @@ func scopedLiveCases() []scopedMonitorCase {
 			},
 			call: func(svc *ConnectionService, account string) (*conn.AccountMonitor, error) {
 				return svc.MonitorGoogleAdsAccount(context.Background(),
-					&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: account, Days: 30})
+					&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: strPtr(account), Days: 30})
 			},
 		},
 		{
@@ -414,7 +414,7 @@ func TestMonitorAccount_DeletedCampaignsStayVisible(t *testing.T) {
 		repo := scopeRepo([]string{"c1"}, nil)
 		repo.deletedScopeErr = errors.New("db down")
 		got, err := liveScopeService(model.ProviderGoogleAds, d, repo).MonitorGoogleAdsAccount(context.Background(),
-			&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: "1234567890", Days: 30})
+			&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: strPtr("1234567890"), Days: 30})
 		if err == nil || got != nil {
 			t.Fatalf("got %v, err %v; want the read to fail", got, err)
 		}
@@ -467,7 +467,7 @@ func TestMonitorAccount_PrecheckAnswersBeforeTheScope(t *testing.T) {
 		d := &scopedLiveDispatcher{mockAccountMetricsReaderDispatcher: mockAccountMetricsReaderDispatcher{rows: scopedLiveCases()[0].live}, precheck: malformed}
 		repo := &fakeCampaignRepo{scopeErr: errors.New("db down")}
 		_, err := liveScopeService(model.ProviderGoogleAds, d, repo).MonitorGoogleAdsAccount(context.Background(),
-			&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: "1234567890", Days: 30})
+			&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: strPtr("1234567890"), Days: 30})
 		if _, ok := err.(*conn.BadRequestError); !ok {
 			t.Fatalf("err = %T %v, want the precheck's 400 rather than the scope lookup's failure", err, err)
 		}
@@ -479,7 +479,7 @@ func TestMonitorAccount_ScopeLookupFailureMakesNoUpstreamCall(t *testing.T) {
 	d := &scopedLiveDispatcher{mockAccountMetricsReaderDispatcher: mockAccountMetricsReaderDispatcher{rows: scopedLiveCases()[0].live}}
 	repo := &fakeCampaignRepo{scopeErr: errors.New("db down")}
 	got, err := liveScopeService(model.ProviderGoogleAds, d, repo).MonitorGoogleAdsAccount(context.Background(),
-		&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: "1234567890", Days: 30})
+		&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: strPtr("1234567890"), Days: 30})
 	if err == nil || got != nil {
 		t.Fatalf("got %v, err %v; want the read to fail", got, err)
 	}

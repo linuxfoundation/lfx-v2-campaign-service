@@ -29,7 +29,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"unicode/utf8"
 )
 
 const (
@@ -52,13 +51,6 @@ const (
 	maxDisplayLongHeadlineWeight = 90
 	maxDisplayDescriptionWeight  = 90
 	maxDisplayBusinessNameWeight = 25
-
-	// maxDisplayCallToActionRunes bounds the optional call-to-action button text.
-	// Google documents no display width for this field on a responsive display ad, so
-	// this is a payload bound rather than an upstream limit being mirrored —
-	// deliberately generous, because refusing text Google would have accepted is the
-	// costlier mistake. The same judgement maxDemandGenCallToActionRunes makes.
-	maxDisplayCallToActionRunes = 30
 
 	// maxDisplayMarketingImages is the COMBINED ceiling across the landscape and square
 	// marketing arrays, which is how Google states it. Logos are counted separately and
@@ -102,6 +94,7 @@ type DisplayCreative struct {
 	// BusinessName is the advertiser/brand name. Required by Google.
 	BusinessName string
 	// CallToActionText is optional; Google supplies its own button text when absent.
+	// When set it must name one of displayCallToActions (#575).
 	CallToActionText string
 }
 
@@ -257,9 +250,9 @@ func validateDisplayCreative(kind string, in CampaignInput) (displayCreativePlan
 	}
 	plan.businessName = name
 
-	cta := strings.TrimSpace(d.CallToActionText)
-	if n := utf8.RuneCountInString(cta); n > maxDisplayCallToActionRunes {
-		return displayCreativePlan{}, fmt.Errorf("google-ads Display call to action %q is %d characters, exceeding the %d limit", capForError(cta), n, maxDisplayCallToActionRunes)
+	cta, err := resolveCallToActionText("Display", displayCallToActions, d.CallToActionText)
+	if err != nil {
+		return displayCreativePlan{}, err
 	}
 	plan.callToActionText = cta
 

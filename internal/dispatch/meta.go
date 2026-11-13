@@ -1105,25 +1105,65 @@ func (d *MetaDispatcher) ReadMetrics(ctx context.Context, projectID string, plat
 	if err := verifyMetaAccountMatch("read meta campaign metrics", campaign, res.accountID); err != nil {
 		return nil, err
 	}
-	m, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, metaWindow)
+	// Conversions (#550 gap 6). The Insights edge has no scalar conversions field: they arrive
+	// in the `actions` list as {action_type, value}, and which action type counts is a per-campaign
+	// choice. That choice IS recorded for a campaign this service created with the conversions
+	// objective (CampaignResult.ConversionEvent, #559), so only such a campaign, and only while
+	// META_CONVERSIONS_METRICS_ENABLED is "true", has its actions read; every other campaign
+	// reports conversions as unavailable, as before. Never a guessed action type: a wrong one
+	// would publish a false zero, which the no_conversions rule would flag.
+	actionType := metaConversionActionType(campaign)
+	if actionType == "" {
+		m, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, metaWindow)
+		if err != nil {
+			return nil, err
+		}
+		return &model.CampaignMetrics{
+			CampaignID:        m.CampaignID,
+			Window:            window,
+			Impressions:       m.Impressions,
+			Clicks:            m.Clicks,
+			CostMicros:        m.CostMicros,
+			Ctr:               m.Ctr,
+			ConversionsStatus: model.ConversionsUnavailable,
+		}, nil
+	}
+	m, err := client.GetCampaignMetricsWithConversions(ctx, campaign.PlatformCampaignID, metaWindow, actionType)
 	if err != nil {
 		return nil, err
 	}
+	// Reported with the measured count; ResolvedConversionsStatus turns a zero against zero
+	// clicks into no_conversions, as for every other channel.
 	return &model.CampaignMetrics{
-		CampaignID:  m.CampaignID,
-		Window:      window,
-		Impressions: m.Impressions,
-		Clicks:      m.Clicks,
-		CostMicros:  m.CostMicros,
-		Ctr:         m.Ctr,
-		// Conversions is deliberately LEFT NIL, which is a statement about Meta's API rather
-		// than an unfinished mapping. The Insights edge exposes no scalar campaign-level
-		// conversions field: conversions arrive inside the `actions` array as
-		// {action_type, value} objects, and reducing that to one number means deciding which
-		// action types count as a conversion for this advertiser — a configuration input this
-		// service does not have. Setting 0 here would report every Meta campaign as having
-		// converted nothing, which the conversions rule would then flag as a finding.
+		CampaignID:        m.CampaignID,
+		Window:            window,
+		Impressions:       m.Impressions,
+		Clicks:            m.Clicks,
+		CostMicros:        m.CostMicros,
+		Ctr:               m.Ctr,
+		Conversions:       m.Conversions,
+		ConversionsStatus: model.ConversionsReported,
 	}, nil
+}
+
+// metaConversionActionType returns the Insights action_type whose count is this campaign's
+// conversions: the one for the conversion event its create result records
+// (meta.CampaignResult.ConversionEvent, set only when this service created the ad set with the
+// conversions objective), and only while META_CONVERSIONS_METRICS_ENABLED is "true". "" means
+// conversions are not read.
+func metaConversionActionType(campaign *model.Campaign) string {
+	if os.Getenv(constants.EnvMetaConversionsMetricsEnabled) != "true" || campaign == nil || len(campaign.Result) == 0 {
+		return ""
+	}
+	var blob meta.CampaignResult
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return ""
+	}
+	t, ok := meta.ConversionActionType(blob.ConversionEvent)
+	if !ok {
+		return ""
+	}
+	return t
 }
 
 // metaAdSetID pulls the ad set id the create path stored in the persisted CampaignResult
@@ -1377,11 +1417,12 @@ func (d *MetaDispatcher) resolveMetaDiscoveryClient(ctx context.Context, project
 	return meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{}, d.opts...), nil
 }
 
-// resolveOwnedMetaDiscovery is resolveMetaDiscoveryClient WITHOUT the LF system fallback —
-// the monitor read's equivalent of googleads.go's resolveOwnedGoogleAdsDiscoveryClient (see
-// that function's doc comment for the shared rationale: round-16 review escalated the
-// pre-existing credential-scope gap to Critical, and membership-checking against ListAccounts
-// would not have closed it given the same shared-tenancy exposure through the fallback).
+// resolveOwnedMetaDiscovery is resolveMetaDiscoveryClient WITHOUT the LF system fallback, for
+// the monitor read. Round-16 review escalated the pre-existing credential-scope gap to Critical,
+// and membership-checking against ListAccounts would not have closed it given the shared-tenancy
+// exposure through the fallback. Google has since dropped the same refusal for its monitor
+// (#591, googleads.go's resolveGoogleAdsMonitorClient) because the read is now reduced to the
+// project's own recorded campaigns; Meta's is too, and is a candidate for the same change.
 //
 // It calls resolveMetaCredentials bound to d.creds.resolveOwned instead of d.creds.resolve, so
 // a project with no Meta connection of its own gets domain.ErrNotFound (via noOwnConnection)

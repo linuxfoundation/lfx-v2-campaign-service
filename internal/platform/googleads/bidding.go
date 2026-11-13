@@ -24,8 +24,8 @@ import (
 // vocabularies genuinely disagree: Google folded the standalone TargetCpa and TargetRoas
 // strategies into MaximizeConversions and MaximizeConversionValue with a target set, and the
 // UI still calls them by the old names. So both spellings are accepted and both resolve to
-// the surviving strategy, except on Demand Gen, which sends the standalone targetCpa (see
-// targetCPA) — the difference being only that the target is REQUIRED when the caller names
+// the surviving strategy, except on Demand Gen and Display, which send the standalone
+// targetCpa (see targetCPA) — the difference being only that the target is REQUIRED when the caller names
 // the target-bearing label, and optional when they name the maximize- one.
 const (
 	biddingManualCPC               = "manual-cpc"
@@ -108,15 +108,18 @@ type maximizeConversions struct {
 }
 
 // targetCPA is `campaign.target_cpa`, the standalone strategy the note above says Google
-// folded into maximizeConversions. Demand Gen is the only channel this client sends it on
-// (#474). A validateOnly probe on 2026-11-03 at v23 found a Demand Gen campaign
-// with a non-shared budget accepts `targetCpa: {targetCpaMicros}` and refuses
-// `maximizeConversions: {targetCpaMicros}` (OPERATION_NOT_PERMITTED_FOR_CONTEXT). No
+// folded into maximizeConversions. Demand Gen (#474) and Display (#578) are the channels
+// this client sends it on. A validateOnly probe on 2026-11-03 at v23 found a Demand Gen
+// campaign with a non-shared budget accepts `targetCpa: {targetCpaMicros}` and refuses
+// `maximizeConversions: {targetCpaMicros}` (OPERATION_NOT_PERMITTED_FOR_CONTEXT). A
+// validateOnly probe on 2026-11-11 at v23 found Display behaves the same way, and that
+// SEARCH and PERFORMANCE_MAX are the opposite: they accept the folded form and refuse the
+// standalone one with the same error, so the choice is per channel, never global. No
 // omitempty: this arm is rendered only when a target exists, and the target is its content.
 //
 // VERSION-SCOPED to v23: settingsQueryFields (campaign_settings.go) records target_cpa.*
 // leaving the selectable set in v25, so a client API version bump must re-probe this
-// payload on Demand Gen before trusting it.
+// payload on Demand Gen and Display before trusting it.
 type targetCPA struct {
 	TargetCpaMicros int64 `json:"targetCpaMicros"`
 }
@@ -141,8 +144,8 @@ type biddingFields struct {
 	TargetSpend             *targetSpend             `json:"targetSpend,omitempty"`
 	MaximizeConversions     *maximizeConversions     `json:"maximizeConversions,omitempty"`
 	MaximizeConversionValue *maximizeConversionValue `json:"maximizeConversionValue,omitempty"`
-	// TargetCpa is set on Demand Gen only; see targetCPA and biddingPlan.standaloneTargetCPA.
-	// Probed at v23 only: settingsQueryFields (campaign_settings.go) records target_cpa.*
+	// TargetCpa is set on Demand Gen and Display only; see targetCPA and
+	// biddingPlan.standaloneTargetCPA. Probed at v23 only: settingsQueryFields (campaign_settings.go) records target_cpa.*
 	// leaving the selectable set in v25, so a version bump must re-probe it (see targetCPA).
 	TargetCpa *targetCPA `json:"targetCpa,omitempty"`
 }
@@ -166,8 +169,9 @@ type biddingPlan struct {
 	// campaign-level conversion goal after the campaign exists (conversion_goal.go, #436).
 	conversionActions []string
 	// standaloneTargetCPA renders a target CPA as the standalone `targetCpa` strategy
-	// rather than as maximizeConversions.targetCpaMicros. Set on Demand Gen only, the one
-	// channel whose probe refused the folded form (see targetCPA).
+	// rather than as maximizeConversions.targetCpaMicros. Set on Demand Gen and Display,
+	// the channels whose probes refused the folded form; Search and Performance Max refuse
+	// the standalone form instead (see targetCPA).
 	standaloneTargetCPA bool
 }
 
@@ -317,10 +321,15 @@ var videoBiddingStrategies = map[string]bool{
 
 // displayBiddingStrategies is the set this client will send on DISPLAY.
 //
-// NOT LIVE-VERIFIED, on the same terms as videoBiddingStrategies: no validateOnly
-// campaigns:mutate has been run for DISPLAY, because the only reachable Google account is
-// a production one and a validateOnly mutate is still a POST to it. Widening it is a
-// live-API question, not a code-reading one.
+// LIVE-VERIFIED for the automated strategies by a validateOnly campaigns:mutate on
+// 2026-11-11 at v23 (#578): DISPLAY accepted `targetSpend: {}`, `maximizeConversions: {}`,
+// the standalone `targetCpa: {targetCpaMicros}`, `maximizeConversionValue: {}` and
+// `maximizeConversionValue: {targetRoas}`, and refused `maximizeConversions:
+// {targetCpaMicros}` (OPERATION_NOT_PERMITTED_FOR_CONTEXT). Until that probe this set was
+// read off Google's documentation, and a Display create with a target CPA failed in prod
+// after its budget existed; a target CPA now renders as the standalone `targetCpa`
+// (biddingPlan.standaloneTargetCPA). Widening it is still a live-API question, not a
+// code-reading one.
 //
 // The five AUTOMATED strategies, which is wider than Video's two because Display's
 // published support for them is not in doubt — a standard Display campaign takes the
@@ -370,7 +379,7 @@ var searchBiddingStrategies = map[string]bool{
 // understates its own evidence rather than claiming a check nobody ran.
 func biddingSetIsLiveVerified(kind string) bool {
 	switch kind {
-	case campaignKindVideo, campaignKindDisplay:
+	case campaignKindVideo:
 		return false
 	default:
 		return true
@@ -460,9 +469,10 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 	if !allowed[strategy] {
 		// The parenthetical differs by channel because the CLAIM behind it does. Some
 		// channels' sets were settled by a live validateOnly mutate, and saying so is
-		// what tells a caller the refusal is evidence rather than caution. Video's and
-		// Display's were not, and repeating the verified sentence there would make this
-		// client assert a check it never ran.
+		// what tells a caller the refusal is evidence rather than caution. Video's was
+		// not, and repeating the verified sentence there would make this client assert a
+		// check it never ran. Display's automated set was (#578), and its one refusal,
+		// manual CPC, is this client's own limitation, so it says that instead.
 		//
 		// A helper rather than a second `if`: the predicate is "has this channel's set
 		// been live-verified", one fact per channel, and a chain of channel tests here
@@ -470,6 +480,9 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 		reason := "which is the only combination verified against the live API; the others were rejected AFTER the budget was created"
 		if kind == campaignKindDemandGen {
 			reason = "the set verified by validateOnly probes; target ROAS was not probed on this channel, and an unverified strategy fails AFTER the budget is created"
+		}
+		if kind == campaignKindDisplay {
+			reason = "the automated strategies verified by a validateOnly probe; manual CPC is refused because this client's Display ad group carries no bid to send, not because Google refuses it"
 		}
 		if !biddingSetIsLiveVerified(kind) {
 			reason = "a set read off Google's published documentation for this channel; this client has NOT yet verified it against the live API, and sending an unverified strategy fails AFTER the budget is created"
@@ -571,7 +584,7 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 		targetCPAMicros:     targetCPAMicros,
 		targetROAS:          targetROAS,
 		conversionActions:   conversionActions,
-		standaloneTargetCPA: kind == campaignKindDemandGen,
+		standaloneTargetCPA: kind == campaignKindDemandGen || kind == campaignKindDisplay,
 	}, nil
 }
 

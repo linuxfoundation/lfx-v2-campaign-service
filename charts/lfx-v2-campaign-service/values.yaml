@@ -307,6 +307,29 @@ app:
     MICROSOFT_METRICS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to microsoftConfig.headlines, descriptions,
+    # path1 and path2 (#563), the caller copy of the Microsoft responsive
+    # search ad, sent instead of the auto-composed copy. Default off: the
+    # shape is built from the v13 ResponsiveSearchAd reference and no live
+    # create has sent caller copy or Path1/Path2. It names no account
+    # resource; it keeps an unverified shape off the shared ad account. While
+    # off, a create naming any of the four is refused with a 400 before any
+    # job exists. Any value other than "true" is treated as off, so a typo
+    # fails closed.
+    MICROSOFT_AD_COPY_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to microsoftConfig.negativeKeywords (#563):
+    # campaign-level negative keywords attached right after a Microsoft
+    # Advertising campaign is created, through the AddNegativeKeywordsToEntities
+    # call the add-negative-keywords lever makes. Default off: no live create
+    # has made that call. It names no account resource; it keeps an unverified
+    # create-path call off the shared ad account. While off, a create naming a
+    # non-empty list is refused with a 400 before any job exists. Any value
+    # other than "true" is treated as off, so a typo fails closed.
+    MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to BOTH Reddit ad-group targeting writes
     # (LFXV2-2665): removing keywords (remove-keyword-targeting) and adding
     # negative keywords to excluded_keywords (add-negative-keywords) — enabling
@@ -354,6 +377,81 @@ app:
     # is refused with a 400 before any job exists. Any value other than "true"
     # is treated as off, so a typo fails closed.
     REDDIT_TARGETING_EXCLUSIONS_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to resolving redditConfig.subreddits and
+    # redditConfig.interests before create (#549): communities confirmed with
+    # GET /targeting/communities and interests resolved to ids with
+    # GET /targeting/interests, as a synchronous 400 for an unknown value and
+    # again at dispatch, fail-closed. Neither read has been exercised against a
+    # live account. While off, values are sent as given, with the ad-group 400
+    # fallback. Any value other than "true" is treated as off.
+    REDDIT_TARGETING_RESOLUTION_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to twitterConfig.geoTargets, languages, keywords
+    # and interestIds (#564), sent at create time as LOCATION, LANGUAGE,
+    # BROAD_KEYWORD and INTEREST targeting criteria on the new X line item.
+    # Default off: the
+    # shape is built from X's published v12 reference and no live create has
+    # sent it. It names no account resource; it keeps an unverified shape off
+    # the shared ad account. While off, a create naming any of the lists is
+    # refused with a 400 before any job exists. Any value other than "true" is
+    # treated as off, so a typo fails closed.
+    TWITTER_CREATE_TARGETING_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to X custom audiences (#564): the create inputs
+    # twitterConfig.customAudienceIds / excludedCustomAudienceIds (CUSTOM_AUDIENCE
+    # targeting criteria, EQ and NE, on the new line item) and the picker read
+    # twitter-ads/custom-audiences. Built from X's published v12 reference and not
+    # yet exercised against a live ad account. While off, a create setting either
+    # list is refused with a 400 before any job exists and the read answers 400.
+    # The audiences live on the ad account every foundation shares, so the create
+    # inputs also need global_marketing_ops (403 otherwise) and the read is gated
+    # on it at the gateway. Any value other than "true" is treated as off.
+    TWITTER_CUSTOM_AUDIENCES_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to conversions in the Meta metrics read (#550):
+    # for a campaign this service created with the conversions objective, the
+    # Insights read also requests `actions` and reports the recorded event's
+    # action type as conversions. Read-only, but the event-to-action-type
+    # mapping has not been checked against a live account and a wrong one would
+    # publish a false zero. While off, Meta conversions stay unavailable, as
+    # before. Any value other than "true" is treated as off.
+    META_CONVERSIONS_METRICS_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to microsoftConfig.sitelinks and
+    # microsoftConfig.callouts (#563), created at create time as sitelink and
+    # callout ad extensions associated with the new Search campaign. Default
+    # off: the shape is built from the v13 Campaign Management reference and no
+    # live create has sent it. It names no account resource. While off, a
+    # create naming either list is refused with a 400 before any job exists.
+    # Any value other than "true" is treated as off, so a typo fails closed.
+    MICROSOFT_AD_EXTENSIONS_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to microsoftConfig.audienceIds,
+    # excludedAudienceIds and audienceBidAdjustment (#563): remarketing lists
+    # observed (bid only) and excluded on the new ad group. Built from the v13
+    # Campaign Management reference and not yet sent by a live create. While
+    # off, a create naming any of the three is refused with a 400 before any job
+    # exists. The lists live on the account every foundation shares, so they
+    # also need global_marketing_ops (403 otherwise). Any value other than
+    # "true" is treated as off.
+    MICROSOFT_AUDIENCES_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to microsoftConfig.excludedGeoTargets,
+    # proximityTargets and languages (#563): excluded countries and radius
+    # targets on the new campaign, and its ad languages. Built from the v13
+    # Campaign Management reference and not yet sent by a live create. They
+    # name no account resource. While off, a create naming any of the three is
+    # refused with a 400 before any job exists. Any value other than "true" is
+    # treated as off.
+    MICROSOFT_CREATE_TARGETING_ENABLED:
       value: "false"
 
     # Opts this deployment IN to googleAdsConfig.demandGenAudience (#459): one
@@ -473,6 +571,16 @@ app:
     # targeting is refused before a job exists. Any value other than "true" is
     # treated as off, so a typo fails closed.
     LINKEDIN_ADS_TARGETING_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to linkedInConfig.conversions (#552): conversion
+    # rule ids associated with the campaign through a Campaign Conversions PUT
+    # once it exists. The PUT has not been exercised against a live LinkedIn
+    # account. The ids also require global_marketing_ops on the project. Set it
+    # to exactly "true" in lfx-v2-argocd once the probe in the PR passes. While
+    # off, a create naming conversions is refused before a job exists. Any value
+    # other than "true" is treated as off, so a typo fails closed.
+    LINKEDIN_ADS_CONVERSIONS_ENABLED:
       value: "false"
 
     # Opts this deployment IN to the X (Twitter) Ads ACCOUNT MONITOR
@@ -679,6 +787,22 @@ app:
           name: lfx-v2-campaign-service-secrets
           key: indexer-service-token
           optional: true
+
+    # INDEXER_RESOLVE_PROJECT_UID, when exactly "true", makes the index relay key every
+    # indexed brief and campaign on the project UID (#590). OpenFGA keys projects by UID,
+    # so a document whose access_check_object is `project:<slug>` matches no
+    # campaign_manager tuple and the Query Service shows it to nobody. The relay resolves
+    # the slug over NATS (lfx.projects-api.slug_to_uid) at publish time; parent_refs keeps
+    # `project:<slug>` beside `project:<uid>`, so a reader filtering by either finds it. A
+    # failed lookup leaves the row pending. Any other value is off.
+    #
+    # ROLLOUT ORDER: turn this on BEFORE indexer-service-token is provisioned. The relay
+    # publishes and retires the whole outbox backlog as soon as it has a token, so a
+    # backlog drained with this off is indexed slug-keyed and is not replayed when the
+    # flag is turned on later. The service logs a warning when it has a token and this
+    # is off.
+    INDEXER_RESOLVE_PROJECT_UID:
+      value: "false"
 
     # PostgreSQL connection settings from the ExternalSecret-managed secret
     # (keys: host, port, username, password, dbname, engine). The app composes

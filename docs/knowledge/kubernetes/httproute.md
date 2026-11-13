@@ -15,7 +15,7 @@ See [charts/lfx-v2-campaign-service/templates/httproute.yaml](../../../charts/lf
 
 The service serves its API under `/projects/{projectId}/…` (the approved contract —
 every endpoint is nested under a project and gated on that project's
-`campaign_manager` relation, except the Google conversion-action, audience and user lists, gated on
+`campaign_manager` relation, except the Google conversion-action, audience and user lists, the Reddit, Meta and X custom-audience lists and the LinkedIn ad-segment and conversion-rule pickers, gated on
 `global_marketing_ops`).
 `project-service` owns `PathPrefix: /projects/`, and
 the token that distinguishes a campaign-service path (`connection-*`, `briefs`,
@@ -110,7 +110,10 @@ When `heimdall.enabled`, both rules attach the `heimdall-forward-body` middlewar
 MUST have a matching rule in [ruleset.md](ruleset.md) — a routed request with no
 matching Heimdall rule is rejected. The RuleSet's `project-api` rule covers every
 routed project-nested family except `google-ads/conversion-actions`,
-`google-ads/audiences` and `google-ads/user-lists`, which its `marketing-ops-api` rule covers; its
+`google-ads/audiences`, `google-ads/user-lists`, `reddit-ads/custom-audiences`,
+`twitter-ads/custom-audiences`, `linkedin-ads/audiences`, `linkedin-ads/conversions` and
+`meta-ads/custom-audiences`, which its
+`marketing-ops-api` rule covers; its
 `campaigns-placeholder` rule covers the reserved prefixes, so chart↔route parity holds.
 
 This parity is enforced by a Go test — `TestRouteRuleSetParity`
@@ -135,7 +138,10 @@ Path extraction is SCOPED to the two FGA-gated rule blocks, `project-api` and
 `TestConversionActionsIsAMarketingOpsRead` pins that `google-ads/conversion-actions` is ruled
 by `marketing-ops-api` alone, on `global_marketing_ops`, and that no rule gates on the ROOT
 project; `TestGoogleAudiencesIsAMarketingOpsRead` and `TestUserListsIsAMarketingOpsRead` pin
-`google-ads/audiences` and `google-ads/user-lists` the same way. A
+`google-ads/audiences` and `google-ads/user-lists` the same way,
+`TestLinkedInPickersAreMarketingOpsReads` the two LinkedIn pickers (#552), and
+`TestMetaCustomAudiencesIsAMarketingOpsRead` pins `meta-ads/custom-audiences` (#550), and
+`TestTwitterCustomAudiencesIsAMarketingOpsRead` pins `twitter-ads/custom-audiences` (#564). A
 separate `TestProjectAPIRuleEnforcesCampaignManager` asserts
 the `project-api` rule has two `openfga_check` authorizers on relation `campaign_manager`, each
 paired with the correct object: `project:{{- .Outputs.project_slug_resolver_contextualizer.uid -}}`
