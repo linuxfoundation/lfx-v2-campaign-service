@@ -1,0 +1,24 @@
+# 2026-11-13 — #590 cmd/reindex re-enqueues index messages for existing resources
+
+**Creation** — The service had no full-reindex path. Documents indexed under an old contract (keyed
+on the project slug before `INDEXER_RESOLVE_PROJECT_UID`) were corrected only by a later write.
+
+- New `cmd/reindex` and `postgres.ReindexRepo`.
+  - It enqueues one outbox row per brief and campaign: `updated` for live ones, `deleted` for
+    archived or soft-deleted ones. Bare dispatch claims are skipped.
+  - It works in id-ordered batches, `FOR SHARE`, one transaction each.
+  - It is a dry run by default; `-apply` writes. `-project` and `-kind` narrow the run.
+- `service.BriefIndexPayload` and `service.CampaignIndexPayload` are now the shared payload
+  builders. The service's three closures call them too, so the command cannot drift from a write.
+- Run it after `INDEXER_RESOLVE_PROJECT_UID` is on in the environment.
+- Tests:
+  - `cmd/reindex/main_test.go`: arguments, paging, dry run and apply, the payload matching the
+    service builder, and the cursor guard.
+  - `TestLiveReindexEnqueuesEveryResourceOnce`.
+- `-apply` requires `-relay-ready`, confirming the target deployment has `NATS_URL` set,
+  `INDEXER_SERVICE_TOKEN` non-empty and `INDEXER_RESOLVE_PROJECT_UID` on (PR #596). The command merges after #596.
+- Paging orders by the qualified uuid primary key (`b.id` / `c.id`), so the index can serve each batch; the live test uses per-run upstream ids, because migration 000020 makes them unique across projects.
+- `FOR SHARE` ordering is tested both ways, for briefs and campaigns
+  (`reindex_order_live_test.go`): a batch waits for a write in flight and re-sends the committed
+  terminal state, and a write started during a batch waits for it, so its `deleted` comes last.
+  Dropping `FOR SHARE` fails all four subtests.

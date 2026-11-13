@@ -451,11 +451,7 @@ func (s *BriefService) campaignIndexPayload(action string) domain.CampaignIndexP
 		return nil
 	}
 	return func(c *model.Campaign) ([]byte, error) {
-		return json.Marshal(indexer.NewTransaction(
-			action, indexer.ObjectTypeCampaign,
-			c.ID, c.ProjectID, "",
-			campaignDoc(campaignResult(c)), c.CampaignName,
-		))
+		return CampaignIndexPayload(action, c)
 	}
 }
 
@@ -471,11 +467,7 @@ func (s *BriefService) briefIndexPayload(action string) domain.IndexPayloadFunc 
 		return nil
 	}
 	return func(b *model.CampaignBrief) ([]byte, error) {
-		return json.Marshal(indexer.NewTransaction(
-			action, indexer.ObjectTypeBrief,
-			b.ID, b.ProjectID, "",
-			briefDoc(briefResult(b)), b.EventSlug,
-		))
+		return BriefIndexPayload(action, b)
 	}
 }
 
