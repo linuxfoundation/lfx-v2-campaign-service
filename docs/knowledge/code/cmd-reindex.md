@@ -35,6 +35,9 @@ credential, and UID keying when `INDEXER_RESOLVE_PROJECT_UID` is on.
 deployment's** relay is on. The command cannot read that deployment's settings, so it asks:
 - `NATS_URL` must be set there. With it empty the service enqueues nothing, and a row written
   here could never be delivered and is never pruned.
+- `INDEXER_SERVICE_TOKEN` must be non-empty there. Without it the relay logs "index relay is
+  idle" once and claims no row, so every row written here waits pending until the token is set.
+  Nothing is lost, but nothing is delivered either.
 - `INDEXER_RESOLVE_PROJECT_UID` must be `"true"` there. Otherwise the re-sent documents are keyed
   on the slug again.
 
@@ -53,6 +56,7 @@ builders every write uses, so a re-sent message is byte-for-byte what a write wo
   - A write in flight blocks the batch until it commits, and the batch then reads the newer row.
   - A later write waits for the batch, and its message comes after.
   - So the outbox's per-resource order always ends on the current state.
+  - `reindex_order_live_test.go` pins both cases for briefs and campaigns.
 - Re-running re-sends current documents and is safe.
 - Batches are 1–1000 rows (default 200), and one run is bounded at 100,000 batches. A cursor
   that fails to advance stops the run.

@@ -15,6 +15,10 @@ on the project slug before `INDEXER_RESOLVE_PROJECT_UID`) were corrected only by
   - `cmd/reindex/main_test.go`: arguments, paging, dry run and apply, the payload matching the
     service builder, and the cursor guard.
   - `TestLiveReindexEnqueuesEveryResourceOnce`.
-- `-apply` requires `-relay-ready`, confirming the target deployment has `NATS_URL` set and
-  `INDEXER_RESOLVE_PROJECT_UID` on (PR #596). The command merges after #596.
+- `-apply` requires `-relay-ready`, confirming the target deployment has `NATS_URL` set,
+  `INDEXER_SERVICE_TOKEN` non-empty and `INDEXER_RESOLVE_PROJECT_UID` on (PR #596). The command merges after #596.
 - Paging orders by the qualified uuid primary key (`b.id` / `c.id`), so the index can serve each batch; the live test uses per-run upstream ids, because migration 000020 makes them unique across projects.
+- `FOR SHARE` ordering is tested both ways, for briefs and campaigns
+  (`reindex_order_live_test.go`): a batch waits for a write in flight and re-sends the committed
+  terminal state, and a write started during a batch waits for it, so its `deleted` comes last.
+  Dropping `FOR SHARE` fails all four subtests.

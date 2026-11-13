@@ -23,9 +23,11 @@
 //
 // -apply therefore also requires -relay-ready, the operator's statement that the TARGET
 // deployment's index relay is on: NATS_URL set (with it empty the service enqueues nothing,
-// and rows written here could never be delivered and are never pruned) and
-// INDEXER_RESOLVE_PROJECT_UID "true" (otherwise the re-sent documents are keyed on the slug
-// again). This command cannot read the deployment's settings, so it asks rather than guesses.
+// and rows written here could never be delivered and are never pruned), INDEXER_SERVICE_TOKEN
+// non-empty (without it the relay stays idle and every row waits pending until the token is
+// set), and INDEXER_RESOLVE_PROJECT_UID "true" (otherwise the re-sent documents are keyed on
+// the slug again). This command cannot read the deployment's settings, so it asks rather than
+// guesses.
 //
 // Live briefs and campaigns get an "updated" message, archived briefs and soft-deleted
 // campaigns a "deleted" one, and a bare dispatch claim is skipped (no write ever indexed it).
@@ -121,7 +123,7 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 	fs.StringVar(&o.kind, "kind", "all", "what to re-index: all, briefs or campaigns")
 	fs.IntVar(&o.batch, "batch", defaultBatch, fmt.Sprintf("rows per transaction (1-%d)", maxBatch))
 	fs.BoolVar(&o.apply, "apply", false, "write the outbox rows (default: dry run, counts only); requires -relay-ready")
-	fs.BoolVar(&o.relayReady, "relay-ready", false, "confirm the target deployment's index relay is on: NATS_URL set and INDEXER_RESOLVE_PROJECT_UID \"true\" (#596)")
+	fs.BoolVar(&o.relayReady, "relay-ready", false, "confirm the target deployment's index relay is on: NATS_URL set, INDEXER_SERVICE_TOKEN non-empty and INDEXER_RESOLVE_PROJECT_UID \"true\" (#596)")
 	if err := fs.Parse(args); err != nil {
 		return o, err
 	}
@@ -138,7 +140,7 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 		return o, fmt.Errorf("-batch must be between 1 and %d", maxBatch)
 	}
 	if o.apply && !o.relayReady {
-		return o, errors.New("-apply also needs -relay-ready: confirm the target deployment has NATS_URL set and INDEXER_RESOLVE_PROJECT_UID \"true\" (#596); otherwise the rows are never delivered or are re-sent slug-keyed")
+		return o, errors.New("-apply also needs -relay-ready: confirm the target deployment has NATS_URL set, INDEXER_SERVICE_TOKEN non-empty and INDEXER_RESOLVE_PROJECT_UID \"true\" (#596); otherwise the rows are never delivered, wait pending, or are re-sent slug-keyed")
 	}
 	return o, nil
 }

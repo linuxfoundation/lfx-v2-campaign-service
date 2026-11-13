@@ -28,6 +28,13 @@ func TestParseArgs(t *testing.T) {
 	// deployment's relay would deliver the rows, or key them on the project UID.
 	if _, err := parseArgs([]string{"-apply"}, &stderr); err == nil || !strings.Contains(err.Error(), "-relay-ready") {
 		t.Errorf("-apply alone: err = %v, want the -relay-ready refusal", err)
+	} else {
+		// The refusal names every relay prerequisite, the service token included.
+		for _, want := range []string{"NATS_URL", "INDEXER_SERVICE_TOKEN", "INDEXER_RESOLVE_PROJECT_UID"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("-relay-ready refusal %q does not name %s", err, want)
+			}
+		}
 	}
 	for _, bad := range [][]string{{"-kind", "jobs"}, {"-batch", "0"}, {"-batch", "1001"}, {"extra"}} {
 		if _, err := parseArgs(bad, &stderr); err == nil {
