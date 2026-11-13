@@ -20,9 +20,14 @@ func TestParseArgs(t *testing.T) {
 	if err != nil || o.apply || o.kind != "all" || o.batch != defaultBatch || o.project != "" {
 		t.Fatalf("defaults = %+v, %v; want a dry run of everything", o, err)
 	}
-	o, err = parseArgs([]string{"-project", " tlf ", "-kind", "briefs", "-batch", "5", "-apply"}, &stderr)
-	if err != nil || !o.apply || o.kind != "briefs" || o.batch != 5 || o.project != "tlf" {
+	o, err = parseArgs([]string{"-project", " tlf ", "-kind", "briefs", "-batch", "5", "-apply", "-relay-ready"}, &stderr)
+	if err != nil || !o.apply || !o.relayReady || o.kind != "briefs" || o.batch != 5 || o.project != "tlf" {
 		t.Fatalf("parsed = %+v, %v", o, err)
+	}
+	// -apply without -relay-ready is refused: the command cannot see whether the target
+	// deployment's relay would deliver the rows, or key them on the project UID.
+	if _, err := parseArgs([]string{"-apply"}, &stderr); err == nil || !strings.Contains(err.Error(), "-relay-ready") {
+		t.Errorf("-apply alone: err = %v, want the -relay-ready refusal", err)
 	}
 	for _, bad := range [][]string{{"-kind", "jobs"}, {"-batch", "0"}, {"-batch", "1001"}, {"extra"}} {
 		if _, err := parseArgs(bad, &stderr); err == nil {
@@ -36,7 +41,21 @@ type fakeStore struct {
 	briefIDs, campaignIDs []string
 	applies               []bool
 	projects              []string
-	briefPayload          []byte
+	// payloads records what the command's builders produced, keyed "<kind>/<action>", so a
+	// test can compare them with the service's own builders for both actions.
+	payloads map[string][]byte
+}
+
+var (
+	fixtureBrief    = &model.CampaignBrief{ID: "b1", ProjectID: "tlf", EventSlug: "kubecon"}
+	fixtureCampaign = &model.Campaign{ID: "c1", ProjectID: "tlf", BriefID: "b1", Platform: model.ProviderGoogleAds, Status: "created", PlatformCampaignID: "123"}
+)
+
+func (f *fakeStore) record(key string, p []byte) {
+	if f.payloads == nil {
+		f.payloads = map[string][]byte{}
+	}
+	f.payloads[key] = p
 }
 
 func page(ids []string, after string, limit int) postgres.ReindexBatch {
@@ -55,17 +74,26 @@ func page(ids []string, after string, limit int) postgres.ReindexBatch {
 func (f *fakeStore) ReindexBriefs(_ context.Context, project, after string, limit int, apply bool, build postgres.BriefPayloadFunc) (postgres.ReindexBatch, error) {
 	f.applies = append(f.applies, apply)
 	f.projects = append(f.projects, project)
-	p, err := build("updated", &model.CampaignBrief{ID: "b1", ProjectID: "tlf", EventSlug: "kubecon"})
-	if err != nil {
-		return postgres.ReindexBatch{}, err
+	for _, action := range []string{"updated", "deleted"} {
+		p, err := build(action, fixtureBrief)
+		if err != nil {
+			return postgres.ReindexBatch{}, err
+		}
+		f.record("brief/"+action, p)
 	}
-	f.briefPayload = p
 	return page(f.briefIDs, after, limit), nil
 }
 
-func (f *fakeStore) ReindexCampaigns(_ context.Context, project, after string, limit int, apply bool, _ postgres.CampaignPayloadFunc) (postgres.ReindexBatch, error) {
+func (f *fakeStore) ReindexCampaigns(_ context.Context, project, after string, limit int, apply bool, build postgres.CampaignPayloadFunc) (postgres.ReindexBatch, error) {
 	f.applies = append(f.applies, apply)
 	f.projects = append(f.projects, project)
+	for _, action := range []string{"updated", "deleted"} {
+		p, err := build(action, fixtureCampaign)
+		if err != nil {
+			return postgres.ReindexBatch{}, err
+		}
+		f.record("campaign/"+action, p)
+	}
 	return page(f.campaignIDs, after, limit), nil
 }
 
@@ -88,9 +116,17 @@ func TestRunPagesAndTotals(t *testing.T) {
 			t.Fatalf("call %d: apply=%v project=%q; a dry run of tlf must pass apply=false", i, a, f.projects[i])
 		}
 	}
-	want, _ := service.BriefIndexPayload("updated", &model.CampaignBrief{ID: "b1", ProjectID: "tlf", EventSlug: "kubecon"})
-	if !bytes.Equal(f.briefPayload, want) {
-		t.Errorf("brief payload differs from service.BriefIndexPayload:\n%s\n%s", f.briefPayload, want)
+	// Both builders, both actions, byte for byte against the service's own builders: the
+	// command's guarantee is that a re-sent message is exactly what a write would produce.
+	for _, action := range []string{"updated", "deleted"} {
+		wantBrief, _ := service.BriefIndexPayload(action, fixtureBrief)
+		if got := f.payloads["brief/"+action]; len(got) == 0 || !bytes.Equal(got, wantBrief) {
+			t.Errorf("brief %s payload differs from service.BriefIndexPayload:\n%s\n%s", action, got, wantBrief)
+		}
+		wantCampaign, _ := service.CampaignIndexPayload(action, fixtureCampaign)
+		if got := f.payloads["campaign/"+action]; len(got) == 0 || !bytes.Equal(got, wantCampaign) {
+			t.Errorf("campaign %s payload differs from service.CampaignIndexPayload:\n%s\n%s", action, got, wantCampaign)
+		}
 	}
 }
 

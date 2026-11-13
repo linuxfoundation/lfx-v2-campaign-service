@@ -10,12 +10,16 @@ resource: "cmd/reindex"
 The service's only full-reindex path. A document indexed under an old contract is otherwise
 corrected only by its resource's next write, and a terminal write such as an archive never
 comes again. The motivating case is #590: documents keyed on the project slug before
-`INDEXER_RESOLVE_PROJECT_UID` existed.
+`INDEXER_RESOLVE_PROJECT_UID` existed. That flag arrives with PR #596, so this command is
+useful only once #596 is merged and released, and should merge after it.
 
 ## Usage
 
-    go run ./cmd/reindex [-project <slug>] [-kind all|briefs|campaigns] [-batch 200]          # dry run
-    go run ./cmd/reindex [-project <slug>] [-kind all|briefs|campaigns] [-batch 200] -apply   # write
+    go run ./cmd/reindex [-project <slug>] [-kind all|briefs|campaigns] [-batch 200]                       # dry run
+    go run ./cmd/reindex [-project <slug>] [-kind all|briefs|campaigns] [-batch 200] -apply -relay-ready   # write
+
+`-project` matches the `project_id` stored on briefs and campaigns, which is the project slug,
+not its UID.
 
 It needs the same database environment as the service: `DATABASE_URL` or `PGHOST`, `PGUSER`,
 `PGPASSWORD` and `PGDATABASE`, read through `config.ResolveDatabaseURL`. Without `-apply` it
@@ -25,8 +29,14 @@ reads every batch and builds every payload, then rolls back and prints only coun
 
 Only `index_outbox` rows, through `postgres.ReindexRepo`. It never publishes to NATS. The running
 service's relay delivers the rows, so the deployment's indexing settings apply: the service
-credential, and UID keying when `INDEXER_RESOLVE_PROJECT_UID` is on. **Run it after that flag is
-on in the target environment**, or the re-sent documents are keyed on the slug again.
+credential, and UID keying when `INDEXER_RESOLVE_PROJECT_UID` is on.
+
+`-apply` refuses to run without `-relay-ready`, the operator's statement that the **target
+deployment's** relay is on. The command cannot read that deployment's settings, so it asks:
+- `NATS_URL` must be set there. With it empty the service enqueues nothing, and a row written
+  here could never be delivered and is never pruned.
+- `INDEXER_RESOLVE_PROJECT_UID` must be `"true"` there. Otherwise the re-sent documents are keyed
+  on the slug again.
 
 Each payload comes from `service.BriefIndexPayload` or `service.CampaignIndexPayload`, the same
 builders every write uses, so a re-sent message is byte-for-byte what a write would produce.

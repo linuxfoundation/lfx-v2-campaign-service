@@ -3,8 +3,11 @@
 
 // Command reindex re-enqueues search-index messages for existing briefs and campaigns (#590):
 //
-//	go run ./cmd/reindex [-project <slug>] [-kind all|briefs|campaigns] [-batch 200]          # dry run
-//	go run ./cmd/reindex [-project <slug>] [-kind all|briefs|campaigns] [-batch 200] -apply   # write
+//	go run ./cmd/reindex [-project <slug>] [-kind all|briefs|campaigns] [-batch 200]                       # dry run
+//	go run ./cmd/reindex [-project <slug>] [-kind all|briefs|campaigns] [-batch 200] -apply -relay-ready   # write
+//
+// -project matches the project_id the service stores on briefs and campaigns, which is the
+// project SLUG (validateProjectSlug), not its UID.
 //
 // It exists because the service has no other full-reindex path. A document indexed under an
 // old contract (for example keyed on the project slug before INDEXER_RESOLVE_PROJECT_UID) is
@@ -15,8 +18,14 @@
 // (service.BriefIndexPayload / CampaignIndexPayload), so each is byte-for-byte the message a
 // write would have produced. It never publishes to NATS: the running service's relay
 // delivers the rows, which is what applies the deployment's indexing settings (the service
-// credential, and UID keying when INDEXER_RESOLVE_PROJECT_UID is on). Run it AFTER that flag
-// is on in the target environment, or the re-sent documents are keyed on the slug again.
+// credential, and UID keying when INDEXER_RESOLVE_PROJECT_UID is on). That flag arrives with
+// PR #596 (#590), so this command is useful only once #596 is merged and released.
+//
+// -apply therefore also requires -relay-ready, the operator's statement that the TARGET
+// deployment's index relay is on: NATS_URL set (with it empty the service enqueues nothing,
+// and rows written here could never be delivered and are never pruned) and
+// INDEXER_RESOLVE_PROJECT_UID "true" (otherwise the re-sent documents are keyed on the slug
+// again). This command cannot read the deployment's settings, so it asks rather than guesses.
 //
 // Live briefs and campaigns get an "updated" message, archived briefs and soft-deleted
 // campaigns a "deleted" one, and a bare dispatch claim is skipped (no write ever indexed it).
@@ -55,10 +64,11 @@ const (
 )
 
 type options struct {
-	project string
-	kind    string
-	batch   int
-	apply   bool
+	project    string
+	kind       string
+	batch      int
+	apply      bool
+	relayReady bool
 }
 
 // store is the slice of postgres.ReindexRepo the command drives; a fake in tests.
@@ -80,7 +90,13 @@ func main() {
 	defer stop()
 
 	dsn, err := config.ResolveDatabaseURL()
-	if err != nil || dsn == "" {
+	if err != nil {
+		// ValidateDatabaseSettings never puts the password in its error, so it is safe to show,
+		// and it names the actual problem (a partial PG* set, an unsupported engine).
+		fmt.Fprintln(os.Stderr, "reindex:", err)
+		os.Exit(1)
+	}
+	if dsn == "" {
 		fmt.Fprintf(os.Stderr, "reindex: no database configured; set PGHOST/PGUSER/PGPASSWORD/PGDATABASE or %s\n", constants.EnvDatabaseURL)
 		os.Exit(1)
 	}
@@ -101,10 +117,11 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 	fs := flag.NewFlagSet("reindex", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var o options
-	fs.StringVar(&o.project, "project", "", "only this project slug (default: every project)")
+	fs.StringVar(&o.project, "project", "", "only this project, by the slug stored as project_id (default: every project)")
 	fs.StringVar(&o.kind, "kind", "all", "what to re-index: all, briefs or campaigns")
 	fs.IntVar(&o.batch, "batch", defaultBatch, fmt.Sprintf("rows per transaction (1-%d)", maxBatch))
-	fs.BoolVar(&o.apply, "apply", false, "write the outbox rows (default: dry run, counts only)")
+	fs.BoolVar(&o.apply, "apply", false, "write the outbox rows (default: dry run, counts only); requires -relay-ready")
+	fs.BoolVar(&o.relayReady, "relay-ready", false, "confirm the target deployment's index relay is on: NATS_URL set and INDEXER_RESOLVE_PROJECT_UID \"true\" (#596)")
 	if err := fs.Parse(args); err != nil {
 		return o, err
 	}
@@ -119,6 +136,9 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 	}
 	if o.batch < 1 || o.batch > maxBatch {
 		return o, fmt.Errorf("-batch must be between 1 and %d", maxBatch)
+	}
+	if o.apply && !o.relayReady {
+		return o, errors.New("-apply also needs -relay-ready: confirm the target deployment has NATS_URL set and INDEXER_RESOLVE_PROJECT_UID \"true\" (#596); otherwise the rows are never delivered or are re-sent slug-keyed")
 	}
 	return o, nil
 }

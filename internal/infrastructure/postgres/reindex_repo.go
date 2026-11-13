@@ -127,7 +127,7 @@ func (r *ReindexRepo) ReindexCampaigns(ctx context.Context, projectID, afterID s
 				continue
 			}
 			action := reindexActionUpdated
-			if c.Status == campaignStatusDeleted {
+			if c.Status == model.CampaignStatusDeleted {
 				action = reindexActionDeleted
 			}
 			if err := enqueueReindex(ctx, tx, apply, indexObjectTypeCampaign, c.ID, func() ([]byte, error) { return build(action, c) }); err != nil {
@@ -143,15 +143,12 @@ func (r *ReindexRepo) ReindexCampaigns(ctx context.Context, projectID, afterID s
 	})
 }
 
-// campaignStatusDeleted is the soft-delete status every campaign read excludes.
-const campaignStatusDeleted = "deleted"
-
 // isBareClaim reports a dispatch claim that never became a campaign: still pending, with no
 // upstream id and no result. ClaimCampaignDispatch does not enqueue an index message, and a
 // write that does (UpsertCampaign) always gives the row an id or a result, so re-indexing a
 // bare claim would publish a document no write ever published.
 func isBareClaim(c *model.Campaign) bool {
-	return c.Status == "pending" && c.PlatformCampaignID == "" && len(c.Result) == 0
+	return c.Status == model.CampaignStatusPending && c.PlatformCampaignID == "" && len(c.Result) == 0
 }
 
 func enqueueReindex(ctx context.Context, tx pgx.Tx, apply bool, objectType, objectID string, build func() ([]byte, error)) error {

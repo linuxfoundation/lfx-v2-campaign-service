@@ -43,7 +43,7 @@ func TestLiveReindexEnqueuesEveryResourceOnce(t *testing.T) {
 	}
 	liveCampaign := seedCampaign("created", "123", nil)
 	deletedCampaign := seedCampaign("deleted", "456", nil)
-	seedCampaign("pending", "", nil) // a bare claim
+	bareClaim := seedCampaign("pending", "", nil) // a bare claim
 	t.Cleanup(func() {
 		cctx, cancel := dbtest.CleanupContext()
 		defer cancel()
@@ -60,7 +60,7 @@ func TestLiveReindexEnqueuesEveryResourceOnce(t *testing.T) {
 
 	outboxRows := func() map[string]string {
 		rows, err := pool.Query(ctx, `SELECT object_id, payload->>'action' FROM index_outbox
-			WHERE object_id IN ($1, $2, $3, $4)`, live, archived, liveCampaign, deletedCampaign)
+			WHERE object_id IN ($1, $2, $3, $4, $5)`, live, archived, liveCampaign, deletedCampaign, bareClaim)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -115,8 +115,9 @@ func TestLiveReindexEnqueuesEveryResourceOnce(t *testing.T) {
 		}
 		after = b.LastID
 	}
-	if _, err := repo.ReindexCampaigns(ctx, project, "", 100, true, buildCampaign); err != nil {
-		t.Fatal(err)
+	applied, err := repo.ReindexCampaigns(ctx, project, "", 100, true, buildCampaign)
+	if err != nil || applied.Read != 3 || applied.Live != 1 || applied.Deleted != 1 || applied.Skipped != 1 {
+		t.Fatalf("applied campaigns = %+v, %v", applied, err)
 	}
 	want := map[string]string{live: "updated", archived: "deleted", liveCampaign: "updated", deletedCampaign: "deleted"}
 	got := outboxRows()
@@ -124,5 +125,9 @@ func TestLiveReindexEnqueuesEveryResourceOnce(t *testing.T) {
 		if got[id] != action {
 			t.Errorf("object %s: outbox action %q, want %q", id, got[id], action)
 		}
+	}
+	// The bare dispatch claim was never indexed by the service, so it gets no row here either.
+	if action, ok := got[bareClaim]; ok {
+		t.Errorf("bare claim %s was enqueued (%q); it must be skipped", bareClaim, action)
 	}
 }
