@@ -823,3 +823,33 @@ func TestIsPreSendDialError_PositiveCases(t *testing.T) {
 		})
 	}
 }
+
+// #577: an oversized Retry-After on the over-cap abort is logged capped, not in full.
+func TestDoRequest_OverCapRetryAfterLogsABoundedHeader(t *testing.T) {
+	long := strings.Repeat("9", 10_000)
+	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", long)
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer apiSrv.Close()
+	var logs bytes.Buffer
+	prevLog := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prevLog) })
+
+	c := NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
+		withRetryBaseDelay(time.Millisecond))
+	if _, err := c.doRequest(context.Background(), http.MethodPost, "customers/1/googleAds:search", searchRequest{Query: "x"}, true); err == nil {
+		t.Fatal("expected the over-cap 429 to abort")
+	}
+	got := logs.String()
+	if !strings.Contains(got, "google-ads request refused") {
+		t.Fatalf("no refusal logged: %.200q", got)
+	}
+	if strings.Contains(got, strings.Repeat("9", maxLoggedRetryAfterRunes+1)) {
+		t.Errorf("the logged retry_after is not capped (%d bytes of log)", len(got))
+	}
+}

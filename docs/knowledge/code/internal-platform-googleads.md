@@ -106,7 +106,8 @@ response reads (`maxResponseBytes+1`), and the pre-send (`isPreSendDialError`) v
 ambiguous (`transportError`) vs definite (`apiError`, status-only `Error()`)
 classification. A definite refusal is also LOGGED once where it happens (#577): `doRequest`
 writes "google-ads request refused" with the method, path, status and `google_errors`. It writes the
-same line when a 429 with an over-long `Retry-After` aborts, adding `retry_after`.
+same line when a 429 with an over-long `Retry-After` aborts, adding `retry_after` (capped at 64 runes
+and stripped, while the raw header still drives retry parsing).
 `parseErrorSummaries` renders each of Google's errors as `<category>.<CODE>: <message> (<field
 path>)`, at most 16, each message capped at 200 runes, the field path capped at 32 elements of at most 128
 bytes each, and everything stripped of control characters. Before

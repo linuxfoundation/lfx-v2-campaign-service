@@ -673,6 +673,17 @@ func TestParseErrorSummaries(t *testing.T) {
 	}
 }
 
+// The logged Retry-After is capped and stripped; the raw header still drives retry parsing.
+func TestLoggedRetryAfter(t *testing.T) {
+	if got := loggedRetryAfter(" 600 "); got != "600" {
+		t.Errorf("loggedRetryAfter(600) = %q", got)
+	}
+	got := loggedRetryAfter(strings.Repeat("9", 10_000) + "\nlevel=ERROR")
+	if n := len([]rune(got)); n > maxLoggedRetryAfterRunes+1 || strings.ContainsAny(got, "\n\r") {
+		t.Errorf("loggedRetryAfter kept %d runes / a newline: %.40q", n, got)
+	}
+}
+
 // #577 end to end: a refused mutate logs the path, the status and Google's own error, while
 // the returned error still carries none of Google's text.
 func TestDoRequest_LogsGooglesErrorOnRefusal(t *testing.T) {

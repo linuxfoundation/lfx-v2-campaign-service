@@ -6,7 +6,7 @@ by re-running it live.
 
 - `doRequest` now logs "google-ads request refused" at WARN with `method`, `path`, `status` and
   `google_errors` for every non-2xx answer. That includes a 429 whose `Retry-After` exceeds the
-  retry cap, which aborts before the general path and also logs `retry_after`.
+  retry cap, which aborts before the general path and also logs `retry_after`, capped at 64 runes.
 - `parseErrorSummaries` (`campaign.go`) renders each Google error as
   `<category>.<CODE>: <message> (<field path>)`.
   - It keeps at most 16 errors.

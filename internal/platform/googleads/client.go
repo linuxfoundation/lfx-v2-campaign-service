@@ -1133,7 +1133,7 @@ func (c *Client) doRequestValidatedCounted(ctx context.Context, method, path str
 				// diagnostic (#577).
 				slog.WarnContext(ctx, "google-ads request refused",
 					"method", method, "path", path, "status", http.StatusTooManyRequests,
-					"retry_after", rawRetryAfter, "google_errors", parseErrorSummaries(body429))
+					"retry_after", loggedRetryAfter(rawRetryAfter), "google_errors", parseErrorSummaries(body429))
 				return nil, attempt, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path, Body: fmt.Sprintf("rate-limit reset (Retry-After: %q) exceeds max wait %s; aborting", rawRetryAfter, maxRetryWait)}
 			}
 			if wait <= 0 {

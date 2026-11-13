@@ -1177,6 +1177,20 @@ func parseErrorSummaries(body []byte) []string {
 	return out
 }
 
+// maxLoggedRetryAfterRunes bounds the logged Retry-After header. The raw value still drives
+// retry parsing; only the copy written to the log is capped.
+const maxLoggedRetryAfterRunes = 64
+
+// loggedRetryAfter is the Retry-After header as it may be logged: control characters
+// stripped and capped, so an oversized header cannot bloat or forge the line.
+func loggedRetryAfter(raw string) string {
+	v := logSafe(raw)
+	if r := []rune(v); len(r) > maxLoggedRetryAfterRunes {
+		v = string(r[:maxLoggedRetryAfterRunes]) + "…"
+	}
+	return v
+}
+
 // logSafe drops control characters (newlines included) and trims, so a value from a
 // response body cannot start a forged log line.
 func logSafe(s string) string {
