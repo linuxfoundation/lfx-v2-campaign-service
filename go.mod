@@ -20,7 +20,7 @@ require (
 	github.com/yuin/goldmark v1.8.6
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0
 	go.opentelemetry.io/contrib/propagators/jaeger v1.40.0
-	go.opentelemetry.io/otel v1.45.0
+	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.21.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.21.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.45.0
@@ -28,12 +28,12 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.45.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.45.0
 	go.opentelemetry.io/otel/exporters/prometheus v0.67.0
-	go.opentelemetry.io/otel/log v0.21.0
-	go.opentelemetry.io/otel/metric v1.45.0
-	go.opentelemetry.io/otel/sdk v1.45.0
-	go.opentelemetry.io/otel/sdk/log v0.21.0
-	go.opentelemetry.io/otel/sdk/metric v1.45.0
-	go.opentelemetry.io/otel/trace v1.45.0
+	go.opentelemetry.io/otel/log v1.47.0
+	go.opentelemetry.io/otel/metric v1.47.0
+	go.opentelemetry.io/otel/sdk v1.47.0
+	go.opentelemetry.io/otel/sdk/log v1.47.0
+	go.opentelemetry.io/otel/sdk/metric v1.47.0
+	go.opentelemetry.io/otel/trace v1.47.0
 	goa.design/clue v1.2.1
 	goa.design/goa/v3 v3.34.0
 	golang.org/x/net v0.59.0
