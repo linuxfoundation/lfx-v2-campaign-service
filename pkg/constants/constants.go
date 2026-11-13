@@ -40,6 +40,10 @@ const (
 	// messages. Optional: with it unset the relay leaves rows pending rather than publishing
 	// messages the indexer would reject for a missing authorization header.
 	EnvIndexerServiceToken = "INDEXER_SERVICE_TOKEN"
+	// EnvIndexerResolveProjectUID, when exactly "true", makes the index relay key each
+	// message's FGA checks on the project UID instead of the slug (#590): OpenFGA keys
+	// projects by UID, so a slug-keyed document is readable by nobody. Default-off.
+	EnvIndexerResolveProjectUID = "INDEXER_RESOLVE_PROJECT_UID"
 	// EnvDatabaseURL is an optional PostgreSQL connection string (DSN).
 	// Prefer composing from PG* variables when running in-cluster.
 	EnvDatabaseURL = "DATABASE_URL"

@@ -7,10 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/accesscheck"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -267,4 +269,189 @@ func TestRelay_NoCredentialSkipsPruningToo(t *testing.T) {
 
 	assert.Zero(t, out.pruneCalls, "an idle relay must not prune")
 	assert.Len(t, out.pending, 1, "and must leave the row pending")
+}
+
+// fakeResolver answers slug_to_uid from a table and counts lookups.
+type fakeResolver struct {
+	uids  map[string]string
+	err   error
+	calls int
+}
+
+func (f *fakeResolver) ProjectUID(_ context.Context, slug string) (string, error) {
+	f.calls++
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.uids[slug], nil
+}
+
+const relayTestUID = "7cad5a8d-19d0-41a4-81a6-043453daf9ee"
+
+func campaignRow(id int64, objectID, project string) *model.OutboxMessage {
+	raw, _ := json.Marshal(NewTransaction(ActionUpdated, ObjectTypeCampaign, objectID, project, "", map[string]any{"id": objectID}, "Name"))
+	return &model.OutboxMessage{ID: id, ObjectType: ObjectTypeCampaign, ObjectID: objectID, Payload: raw}
+}
+
+func publishedConfig(t *testing.T, payload []byte) map[string]any {
+	t.Helper()
+	var msg map[string]any
+	require.NoError(t, json.Unmarshal(payload, &msg))
+	return msg["indexing_config"].(map[string]any)
+}
+
+// #590: with a resolver, the relay keys the FGA checks on the project UID, keeps the slug in
+// parent_refs beside it, and leaves every other field and the stored row as written.
+func TestRelay_KeysFGAChecksOnTheProjectUID(t *testing.T) {
+	row := campaignRow(1, "c1", "cncf")
+	stored := append([]byte(nil), row.Payload...)
+	out := &fakeOutbox{pending: []*model.OutboxMessage{row}}
+	pub := &capturingPublisher{}
+	res := &fakeResolver{uids: map[string]string{"cncf": relayTestUID}}
+
+	NewRelay(out, pub, "Bearer t").WithProjectUIDResolver(res).drain(context.Background())
+
+	require.Len(t, pub.payloads, 1)
+	cfg := publishedConfig(t, pub.payloads[0])
+	assert.Equal(t, "project:"+relayTestUID, cfg["access_check_object"])
+	assert.Equal(t, "project:"+relayTestUID, cfg["history_check_object"])
+	assert.Equal(t, []any{"project:" + relayTestUID, "project:cncf"}, cfg["parent_refs"])
+	assert.Equal(t, "campaign_manager", cfg["access_check_relation"])
+	assert.Equal(t, "c1", cfg["object_id"])
+	assert.Equal(t, "Name", cfg["sort_name"])
+	assert.Equal(t, "project:cncf", publishedConfig(t, stored)["access_check_object"], "the stored row is never rewritten")
+	assert.Equal(t, string(row.Payload), string(stored))
+}
+
+// A failed lookup must not publish a slug-keyed document nobody can read: the row stays
+// pending, with the failure recorded, for a later pass.
+func TestRelay_UnresolvedProjectLeavesTheRowPending(t *testing.T) {
+	out := &fakeOutbox{pending: []*model.OutboxMessage{campaignRow(1, "c1", "cncf")}}
+	pub := &capturingPublisher{}
+
+	NewRelay(out, pub, "Bearer t").WithProjectUIDResolver(&fakeResolver{err: errors.New("unavailable")}).drain(context.Background())
+
+	assert.Empty(t, pub.payloads)
+	assert.Empty(t, out.published)
+	assert.Equal(t, []int64{1}, out.failed)
+	assert.Len(t, out.pending, 1)
+}
+
+// A message already keyed on a UID is published as written, without a lookup; a resolved slug
+// is looked up once for every row that carries it.
+func TestRelay_ResolvesEachSlugOnceAndSkipsUIDs(t *testing.T) {
+	out := &fakeOutbox{pending: []*model.OutboxMessage{
+		campaignRow(1, "c1", "cncf"),
+		campaignRow(2, "c2", "cncf"),
+		campaignRow(3, "c3", relayTestUID),
+	}}
+	pub := &capturingPublisher{}
+	res := &fakeResolver{uids: map[string]string{"cncf": relayTestUID}}
+
+	NewRelay(out, pub, "Bearer t").WithProjectUIDResolver(res).drain(context.Background())
+
+	require.Len(t, pub.payloads, 3)
+	assert.Equal(t, 1, res.calls, "one lookup per slug, none for a UID")
+	assert.Equal(t, []any{"project:" + relayTestUID}, publishedConfig(t, pub.payloads[2])["parent_refs"])
+}
+
+// Without a resolver (the flag off) the message keeps the slug it was written with.
+func TestRelay_WithoutAResolverKeepsTheSlug(t *testing.T) {
+	out := &fakeOutbox{pending: []*model.OutboxMessage{campaignRow(1, "c1", "cncf")}}
+	pub := &capturingPublisher{}
+
+	NewRelay(out, pub, "Bearer t").drain(context.Background())
+
+	require.Len(t, pub.payloads, 1)
+	assert.Equal(t, "project:cncf", publishedConfig(t, pub.payloads[0])["access_check_object"])
+}
+
+// A delete is never held on the lookup: the indexer removes by object id, so an archive must
+// reach it even when the project can no longer be resolved.
+func TestRelay_DeletesPublishWithoutALookup(t *testing.T) {
+	out := &fakeOutbox{pending: []*model.OutboxMessage{outboxMsg(1, ObjectTypeBrief)}}
+	pub := &capturingPublisher{}
+	res := &fakeResolver{err: errors.New("not found")}
+
+	NewRelay(out, pub, "Bearer t").WithProjectUIDResolver(res).drain(context.Background())
+
+	require.Len(t, pub.payloads, 1)
+	assert.Equal(t, 0, res.calls)
+	assert.Equal(t, []int64{1}, out.published)
+}
+
+// A failed lookup is remembered briefly, so every row of that project fails fast instead of
+// each spending the resolver's timeout; rows of other projects still publish.
+func TestRelay_RemembersAFailedLookup(t *testing.T) {
+	out := &fakeOutbox{pending: []*model.OutboxMessage{
+		campaignRow(1, "c1", "gone"),
+		campaignRow(2, "c2", "gone"),
+		campaignRow(3, "c3", "cncf"),
+	}}
+	pub := &capturingPublisher{}
+	res := &failingFor{slug: "gone", uid: relayTestUID}
+
+	NewRelay(out, pub, "Bearer t").WithProjectUIDResolver(res).drain(context.Background())
+
+	assert.Equal(t, map[string]int{"gone": 1, "cncf": 1}, res.calls, "one lookup per slug, failures included")
+	assert.Equal(t, []int64{3}, out.published)
+	// The fake has no retry backoff, so the drain loop may try the failed rows again in a
+	// later pass; the cached failure answers those attempts without another lookup.
+	assert.Subset(t, []int64{1, 2}, out.failed)
+	assert.Len(t, out.pending, 2)
+}
+
+type failingFor struct {
+	slug  string
+	uid   string
+	calls map[string]int
+}
+
+func (f *failingFor) ProjectUID(_ context.Context, slug string) (string, error) {
+	if f.calls == nil {
+		f.calls = map[string]int{}
+	}
+	f.calls[slug]++
+	if slug == f.slug {
+		return "", errors.New("unavailable")
+	}
+	return f.uid, nil
+}
+
+// The resolver's answer must be a UID: an empty or non-UUID success leaves the row pending
+// rather than keying the document on `project:` or on some other string.
+func TestRelay_RefusesANonUIDAnswer(t *testing.T) {
+	for _, answer := range []string{"", "cncf", "not-a-uuid"} {
+		out := &fakeOutbox{pending: []*model.OutboxMessage{campaignRow(1, "c1", "cncf")}}
+		pub := &capturingPublisher{}
+
+		NewRelay(out, pub, "Bearer t").WithProjectUIDResolver(&fakeResolver{uids: map[string]string{"cncf": answer}}).drain(context.Background())
+
+		assert.Empty(t, pub.payloads, "answer %q", answer)
+		assert.Equal(t, []int64{1}, out.failed, "answer %q", answer)
+	}
+}
+
+// A slug the project service definitely does not know will not resolve on retry, and a row held
+// pending would also hold the later delete for the same resource behind it (#590 review). Such a
+// message is published as written, slug-keyed and readable by nobody, so the delete follows.
+func TestRelay_UnknownProjectPublishesSlugKeyedAndUnblocksTheDelete(t *testing.T) {
+	update := campaignRow(1, "c1", "gone")
+	rawDelete, _ := json.Marshal(NewTransaction(ActionDeleted, ObjectTypeCampaign, "c1", "gone", "", "c1"))
+	del := &model.OutboxMessage{ID: 2, ObjectType: ObjectTypeCampaign, ObjectID: "c1", Payload: rawDelete}
+	out := &fakeOutbox{pending: []*model.OutboxMessage{update, del}}
+	pub := &capturingPublisher{}
+	res := &fakeResolver{err: fmt.Errorf("%w: %w", accesscheck.ErrUnavailable, accesscheck.ErrProjectNotFound)}
+
+	NewRelay(out, pub, "Bearer t").WithProjectUIDResolver(res).drain(context.Background())
+
+	assert.Equal(t, []int64{1, 2}, out.published, "the update and then the delete both publish")
+	require.Len(t, pub.payloads, 2)
+	assert.Equal(t, "project:gone", publishedConfig(t, pub.payloads[0])["access_check_object"], "fail closed: slug-keyed")
+}
+
+// A resolved UID is reused for about one pass, not longer: a message published from a stale
+// entry is retired, so expiry cannot repair it (#590 review).
+func TestRelay_ProjectUIDCacheLastsAboutOnePass(t *testing.T) {
+	assert.LessOrEqual(t, projectUIDCacheTTL, relayPassTimeout)
 }
