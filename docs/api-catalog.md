@@ -1027,11 +1027,35 @@ variants[].imageUrn?: string     — OPTIONAL existing urn:li:image used verbati
                                   thumbnail. MUTUALLY EXCLUSIVE with imageAssetId.
 ```
 
+#### LinkedInConfig profile targeting and job functions (`linkedInConfig.jobFunctions`, #585)
+
+Without `targeting`, the campaign's `targetingCriteria.include.and` is three clauses:
+
+```text
+locations  AND  (profile skills OR profile groups)  AND  jobFunctions
+```
+
+This is the "narrow audience" structure of LF's own Campaign Manager campaigns. Until #585 the job
+functions sat in one `or` with the skills and groups, so every member in those functions qualified
+whatever their skills or groups. The `(skills OR groups)` clause is left out when the profile has
+neither. The fixed employer and seniority exclusions are unchanged.
+
+```text
+jobFunctions?: string[]  — job function URNs (urn:li:function:<id>), at most 100, duplicates
+                           dropped. Replaces the default three: urn:li:function:8, 13 and 16.
+```
+
+Refused with a synchronous `400 invalid campaign config: …` before any job exists: a value that is
+not an array of strings (`null` included), an empty list (omit it for the default), a malformed
+value, and `jobFunctions` together with `targeting`, which brings its own clauses and would leave it
+unread. Not role-gated (job functions are LinkedIn's taxonomy, not an ad-account resource) and not
+flag-gated (the request shape is the one the default has always sent).
+
 #### LinkedInConfig targeting (`linkedInConfig.targeting`, #552)
 
 The caller's own LinkedIn `targetingCriteria`, behind `LINKEDIN_ADS_TARGETING_ENABLED` (off by
 default; while off, any `targeting` is a synchronous `400` naming the flag). Omitted, the campaign
-is targeted exactly as before (profile skills/groups, fixed job functions and seniority exclusions).
+is targeted by its profile, as the next section describes.
 
 ```jsonc
 "targeting": {

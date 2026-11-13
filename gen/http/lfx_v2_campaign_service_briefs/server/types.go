@@ -5429,16 +5429,26 @@ type CampaignCreateInputRequestBody struct {
 	// character, a non-numeric instagramUserId, and any of the three with a
 	// non-string JSON type (null counts as absent) are refused here with a 400,
 	// before any job exists. An absent instagramUserId is not refused, but Meta
-	// will not publish an Instagram placement without it. LINKEDIN TARGETING
-	// (#552): linkedInConfig takes an optional `targeting` object, {"include":
-	// [{<facet>: [urn, ...], ...}, ...], "exclude": {<facet>: [urn, ...]}}, sent
-	// as the campaign's targetingCriteria: each include entry (1 to 10) is one
-	// ANDed clause whose facets are ORed, after the geoTargets clause, and exclude
-	// is ORed. Facets: skills, groups, industries, titles, seniorities,
-	// jobFunctions, employers, staffCountRanges, interfaceLocales, interests,
-	// audienceMatchingSegments and dynamicSegments, with LinkedIn's URN values
-	// (urn:li:skill:<id>, urn:li:interest:<id>, urn:li:adSegment:<id>, ...);
-	// groups and interfaceLocales only under include. Set, it replaces
+	// will not publish an Instagram placement without it. LINKEDIN PROFILE
+	// TARGETING (#585): without linkedInConfig.targeting the campaign is targeted
+	// as locations AND (the profile's skills OR groups) AND jobFunctions, each a
+	// clause of include.and, so the job functions narrow the profile instead of
+	// widening it; the (skills OR groups) clause is left out when the profile has
+	// neither. linkedInConfig takes an optional `jobFunctions` list of job
+	// function URNs (urn:li:function:<id>, at most 100, duplicates dropped) that
+	// replaces the default three (urn:li:function:8, 13 and 16). Refused with a
+	// 400 before any job exists: a value that is not an array of strings (null
+	// included), an empty list, a malformed value, and jobFunctions together with
+	// targeting, which brings its own clauses. Not role-gated and not flag-gated.
+	// LINKEDIN TARGETING (#552): linkedInConfig takes an optional `targeting`
+	// object, {"include": [{<facet>: [urn, ...], ...}, ...], "exclude": {<facet>:
+	// [urn, ...]}}, sent as the campaign's targetingCriteria: each include entry
+	// (1 to 10) is one ANDed clause whose facets are ORed, after the geoTargets
+	// clause, and exclude is ORed. Facets: skills, groups, industries, titles,
+	// seniorities, jobFunctions, employers, staffCountRanges, interfaceLocales,
+	// interests, audienceMatchingSegments and dynamicSegments, with LinkedIn's URN
+	// values (urn:li:skill:<id>, urn:li:interest:<id>, urn:li:adSegment:<id>,
+	// ...); groups and interfaceLocales only under include. Set, it replaces
 	// targetingProfile and the fixed job-function and seniority targeting; the
 	// config's employerExclusions still join exclude.employers. Refused with a 400
 	// before any job exists: an unknown facet, a malformed value, an empty clause

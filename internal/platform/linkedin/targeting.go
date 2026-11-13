@@ -269,14 +269,18 @@ func (c *Client) resolveAccountID(override string) (string, error) {
 	return "", fmt.Errorf("no LinkedIn ad account configured: provide defaultAccountId in the runtime config")
 }
 
-// buildTargetingCriteria builds the targetingCriteria block for a campaign.
-// Mirrors buildTargetingCriteria(): skills, groups, and jobFunctions go into a
-// SINGLE `or` block alongside the geo `or` block (both under one `and`).
-// Employer and seniority exclusions form the `exclude.or` block.
+// buildTargetingCriteria builds the targetingCriteria block for a campaign:
+// locations AND (skills OR groups) AND jobFunctions, the "narrow audience" shape
+// LF's own Campaign Manager campaigns use (#585). jobFunctions is a clause of its
+// own so it narrows the profile's skills and groups; in one `or` with them, as the
+// TypeScript port had it, every member in those functions qualified whatever their
+// skills or groups. The (skills OR groups) clause is left out when the profile has
+// neither, rather than sent empty. jobFns replaces the default job functions; nil
+// means the default. Employer and seniority exclusions form the `exclude.or` block.
 //
 // The profile "custom" is treated as an alias for "cloud-native" (matching the
 // TypeScript fallback). Any other profile must exist in the runtime config.
-func (c *Client) buildTargetingCriteria(profile string, geoURNs []string) (map[string]any, error) {
+func (c *Client) buildTargetingCriteria(profile string, geoURNs, jobFns []string) (map[string]any, error) {
 	var skills, groups []string
 
 	lookup := profile
@@ -329,24 +333,35 @@ func (c *Client) buildTargetingCriteria(profile string, geoURNs []string) (map[s
 	if geoURNs == nil {
 		geoURNs = []string{}
 	}
+	if jobFns == nil {
+		jobFns = jobFunctions
+	}
+
+	and := []any{
+		map[string]any{
+			"or": map[string]any{
+				"urn:li:adTargetingFacet:locations": geoURNs,
+			},
+		},
+	}
+	if len(skills) > 0 || len(groups) > 0 {
+		and = append(and, map[string]any{
+			"or": map[string]any{
+				"urn:li:adTargetingFacet:skills": skills,
+				"urn:li:adTargetingFacet:groups": groups,
+			},
+		})
+	}
+	and = append(and, map[string]any{
+		"or": map[string]any{
+			"urn:li:adTargetingFacet:jobFunctions": jobFns,
+		},
+	})
 
 	return map[string]any{
 		"targetingCriteria": map[string]any{
 			"include": map[string]any{
-				"and": []any{
-					map[string]any{
-						"or": map[string]any{
-							"urn:li:adTargetingFacet:locations": geoURNs,
-						},
-					},
-					map[string]any{
-						"or": map[string]any{
-							"urn:li:adTargetingFacet:skills":       skills,
-							"urn:li:adTargetingFacet:groups":       groups,
-							"urn:li:adTargetingFacet:jobFunctions": jobFunctions,
-						},
-					},
-				},
+				"and": and,
 			},
 			"exclude": map[string]any{
 				"or": map[string]any{

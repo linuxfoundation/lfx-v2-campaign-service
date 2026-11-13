@@ -162,6 +162,19 @@ func cleanFacet(key string, values []string, where string, exclude bool) ([]stri
 	return out, nil
 }
 
+// ValidateJobFunctions checks linkedInConfig.jobFunctions (#585), the job functions that replace
+// the default three in the profile's jobFunctions clause, under the same rules as the
+// targeting facet: urn:li:function:<id> values, at most 100, duplicates dropped. Nil means the
+// default and is returned as nil; an explicit empty list is refused, since it would otherwise
+// read as the default. It makes no request, so the dispatcher's pre-flight and CreateCampaign
+// share it.
+func ValidateJobFunctions(fns []string) ([]string, error) {
+	if fns == nil {
+		return nil, nil
+	}
+	return cleanFacet("jobFunctions", fns, "linkedInConfig", false)
+}
+
 // ValidateTargeting checks t and returns its normalised copy (duplicates within a list
 // dropped). It makes no request, so the dispatcher's pre-flight and CreateCampaign share it.
 //

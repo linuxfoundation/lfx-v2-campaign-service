@@ -106,7 +106,7 @@ func TestCreateCampaign_CustomTargetingReachesTheWire(t *testing.T) {
 // still carries the profile clause and the hard-coded job functions and seniority exclusions.
 func TestBuildTargetingCriteria_ProfileKeepsFixedFacets(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig())
-	crit, err := c.buildTargetingCriteria("cloud-native", []string{"urn:li:geo:1"})
+	crit, err := c.buildTargetingCriteria("cloud-native", []string{"urn:li:geo:1"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

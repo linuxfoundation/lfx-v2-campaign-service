@@ -1006,6 +1006,20 @@ Pinned by `TestEnsureCampaignGroupCoversEnd` (and its `_WriteFailureIsAnError`,
 `_ReWidensAfterAConcurrentShortening` and `_ConcurrentCallersKeepTheLaterEnd` siblings) and
 `TestCreateCampaign_ReusedGroupScheduleCoversCampaign`.
 
+## Profile targeting shape (`targeting.go`, #585)
+
+`buildTargetingCriteria(profile, geoURNs, jobFns)` sends `include.and` as locations, then
+`(skills OR groups)` from the profile, then `jobFunctions` in a clause of its own: Campaign
+Manager's "narrow audience" (AND) structure, which LF's own campaigns use. The TypeScript port put
+the job functions in the skills/groups `or`, which made every member in those functions eligible.
+The skills/groups clause is omitted when both are empty rather than sent empty; the
+`validatePrerequisites` non-empty check still holds because a job-function clause is always sent.
+`jobFns` is `CampaignInput.JobFunctions` (`linkedInConfig.jobFunctions`), checked by
+`ValidateJobFunctions` (the targeting facet's `urn:li:function:<id>` rule, via `cleanFacet`); nil
+means the default three in `config.go`. `CreateCampaign` refuses `JobFunctions` with `Targeting`
+as a pre-flight refusal, and the dispatcher refuses it, and a wrong JSON type
+(`checkJobFunctionsShape`), as a synchronous 400.
+
 ## Caller targeting (`targeting_criteria.go`, #552)
 
 `CampaignInput.Targeting` carries `linkedInConfig.targeting`, the caller's own `targetingCriteria`

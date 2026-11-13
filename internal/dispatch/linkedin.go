@@ -207,6 +207,60 @@ type linkedinConfig struct {
 	// Conversions are conversion rule ids associated with the campaign once it exists (#552),
 	// behind LINKEDIN_ADS_CONVERSIONS_ENABLED. See linkedin.ValidateConversions.
 	Conversions []string `json:"conversions,omitempty"`
+	// JobFunctions replace the default job functions in the profile's jobFunctions clause
+	// (#585). Not read with Targeting. See linkedin.ValidateJobFunctions.
+	JobFunctions []string `json:"jobFunctions,omitempty"`
+}
+
+// checkJobFunctionsShape refuses a linkedInConfig.jobFunctions that is not a JSON array of
+// strings (#585), explicit null included. The best-effort pre-flight decode leaves a wrong-typed
+// value nil, which reads as "use the default", so without this a caller sending "urn:li:function:4"
+// would get the default three silently. Anything it cannot attribute to jobFunctions is left to
+// the ordinary decode.
+func checkJobFunctionsShape(config json.RawMessage) error {
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(config, &envelope) != nil {
+		return nil
+	}
+	var platformCfg map[string]json.RawMessage
+	if json.Unmarshal(envelope["linkedInConfig"], &platformCfg) != nil {
+		return nil
+	}
+	for k, raw := range platformCfg {
+		if !strings.EqualFold(k, "jobFunctions") {
+			continue
+		}
+		var entries []json.RawMessage
+		bad := isJSONNull(raw) || json.Unmarshal(raw, &entries) != nil
+		for _, e := range entries {
+			var str string
+			if bad || json.Unmarshal(e, &str) != nil {
+				bad = true
+				break
+			}
+		}
+		if bad {
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.jobFunctions must be an array of job function URN strings, e.g. [\"urn:li:function:8\"]", domain.ErrCreateConfigInvalid))
+		}
+	}
+	return nil
+}
+
+// linkedinJobFunctions checks linkedInConfig.jobFunctions before any job or request: refused
+// with targeting, which brings its own clauses and would leave it unread, and refused when
+// linkedin.ValidateJobFunctions refuses it. Returns the de-duplicated copy, nil for the default.
+func linkedinJobFunctions(cfg linkedinConfig) ([]string, error) {
+	if cfg.JobFunctions == nil {
+		return nil, nil
+	}
+	if cfg.Targeting != nil {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.jobFunctions is not read with linkedInConfig.targeting; put the job functions in a targeting clause instead", domain.ErrCreateConfigInvalid))
+	}
+	fns, err := linkedin.ValidateJobFunctions(cfg.JobFunctions)
+	if err != nil {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: %w", domain.ErrCreateConfigInvalid, err))
+	}
+	return fns, nil
 }
 
 // linkedinTargetingEnabled reports whether this deployment opted in to linkedInConfig.targeting
@@ -418,6 +472,13 @@ func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ mode
 	if _, err := linkedinConversions(cfg); err != nil {
 		return err
 	}
+	// linkedInConfig.jobFunctions (#585) likewise, a wrong JSON type included.
+	if err := checkJobFunctionsShape(config); err != nil {
+		return err
+	}
+	if _, err := linkedinJobFunctions(cfg); err != nil {
+		return err
+	}
 	return domain.ErrPreflightNotApplicable
 }
 
@@ -527,6 +588,14 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if cfg.Conversions, err = linkedinConversions(cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// Job functions (#585), validated before any upstream call; the de-duplicated copy replaces
+	// the request's, for the client and the stored snapshot.
+	if err := checkJobFunctionsShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	if cfg.JobFunctions, err = linkedinJobFunctions(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
 	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
 	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
@@ -611,6 +680,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		ManualCPCBid:     plan.amount,
 		Targeting:        cfg.Targeting,
 		Conversions:      cfg.Conversions,
+		JobFunctions:     cfg.JobFunctions,
 
 		// The name labels of the CLAIMED row (multi-campaign cs-4): its stored funnel stage and
 		// tactic (model.DispatchLabels) and its slot version, never the request's. A retry of

@@ -285,6 +285,10 @@ type CampaignInput struct {
 	// seniorityExclusions; the runtime config's EmployerExclusions still join exclude.employers.
 	// CreateCampaign runs ValidateTargeting on it before any request. See targeting_criteria.go.
 	Targeting *Targeting
+	// JobFunctions replace the default job functions (urn:li:function:8, 13 and 16) in the
+	// profile's own jobFunctions clause (#585). Nil means the default. Not read with Targeting,
+	// which brings its own. CreateCampaign runs ValidateJobFunctions on it before any request.
+	JobFunctions []string
 	// Conversions are conversion rule ids (#552) associated with the campaign once it exists,
 	// through Campaign Conversions (conversions.go). CreateCampaign runs ValidateConversions on
 	// them before any request. A failed association does not stop the create.
@@ -2079,7 +2083,7 @@ func (c *Client) readCampaignGroupEnd(ctx context.Context, path, groupID string)
 // single-flight claim is PLANNED but NOT provided here (tracked separately as
 // LFXV2-2665); until it exists, callers MUST NOT rely on any dedup guarantee and
 // must serialize concurrent calls for the same name on their own.
-func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, custom *Targeting, lifetimeBudget bool, bidding campaignBiddingPlan) (id string, reused bool, err error) {
+func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, jobFns []string, custom *Targeting, lifetimeBudget bool, bidding campaignBiddingPlan) (id string, reused bool, err error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
 	// Scope the idempotency lookup to the resolved campaign group: the campaign
@@ -2122,7 +2126,7 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 	if custom != nil {
 		targeting, err = c.buildCustomTargetingCriteria(custom, geoURNs)
 	} else {
-		targeting, err = c.buildTargetingCriteria(targetingProfile, geoURNs)
+		targeting, err = c.buildTargetingCriteria(targetingProfile, geoURNs, jobFns)
 	}
 	if err != nil {
 		return "", false, err
@@ -2463,9 +2467,9 @@ func stripDashes(text string) string {
 // profile actually yields usable targeting — i.e. that the FINAL assembled
 // targeting criteria would be non-empty. Mirroring the TS source, an empty
 // skills/groups config is acceptable AS LONG AS the resulting include criteria
-// is non-empty: buildTargetingCriteria always adds the hardcoded jobFunctions
-// facets to the include block, so a profile with empty skills AND groups still
-// contributes real targeting (the jobFunctions) and is accepted. The rejection
+// is non-empty: buildTargetingCriteria always adds a jobFunctions clause (the
+// default three, or the caller's non-empty list), so a profile with empty skills
+// AND groups still yields real targeting (locations AND jobFunctions) and is accepted. The rejection
 // keys off the ASSEMBLED include facets being empty, not merely off skills/groups
 // being empty. Because jobFunctions is always present, a config-only-blank
 // skills/groups profile is accepted, exactly as the TS does.
@@ -2497,8 +2501,8 @@ func (c *Client) validatePrerequisites(accountID, profile string) error {
 		// non-empty. Count only NON-BLANK skill/group entries — a config-supplied
 		// slice can contain blank strings (e.g. []string{""} or {"  "}) that are not
 		// usable facets and are dropped by buildTargetingCriteria before the wire —
-		// then add the always-present hardcoded jobFunctions facets that
-		// buildTargetingCriteria injects into the SAME include `or` block. Mirroring
+		// then add the always-present default jobFunctions that buildTargetingCriteria
+		// sends as their own include clause (a caller's list is non-empty too). Mirroring
 		// the TS source, empty skills AND groups is acceptable so long as the
 		// assembled criteria is non-empty: because jobFunctions is always non-empty,
 		// the include criteria is never empty and such a profile is ACCEPTED. Only a
@@ -2664,15 +2668,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Caller targeting (#552) replaces the profile, so the profile prerequisites are not read;
 	// the org and the configured employer exclusions still are, since both still reach the wire.
 	var targeting *Targeting
+	var jobFns []string
 	if in.Targeting != nil {
+		if in.JobFunctions != nil {
+			return nil, domain.WrapPreflightRefusal(targetingInvalid("jobFunctions is not read with targeting; put them in a targeting clause instead"))
+		}
 		if targeting, err = ValidateTargeting(in.Targeting, c.cfg.EmployerExclusions); err != nil {
 			return nil, domain.WrapPreflightRefusal(err)
 		}
 		if _, err := c.orgURN(accountID); err != nil {
 			return nil, domain.WrapPreflightRefusal(err)
 		}
-	} else if err := c.validatePrerequisites(accountID, in.TargetingProfile); err != nil {
-		return nil, domain.WrapPreflightRefusal(err)
+	} else {
+		if jobFns, err = ValidateJobFunctions(in.JobFunctions); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+		if err := c.validatePrerequisites(accountID, in.TargetingProfile); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
 	}
 
 	// EventName is semantically required: it is the sole distinguishing token in
@@ -2924,7 +2937,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
-	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, targeting, in.LifetimeBudget, bidding)
+	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, jobFns, targeting, in.LifetimeBudget, bidding)
 	if err != nil {
 		// findOrCreateCampaignGroup may have just created a PERMANENT campaign group
 		// (groupID) whose creation is a real side effect. Returning nil,err here

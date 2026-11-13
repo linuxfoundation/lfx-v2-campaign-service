@@ -103,52 +103,52 @@ func TestResolveGeoTargets_UsaAlias(t *testing.T) {
 // Targeting criteria building
 // ---------------------------------------------------------------------------
 
-func TestBuildTargetingCriteria_SkillsAndGroupsInOneOrBlock(t *testing.T) {
-	c := NewClient(Credentials{AccessToken: "t"}, testConfig())
-	crit, err := c.buildTargetingCriteria("cloud-native", []string{"urn:li:geo:1"})
-	if err != nil {
-		t.Fatalf("buildTargetingCriteria: %v", err)
-	}
-
-	// Round-trip through JSON to inspect structure the way LinkedIn receives it.
+// includeAnd decodes a built targetingCriteria the way LinkedIn receives it and returns its
+// include.and clauses, each as its `or` facet map.
+func includeAnd(t *testing.T, crit map[string]any) ([]map[string]any, map[string]any) {
+	t.Helper()
 	b, _ := json.Marshal(crit)
 	var decoded map[string]any
 	if err := json.Unmarshal(b, &decoded); err != nil {
 		t.Fatal(err)
 	}
-
 	tc := decoded["targetingCriteria"].(map[string]any)
-	include := tc["include"].(map[string]any)
-	and := include["and"].([]any)
-	if len(and) != 2 {
-		t.Fatalf("expected 2 entries in include.and, got %d", len(and))
+	var clauses []map[string]any
+	for _, c := range tc["include"].(map[string]any)["and"].([]any) {
+		clauses = append(clauses, c.(map[string]any)["or"].(map[string]any))
 	}
+	return clauses, tc["exclude"].(map[string]any)["or"].(map[string]any)
+}
 
-	// First and-entry: geo locations.
-	first := and[0].(map[string]any)["or"].(map[string]any)
-	if _, ok := first["urn:li:adTargetingFacet:locations"]; !ok {
-		t.Errorf("first and-entry should carry locations facet: %+v", first)
+// TestBuildTargetingCriteria_JobFunctionsNarrowSkillsAndGroups pins the profile shape LF's own
+// campaigns use (#585): locations AND (skills OR groups) AND jobFunctions. Job functions are a
+// clause of their own, so they narrow the profile's skills and groups instead of widening it to
+// every member in those functions.
+func TestBuildTargetingCriteria_JobFunctionsNarrowSkillsAndGroups(t *testing.T) {
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig())
+	crit, err := c.buildTargetingCriteria("cloud-native", []string{"urn:li:geo:1"}, nil)
+	if err != nil {
+		t.Fatalf("buildTargetingCriteria: %v", err)
 	}
-
-	// Second and-entry: skills + groups + jobFunctions all in ONE or block.
-	second := and[1].(map[string]any)["or"].(map[string]any)
-	for _, facet := range []string{
-		"urn:li:adTargetingFacet:skills",
-		"urn:li:adTargetingFacet:groups",
-		"urn:li:adTargetingFacet:jobFunctions",
-	} {
-		if _, ok := second[facet]; !ok {
-			t.Errorf("skills/groups OR block missing facet %s: %+v", facet, second)
-		}
+	and, exclude := includeAnd(t, crit)
+	if len(and) != 3 {
+		t.Fatalf("expected 3 include.and clauses (locations, skills/groups, job functions), got %d: %+v", len(and), and)
 	}
-
-	skills := second["urn:li:adTargetingFacet:skills"].([]any)
-	if len(skills) != 2 {
+	if _, ok := and[0]["urn:li:adTargetingFacet:locations"]; !ok || len(and[0]) != 1 {
+		t.Errorf("clause 0 should be locations alone: %+v", and[0])
+	}
+	if len(and[1]) != 2 || and[1]["urn:li:adTargetingFacet:skills"] == nil || and[1]["urn:li:adTargetingFacet:groups"] == nil {
+		t.Errorf("clause 1 should be skills OR groups alone: %+v", and[1])
+	}
+	if skills := and[1]["urn:li:adTargetingFacet:skills"].([]any); len(skills) != 2 {
 		t.Errorf("expected 2 skills, got %d", len(skills))
+	}
+	fns, ok := and[2]["urn:li:adTargetingFacet:jobFunctions"].([]any)
+	if !ok || len(and[2]) != 1 || len(fns) != 3 || fns[0] != "urn:li:function:8" {
+		t.Errorf("clause 2 should be the default job functions alone: %+v", and[2])
 	}
 
 	// Exclusions: employers + seniorities.
-	exclude := tc["exclude"].(map[string]any)["or"].(map[string]any)
 	employers, ok := exclude["urn:li:adTargetingFacet:employers"].([]any)
 	if !ok {
 		t.Errorf("exclude block missing employers facet")
@@ -162,9 +162,40 @@ func TestBuildTargetingCriteria_SkillsAndGroupsInOneOrBlock(t *testing.T) {
 	}
 }
 
+// TestBuildTargetingCriteria_CallerJobFunctionsReplaceTheDefault pins that linkedInConfig.jobFunctions
+// (#585) replaces the default three in their own clause.
+func TestBuildTargetingCriteria_CallerJobFunctionsReplaceTheDefault(t *testing.T) {
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig())
+	crit, err := c.buildTargetingCriteria("cloud-native", []string{"urn:li:geo:1"}, []string{"urn:li:function:4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	and, _ := includeAnd(t, crit)
+	fns := and[len(and)-1]["urn:li:adTargetingFacet:jobFunctions"].([]any)
+	if len(fns) != 1 || fns[0] != "urn:li:function:4" {
+		t.Errorf("job functions = %+v, want [urn:li:function:4]", fns)
+	}
+}
+
+// TestBuildTargetingCriteria_NoSkillsOrGroupsOmitsTheirClause pins that a profile with neither
+// sends no empty (skills OR groups) clause: the campaign is locations AND jobFunctions.
+func TestBuildTargetingCriteria_NoSkillsOrGroupsOmitsTheirClause(t *testing.T) {
+	cfg := testConfig()
+	cfg.TargetingProfiles = []TargetingProfileConfig{{ID: "cloud-native"}}
+	c := NewClient(Credentials{AccessToken: "t"}, cfg)
+	crit, err := c.buildTargetingCriteria("cloud-native", []string{"urn:li:geo:1"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	and, _ := includeAnd(t, crit)
+	if len(and) != 2 || and[1]["urn:li:adTargetingFacet:jobFunctions"] == nil {
+		t.Errorf("want locations AND jobFunctions only, got %+v", and)
+	}
+}
+
 func TestBuildTargetingCriteria_CustomAliasesCloudNative(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig())
-	crit, err := c.buildTargetingCriteria("custom", []string{"urn:li:geo:1"})
+	crit, err := c.buildTargetingCriteria("custom", []string{"urn:li:geo:1"}, nil)
 	if err != nil {
 		t.Fatalf("custom should not error: %v", err)
 	}
@@ -176,7 +207,7 @@ func TestBuildTargetingCriteria_CustomAliasesCloudNative(t *testing.T) {
 
 func TestBuildTargetingCriteria_UnknownProfileErrors(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig())
-	if _, err := c.buildTargetingCriteria("nonexistent", nil); err == nil {
+	if _, err := c.buildTargetingCriteria("nonexistent", nil, nil); err == nil {
 		t.Fatal("expected error for unknown targeting profile")
 	}
 }
