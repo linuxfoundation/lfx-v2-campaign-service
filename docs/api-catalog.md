@@ -2950,7 +2950,7 @@ targeting?: object              — OPTIONAL audience targeting on the ad set (#
                                   with a 400 before any job exists unless the deployment sets
                                   META_AUDIENCE_TARGETING_ENABLED to exactly "true" (not yet
                                   live-verified); a block that sets only keys with their own
-                                  flag (locales) needs only that flag. null/absent → targeting
+                                  flag (locales, devicePlatforms) needs only that flag. null/absent → targeting
                                   unchanged. Keys:
   ageMin?, ageMax?: integer      — 18–65 each, ageMin ≤ ageMax → `age_min` / `age_max`. null or
                                   absent is Meta's default; an explicit 0 is out of range (400).
@@ -2973,6 +2973,13 @@ targeting?: object              — OPTIONAL audience targeting on the ad set (#
                                   constraint even with Advantage+ on, so it is not an inclusion.
                                   Refused with a 400 unless META_LOCALE_TARGETING_ENABLED is
                                   exactly "true"; not gated by global_marketing_ops.
+  devicePlatforms?: string[]     — subset of mobile, desktop (case-insensitive, de-duplicated);
+                                  one device → `device_platforms: ["mobile"|"desktop"]`; both
+                                  or none sends nothing. Not an inclusion. ["desktop"] with
+                                  placements.audienceNetwork true is a synchronous 400 (Audience
+                                  Network is mobile only). Refused with a 400 unless
+                                  META_DEVICE_TARGETING_ENABLED is exactly "true"; not gated by
+                                  global_marketing_ops.
                                   Every invalid value is a synchronous 400 ("invalid campaign
                                   config: metaConfig.targeting: …"). Before anything is created
                                   each audience is read (`GET /{id}?fields=id,account_id,subtype`);

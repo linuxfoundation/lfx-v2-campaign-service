@@ -42,6 +42,11 @@ type AudienceTargeting struct {
 	// (Advantage+ Audience reference), so it is not an inclusion. Gated by its own deployment flag,
 	// not by the one that gates the six audience fields above.
 	Locales []int `json:"locales"`
+	// DevicePlatforms is a subset of "mobile" and "desktop" (#550, gap 15), sent as the ad set's
+	// `device_platforms`. Both, or none, is Meta's default and sends nothing. A device is a placement
+	// control, not an audience inclusion, so it sends no Advantage+ flag. Gated by its own deployment
+	// flag.
+	DevicePlatforms []string `json:"devicePlatforms"`
 }
 
 const (
@@ -64,16 +69,20 @@ const (
 // metaGenderCodes maps the request's gender names to Meta's targeting codes.
 var metaGenderCodes = map[string]int{"male": 1, "female": 2}
 
+// metaDevicePlatforms are the Ad Set targeting `device_platforms` values (Targeting Specs,
+// placement fields).
+var metaDevicePlatforms = map[string]bool{"mobile": true, "desktop": true}
+
 // IsZero reports whether t asks for nothing, in which case the ad set's targeting is unchanged.
 func (t *AudienceTargeting) IsZero() bool {
 	return t == nil || (t.AgeMin == nil && t.AgeMax == nil && len(t.Genders) == 0 &&
 		len(t.CustomAudiences) == 0 && len(t.ExcludedCustomAudiences) == 0 && t.AdvantageAudience == nil &&
-		len(t.Locales) == 0)
+		len(t.Locales) == 0 && len(t.DevicePlatforms) == 0)
 }
 
 // HasAudienceFields reports whether t sets any of the six fields META_AUDIENCE_TARGETING_ENABLED
 // gates — age, gender, the two custom audience lists, advantageAudience — as opposed to only the
-// later fields (locales) that have their own deployment flags.
+// later fields (locales, devicePlatforms) that have their own deployment flags.
 func (t *AudienceTargeting) HasAudienceFields() bool {
 	return t != nil && (t.AgeMin != nil || t.AgeMax != nil || len(t.Genders) > 0 ||
 		len(t.CustomAudiences) > 0 || len(t.ExcludedCustomAudiences) > 0 || t.AdvantageAudience != nil)
@@ -129,6 +138,17 @@ func NormalizeAudienceTargeting(t *AudienceTargeting) (*AudienceTargeting, error
 	if out.Locales, err = normalizeLocales(t.Locales); err != nil {
 		return nil, err
 	}
+	seenDevice := map[string]bool{}
+	for _, d := range t.DevicePlatforms {
+		key := strings.ToLower(strings.TrimSpace(d))
+		if !metaDevicePlatforms[key] {
+			return nil, targetingInvalid("devicePlatforms entry %s is not one of mobile, desktop", domain.CallerValue(d))
+		}
+		if !seenDevice[key] {
+			seenDevice[key] = true
+			out.DevicePlatforms = append(out.DevicePlatforms, key)
+		}
+	}
 	if out.AdvantageAudience != nil && *out.AdvantageAudience {
 		if out.AgeMin != nil && *out.AgeMin > maxAdvantageAgeMin {
 			return nil, targetingInvalid("with advantageAudience true, Meta accepts an ageMin of at most %d (ageMin is %d); lower it or set advantageAudience false", maxAdvantageAgeMin, *out.AgeMin)
@@ -168,6 +188,21 @@ func normalizeAudienceIDs(field string, ids []string) ([]string, error) {
 		return nil, targetingInvalid("%s names %d audiences; at most %d are allowed", field, len(out), MaxCustomAudiences)
 	}
 	return out, nil
+}
+
+// CheckDevicePlacements refuses a desktop-only device list together with the Audience Network
+// placement, which serves in mobile apps only (Meta's placement guide), so Meta would refuse the ad
+// set after the campaign exists. t must be NormalizeAudienceTargeting's output (lower-cased,
+// de-duplicated); placements are the caller's, merged with the defaults here. Other placement and
+// device pairings are left to Meta until a live probe says which it refuses.
+func CheckDevicePlacements(t *AudienceTargeting, placements Placement) error {
+	if t == nil || len(t.DevicePlatforms) != 1 || t.DevicePlatforms[0] != "desktop" {
+		return nil
+	}
+	if deref(mergePlacements(placements).AudienceNetwork) {
+		return targetingInvalid("devicePlatforms [desktop] cannot serve the audienceNetwork placement, which is mobile only; add mobile or turn audienceNetwork off")
+	}
+	return nil
 }
 
 // normalizeLocales de-duplicates the locale keys in order, refusing a key that is not a positive
@@ -227,6 +262,9 @@ func (t *AudienceTargeting) apply(targeting map[string]any) {
 	}
 	if len(t.Locales) > 0 {
 		targeting["locales"] = t.Locales
+	}
+	if len(t.DevicePlatforms) == 1 {
+		targeting["device_platforms"] = t.DevicePlatforms
 	}
 	if t.inclusion() || t.AdvantageAudience != nil {
 		flag := 0

@@ -540,6 +540,15 @@ app:
     META_LOCALE_TARGETING_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to metaConfig.targeting.devicePlatforms (#550):
+    # mobile or desktop only, sent as the ad set's targeting.device_platforms.
+    # Same rules as META_LOCALE_TARGETING_ENABLED: off by default until the
+    # payload is live-verified, a create carrying the list while off is a 400,
+    # and a block that sets only devicePlatforms needs only this flag. Any value
+    # other than "true" is treated as off.
+    META_DEVICE_TARGETING_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to googleAdsConfig.performanceMaxAudienceSignal
     # (#461): one existing Google Ads Audience attached to a Performance Max
     # asset group as a signal. A per-deployment opt-in, off by default, like

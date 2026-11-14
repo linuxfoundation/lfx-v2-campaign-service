@@ -6,6 +6,7 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -47,6 +48,63 @@ func TestMeta_PreflightCreate_LocalesFlag(t *testing.T) {
 				want: `"targeting" must be an object of`},
 		})
 	})
+}
+
+// TestMeta_PreflightCreate_DevicePlatformsFlag: targeting.devicePlatforms has its own flag, like
+// locales; with it on, an unknown device and desktop-only with Audience Network are 400s.
+func TestMeta_PreflightCreate_DevicePlatformsFlag(t *testing.T) {
+	t.Run("off", func(t *testing.T) {
+		t.Setenv(constants.EnvMetaDeviceTargetingEnabled, "1")
+		t.Setenv(constants.EnvMetaAudienceTargetingEnabled, "true")
+		runBiddingPreflight(t, &MetaDispatcher{}, model.ProviderMetaAds, []biddingPreflightCase{
+			{name: "devices", config: `{"metaConfig":{"targeting":{"devicePlatforms":["mobile"]}}}`,
+				want: "metaConfig.targeting.devicePlatforms is disabled on this deployment (META_DEVICE_TARGETING_ENABLED is not \"true\")"},
+		})
+	})
+	t.Run("on, audience flag off", func(t *testing.T) {
+		t.Setenv(constants.EnvMetaDeviceTargetingEnabled, "true")
+		t.Setenv(constants.EnvMetaAudienceTargetingEnabled, "false")
+		t.Setenv(constants.EnvMetaLocaleTargetingEnabled, "false")
+		runBiddingPreflight(t, &MetaDispatcher{}, model.ProviderMetaAds, []biddingPreflightCase{
+			{name: "devices only", config: `{"metaConfig":{"targeting":{"devicePlatforms":["desktop"]}}}`},
+			{name: "devices and genders", config: `{"metaConfig":{"targeting":{"devicePlatforms":["mobile"],"genders":["male"]}}}`,
+				want: "META_AUDIENCE_TARGETING_ENABLED"},
+			{name: "devices and locales", config: `{"metaConfig":{"targeting":{"devicePlatforms":["mobile"],"locales":[6]}}}`,
+				want: "META_LOCALE_TARGETING_ENABLED"},
+			{name: "unknown device", config: `{"metaConfig":{"targeting":{"devicePlatforms":["tv"]}}}`,
+				want: `invalid campaign config: metaConfig.targeting: devicePlatforms entry "tv" is not one of mobile, desktop`},
+			{name: "desktop with audience network", config: `{"metaConfig":{"placements":{"audienceNetwork":true},"targeting":{"devicePlatforms":["desktop"]}}}`,
+				want: "cannot serve the audienceNetwork placement"},
+			{name: "a string list as a string", config: `{"metaConfig":{"targeting":{"devicePlatforms":"mobile"}}}`,
+				want: `"targeting" must be an object of`},
+		})
+	})
+}
+
+// TestMeta_DispatchCarriesDevicePlatformsToTheAdSet: with only the device flag on, one device reaches
+// the ad set as device_platforms, and Dispatch refuses desktop-only with Audience Network before any
+// request.
+func TestMeta_DispatchCarriesDevicePlatformsToTheAdSet(t *testing.T) {
+	t.Setenv(constants.EnvMetaDeviceTargetingEnabled, "true")
+	t.Setenv(constants.EnvMetaAudienceTargetingEnabled, "false")
+	targeting := dispatchMetaAdSetTargeting(t, `"targeting":{"devicePlatforms":["Mobile"]}`)
+	if !reflect.DeepEqual(targeting["device_platforms"], []any{"mobile"}) {
+		t.Errorf("ad set targeting.device_platforms = %#v, want [mobile]", targeting["device_platforms"])
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected Meta request %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }))
+	cfg := json.RawMessage(`{"metaConfig":{"budget":100,"startDate":"2099-01-01","endDate":"2099-02-01","geoTargets":["US"],
+		"placements":{"audienceNetwork":true},"targeting":{"devicePlatforms":["desktop"]},"variants":[{"primaryText":"Join us","headline":"KubeCon"}]}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, cfg)
+	var nuc interface{ NoUpstreamCreate() bool }
+	if camp != nil || !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() || !strings.Contains(err.Error(), "audienceNetwork") {
+		t.Fatalf("Dispatch = %+v, %v; want a NoUpstreamCreate refusal naming audienceNetwork", camp, err)
+	}
 }
 
 // TestMeta_DispatchCarriesLocalesToTheAdSet: with only the locale flag on, a locales-only block

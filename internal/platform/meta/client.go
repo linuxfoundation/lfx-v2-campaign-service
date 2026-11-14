@@ -3202,6 +3202,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, err
 	}
+	if err := CheckDevicePlacements(audience, in.Placements); err != nil {
+		return nil, err
+	}
 	// The ad set's optimization goal: the objective's own unless metaConfig.optimizationGoal picks
 	// another one the objective accepts (#550, gap 11), checked here before any request.
 	optimizationGoal := objParams.OptimizationGoal

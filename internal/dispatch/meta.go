@@ -80,7 +80,7 @@ type metaConfig struct {
 	ConversionEvent string `json:"conversionEvent"`
 	// Targeting is the optional audience targeting (#550): age, gender, custom audiences to include
 	// and exclude, and the Advantage+ audience flag. Refused while META_AUDIENCE_TARGETING_ENABLED is
-	// not "true" (metaTargetingEnabled); the later fields (locales) have their own flags
+	// not "true" (metaTargetingEnabled); the later fields (locales, devicePlatforms) have their own flags
 	// (checkMetaTargeting). Validated by meta.NormalizeAudienceTargeting. Null or absent targets as
 	// before.
 	Targeting *meta.AudienceTargeting `json:"targeting,omitempty"`
@@ -139,11 +139,12 @@ func metaTargetingEnabled() bool {
 
 // checkMetaTargeting refuses a metaConfig.targeting the create cannot send: a field whose
 // deployment flag is off, and otherwise a block meta.NormalizeAudienceTargeting refuses. Each later
-// field (locales) has its own flag; META_AUDIENCE_TARGETING_ENABLED gates the six audience fields
-// and any block that sets none of the later ones, an empty block included, as it did before.
+// field (locales, devicePlatforms) has its own flag; META_AUDIENCE_TARGETING_ENABLED gates the six audience fields
+// and any block that sets none of the later ones, an empty block included, as it did before. A
+// desktop-only device list is also checked against the placements (meta.CheckDevicePlacements).
 // Every refusal is a domain.PreflightRefusal, so PreflightCreate answers it with a 400 before any
 // job exists and Dispatch fails the job before any Meta request.
-func checkMetaTargeting(t *meta.AudienceTargeting) error {
+func checkMetaTargeting(t *meta.AudienceTargeting, placements meta.Placement) error {
 	if t == nil {
 		return nil
 	}
@@ -154,12 +155,21 @@ func checkMetaTargeting(t *meta.AudienceTargeting) error {
 		}
 		ownFlag = true
 	}
+	if len(t.DevicePlatforms) > 0 {
+		if os.Getenv(constants.EnvMetaDeviceTargetingEnabled) != "true" {
+			return metaCreativeOptionDisabled("targeting.devicePlatforms", constants.EnvMetaDeviceTargetingEnabled)
+		}
+		ownFlag = true
+	}
 	if (!ownFlag || t.HasAudienceFields()) && !metaTargetingEnabled() {
 		return domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig.targeting is disabled on this deployment (%s is not \"true\"); omit targeting, or ask an operator to set %s to \"true\"",
 			domain.ErrCreateConfigInvalid, constants.EnvMetaAudienceTargetingEnabled, constants.EnvMetaAudienceTargetingEnabled))
 	}
-	_, err := meta.NormalizeAudienceTargeting(t)
-	return err
+	normalized, err := meta.NormalizeAudienceTargeting(t)
+	if err != nil {
+		return err
+	}
+	return meta.CheckDevicePlacements(normalized, placements)
 }
 
 // creativeAssetReader is the ONE creative-asset operation this dispatcher needs: read a
@@ -774,7 +784,7 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	}
 	// The audience targeting gate and its shape (#550), before any Meta request. The client
 	// normalizes it again and reads each custom audience before the first write.
-	if err := checkMetaTargeting(cfg.Targeting); err != nil {
+	if err := checkMetaTargeting(cfg.Targeting, cfg.Placements); err != nil {
 		return nil, notCreated(err)
 	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
@@ -1716,7 +1726,7 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 	if err != nil {
 		return err
 	}
-	if err := checkMetaTargeting(t); err != nil {
+	if err := checkMetaTargeting(t, cfg.Placements); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -1765,7 +1775,7 @@ func decodeMetaTargeting(config json.RawMessage) (*meta.AudienceTargeting, error
 		}
 		var got meta.AudienceTargeting
 		if err := json.Unmarshal(platformCfg[k], &got); err != nil {
-			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig: %s must be an object of ageMin, ageMax (integers), genders, customAudiences, excludedCustomAudiences (string lists), advantageAudience (boolean) and locales (an integer list)", domain.ErrCreateConfigInvalid, quoteKey(k)))
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig: %s must be an object of ageMin, ageMax (integers), genders, customAudiences, excludedCustomAudiences (string lists), advantageAudience (boolean), locales (an integer list) and devicePlatforms (a string list)", domain.ErrCreateConfigInvalid, quoteKey(k)))
 		}
 		t = &got
 	}
