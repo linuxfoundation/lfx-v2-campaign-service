@@ -168,9 +168,10 @@ type Service interface {
 	// twitter-ads requires global_marketing_ops on this project in the same single
 	// check; those audiences belong to the LF X ad account. MICROSOFT
 	// SHARED-ACCOUNT INPUTS (#563): likewise a microsoftConfig that sets
-	// audienceIds or excludedAudienceIds (any non-empty list) on a create that
-	// selects microsoft-ads requires global_marketing_ops on this project in the
-	// same single check; those remarketing lists belong to the LF Microsoft
+	// audienceIds, excludedAudienceIds or sharedNegativeKeywordListIds (any
+	// non-empty list) on a create that selects microsoft-ads requires
+	// global_marketing_ops on this project in the same single check; those
+	// remarketing lists and negative keyword lists belong to the LF Microsoft
 	// Advertising account. A remarketing list input that breaks its rules, or is
 	// sent while MICROSOFT_AUDIENCES_ENABLED is not "true", is a synchronous 400
 	// too (see the config attribute). So is a microsoftConfig.excludedGeoTargets,
@@ -182,15 +183,17 @@ type Service interface {
 	// MICROSOFT_AD_SCHEDULE_ENABLED is not "true". So is a
 	// microsoftConfig.deviceBidAdjustments, ageBidAdjustments or
 	// genderBidAdjustments that breaks its rules or is sent while
-	// MICROSOFT_BID_ADJUSTMENTS_ENABLED is not "true". An X custom audience list
-	// is also refused synchronously with 400 "invalid campaign config:
-	// twitterConfig.<field>: ..." when it is not an array of strings, when an id
-	// is not 1-32 letters or digits, repeats, or is in both lists, when a list
-	// holds more than 60 ids or the X targeting lists together name more than 60
-	// criteria, and when TWITTER_CUSTOM_AUDIENCES_ENABLED is not "true" on this
-	// deployment. When both platforms' inputs are refused, the 403 names each
-	// platform's fields in its own sentence. A Reddit custom audience list is also
-	// refused synchronously with 400 "invalid campaign config:
+	// MICROSOFT_BID_ADJUSTMENTS_ENABLED is not "true". So is a
+	// microsoftConfig.sharedNegativeKeywordListIds that breaks its rules or is
+	// sent while MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED is not "true". An X
+	// custom audience list is also refused synchronously with 400 "invalid
+	// campaign config: twitterConfig.<field>: ..." when it is not an array of
+	// strings, when an id is not 1-32 letters or digits, repeats, or is in both
+	// lists, when a list holds more than 60 ids or the X targeting lists together
+	// name more than 60 criteria, and when TWITTER_CUSTOM_AUDIENCES_ENABLED is not
+	// "true" on this deployment. When both platforms' inputs are refused, the 403
+	// names each platform's fields in its own sentence. A Reddit custom audience
+	// list is also refused synchronously with 400 "invalid campaign config:
 	// redditConfig.<field>: ..." when it is not an array of strings, when an id is
 	// not 1-64 letters, digits or underscores, repeats, or is in both lists, when
 	// a list holds more than 100 ids, and when REDDIT_CUSTOM_AUDIENCES_ENABLED is
@@ -1459,7 +1462,23 @@ type CampaignCreateInput struct {
 	// absent), an unknown or repeated segment, an out-of-range or fractional
 	// percent, or any of the three while the flag is off is refused with 400
 	// "invalid campaign config: microsoftConfig.<field>: ..." before any job
-	// exists. Not role-gated.
+	// exists. Not role-gated. MICROSOFT SHARED NEGATIVE KEYWORD LISTS (#563):
+	// microsoftConfig takes `sharedNegativeKeywordListIds`, at most 20 decimal ids
+	// of EXISTING account-level negative keyword lists (each the canonical
+	// spelling of a positive int64, no repeat). Before anything is created one
+	// GetSharedEntities read (NegativeKeywordList, Account scope) must hold every
+	// id as a negative keyword list, or the job fails with nothing created. After
+	// the campaign is confirmed (created or reused by name) they are associated
+	// with it in one SetSharedEntityAssociations call; the per-list outcome
+	// (APPLIED, FAILED, UNCONFIRMED) is recorded as sharedNegativeKeywordLists in
+	// the result, and anything but APPLIED leaves the campaign created_degraded
+	// with a step, never failing the job. OFF unless
+	// MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED is exactly "true". A wrong JSON type
+	// (null reads as absent), a rule breach, or the list while the flag is off is
+	// refused with 400 "invalid campaign config:
+	// microsoftConfig.sharedNegativeKeywordListIds: ..." before any job exists.
+	// The lists belong to the shared LF account, so the field needs
+	// global_marketing_ops (403, or 503 when the check cannot be made).
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

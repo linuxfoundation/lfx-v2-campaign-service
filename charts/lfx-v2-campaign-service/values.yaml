@@ -493,6 +493,16 @@ app:
     MICROSOFT_REMARKETING_LISTS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to microsoftConfig.sharedNegativeKeywordListIds
+    # (#563): existing account-level negative keyword lists, verified before
+    # anything is created and associated with the confirmed campaign. Built from
+    # the v13 Campaign Management reference and not yet sent by a live create.
+    # The lists belong to the shared account, so the field also needs
+    # global_marketing_ops. While off, a create naming it is refused with a 400
+    # before any job exists. Any value other than "true" is treated as off.
+    MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to googleAdsConfig.demandGenAudience (#459): one
     # existing Google Ads Audience on a Demand Gen ad group. The same flag
     # gates each googleAdsConfig.demandGenAdGroups[].audience (#460), the same

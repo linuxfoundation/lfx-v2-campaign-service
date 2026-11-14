@@ -1607,6 +1607,39 @@ id, and records the upstream call only when Microsoft was contacted. The shared 
 every foundation's lists, so the route is in the gateway's `marketing-ops-api` rule
 (`global_marketing_ops`), like the Reddit and X custom-audience pickers. Not verified live.
 
+## Shared negative keyword lists at create (`shared_negative_lists.go`, #563 gap 9)
+
+`microsoftConfig.sharedNegativeKeywordListIds` associates EXISTING account-level negative keyword
+lists with the campaign. `ValidateSharedNegativeKeywordLists` holds the pure rules: at most 20
+(Microsoft's per-campaign limit), each the canonical spelling of a positive int64, no repeat.
+
+`CheckSharedNegativeKeywordLists` runs BEFORE anything is created, right after the remarketing-list
+check: ONE `POST SharedEntities/Query` (`GetSharedEntities`, `SharedEntityType:
+"NegativeKeywordList"`, `SharedEntityScope: "Account"`). Every requested id must be in
+`SharedEntities` with that type; a missing id, or one of another type, is a `PreflightRefusal`
+naming the field and the id. An answer that cannot be believed (no array, a null entry, an entry
+with no usable id, more than 5,000 entries) is a plain error. Either way the job fails with nothing
+created.
+
+`AttachCampaignSharedNegativeKeywordLists` runs on the CONFIRMED campaign, after the create-time
+negatives: ONE `POST SharedEntityAssociations/Set` with an association per list (`EntityType:
+"Campaign"`, account scope), not retried on 429. Outcomes are positional (`SharedListOutcome`):
+`FAILED` with the code for a `PartialErrors` entry naming the index (or every list on a definite
+refusal, or `NOT_SENT` when the context ended first); `UNCONFIRMED` for every list without its own
+error when an error carries no usable index or the array was truncated, and for all of them on an
+ambiguous call or an unreadable 2xx; `APPLIED` otherwise. Absent or null `PartialErrors` is no
+error. The dispatcher (`applyMicrosoftSharedNegativeLists`) records them as
+`CampaignResult.SharedNegativeKeywordLists`; anything but `APPLIED` makes the campaign
+`created_degraded` with a step, and the job never fails here. It runs on a campaign reused by name
+too, as the create-time negatives do, since a negative list only narrows serving; what Microsoft
+answers for a list that is already associated is undocumented and is reported as the call yields.
+
+Not verified live. The dispatcher keeps the field behind `MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED`
+(default off; a 400 while off, re-checked in Dispatch before any call). The lists belong to the
+shared LF account, so the field also needs `global_marketing_ops`
+(`service.MicrosoftMarketingOpsInputs`, pinned field for field to the dispatcher by
+`TestMicrosoftSharedAccountInputDetectionAgreesWithTheCreateGate`).
+
 ## Excluded countries, radius targets and campaign languages (`create_targeting.go`, #563 gaps 5-6)
 
 `ValidateCreateTargeting` holds the pure rules once, so the dispatcher's synchronous preflight and

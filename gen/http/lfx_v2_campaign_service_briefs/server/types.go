@@ -5659,7 +5659,23 @@ type CampaignCreateInputRequestBody struct {
 	// absent), an unknown or repeated segment, an out-of-range or fractional
 	// percent, or any of the three while the flag is off is refused with 400
 	// "invalid campaign config: microsoftConfig.<field>: ..." before any job
-	// exists. Not role-gated.
+	// exists. Not role-gated. MICROSOFT SHARED NEGATIVE KEYWORD LISTS (#563):
+	// microsoftConfig takes `sharedNegativeKeywordListIds`, at most 20 decimal ids
+	// of EXISTING account-level negative keyword lists (each the canonical
+	// spelling of a positive int64, no repeat). Before anything is created one
+	// GetSharedEntities read (NegativeKeywordList, Account scope) must hold every
+	// id as a negative keyword list, or the job fails with nothing created. After
+	// the campaign is confirmed (created or reused by name) they are associated
+	// with it in one SetSharedEntityAssociations call; the per-list outcome
+	// (APPLIED, FAILED, UNCONFIRMED) is recorded as sharedNegativeKeywordLists in
+	// the result, and anything but APPLIED leaves the campaign created_degraded
+	// with a step, never failing the job. OFF unless
+	// MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED is exactly "true". A wrong JSON type
+	// (null reads as absent), a rule breach, or the list while the flag is off is
+	// refused with 400 "invalid campaign config:
+	// microsoftConfig.sharedNegativeKeywordListIds: ..." before any job exists.
+	// The lists belong to the shared LF account, so the field needs
+	// global_marketing_ops (403, or 503 when the check cannot be made).
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

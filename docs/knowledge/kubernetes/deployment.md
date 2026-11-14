@@ -162,6 +162,12 @@ Management v13 `GetAudiencesByIds` reference and has not been exercised live. On
 `"true"` enables it, read per call; off, the read answers 400 "not supported" before Microsoft is
 contacted.
 
+`MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED` gates `microsoftConfig.sharedNegativeKeywordListIds` at
+create (#563) the same way, defaulting to `"false"`: the `GetSharedEntities` pre-create read and the
+`SetSharedEntityAssociations` write are built from the v13 reference and have not been sent live.
+Only exactly `"true"` enables it, read per call; off, a create naming it is a 400 before any job
+exists, and Dispatch refuses it again before any Microsoft call.
+
 `TWITTER_METRICS_ENABLED` is the third gate of this kind, defaulting to `"false"`, and it
 covers BOTH X Ads features built on stats jobs (LFXV2-2665) — the ACCOUNT MONITOR and the
 AUDIENCE READ (`twitter-ads/audience`, `twitterAudienceEnabled` in

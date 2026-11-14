@@ -340,9 +340,14 @@ type CampaignResult struct {
 	// Audiences is the positional outcome of the create-time remarketing lists
 	// (microsoftConfig.excludedAudienceIds then audienceIds, #563 gap 4) on the ad group. Set by
 	// the DISPATCHER after AttachAdGroupAudiences; empty when none were requested.
-	Audiences       []AudienceOutcome `json:"audiences,omitempty"`
-	MicrosoftAdsURL string            `json:"microsoftAdsUrl"`
-	Steps           []string          `json:"steps"`
+	Audiences []AudienceOutcome `json:"audiences,omitempty"`
+	// SharedNegativeKeywordLists is the positional outcome of the create-time shared negative
+	// keyword lists (microsoftConfig.sharedNegativeKeywordListIds, #563 gap 9) on the campaign.
+	// Set by the DISPATCHER after AttachCampaignSharedNegativeKeywordLists; empty when none were
+	// requested.
+	SharedNegativeKeywordLists []SharedListOutcome `json:"sharedNegativeKeywordLists,omitempty"`
+	MicrosoftAdsURL            string              `json:"microsoftAdsUrl"`
+	Steps                      []string            `json:"steps"`
 }
 
 // msCampaign is one Campaign in the POST CampaignManagement/v13/Campaigns body. Only
