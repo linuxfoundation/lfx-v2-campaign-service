@@ -42,6 +42,8 @@ var microsoftUngatedFields = map[string]bool{
 	"excludedGeoTargets": true, "proximityTargets": true, "languages": true,
 	// #563 gap 11: a search network choice names no account resource.
 	"searchPartners": true,
+	// #563 gap 10: days and hours name no account resource.
+	"adSchedules": true,
 }
 
 // TestEveryMicrosoftConfigFieldIsClassifiedForTheMarketingOpsGate fails when a microsoftConfig

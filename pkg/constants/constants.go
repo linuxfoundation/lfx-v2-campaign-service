@@ -269,6 +269,14 @@ const (
 	// confirms it.
 	EnvMicrosoftSearchNetworkEnabled = "MICROSOFT_SEARCH_NETWORK_ENABLED"
 
+	// EnvMicrosoftAdScheduleEnabled opts a deployment IN to microsoftConfig.adSchedules (#563 gap
+	// 10): day-time criteria (dayparting, with an optional bid adjustment per window) on the new
+	// campaign. Only the exact value "true" enables it; unset or any other value fails closed, and
+	// a create naming it is refused with a 400 before any job exists (and again at dispatch). It
+	// names no account resource; it keeps an UNVERIFIED request shape (from the v13 reference) off
+	// the shared account until a live create confirms it.
+	EnvMicrosoftAdScheduleEnabled = "MICROSOFT_AD_SCHEDULE_ENABLED"
+
 	// EnvMicrosoftAdExtensionsEnabled opts a deployment IN to microsoftConfig.sitelinks and
 	// microsoftConfig.callouts (#563), created at create time as SitelinkAdExtension and
 	// CalloutAdExtension entries and associated with the new Search campaign. Only the exact value
