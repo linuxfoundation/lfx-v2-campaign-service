@@ -583,6 +583,16 @@ app:
     LINKEDIN_ADS_CONVERSIONS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to linkedInConfig.variants[].callToAction (#588):
+    # the dark post's contentCallToActionLabel, sent with contentLandingPage. No
+    # call to action on an article dark post has been sent to a live LinkedIn
+    # account, and a refused one fails the dark post after the campaign group
+    # and campaign exist. Set it to exactly "true" in lfx-v2-argocd once the
+    # probe in the PR passes. While off, a create naming one is refused before a
+    # job exists. Any value other than "true" is treated as off.
+    LINKEDIN_ADS_CALL_TO_ACTION_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to the X (Twitter) Ads ACCOUNT MONITOR
     # (/projects/{project_id}/connection-twitter-ads/account-monitor). Default
     # off for the same reason as MICROSOFT_METRICS_ENABLED above: the X account

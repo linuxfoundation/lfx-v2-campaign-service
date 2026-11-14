@@ -235,6 +235,15 @@ type CreativeVariant struct {
 	// the Images API and used as this variant's thumbnail (images.go). It is a key into
 	// CampaignInput.Images and is MUTUALLY EXCLUSIVE with ImageURN.
 	ImageAssetID string
+	// Name optionally names this variant's creative (#589); empty keeps "<event> | variant-N".
+	// See creativeName. No two variants of one campaign may share a name (ValidateVariantFields).
+	Name string
+	// CallToAction is optionally one of CallToActionLabels, sent as the dark post's
+	// contentCallToActionLabel (#588). Empty sends none, as before.
+	CallToAction string
+	// Description is the optional article description (#588), normalized and cut to
+	// maxDescriptionLen. Empty sends "", as before.
+	Description string
 }
 
 // CampaignInput is the full campaign-creation request. Mirrors
@@ -2194,13 +2203,17 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 // createDarkPost creates an unpublished-to-feed sponsored post
 // (feedDistribution NONE) and returns its share URN. Mirrors createDarkPost().
 //
-// The post uses an article content block. Per the TS, callToAction is NOT sent
-// for article ads. The dark-post nature comes from distribution.feedDistribution
-// = "NONE".
+// The post uses an article content block. The dark-post nature comes from
+// distribution.feedDistribution = "NONE". description is the article description
+// (empty sends "", as the TS did). callToAction, when set, is sent as
+// contentCallToActionLabel with contentLandingPage = destURL, the page the button
+// opens (#588); when empty neither field is sent, the shape the TS sent for every
+// article ad. callToAction is trusted to have passed ValidateCallToAction in
+// CreateCampaign.
 //
 // Unexported by design (see findOrCreateCampaignGroup): accountID is trusted to
 // have passed resolveAccountID in CreateCampaign.
-func (c *Client) createDarkPost(ctx context.Context, accountID, introText, headline, destURL, imageURN string) (string, error) {
+func (c *Client) createDarkPost(ctx context.Context, accountID, introText, headline, destURL, imageURN, description, callToAction string) (string, error) {
 	author, err := c.orgURN(accountID)
 	if err != nil {
 		return "", err
@@ -2223,7 +2236,7 @@ func (c *Client) createDarkPost(ctx context.Context, accountID, introText, headl
 	article := map[string]any{
 		"source":      destURL,
 		"title":       head,
-		"description": "",
+		"description": normalizeDescription(description),
 	}
 	if imageURN != "" {
 		article["thumbnail"] = imageURN
@@ -2241,6 +2254,10 @@ func (c *Client) createDarkPost(ctx context.Context, accountID, introText, headl
 		"content":        map[string]any{"article": article},
 		"lifecycleState": "PUBLISHED",
 		"adContext":      map[string]any{"dscAdAccount": accountURN(accountID)},
+	}
+	if callToAction != "" {
+		body["contentCallToActionLabel"] = callToAction
+		body["contentLandingPage"] = destURL
 	}
 
 	resp, err := c.doRequest(ctx, http.MethodPost, "posts", body, nil, nil)
@@ -2788,6 +2805,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
+	// The optional call to action and creative name (#588, #589) are checked here too: an
+	// unknown label is refused by LinkedIn only on the dark post, after the campaign exists.
+	if err := ValidateVariantFields(in.Variants); err != nil {
+		return nil, domain.WrapPreflightRefusal(err)
+	}
+
 	// Project is the campaign-name Project segment the data pipeline joins on for
 	// foundation attribution. Require the caller's canonical LFX slug rather than
 	// silently defaulting (a hardcoded default mis-attributes every non-TLF
@@ -3014,7 +3037,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if variant.ImageAssetID != "" {
 			imageURN = imageURNs[variant.ImageAssetID]
 		}
-		shareURN, err := c.createDarkPost(ctx, accountID, variant.IntroText, variant.Headline, destURL, imageURN)
+		shareURN, err := c.createDarkPost(ctx, accountID, variant.IntroText, variant.Headline, destURL, imageURN, variant.Description, variant.CallToAction)
 		if err != nil {
 			// Dark posts have NO name-based reconciliation lookup and LinkedIn exposes
 			// no upsert, so an AMBIGUOUS failure (transport/timeout after send, a 5xx,
@@ -3044,7 +3067,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		steps = append(steps, fmt.Sprintf("Dark post variant-%d: %s", i+1, shareURN))
 
-		adName := fmt.Sprintf("%s | variant-%d", eventName, i+1)
+		adName := creativeName(eventName, i, variant)
 		creativeID, err := c.createCreative(ctx, accountID, campaignID, shareURN, adName)
 		if err != nil {
 			// The creative failed but this variant's dark post (shareURN) was

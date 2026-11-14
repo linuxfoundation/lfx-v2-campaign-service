@@ -355,6 +355,71 @@ func linkedinConversions(cfg linkedinConfig) ([]string, error) {
 	return ids, nil
 }
 
+// linkedinCallToActionEnabled reports whether this deployment opted in to
+// linkedInConfig.variants[].callToAction (#588). Read per call so it flips without a rebuild. Off by
+// default: no call to action on an article dark post has been sent to a live LinkedIn account, and
+// a refused one fails the dark post after the campaign group and campaign exist.
+func linkedinCallToActionEnabled() bool {
+	return os.Getenv(constants.EnvLinkedInAdsCallToActionEnabled) == "true"
+}
+
+// variantStringFields are the optional per-variant strings checkVariantsShape type-checks.
+var variantStringFields = []string{"name", "callToAction", "description"}
+
+// checkVariantsShape refuses a linkedInConfig.variants entry whose name, callToAction or description
+// (#588, #589) is not a JSON string, explicit null included. encoding/json skips a wrong-typed field
+// in the best-effort pre-flight decode (a "callToAction": 1 decodes to ""), so without this a caller's
+// value would be silently dropped: the creative named by default, or created with no button. A
+// variants value that is not an array of objects is left to the ordinary decode.
+func checkVariantsShape(config json.RawMessage) error {
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(config, &envelope) != nil {
+		return nil
+	}
+	var platformCfg map[string]json.RawMessage
+	if json.Unmarshal(envelope["linkedInConfig"], &platformCfg) != nil {
+		return nil
+	}
+	for k, raw := range platformCfg {
+		if !strings.EqualFold(k, "variants") {
+			continue
+		}
+		var variants []map[string]json.RawMessage
+		if json.Unmarshal(raw, &variants) != nil {
+			return nil
+		}
+		for i, v := range variants {
+			for vk, vraw := range v {
+				for _, field := range variantStringFields {
+					var str string
+					if strings.EqualFold(vk, field) && (isJSONNull(vraw) || json.Unmarshal(vraw, &str) != nil) {
+						return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.variants[%d].%s must be a string; omit it for none", domain.ErrCreateConfigInvalid, i, field))
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// linkedinVariants checks the optional per-variant callToAction and name (#588, #589) before any job
+// or request: a callToAction is refused while the deployment gate is off, and both are refused when
+// linkedin.ValidateVariantFields refuses them (an unknown label, two variants with one name). Both
+// are ErrCreateConfigInvalid pre-flight refusals, so PreflightCreate answers them with a synchronous
+// 400 and Dispatch fails the job with the same sentence.
+func linkedinVariants(cfg linkedinConfig) error {
+	for i, v := range cfg.Variants {
+		if v.CallToAction != "" && !linkedinCallToActionEnabled() {
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.variants[%d].callToAction is disabled on this deployment (%s is not \"true\"); omit it, or ask an operator to set %s to \"true\"",
+				domain.ErrCreateConfigInvalid, i, constants.EnvLinkedInAdsCallToActionEnabled, constants.EnvLinkedInAdsCallToActionEnabled))
+		}
+	}
+	if err := linkedin.ValidateVariantFields(cfg.Variants); err != nil {
+		return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.variants: %w", domain.ErrCreateConfigInvalid, err))
+	}
+	return nil
+}
+
 // linkedinBidPlan resolves linkedInConfig's bidding choice. The OBJECTIVE follows it (decision
 // 2026-10-13, Misha): automatic — the default — creates a WEBSITE_VISIT campaign optimising for
 // clicks (MAX_CLICK), because MAX_CONVERSION, the only automated target WEBSITE_CONVERSION allows,
@@ -416,6 +481,14 @@ func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ mode
 		return err
 	}
 	if _, err := linkedinConversions(cfg); err != nil {
+		return err
+	}
+	// linkedInConfig.variants[].name, callToAction and description (#588, #589) are promised as a
+	// synchronous 400 too, a wrong JSON type included.
+	if err := checkVariantsShape(config); err != nil {
+		return err
+	}
+	if err := linkedinVariants(cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -525,6 +598,14 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		return nil, notCreated(err)
 	}
 	if cfg.Conversions, err = linkedinConversions(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// Per-variant name, call to action and description (#588, #589), gated and validated before
+	// any upstream call.
+	if err := checkVariantsShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	if err := linkedinVariants(cfg); err != nil {
 		return nil, notCreated(err)
 	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
@@ -1461,8 +1542,9 @@ func linkedinRunStatus(status string) (string, error) {
 // Every caller string that the client does not shape-check goes through sanitizeSnapshotText
 // — the helper X's tweetText and Microsoft's keywords use — which reduces any link-shaped run
 // to scheme+host and drops one carrying userinfo. The fields that matter are
-// Variants[].IntroText and Headline: operator-authored ad copy where a link gets pasted, and a
-// password-reset or magic-link URL keeps its secret in the PATH as readily as in the query.
+// Variants[].IntroText, Headline, Description and Name: operator-authored ad copy where a link
+// gets pasted, and a password-reset or magic-link URL keeps its secret in the PATH as readily as
+// in the query.
 // GeoTargets[].Label, TargetingProfile and TargetingProfiles[].ID/Label are caller labels and
 // selectors bound for the same column and get the same treatment. So are
 // TargetingProfiles[].Skills/Groups: validFacets checks them only on the profile
@@ -1473,7 +1555,8 @@ func linkedinRunStatus(status string) (string, error) {
 // (and so a snapshot) exists: Variants[].ImageURN (urn:li:image:<id> only), EmployerExclusions
 // (validFacets: facet URNs only, and creation is refused when no profile matches), and
 // AdAccountID (refused unless it equals the connection's account). GeoTargets[].URN,
-// Variants[].ImageAssetID (a stored asset key), numbers, flags and dates are kept too.
+// Variants[].ImageAssetID (a stored asset key), Variants[].CallToAction (one of
+// linkedin.CallToActionLabels), numbers, flags and dates are kept too.
 // Bidding is kept verbatim too: resolveBidding refuses a strategy other than automatic or
 // manual before anything is sent, and bidAmount is a number
 // (TestConfigSnapshot_BiddingRoundTripsThroughTheValidator replays the stored copy).
@@ -1490,6 +1573,8 @@ func linkedinSnapshotConfig(cfg linkedinConfig) linkedinConfig {
 		for i := range snapshot.Variants {
 			snapshot.Variants[i].IntroText = sanitizeSnapshotText(cfg.Variants[i].IntroText)
 			snapshot.Variants[i].Headline = sanitizeSnapshotText(cfg.Variants[i].Headline)
+			snapshot.Variants[i].Name = sanitizeSnapshotText(cfg.Variants[i].Name)
+			snapshot.Variants[i].Description = sanitizeSnapshotText(cfg.Variants[i].Description)
 		}
 	}
 	if cfg.GeoTargets != nil {

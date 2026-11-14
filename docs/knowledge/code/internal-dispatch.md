@@ -374,7 +374,7 @@ guess, so it keeps nothing.
   (`microsoftSnapshotConfig`); the snapshot is a redacted record, not a verbatim one.
 - `hubspot.go` — snapshots only the provenance fields (`hubspotConfigProvenance`); subject and
   body HTML are never stored.
-- `linkedin.go` — each variant's `IntroText`/`Headline`, every `geoTargets[].label`,
+- `linkedin.go` — each variant's `IntroText`/`Headline`/`Name`/`Description`, every `geoTargets[].label`,
   `targetingProfile`, and every `targetingProfiles[].id`/`label`/`skills`/`groups` entry
   (`sanitizeSnapshotText`) —
   `linkedinSnapshotConfig`, #245. Before #245 it persisted the raw `linkedinConfig`.
@@ -5610,3 +5610,12 @@ and `Dispatch` (not-created refusal) both run, after `checkConversionsShape` ref
 are not JSON strings (encoding/json would decode a number to `""`); `Dispatch` keeps the de-duplicated copy for the
 client and the snapshot. `campaignFromLinkedIn` reports a result with `ConversionsFailed` as
 `created_degraded`.
+
+**LinkedIn variant name, call to action and description (#588, #589).** `checkVariantsShape`
+refuses a `variants[].name`, `callToAction` or `description` that is not a JSON string (null
+included), since the best-effort pre-flight decode would drop it silently; `linkedinVariants`
+refuses a `callToAction` while `linkedinCallToActionEnabled` (`LINKEDIN_ADS_CALL_TO_ACTION_ENABLED`,
+off by default) is off, then runs `linkedin.ValidateVariantFields` (label enum, repeated names).
+`PreflightCreate` (synchronous 400) and `Dispatch` (not-created refusal) both run the two.
+`linkedinSnapshotConfig` redacts `Name` and `Description` like `IntroText`; `CallToAction` is an
+enum and kept.

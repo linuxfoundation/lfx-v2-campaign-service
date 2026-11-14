@@ -1071,3 +1071,20 @@ conversion. Each failure is a step naming the
 id and only the HTTP status or transport class (`associationFailureClass`), never LinkedIn's text,
 and the split lands on every later result through `withConversions` as `ConversionsAssociated` /
 `ConversionsFailed`; the dispatcher reports a non-empty `ConversionsFailed` as `created_degraded`.
+
+## Variant name, call to action and description (`variants.go`, #588, #589)
+
+`CreativeVariant` carries three optional strings. `Name` becomes the creative's `name` through
+`creativeName` (whitespace runs collapsed, trimmed, cut to `maxCreativeNameLen` = 255; dashes kept,
+unlike ad copy); empty keeps `<event> | variant-N`. `CallToAction` is sent by `createDarkPost` as
+`contentCallToActionLabel` with `contentLandingPage` = the variant's UTM URL; empty sends neither,
+the shape sent before. `Description` is `content.article.description`, normalized like intro text
+(`normalizeCreativeText`) and cut to `maxDescriptionLen` = 300, LinkedIn's single-image ad maximum
+(the Article Ads schema allows 4,085); empty sends `""` as before.
+
+`ValidateVariantFields` is the one authority: every `CallToAction` must be exactly one of
+`CallToActionLabels` (Posts API `ContentCallToActionLabel` at 202602, `BUY_NOW`/`SHOP_NOW`
+included since 202504), and no two names may match once normalized. `CreateCampaign` runs it
+before the campaign group — LinkedIn would refuse a bad label only on the dark post, after the
+group and campaign exist — and the dispatcher's `PreflightCreate` runs it for the synchronous 400.
+A call to action on an article dark post has not been sent to a live account yet.

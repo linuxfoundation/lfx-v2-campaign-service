@@ -5463,9 +5463,22 @@ type CampaignCreateInputRequestBody struct {
 	// conversions while the deployment has not set
 	// LINKEDIN_ADS_CONVERSIONS_ENABLED. Conversion rules belong to the ad account,
 	// so conversions also require global_marketing_ops on the project (403; 503
-	// when the check cannot be made). REDDIT CONVERSION EVENT (#549):
-	// redditConfig.conversionEvent names the pixel event a conversions campaign
-	// optimizes toward, sent as the campaign's and the ad group's
+	// when the check cannot be made). LINKEDIN VARIANT NAME, CALL TO ACTION AND
+	// DESCRIPTION (#588, #589): each linkedInConfig.variants entry takes optional
+	// strings `name`, `callToAction` and `description`. `name` names the variant's
+	// creative (whitespace collapsed, trimmed, cut to LinkedIn's 255 characters,
+	// dashes kept); omitted or empty keeps `<event> | variant-N`. `callToAction`
+	// is the dark post's button, exactly one of APPLY, DOWNLOAD, VIEW_QUOTE,
+	// LEARN_MORE, SIGN_UP, SUBSCRIBE, REGISTER, JOIN, ATTEND, REQUEST_DEMO,
+	// SEE_MORE, BUY_NOW, SHOP_NOW (LinkedIn-Version 202602), opening the variant's
+	// registration URL; omitted sends none. `description` is the article
+	// description, normalized like introText and cut to 300 characters; omitted
+	// sends an empty one. Refused with a 400 before any job exists: a value that
+	// is not a JSON string (null included), an unknown callToAction, two variants
+	// whose names match once normalized, and any callToAction while the deployment
+	// has not set LINKEDIN_ADS_CALL_TO_ACTION_ENABLED. REDDIT CONVERSION EVENT
+	// (#549): redditConfig.conversionEvent names the pixel event a conversions
+	// campaign optimizes toward, sent as the campaign's and the ad group's
 	// optimization_goal: PURCHASE, SIGN_UP, LEAD, PAGE_VISIT, VIEW_CONTENT,
 	// ADD_TO_CART, ADD_TO_WISHLIST or SEARCH, case-insensitive. Omitted means
 	// PURCHASE, as before. It is accepted only with objective conversions (also

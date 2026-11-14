@@ -1027,6 +1027,38 @@ variants[].imageUrn?: string     — OPTIONAL existing urn:li:image used verbati
                                   thumbnail. MUTUALLY EXCLUSIVE with imageAssetId.
 ```
 
+#### LinkedInConfig variant name, call to action and description (`linkedInConfig.variants[]`, #588, #589)
+
+Three optional strings per variant. Omitted (or `""`), each sends exactly what was sent before.
+
+```
+variants[].name?: string         — OPTIONAL name of this variant's creative in Campaign Manager
+                                  and reporting. Whitespace runs collapse to one space, the ends
+                                  are trimmed, and it is cut to LinkedIn's 255 characters; dashes
+                                  are kept ("OSSNA 2026 – Skill Up"). Omitted keeps
+                                  "<event> | variant-N". Two variants whose names match once
+                                  normalized are refused: their creatives could not be told apart.
+variants[].callToAction?: string — OPTIONAL button on the dark post, sent as
+                                  contentCallToActionLabel with contentLandingPage set to the
+                                  variant's UTM-tagged registration URL. Exactly one of APPLY,
+                                  DOWNLOAD, VIEW_QUOTE, LEARN_MORE, SIGN_UP, SUBSCRIBE, REGISTER,
+                                  JOIN, ATTEND, REQUEST_DEMO, SEE_MORE, BUY_NOW, SHOP_NOW (Posts
+                                  API ContentCallToActionLabel at LinkedIn-Version 202602;
+                                  case-sensitive). Omitted sends no button.
+                                  Behind LINKEDIN_ADS_CALL_TO_ACTION_ENABLED (off by default).
+variants[].description?: string  — OPTIONAL article description (content.article.description).
+                                  Normalized like introText (trimmed, em/en dashes to commas) and
+                                  cut to 300 characters, LinkedIn's single-image ad maximum.
+                                  Omitted sends "".
+```
+
+Refused **synchronously** with `400 invalid campaign config: linkedInConfig.variants…` before any
+job exists: a value that is not a JSON string (an explicit `null` included; omit the key instead),
+an unknown `callToAction`, a repeated `name`, and any `callToAction` while
+`LINKEDIN_ADS_CALL_TO_ACTION_ENABLED` is not exactly `"true"`. `name` and `description` are not
+gated. The stored `config_snapshot` redacts a link pasted into `name` or `description` like
+`introText`; LinkedIn receives the full text.
+
 #### LinkedInConfig targeting (`linkedInConfig.targeting`, #552)
 
 The caller's own LinkedIn `targetingCriteria`, behind `LINKEDIN_ADS_TARGETING_ENABLED` (off by
