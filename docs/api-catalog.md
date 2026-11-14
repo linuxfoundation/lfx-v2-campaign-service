@@ -3341,6 +3341,29 @@ variants?: {tweetText: string}[] — One promoted tweet per variant (#564 gap 10
                                   flag. A rule breach or wrong shape (null reads as absent) is a
                                   synchronous 400 `invalid campaign config: twitterConfig.variants:
                                   …`. Not role-gated.
+card?: {headline: string}        — Website card (#564 gap 6). `headline` (the only key) is trimmed,
+                                  1-70 characters, no control character. Needs `imageAssetId` (the
+                                  card's media) and an authored tweet (`tweetText` or `variants`,
+                                  never `tweetId`). Created ONCE, after the line item and its
+                                  targeting, immediately before the first authoring write:
+                                  `POST accounts/:account_id/cards` with JSON
+                                  `{"name":"lfx-card-<hash of the campaign name>","components":[
+                                  {"type":"MEDIA","media_key":"<the image's media_key>"},
+                                  {"type":"DETAILS","title":"<headline>","destination":{"type":
+                                  "WEBSITE","url":"<registration URL + UTMs,
+                                  utm_content=website-card>"}}]}`; the returned `card_uri` is sent
+                                  on every authored tweet (`card_uri`, and then no `media_keys` —
+                                  the image rides in the card) and recorded as `CardURI`. A card
+                                  POST that fails publishes nothing: the row is `created_degraded`
+                                  ("website card creation failed … no tweet was authored or
+                                  promoted", UNCONFIRMED when the card may exist — harmless, a card
+                                  is neither public nor billable). A create that reuses an earlier
+                                  attempt's promoted tweet creates no card. The tweet copy is
+                                  composed as before (its inline link kept). OFF unless
+                                  TWITTER_WEBSITE_CARD_ENABLED is exactly "true" — while off, a card
+                                  is a synchronous 400 naming the flag. A rule breach or a wrong
+                                  shape (null reads as absent) is a synchronous 400 `invalid campaign
+                                  config: twitterConfig.card: …`. Not role-gated. Not verified live.
 customAudienceIds?: string[]     — X custom audiences to TARGET (#564 gap 3), ids from
                                   GET .../twitter-ads/custom-audiences (e.g. `1nmth`). Sent as
                                   `CUSTOM_AUDIENCE` / `EQ` criteria on the new line item, after

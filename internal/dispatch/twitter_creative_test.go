@@ -139,6 +139,9 @@ func newXCreativeServer(t *testing.T) (*xCreativeServer, *httptest.Server) {
 			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
 		case r.Method == http.MethodGet:
 			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(p, "/accounts/acc1/cards"):
+			hit("card")
+			_, _ = w.Write([]byte(`{"data":{"card_uri":"card://987"}}`))
 		case r.Method == http.MethodPost && strings.HasSuffix(p, "campaigns"):
 			hit("campaign")
 			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))

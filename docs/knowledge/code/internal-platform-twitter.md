@@ -1803,3 +1803,23 @@ now counts the four extra variants' eight writes. The dispatcher gates it on
 `TWITTER_TWEET_VARIANTS_ENABLED` (`internal/dispatch/twitter_tweet_variants.go`), applies the
 connection's `as_user_id` authorization to variants, and stores their copy through
 `sanitizeSnapshotText`. Not verified live.
+
+## Website card on the authored tweet (`CampaignInput.WebsiteCard`, #564 gap 6)
+
+`twitterConfig.card` (`{headline}`; `website_card.go`). Up front: `NormalizeWebsiteCardHeadline`
+(1-70 characters, no control character), an authored tweet (single `tweetText` or variants), an
+`Image` (the card's media), and the card destination (`buildTwitterCardUTMURL`,
+`utm_content=website-card`) screened by `rejectCredentialQueryParams`. The card is made by the
+`ensureCard` closure, called at most once and only when a tweet is about to be authored — after
+the reused-line-item checks, so a create reusing an earlier promoted tweet makes none — by the
+single-tweet path right before its authoring write, or by `promoteTweetVariants` before its loop.
+`createWebsiteCard` POSTs `accounts/:account_id/cards` with a JSON body through `doBodyRequest`
+(paced, sent once): a `MEDIA` component (`media_key`) and a `DETAILS` component (`title`,
+`destination {type WEBSITE, url}`); a 2xx without a `card://` `card_uri` is an ambiguous
+`transportError`. `createNullcastTweet` sends `card_uri` and, with it, no `media_keys`. A card
+failure authors nothing and degrades like an authoring failure (`websiteCardFailure`,
+`PromotedTweetWarning`, so `created_degraded`); `CampaignResult.CardURI` records the card. The
+dispatcher gates it on `TWITTER_WEBSITE_CARD_ENABLED` (`internal/dispatch/twitter_website_card.go`)
+with synchronous 400s for the flag, the shape (`headline` the only key), the headline, a missing
+`imageAssetId` and a non-authoring create, re-checked in `Dispatch`. Not verified live: the cards
+body and `card_uri` echo follow the published v12 reference only.

@@ -2797,6 +2797,12 @@ func buildTwitterUTMURL(in CampaignInput) (string, error) {
 // destination with utm_content=variant-N in place of promoted-tweet, as the other platforms tag
 // their variants. validateRegistrationURL must be called before this.
 func buildTwitterVariantUTMURL(in CampaignInput, n int) (string, error) {
+	return buildTwitterUTMURLWithContent(in, variantUTMContent(n))
+}
+
+// buildTwitterUTMURLWithContent is buildTwitterUTMURL with utm_content set to content (a tweet
+// variant's variant-N, or the website card's website-card).
+func buildTwitterUTMURLWithContent(in CampaignInput, content string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(in.RegistrationURL))
 	if err != nil || !u.IsAbs() || u.Hostname() == "" {
 		return "", fmt.Errorf("registration URL %q is not usable to build a destination URL", redactURLForError(in.RegistrationURL))
@@ -2805,7 +2811,7 @@ func buildTwitterVariantUTMURL(in CampaignInput, n int) (string, error) {
 		return "", fmt.Errorf("the query of registration URL %q could not be parsed, so the destination URL cannot be built without silently dropping its parameters; fix or remove the URL's query string", redactURLForError(in.RegistrationURL))
 	}
 	params := twitterUTMParams(in)
-	params["utm_content"] = variantUTMContent(n)
+	params["utm_content"] = content
 	u.RawQuery = appendUTMToRawQuery(u.RawQuery, params)
 	return u.String(), nil
 }
@@ -3380,6 +3386,12 @@ type CampaignInput struct {
 	// or TweetText. Image, when set, is attached to every variant's tweet. Empty means the single
 	// tweet path (TweetID / TweetText), as before.
 	TweetVariants []string
+	// WebsiteCard (#564 gap 6; website_card.go), when non-nil, creates one website card (the
+	// creative image as its media, Headline as its title, the UTM'd registration URL as its
+	// destination) right before the first authoring write, and attaches it by card_uri to every
+	// tweet this create authors. It requires Image and an authored tweet (TweetText or
+	// TweetVariants, no TweetID). nil means no card, as before.
+	WebsiteCard *WebsiteCardInput
 }
 
 // manualMaxBidMicros encodes a create-time manual bid in micro-units, refusing (never rounding)
@@ -3430,6 +3442,9 @@ type CampaignResult struct {
 	// still sees a tweet when one exists. Set on partial results too: a published tweet is the one
 	// artifact a retry does not reuse.
 	PromotedTweets []PromotedTweetResult `json:",omitempty"`
+	// CardURI is the website card (#564 gap 6) this create made and attached to its authored
+	// tweet(s); empty when no card was requested or none was confirmed.
+	CardURI string `json:",omitempty"`
 	// PromotedTweetWarning is non-empty when the promoted-tweet association could
 	// not be confirmed (POST failed, or returned a malformed/empty response). The
 	// campaign and line item may still have been created, so the overall call is
@@ -3690,6 +3705,30 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
+	// Website card (#564 gap 6): a closed rule set, checked before any request. The card's media is
+	// the creative image, and it rides on an authored tweet only.
+	var cardHeadline, cardDestURL string
+	if in.WebsiteCard != nil {
+		h, herr := NormalizeWebsiteCardHeadline(in.WebsiteCard.Headline)
+		if herr != nil {
+			return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", herr.Error())
+		}
+		if composedTweetText == "" && len(composedVariants) == 0 {
+			return nil, domain.PreflightRefusalf("invalid twitterConfig.%s: a website card rides on an authored tweet, so it requires tweetText (or variants) and no tweetId", FieldWebsiteCard)
+		}
+		if in.Image == nil {
+			return nil, domain.PreflightRefusalf("invalid twitterConfig.%s: a website card needs media, so it requires imageAssetId", FieldWebsiteCard)
+		}
+		dest, derr := buildTwitterCardUTMURL(in)
+		if derr != nil {
+			return nil, derr
+		}
+		if err := rejectCredentialQueryParams(dest); err != nil {
+			return nil, err
+		}
+		cardHeadline, cardDestURL = h, dest
+	}
+
 	// Create-time targeting (#564): the pure rules first, here, with the other caller checks;
 	// X's lookups run below, once the account config is known to be usable.
 	geoTargets, languages, terr := NormalizeCreateTargeting(in.GeoTargets, in.Languages)
@@ -3918,6 +3957,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// promotedTweets is the variant path's per-variant record (#564 gap 10), captured by the
 	// closure for the same reason as authoredTweetID: it names every tweet already published.
 	var promotedTweets []PromotedTweetResult
+	// cardURI is the website card (#564 gap 6) once created (ensureCard below).
+	var cardURI string
 	partialResult := func() *CampaignResult {
 		return &CampaignResult{
 			Platform:        "twitter-ads",
@@ -3928,6 +3969,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			AuthoredTweetID: authoredTweetID,
 			PromotedTweets:  append([]PromotedTweetResult(nil), promotedTweets...),
 			MediaKey:        mediaKey,
+			CardURI:         cardURI,
 			// Reused must be set on partial results too, not just the final success —
 			// a downstream error AFTER a campaign/line-item reuse still carries the
 			// config-drift signal (the closure reads the current campaignReused/
@@ -3942,6 +3984,23 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// whether the resource that already exists was CREATED by this call or REUSED
 	// (found by name). Wording a reused resource as "created" is misleading during
 	// cleanup/reconcile, so the message reflects the actual provenance.
+	// ensureCard creates the website card (#564 gap 6) and returns its card_uri; nil
+	// when no card was requested. Called only once a tweet is about to be authored, so a create that
+	// authors nothing creates no card.
+	var ensureCard func() (string, error)
+	if in.WebsiteCard != nil {
+		// Called at most once per create: by the single-tweet path or, before its loop, by
+		// promoteTweetVariants.
+		ensureCard = func() (string, error) {
+			uri, err := c.createWebsiteCard(ctx, websiteCardName(campaignName), cardHeadline, mediaKey, cardDestURL)
+			if err != nil {
+				return "", err
+			}
+			cardURI = uri
+			steps = append(steps, fmt.Sprintf("Website card created: %s (attached to the authored tweet by card_uri)", uri))
+			return uri, nil
+		}
+	}
 	campaignStatus := func() string {
 		if campaignReused {
 			return fmt.Sprintf("campaign %s reused, PRE-EXISTING", campaignID)
@@ -4149,7 +4208,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// (NormalizeTweetVariants), so none of the single-tweet branches below run.
 	if len(composedVariants) > 0 {
 		var aborted error
-		promotedTweets, promotedTweetWarning, aborted = c.promoteTweetVariants(ctx, composedVariants, in.AsUserID, mediaKey, lineItemID, lineItemReused, &steps)
+		promotedTweets, promotedTweetWarning, aborted = c.promoteTweetVariants(ctx, composedVariants, in.AsUserID, mediaKey, ensureCard, lineItemID, lineItemReused, &steps)
 		if aborted != nil {
 			return partialResult(), fmt.Errorf("x tweet variants aborted (%s / %s%s): %w", campaignStatus(), lineItemStatus(), authoredTweetsStatus(promotedTweets), aborted)
 		}
@@ -4229,14 +4288,23 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// nothing to move, so the fix is simply to finish the read first and reserve
 		// immediately before the write.
 		asUserID, resolveErr := c.resolvePromotableUser(ctx, in.AsUserID)
+		// The website card (#564 gap 6), only now that a tweet is about to be authored.
+		var tweetCardURI string
+		var cardErr error
+		if resolveErr == nil && ensureCard != nil {
+			tweetCardURI, cardErr = ensureCard()
+		}
 		if resolveErr != nil {
 			promotedTweetWarning = fmt.Sprintf("could not author a tweet: %s — post one manually, then add it as a promoted tweet in X Ads Manager", resolveErr.Error())
 			steps = append(steps, fmt.Sprintf("Tweet authoring skipped: %s", resolveErr.Error()))
+		} else if cardErr != nil {
+			promotedTweetWarning = websiteCardFailure(cardErr)
+			steps = append(steps, "Tweet authoring skipped: "+promotedTweetWarning)
 		} else {
 			if err := c.pace(ctx); err != nil {
 				return partialResult(), fmt.Errorf("x tweet authoring aborted (%s / %s): %w", campaignStatus(), lineItemStatus(), err)
 			}
-			resp, authorErr := c.createNullcastTweet(ctx, composedTweetText, asUserID, mediaKey)
+			resp, authorErr := c.createNullcastTweet(ctx, composedTweetText, asUserID, mediaKey, tweetCardURI)
 			switch {
 			case authorErr != nil && createOutcomeAmbiguous(authorErr):
 				// An AMBIGUOUS failure may follow a committed tweet publish — a blind
@@ -4373,6 +4441,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		MediaKey:             mediaKey,
 		PromotedTweetID:      promotedTweetID,
 		PromotedTweets:       promotedTweets,
+		CardURI:              cardURI,
 		PromotedTweetWarning: promotedTweetWarning,
 		Reused:               campaignReused || lineItemReused,
 		BidApplied:           !lineItemReused,
@@ -4667,7 +4736,7 @@ func (c *Client) resolvePromotableUser(ctx context.Context, pinned string) (stri
 // timeline. It does not classify its own error/response; the caller applies
 // the same ambiguous/definite/duplicate handling used for the promoted_tweets
 // POST.
-func (c *Client) createNullcastTweet(ctx context.Context, text, asUserID, mediaKey string) (*apiResponse, error) {
+func (c *Client) createNullcastTweet(ctx context.Context, text, asUserID, mediaKey, cardURI string) (*apiResponse, error) {
 	params := map[string]string{
 		"text":     text,
 		"nullcast": "true",
@@ -4677,7 +4746,12 @@ func (c *Client) createNullcastTweet(ctx context.Context, text, asUserID, mediaK
 	}
 	// media_keys attaches the creative image; the key is a Media Library entry this call
 	// confirmed or created (media.go), which is what X requires of it.
-	if mediaKey != "" {
+	//
+	// A website card (#564 gap 6) carries the media itself, so with card_uri the media_keys
+	// parameter is not also sent.
+	if cardURI != "" {
+		params["card_uri"] = cardURI
+	} else if mediaKey != "" {
 		params["media_keys"] = mediaKey
 	}
 	// idempotent=FALSE, as it is for all three of the other creates — none of this

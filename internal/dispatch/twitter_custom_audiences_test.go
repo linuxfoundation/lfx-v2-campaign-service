@@ -50,6 +50,8 @@ var twitterUngatedFields = map[string]bool{
 	"followerLookalikeUserIds": true,
 	// #564 gap 10: tweet copy names no account resource.
 	"variants": true,
+	// #564 gap 6: a headline and the create's own image name no account resource.
+	"card": true,
 }
 
 // TestEveryTwitterConfigFieldIsClassifiedForTheMarketingOpsGate fails when a twitterConfig field

@@ -258,6 +258,15 @@ const (
 	// create confirms them.
 	EnvTwitterTweetVariantsEnabled = "TWITTER_TWEET_VARIANTS_ENABLED"
 
+	// EnvTwitterWebsiteCardEnabled opts a deployment IN to twitterConfig.card (#564 gap 6): a
+	// website card (POST accounts/:account_id/cards: the creative's media, a headline, the UTM'd
+	// registration URL) attached by card_uri to the tweet(s) an X create authors. Only the exact
+	// value "true" enables it; unset or any other value fails closed, and a create setting it is
+	// refused with a 400 before any job exists (and again at dispatch). It names no account
+	// resource; it keeps an UNVERIFIED request body (from X's published reference) off the shared
+	// ad account until a live create confirms it.
+	EnvTwitterWebsiteCardEnabled = "TWITTER_WEBSITE_CARD_ENABLED"
+
 	// EnvTwitterKeywordAddEnabled opts a deployment IN to the positive keyword add lever on an
 	// existing X campaign (#564 gap 12): POST .../keyword-targeting/additions, one BROAD_KEYWORD
 	// targeting criterion (operator_type EQ) per keyword on the line item this service created.
