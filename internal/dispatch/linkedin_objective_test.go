@@ -85,21 +85,31 @@ func TestLinkedIn_ObjectiveConversionsNamesTheConversionsGate(t *testing.T) {
 	}
 }
 
-// TestLinkedIn_ObjectiveRefusedByDispatchSendsNothing: the same refusal, reached through Dispatch
-// (a path that skipped the preflight), fails not-created with no LinkedIn request.
+// TestLinkedIn_ObjectiveRefusedByDispatchSendsNothing: the objective refusals, reached through
+// Dispatch (a path that skipped the preflight), fail not-created with no LinkedIn request. The null
+// and "" cases pin Dispatch's own checkObjectiveShape: without it both decode to "" — no objective —
+// and would create a paid WEBSITE_VISIT campaign.
 func TestLinkedIn_ObjectiveRefusedByDispatchSendsNothing(t *testing.T) {
 	t.Setenv(constants.EnvLinkedInAdsConversionsEnabled, "true")
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
-	defer srv.Close()
-	d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
-	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, linkedInObjectiveConfig(`"objective":"conversions"`))
-	var nuc interface{ NoUpstreamCreate() bool }
-	if !errors.Is(err, domain.ErrCreateConfigInvalid) || !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
-		t.Fatalf("Dispatch = %v, want a not-created config refusal", err)
-	}
-	if n := calls.Load(); n != 0 {
-		t.Errorf("%d LinkedIn requests for a refused create", n)
+	for _, tc := range []struct{ name, extra string }{
+		{"conversions without conversions", `"objective":"conversions"`},
+		{"null objective", `"objective":null`},
+		{"empty objective", `"objective":""`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
+			defer srv.Close()
+			d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
+			_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, linkedInObjectiveConfig(tc.extra))
+			var nuc interface{ NoUpstreamCreate() bool }
+			if !errors.Is(err, domain.ErrCreateConfigInvalid) || !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+				t.Fatalf("Dispatch = %v, want a not-created config refusal", err)
+			}
+			if n := calls.Load(); n != 0 {
+				t.Errorf("%d LinkedIn requests for a refused create", n)
+			}
+		})
 	}
 }
 
@@ -180,7 +190,7 @@ func TestLinkedIn_ObjectiveReachesTheWire(t *testing.T) {
 			if camp.BiddingStrategy == nil || *camp.BiddingStrategy != tc.wantStrategy {
 				t.Fatalf("recorded strategy = %v, want %s", camp.BiddingStrategy, tc.wantStrategy)
 			}
-			if got := linkedinRecordedObjective(camp); got == nil || *got != tc.wantRecordedObjectiveOnReadback {
+			if got := linkedinRecordedObjective(context.Background(), camp); got == nil || *got != tc.wantRecordedObjectiveOnReadback {
 				t.Errorf("settings readback's recorded objective = %v, want %s (snapshot %s)", got, tc.wantRecordedObjectiveOnReadback, camp.ConfigSnapshot)
 			}
 		})
