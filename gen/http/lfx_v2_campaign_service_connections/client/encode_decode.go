@@ -15818,7 +15818,9 @@ func EncodeMonitorLinkedinAdsAccountRequest(encoder func(*http.Request) goahttp.
 			}
 		}
 		values := req.URL.Query()
-		values.Add("account_id", p.AccountID)
+		if p.AccountID != nil {
+			values.Add("account_id", *p.AccountID)
+		}
 		values.Add("days", strconv.Itoa(p.Days))
 		req.URL.RawQuery = values.Encode()
 		return nil
@@ -15830,6 +15832,7 @@ func EncodeMonitorLinkedinAdsAccountRequest(encoder func(*http.Request) goahttp.
 // monitor-linkedin-ads-account endpoint. restoreBody controls whether the
 // response body should be restored after having been read.
 // DecodeMonitorLinkedinAdsAccountResponse may return the following errors:
+//   - "Conflict" (type *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError): http.StatusConflict
 //   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
@@ -15873,6 +15876,20 @@ func DecodeMonitorLinkedinAdsAccountResponse(decoder func(*http.Response) goahtt
 			}
 			res := NewMonitorLinkedinAdsAccountAccountMonitorOK(&body)
 			return res, nil
+		case http.StatusConflict:
+			var (
+				body MonitorLinkedinAdsAccountConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-linkedin-ads-account", err)
+			}
+			err = ValidateMonitorLinkedinAdsAccountConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-linkedin-ads-account", err)
+			}
+			return nil, NewMonitorLinkedinAdsAccountConflict(&body)
 		case http.StatusBadRequest:
 			var (
 				body MonitorLinkedinAdsAccountBadRequestResponseBody

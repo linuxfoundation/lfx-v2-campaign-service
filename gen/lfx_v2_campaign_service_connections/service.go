@@ -718,11 +718,31 @@ type Service interface {
 	// connection of its own, naming any other account, gets a 404. A pure read:
 	// nothing is persisted.
 	MonitorGoogleAdsAccount(context.Context, *MonitorGoogleAdsAccountPayload) (res *AccountMonitor, err error)
-	// Read every campaign visible on a LinkedIn Ads account, live from the
+	// Read this project's own campaigns on a LinkedIn Ads account, live from the
 	// platform, with pacing and action items derived by this service's ported rule
-	// engine. Account-scoped, not project-scoped: {project_id} resolves which
-	// stored connection credential to use, and the read enumerates everything that
-	// credential reaches on account_id. A pure read: nothing is persisted.
+	// engine. Project-scoped (#581): only campaigns this service recorded for the
+	// project are returned, because one LF system credential serves several
+	// foundations' LinkedIn accounts (its default account and its
+	// operator-installed grants), so the account read is filtered to them before
+	// rules and totals. A project with no campaigns recorded on the platform gets
+	// an empty monitor without any upstream call. A recorded campaign created
+	// under a different account than account_id, or recording none, fails the read
+	// with 409 rather than returning a partial picture. Campaigns deleted in this
+	// service stay in the monitor, because a local delete does not stop the
+	// upstream campaign, unless it does not record account_id as the account it
+	// was created under or another project has since taken it over; such a
+	// campaign is omitted, never a 409. account_id is the account to read;
+	// omitted, it is the account this project's campaigns were created under, read
+	// from this service's own records: the response's account_id names it, and an
+	// empty account_id with no campaigns means the project has none recorded on
+	// the platform (answered without any upstream call). Live campaigns created
+	// under more than one account, or none recording one, fail with 409 whether or
+	// not account_id is given. account_id is read with the project's own
+	// connection when that is configured for it (a project's own connection reads
+	// only its own account), otherwise with the LF system credential when
+	// account_id is the system row's account or one of its grants. Any other
+	// account, for a project with no usable connection of its own, is a 404. A
+	// pure read: nothing is persisted.
 	MonitorLinkedinAdsAccount(context.Context, *MonitorLinkedinAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read this project's own campaigns on a Meta Ads account, live from the
 	// platform, with pacing and action items derived by this service's ported rule
@@ -2650,8 +2670,9 @@ type MonitorLinkedinAdsAccountPayload struct {
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
 	ProjectID string
-	// The LinkedIn ad account to read.
-	AccountID string
+	// The LinkedIn ad account to read. Optional: omitted, the account this
+	// project's campaigns were created under.
+	AccountID *string
 	// Trailing days to read metrics over.
 	Days int
 }

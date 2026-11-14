@@ -156,7 +156,9 @@ type credsSource struct {
 	// The account-monitor endpoints do NOT consult this flag. Google Ads' resolves through
 	// resolveExisting (resolveGoogleAdsMonitorClient, #591), keyed on the monitored customer, so
 	// it behaves the same with the flag on or off: a project on the system account monitors the
-	// system customer, scoped to its own recorded campaigns. The others resolve the project's own
+	// system customer, scoped to its own recorded campaigns. LinkedIn's does the same since #581
+	// (resolveLinkedInMonitorCredentials), for the system row's default account and its grants.
+	// The others resolve the project's own
 	// connection only (resolveOwned*) — an account-monitor read must never answer with another
 	// tenant's spend, and theirs are not all campaign-scoped. On those, with the flag on, a project with
 	// no connection of its own gets the monitor endpoint's ordinary no-connection 404 rather

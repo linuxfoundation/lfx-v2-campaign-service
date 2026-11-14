@@ -211,3 +211,41 @@ func TestMonitorGoogleAdsAccount_OmittedAccountKeepsTheRequestRefusals(t *testin
 		t.Errorf("days 0: err = %T %v, want a 400", err, err)
 	}
 }
+
+// TestMonitorLinkedinAdsAccount_IsScopedAndDefaultsTheAccount (#581): the LinkedIn monitor now
+// behaves as Google's does. Omitting account_id reads the account the project's campaigns record
+// (how a project creating through the LF system row names a granted account), the response names
+// it, the read is reduced to the project's own campaigns, a project with no recorded campaigns
+// gets an empty monitor with no upstream read, and campaigns recorded under two accounts are the
+// declared 409.
+func TestMonitorLinkedinAdsAccount_IsScopedAndDefaultsTheAccount(t *testing.T) {
+	monitor := func(svc *ConnectionService) (*conn.AccountMonitor, error) {
+		return svc.MonitorLinkedinAdsAccount(context.Background(), &conn.MonitorLinkedinAdsAccountPayload{ProjectID: "p", Days: 30})
+	}
+	t.Run("omitted account reads the recorded one, scoped", func(t *testing.T) {
+		d := newDefaultingDispatcher()
+		got, err := monitor(liveScopeService(model.ProviderLinkedInAds, d, scopeRepo([]string{"c1"}, map[string]string{"c1": "500928401"})))
+		if err != nil {
+			t.Fatalf("MonitorLinkedinAdsAccount without account_id: %v", err)
+		}
+		if len(d.readAccounts) != 1 || d.readAccounts[0] != "500928401" || got.AccountID != "500928401" {
+			t.Fatalf("reads %v, account_id %q; want one read of the recorded account 500928401", d.readAccounts, got.AccountID)
+		}
+		assertOnlyOwnCampaign(t, got, 50)
+	})
+	t.Run("no recorded campaigns is an empty monitor without a read", func(t *testing.T) {
+		d := newDefaultingDispatcher()
+		got, err := monitor(liveScopeService(model.ProviderLinkedInAds, d, scopeRepo([]string{}, nil)))
+		if err != nil || got.AccountID != "" || len(got.Campaigns) != 0 || len(d.readAccounts) != 0 {
+			t.Fatalf("got %+v, err %v, reads %v; want an empty monitor and no upstream read", got, err, d.readAccounts)
+		}
+	})
+	t.Run("two recorded accounts is the scope 409", func(t *testing.T) {
+		d := newDefaultingDispatcher()
+		_, err := monitor(liveScopeService(model.ProviderLinkedInAds, d, scopeRepo([]string{"c1", "c2"}, map[string]string{"c1": "500928401", "c2": "538170226"})))
+		var sce *conn.AccountMonitorScopeConflictError
+		if !errors.As(err, &sce) || len(d.readAccounts) != 0 {
+			t.Fatalf("err = %T %v, reads %v; want the declared 409 and no read", err, err, d.readAccounts)
+		}
+	})
+}

@@ -1605,6 +1605,7 @@ func (c *Client) MonitorGoogleAdsAccount(ctx context.Context, p *MonitorGoogleAd
 // of the "lfx-v2-campaign-service-connections" service.
 // MonitorLinkedinAdsAccount may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *AccountMonitorScopeConflictError): A campaign recorded for this project does not fit the monitored account: created under a different account than account_id, recording none, or carrying an id the platform cannot read (see reason); the same for account_id omitted
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large

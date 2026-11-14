@@ -6304,6 +6304,22 @@ type MonitorGoogleAdsAccountUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// MonitorLinkedinAdsAccountConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-linkedin-ads-account"
+// endpoint HTTP response body for the "Conflict" error.
+type MonitorLinkedinAdsAccountConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Why the project's recorded campaigns cannot be read under the monitored
+	// account: campaign_account_mismatch (a campaign recorded for this project was
+	// created under a different account, or does not record which) or
+	// campaign_scope_invalid (a campaign recorded for this project has an id the
+	// platform cannot read).
+	Reason string `form:"reason" json:"reason" xml:"reason"`
+}
+
 // MonitorLinkedinAdsAccountBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-linkedin-ads-account"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -14822,6 +14838,18 @@ func NewMonitorGoogleAdsAccountUnauthorizedResponseBody(res *lfxv2campaignservic
 	return body
 }
 
+// NewMonitorLinkedinAdsAccountConflictResponseBody builds the HTTP response
+// body from the result of the "monitor-linkedin-ads-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorLinkedinAdsAccountConflictResponseBody(res *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError) *MonitorLinkedinAdsAccountConflictResponseBody {
+	body := &MonitorLinkedinAdsAccountConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
 // NewMonitorLinkedinAdsAccountBadRequestResponseBody builds the HTTP response
 // body from the result of the "monitor-linkedin-ads-account" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -16109,7 +16137,7 @@ func NewMonitorGoogleAdsAccountPayload(projectID string, accountID *string, days
 // NewMonitorLinkedinAdsAccountPayload builds a
 // lfx-v2-campaign-service-connections service monitor-linkedin-ads-account
 // endpoint payload.
-func NewMonitorLinkedinAdsAccountPayload(projectID string, accountID string, days int, bearerToken *string) *lfxv2campaignserviceconnections.MonitorLinkedinAdsAccountPayload {
+func NewMonitorLinkedinAdsAccountPayload(projectID string, accountID *string, days int, bearerToken *string) *lfxv2campaignserviceconnections.MonitorLinkedinAdsAccountPayload {
 	v := &lfxv2campaignserviceconnections.MonitorLinkedinAdsAccountPayload{}
 	v.ProjectID = projectID
 	v.AccountID = accountID

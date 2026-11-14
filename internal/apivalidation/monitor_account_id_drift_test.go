@@ -71,7 +71,12 @@ func TestMonitorAccountIDPatterns_MatchPlatformValidators(t *testing.T) {
 	t.Run("linkedin", func(t *testing.T) {
 		decodeOK := monitorDecoderChecker(t, "/connection-linkedin-ads/account-monitor",
 			connsrv.MountMonitorLinkedinAdsAccountHandler, connsrv.DecodeMonitorLinkedinAdsAccountRequest)
-		cases := []string{"512345678", "0", "", "12-34", "abc123", "512345678 ", " 512345678", "123abc", " "}
+		// "" is not compared, as on Google Ads: account_id is optional here since #581, and an
+		// empty value is read as absent, which the handler answers with the recorded account.
+		if !decodeOK("") {
+			t.Errorf(`account_id "": design decoder refused it, want it read as absent (account_id is optional)`)
+		}
+		cases := []string{"512345678", "0", "12-34", "abc123", "512345678 ", " 512345678", "123abc", " "}
 		for _, id := range cases {
 			designOK := decodeOK(id)
 			platformOK := linkedin.ValidateAccountID(id) == nil

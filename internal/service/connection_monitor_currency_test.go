@@ -114,7 +114,7 @@ func TestMonitorLinkedinAdsAccount_RulesSizedInReadCurrency(t *testing.T) {
 		model.ProviderLinkedInAds: &mockAccountMonitorReaderDispatcher{rows: rows, currency: "KWD"},
 	}})
 	got, err := svc.MonitorLinkedinAdsAccount(context.Background(),
-		&conn.MonitorLinkedinAdsAccountPayload{ProjectID: "p", AccountID: "123", Days: 30})
+		&conn.MonitorLinkedinAdsAccountPayload{ProjectID: "p", AccountID: strPtr("123"), Days: 30})
 	if err != nil {
 		t.Fatalf("MonitorLinkedinAdsAccount: %v", err)
 	}

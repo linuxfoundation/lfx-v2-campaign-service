@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "Account-Monitor Endpoints"
-description: "Seven monitor endpoints: six ad-platform ones, one per ad platform (four ported from the LFX One BFF's rule engines and read live, Microsoft Ads and X served from saved asynchronous reports because their metrics cannot be read inside one request), of which Google Ads, Meta, Reddit and X return only the campaigns this service recorded for the project because their ad account is shared across foundations while LinkedIn and Microsoft stay account-scoped, and a project-scoped HubSpot email monitor that reads only the marketing emails this service recorded for the project."
+description: "Seven monitor endpoints: six ad-platform ones, one per ad platform (four ported from the LFX One BFF's rule engines and read live, Microsoft Ads and X served from saved asynchronous reports because their metrics cannot be read inside one request), of which Google Ads, LinkedIn, Meta, Reddit and X return only the campaigns this service recorded for the project because their ad account is shared across foundations (LinkedIn's LF system credential through its operator-installed grants) while Microsoft stays account-scoped, and a project-scoped HubSpot email monitor that reads only the marketing emails this service recorded for the project."
 resource: "internal/service/connection_monitor.go"
 ---
 
@@ -710,6 +710,28 @@ read is reduced to the campaigns this service recorded for the project, and
   the lowest id). A deleted row cannot be re-dispatched, so it never causes a 409.
 - LinkedIn keeps its refusal: its monitor is not campaign-scoped. Meta and
   Reddit are scoped and are candidates for the same change.
+
+### LinkedIn: campaign-scoped, served from the system row's grants (#581)
+
+LinkedIn joined the project-scoped monitors with #581. The LF system LinkedIn row now carries
+operator-installed account grants (migration 000058), so one system credential reaches several
+foundations' ad accounts, and an account-wide read through it would show one foundation another's
+campaigns. `LinkedInDispatcher` implements `service.AccountMonitorScoper` and
+`AccountMonitorDefaulter` (`account_monitor_scope.go`), mirroring Google Ads:
+
+- `ReadAccountMonitor` resolves through `resolveLinkedInMonitorCredentials`: `resolveExisting` keyed
+  on `account_id`, so the project's own connection serves its own account, and the system row serves
+  its default account or a grant (a grant-scoped copy). The system credential naming any other
+  account keeps the 404; a project's own connection naming another account keeps
+  `ErrAccountNotManagedByConnection`.
+- `MonitorScopeForAccount` refuses a recorded campaign from another account, an unrecorded one, and
+  a malformed id. `account_id` is optional; omitted, it is the one account the campaigns record.
+- The method declares `AccountMonitorScopeConflictError` (409) and `classifyMonitorError` answers it.
+- Behaviour change for a project with its OWN LinkedIn connection: its monitor now shows only the
+  campaigns this service recorded for it, not every campaign on its account. Hand-built campaigns
+  reach the monitor by adoption (#581 decision memo, Q3).
+- LinkedIn audience insights follow the same resolution, keyed on the account the scope records
+  (`linkedInScopeAccount`); served from the system row, every campaign must record that account.
 
 ### Expected interaction with `LFX_FORCE_SYSTEM_ADS_ACCOUNT`
 

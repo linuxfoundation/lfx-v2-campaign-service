@@ -2903,18 +2903,17 @@ func BuildMonitorLinkedinAdsAccountPayload(lfxV2CampaignServiceConnectionsMonito
 		}
 		projectID = *lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountProjectID
 	}
-	var accountID string
+	var accountID *string
 	{
-		if lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountAccountID == nil {
-			return nil, fmt.Errorf("missing required flag --account-id")
-		}
-		accountID = *lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountAccountID
-		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^[0-9]+$"))
-		if utf8.RuneCountInString(accountID) > 64 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
-		}
-		if err != nil {
-			return nil, err
+		if lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountAccountID != nil {
+			accountID = lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountAccountID
+			err = goa.MergeErrors(err, goa.ValidatePattern("account_id", *lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountAccountID, "^[0-9]+$"))
+			if utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountAccountID) > 64 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", *lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountAccountID, utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountAccountID), 64, false))
+			}
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	var days int

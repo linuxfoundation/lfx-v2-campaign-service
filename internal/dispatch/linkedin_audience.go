@@ -25,11 +25,13 @@ var _ service.LinkedInAudienceReader = (*LinkedInDispatcher)(nil)
 //  1. The window and the scope's SHAPE (canonical ids, at most linkedin.MaxAudienceCampaigns) are
 //     checked BEFORE credentials are resolved, so a permanent request or row fault answers the same
 //     whatever the connection's state.
-//  2. Credentials resolve through resolveOwned — the project's OWN connection only, never the LF
-//     system fallback, exactly like the LinkedIn account monitor and the Microsoft audience read. A
-//     project with no LinkedIn connection of its own is domain.ErrNotFound (404), not a read served
-//     from a credential that reaches other foundations' accounts. resolveLinkedInCredentials also
-//     refuses an inactive connection, an incomplete credential and an unselected account.
+//  2. Credentials resolve through resolveExisting keyed on the account the scope's campaigns record
+//     (linkedInScopeAccount, #581): the project's own connection when it is bound to that account,
+//     else the LF system row when the account is its default or one of its grants. A project
+//     creating through the system row can therefore read its own campaigns' audience. Served from
+//     the system row, every entry must record that account (linkedInSystemScopeRecorded).
+//     resolveLinkedInCredentials also refuses an inactive connection, an incomplete credential and
+//     an unselected account.
 //  3. Every scope entry's recorded creation account must be the account the connection is bound
 //     to. ANY mismatch refuses the whole read (ErrCampaignAccountMismatch, 409) rather than
 //     dropping the entry — see googleAdsScopeForCustomer for why a silently reduced scope is worse
@@ -45,11 +47,20 @@ func (d *LinkedInDispatcher) ReadLinkedInAudienceInsights(ctx context.Context, p
 	if err != nil {
 		return nil, err
 	}
-	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform, d.creds.resolveOwned)
+	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform, d.creds.existingResolver(linkedInScopeAccount(scope)))
 	if err != nil {
 		return nil, err
 	}
 	accountID := strings.TrimSpace(res.accountID)
+	if res.fromSystem {
+		// The LF system credential (#581) reads only campaigns PROVEN to live in the account it
+		// resolved: every entry must record that account. An unrecorded entry, which a
+		// project's own connection treats as unknown-proceed, could name another foundation's
+		// campaign through the shared token.
+		if err := linkedInSystemScopeRecorded(op, scope, accountID); err != nil {
+			return nil, err
+		}
+	}
 	if err := linkedInAudienceScopeForAccount(op, scope, accountID); err != nil {
 		return nil, err
 	}
@@ -134,6 +145,42 @@ func linkedInAudienceScopeForAccount(op string, scope []model.ProjectCampaignSco
 	if mismatched > 0 {
 		return fmt.Errorf("%s: %d of this project's %d campaigns were created under a different linkedin ad account than the one its connection is bound to (%s); returning only the rest would report a partial result as complete: %w",
 			op, mismatched, len(scope), accountID, domain.ErrCampaignAccountMismatch)
+	}
+	return nil
+}
+
+// linkedInScopeAccount is the one ad account the scope's campaigns record as their creation
+// account, or "" when they record none or several. "" makes resolveExisting fall back to ordinary
+// project-then-system resolution, and linkedInAudienceScopeForAccount then refuses a scope that
+// spans accounts, so a mixed scope still fails closed.
+func linkedInScopeAccount(scope []model.ProjectCampaignScope) string {
+	account := ""
+	for _, s := range scope {
+		created := linkedInCreationAccountID(&model.Campaign{PlatformCampaignID: s.PlatformCampaignID, Result: s.Result})
+		switch {
+		case created == "":
+		case account == "":
+			account = created
+		case account != created:
+			return ""
+		}
+	}
+	return account
+}
+
+// linkedInSystemScopeRecorded refuses a read through the LF system credential when any scope
+// entry does not record its creation account (ErrCampaignProvenanceUnknown with
+// ErrCampaignAccountMismatch, 409), the same strictness the account monitor applies.
+func linkedInSystemScopeRecorded(op string, scope []model.ProjectCampaignScope, accountID string) error {
+	unknown := 0
+	for _, s := range scope {
+		if linkedInCreationAccountID(&model.Campaign{PlatformCampaignID: s.PlatformCampaignID, Result: s.Result}) == "" {
+			unknown++
+		}
+	}
+	if unknown > 0 {
+		return fmt.Errorf("%s: %d of this project's %d campaigns do not record which linkedin ad account they were created under, so they cannot be read through the shared LF credential on %s: %w",
+			op, unknown, len(scope), accountID, errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
 	}
 	return nil
 }

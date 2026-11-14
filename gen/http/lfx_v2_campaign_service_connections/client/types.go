@@ -6304,6 +6304,22 @@ type MonitorGoogleAdsAccountUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// MonitorLinkedinAdsAccountConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-linkedin-ads-account"
+// endpoint HTTP response body for the "Conflict" error.
+type MonitorLinkedinAdsAccountConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Why the project's recorded campaigns cannot be read under the monitored
+	// account: campaign_account_mismatch (a campaign recorded for this project was
+	// created under a different account, or does not record which) or
+	// campaign_scope_invalid (a campaign recorded for this project has an id the
+	// platform cannot read).
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
 // MonitorLinkedinAdsAccountBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-linkedin-ads-account"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -15225,6 +15241,19 @@ func NewMonitorLinkedinAdsAccountAccountMonitorOK(body *MonitorLinkedinAdsAccoun
 	return v
 }
 
+// NewMonitorLinkedinAdsAccountConflict builds a
+// lfx-v2-campaign-service-connections service monitor-linkedin-ads-account
+// endpoint Conflict error.
+func NewMonitorLinkedinAdsAccountConflict(body *MonitorLinkedinAdsAccountConflictResponseBody) *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError {
+	v := &lfxv2campaignserviceconnections.AccountMonitorScopeConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  *body.Reason,
+	}
+
+	return v
+}
+
 // NewMonitorLinkedinAdsAccountBadRequest builds a
 // lfx-v2-campaign-service-connections service monitor-linkedin-ads-account
 // endpoint BadRequest error.
@@ -23569,6 +23598,26 @@ func ValidateMonitorGoogleAdsAccountUnauthorizedResponseBody(body *MonitorGoogle
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorLinkedinAdsAccountConflictResponseBody runs the validations
+// defined on MonitorLinkedinAdsAccountConflictResponseBody
+func ValidateMonitorLinkedinAdsAccountConflictResponseBody(body *MonitorLinkedinAdsAccountConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("reason", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "campaign_account_mismatch" || *body.Reason == "campaign_scope_invalid") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"campaign_account_mismatch", "campaign_scope_invalid"}))
+		}
 	}
 	return
 }

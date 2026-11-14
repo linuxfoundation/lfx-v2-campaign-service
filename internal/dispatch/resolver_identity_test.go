@@ -257,17 +257,17 @@ func TestResolverIdentity_LinkedIn(t *testing.T) {
 		}},
 		{"WriteBid", idExisting, func(r connReader, c *model.Campaign) { _ = d(r).WriteBid(riCtx, resolverIdentityProject, p, c, riBid) }},
 		{"ReadSettings", idExisting, func(r connReader, c *model.Campaign) { _, _ = d(r).ReadSettings(riCtx, resolverIdentityProject, p, c) }},
-		{"ReadLinkedInAudienceInsights", idOwned, func(r connReader, _ *model.Campaign) {
+		{"ReadLinkedInAudienceInsights", idExisting, func(r connReader, _ *model.Campaign) {
 			_, _ = d(r).ReadLinkedInAudienceInsights(riCtx, resolverIdentityProject, p, model.MetricsWindowLast7Days, riScope(blob))
 		}},
 		{"LookupCampaign (adopt)", idOwned, func(r connReader, _ *model.Campaign) {
 			_, _ = d(r).LookupCampaign(riCtx, resolverIdentityProject, p, "1001")
 		}},
 		{"VerifyAccountOrg", idOwned, func(r connReader, _ *model.Campaign) { _ = d(r).VerifyAccountOrg(riCtx, resolverIdentityProject, p) }},
-		{"ReadAccountMonitor", idOwned, func(r connReader, _ *model.Campaign) {
+		{"ReadAccountMonitor", idExisting, func(r connReader, _ *model.Campaign) {
 			_, _ = d(r).ReadAccountMonitor(riCtx, resolverIdentityProject, p, acct, 7)
 		}},
-		{"ListAccountCampaignMetrics", idOwned, func(r connReader, _ *model.Campaign) {
+		{"ListAccountCampaignMetrics", idExisting, func(r connReader, _ *model.Campaign) {
 			_, _ = d(r).ListAccountCampaignMetrics(riCtx, resolverIdentityProject, p, acct, 7)
 		}},
 	})

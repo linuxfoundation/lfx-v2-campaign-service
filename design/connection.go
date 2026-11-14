@@ -247,11 +247,11 @@ var AccountMonitorConflictError = Type("account-monitor-conflict-error", func() 
 })
 
 // AccountMonitorScopeConflictError is the 409 body of monitor-google-ads-account,
-// monitor-meta-ads-account and monitor-reddit-ads-account: the project's recorded campaigns do not
+// monitor-linkedin-ads-account, monitor-meta-ads-account and monitor-reddit-ads-account: the project's recorded campaigns do not
 // all fit the monitored account. It has its own type for the reason AccountMonitorConflictError
 // does — ConflictError's published example is a connection collision these methods can never
 // return — and is not AccountMonitorConflictError itself, whose example and two of whose reasons
-// are X's account-state refusals, which these three never answer. `reason` is REQUIRED with
+// are X's account-state refusals, which these four never answer. `reason` is REQUIRED with
 // exactly the values these methods emit: classifyMonitorError sets one on every 409 they return.
 var AccountMonitorScopeConflictError = Type("account-monitor-scope-conflict-error", func() {
 	errorAttrs("409", "some of this project's campaigns were created under a different ad account than the one being monitored — monitor the account that owns them, or re-dispatch or reconcile those campaigns onto this one, to monitor this account")
@@ -2603,7 +2603,9 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	// shared by every foundation — Google Ads, Meta, Reddit and X (docs/architecture.md,
 	// "Account Tenancy") — the response is then reduced to the campaigns this service recorded
 	// for {project_id}, and a live recorded campaign whose recorded account is not account_id is
-	// a 409 (lfx-self-serve-ops#897). LinkedIn and Microsoft stay account-scoped.
+	// a 409 (lfx-self-serve-ops#897). LinkedIn is scoped the same way since #581, because its LF
+	// system row serves several foundations' accounts through grants. Microsoft stays
+	// account-scoped.
 	//
 	// days is a plain bounded integer, NOT model.MetricsWindow: MetricsWindow is a closed
 	// 7-value enum that cannot express an arbitrary day count, and the BFF's own date-range
@@ -2667,15 +2669,31 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	})
 
 	Method("monitor-linkedin-ads-account", func() {
-		Description("Read every campaign visible on a LinkedIn Ads account, live from the platform, with " +
-			"pacing and action items derived by this service's ported rule engine. Account-scoped, not " +
-			"project-scoped: {project_id} resolves which stored connection credential to use, and the " +
-			"read enumerates everything that credential reaches on account_id. A pure read: nothing is " +
-			"persisted.")
+		Description("Read this project's own campaigns on a LinkedIn Ads account, live from the platform, with " +
+			"pacing and action items derived by this service's ported rule engine. " +
+			"Project-scoped (#581): only campaigns this service recorded for the project are returned, " +
+			"because one LF system credential serves several foundations' LinkedIn accounts (its default " +
+			"account and its operator-installed grants), so the account read is filtered to them before " +
+			"rules and totals. A project with no campaigns recorded on the platform gets an empty monitor " +
+			"without any upstream call. A recorded campaign created under a different account than " +
+			"account_id, or recording none, fails the read with 409 rather than returning a partial picture. " +
+			"Campaigns deleted in this service stay in the monitor, because a local delete does not stop the " +
+			"upstream campaign, unless it does not record account_id as the account it was created under " +
+			"or another project has since taken it over; such a campaign is omitted, never a 409. " +
+			"account_id is the account to read; omitted, it is the account this project's campaigns were " +
+			"created under, read from this service's own records: the response's account_id names it, " +
+			"and an empty account_id with no campaigns means the project has none recorded on the " +
+			"platform (answered without any upstream call). Live campaigns created under more than one " +
+			"account, or none recording one, fail with 409 whether or not account_id is given. " +
+			"account_id is read with the project's own connection when that is configured for it (a " +
+			"project's own connection reads only its own account), otherwise with the LF system credential " +
+			"when account_id is the system row's account or one of its grants. Any other account, for a " +
+			"project with no usable connection of its own, is a 404. " +
+			"A pure read: nothing is persisted.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
-			Attribute("account_id", String, "The LinkedIn ad account to read.", func() {
+			Attribute("account_id", String, "The LinkedIn ad account to read. Optional: omitted, the account this project's campaigns were created under.", func() {
 				Pattern(`^[0-9]+$`)
 				MaxLength(64)
 				Example("512345678")
@@ -2685,10 +2703,11 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 				Maximum(monitorDaysMax)
 				Example(30)
 			})
-			Required("project_id", "account_id", "days")
+			Required("project_id", "days")
 		})
 		Result(AccountMonitor)
 		Error("NotFound", NotFoundError, "Resource not found")
+		Error("Conflict", AccountMonitorScopeConflictError, "A campaign recorded for this project does not fit the monitored account: created under a different account than account_id, recording none, or carrying an id the platform cannot read (see reason); the same for account_id omitted")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -2700,6 +2719,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Param("days")
 			Response(StatusOK, accountMonitorExampleBody(linkedinAccountMonitorBody, linkedinAccountMonitorExample()))
 			Response("NotFound", StatusNotFound)
+			Response("Conflict", StatusConflict)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})

@@ -488,24 +488,10 @@ func TestMonitorAccount_ScopeLookupFailureMakesNoUpstreamCall(t *testing.T) {
 	}
 }
 
-// AC-5: LinkedIn and Microsoft do not implement AccountMonitorScoper, so an empty campaign scope
-// leaves their account-wide read unchanged.
+// AC-5: Microsoft does not implement AccountMonitorScoper, so an empty campaign scope leaves its
+// account-wide read unchanged. (LinkedIn implemented it with #581; see
+// TestMonitorLinkedinAdsAccount_IsScopedAndDefaultsTheAccount.)
 func TestMonitorAccount_UnscopedPlatformsKeepTheAccountRead(t *testing.T) {
-	t.Run("linkedin", func(t *testing.T) {
-		rows := []model.AccountCampaignMetrics{
-			{PlatformCampaignID: "1", Name: "a", Status: "ACTIVE", BudgetDay: 10},
-			{PlatformCampaignID: "2", Name: "b", Status: "ACTIVE", BudgetDay: 20},
-		}
-		svc := liveScopeService(model.ProviderLinkedInAds, &mockAccountMetricsReaderDispatcher{rows: rows}, scopeRepo([]string{}, nil))
-		got, err := svc.MonitorLinkedinAdsAccount(context.Background(),
-			&conn.MonitorLinkedinAdsAccountPayload{ProjectID: "p", AccountID: "512345678", Days: 30})
-		if err != nil {
-			t.Fatalf("read: %v", err)
-		}
-		if len(got.Campaigns) != 2 {
-			t.Errorf("campaigns = %v, want both account rows", campaignIDs(got))
-		}
-	})
 	t.Run("microsoft", func(t *testing.T) {
 		o := NewOrchestrator(scopeRepo([]string{}, nil), newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
 			model.ProviderMicrosoftAds: &fakeReportReader{campaigns: twoCampaigns(), submitID: "r1"},
@@ -554,8 +540,15 @@ func TestClassifyMonitorError(t *testing.T) {
 			}
 		})
 	}
-	t.Run("linkedin is delegated unchanged", func(t *testing.T) {
+	t.Run("linkedin answers the declared scope 409 (#581)", func(t *testing.T) {
 		err := svc.classifyMonitorError(context.Background(), "p", model.ProviderLinkedInAds, linkedInAdsMonitorDiscovery, domain.ErrCampaignAccountMismatch)
+		var sce *conn.AccountMonitorScopeConflictError
+		if !errors.As(err, &sce) || sce.Reason != "campaign_account_mismatch" {
+			t.Fatalf("err = %T %v, want a 409 AccountMonitorScopeConflictError", err, err)
+		}
+	})
+	t.Run("microsoft is delegated unchanged", func(t *testing.T) {
+		err := svc.classifyMonitorError(context.Background(), "p", model.ProviderMicrosoftAds, microsoftAdsMonitorDiscovery, domain.ErrCampaignAccountMismatch)
 		var ce *conn.ConflictError
 		var sce *conn.AccountMonitorScopeConflictError
 		if errors.As(err, &ce) || errors.As(err, &sce) {

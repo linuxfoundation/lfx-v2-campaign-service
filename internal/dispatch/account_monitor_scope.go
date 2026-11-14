@@ -6,23 +6,28 @@ package dispatch
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 )
 
-// The four platforms whose single upstream ad account is shared by every foundation
-// (docs/architecture.md, "Account Tenancy"). LinkedIn and Microsoft deliberately do not
-// implement service.AccountMonitorScoper, so their account monitors keep the account-wide read.
+// The platforms whose account monitor is campaign-scoped (docs/architecture.md, "Account
+// Tenancy"): the four whose single upstream ad account is shared by every foundation, and
+// LinkedIn, whose LF system row serves several foundations' accounts through its grants (#581).
+// Microsoft deliberately does not implement service.AccountMonitorScoper, so its account monitor
+// keeps the account-wide read.
 var (
 	_ service.AccountMonitorScoper = (*GoogleAdsDispatcher)(nil)
 	_ service.AccountMonitorScoper = (*MetaDispatcher)(nil)
 	_ service.AccountMonitorScoper = (*RedditDispatcher)(nil)
 	_ service.AccountMonitorScoper = (*TwitterDispatcher)(nil)
+	_ service.AccountMonitorScoper = (*LinkedInDispatcher)(nil)
 )
 
 // MonitorScopePrecheck implements service.AccountMonitorScoper for Google Ads: the same customer
@@ -123,6 +128,84 @@ func (d *TwitterDispatcher) MonitorScopeForAccount(scope []model.ProjectCampaign
 	const op = "read x account monitor"
 	ids, err := twitterScopeForAccount(scope, accountID, op)
 	return requireRecordedMonitorProvenance(op, "x ads account", scope, twitterCreationAccountID, ids, err)
+}
+
+// MonitorScopePrecheck implements service.AccountMonitorScoper for LinkedIn: the account id shape
+// check ReadAccountMonitor runs before it resolves a credential.
+func (d *LinkedInDispatcher) MonitorScopePrecheck(accountID string) error {
+	if err := linkedin.ValidateAccountID(accountID); err != nil {
+		return fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
+	}
+	return nil
+}
+
+// MonitorScopeForAccount implements service.AccountMonitorScoper for LinkedIn (#581). The monitor
+// is campaign-scoped because one LF system credential now serves several foundations' ad
+// accounts (its default and its grants): an account-wide read through it would show one
+// foundation another's campaigns. A campaign recorded under a different account than accountID
+// fails the read, and so does one that records none (requireRecordedMonitorProvenance): a
+// LinkedIn campaign id read on another foundation's account must never be reported as this
+// project's.
+func (d *LinkedInDispatcher) MonitorScopeForAccount(scope []model.ProjectCampaignScope, accountID string) ([]string, error) {
+	const op = "read linkedin account monitor"
+	ids, err := linkedInScopeForAccount(scope, accountID, op)
+	return requireRecordedMonitorProvenance(op, "linkedin ad account", scope, linkedInCreationAccountID, ids, err)
+}
+
+var _ service.AccountMonitorDefaulter = (*LinkedInDispatcher)(nil)
+
+// MonitorAccountForScope implements service.AccountMonitorDefaulter for LinkedIn: the one ad
+// account the project's campaigns record as the one they were created under, exactly as Google
+// Ads names its customer (#591). A project creating through the LF system row has no connection
+// of its own to take the account from, so this is how it names the default or granted account
+// its campaigns live in.
+func (d *LinkedInDispatcher) MonitorAccountForScope(scope []model.ProjectCampaignScope) (string, error) {
+	const op = "read linkedin account monitor"
+	accounts := make(map[string]bool, 1)
+	account := ""
+	for _, s := range scope {
+		if created := linkedInCreationAccountID(&model.Campaign{PlatformCampaignID: s.PlatformCampaignID, Result: s.Result}); created != "" {
+			accounts[created] = true
+			account = created
+		}
+	}
+	switch len(accounts) {
+	case 0:
+		return "", fmt.Errorf("%s: none of this project's %d campaigns record which linkedin ad account they were created under, so there is no account to monitor them on: %w",
+			op, len(scope), errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
+	case 1:
+		return account, nil
+	default:
+		return "", fmt.Errorf("%s: this project's campaigns were created under %d different linkedin ad accounts, so no one account's monitor covers them all: %w",
+			op, len(accounts), domain.ErrCampaignAccountMismatch)
+	}
+}
+
+// linkedInScopeForAccount returns the scope's campaign ids when every entry that records a
+// creation account records accountID, and refuses the whole scope otherwise (an unrecorded entry
+// passes here; the monitor's requireRecordedMonitorProvenance refuses it). Ids are checked for
+// LinkedIn's canonical shape, so a stored id the platform cannot read is ErrAudienceScopeInvalid.
+func linkedInScopeForAccount(scope []model.ProjectCampaignScope, accountID, op string) ([]string, error) {
+	want := strings.TrimSpace(accountID)
+	ids := make([]string, 0, len(scope))
+	mismatched := 0
+	for _, s := range scope {
+		if verr := linkedin.ValidateAudienceCampaignID(s.PlatformCampaignID); verr != nil {
+			return nil, fmt.Errorf("%s: a campaign in scope has a malformed linkedin campaign id (%d bytes): %w",
+				op, len(s.PlatformCampaignID), domain.ErrAudienceScopeInvalid)
+		}
+		created := linkedInCreationAccountID(&model.Campaign{PlatformCampaignID: s.PlatformCampaignID, Result: s.Result})
+		if created != "" && created != want {
+			mismatched++
+			continue
+		}
+		ids = append(ids, s.PlatformCampaignID)
+	}
+	if mismatched > 0 {
+		return nil, fmt.Errorf("%s: %d of this project's %d campaigns were created under a different linkedin ad account than %s; returning only the rest would report a partial result as complete: %w",
+			op, mismatched, len(scope), want, domain.ErrCampaignAccountMismatch)
+	}
+	return ids, nil
 }
 
 // requireRecordedMonitorProvenance applies redditScopeForAccount's strictness to a monitor scope

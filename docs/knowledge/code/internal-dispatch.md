@@ -3531,6 +3531,12 @@ account as the system row's, so when both scopes fail the system row's error is 
 `cachedLinkedInClient` adds `grantAccount` to its cache key: one row now serves several accounts
 and the client's `RuntimeConfig` names exactly one.
 
+The LinkedIn account monitor and audience insights read through the same rule (step 3 of #581):
+`resolveLinkedInMonitorCredentials` and `ReadLinkedInAudienceInsights` use
+`existingResolver(account)`, LinkedIn implements `service.AccountMonitorScoper` and
+`AccountMonitorDefaulter`, and the system credential is served only for its default account or a
+grant, and only to a campaign-scoped read (see the account-monitor architecture concept).
+
 Pinned by `TestLinkedIn_PauseReachesACampaignInAGrantedAccount`,
 `TestLinkedIn_GrantedAndDefaultAccountsDoNotShareAClient`, `TestGrantScopedHonoursOnlyTheSystemRow`
 and `TestLinkedIn_BrokenSystemRowIsBlamedForAGrantedCampaign`.

@@ -463,7 +463,7 @@ Campaign managers can create, read, update, and remove connections to ad platfor
 | Tenancy | Platforms | Details |
 |---------|-----------|---------|
 | Shared across foundations | Google Ads, Meta Ads, Reddit, X/Twitter, HubSpot | One upstream account used by every foundation; each using project stores its own singleton connection row pointing at the shared upstream account, or resolves to the LF system connection (`model.SystemProjectID`, installed by `bootstrap-system-account`) when it has none |
-| Per-foundation | LinkedIn Ads | Several ad accounts, one per foundation (e.g. TLF, LF Events); one singleton connection per project |
+| Per-foundation accounts, shared system credential | LinkedIn Ads | Several ad accounts, one per foundation (e.g. TLF, LF Events, CNCF), each under its own organization page; one singleton connection per project. Since #581 the LF system row also carries operator-installed account grants (`linkedin_ads_account_grants`, migration 000058), so one system credential serves several foundations' accounts: the account monitor is campaign-scoped like the shared platforms' |
 | Not yet recorded | Microsoft Ads | No LF account is listed in [Current Platform Accounts](#current-platform-accounts), so neither grouping is asserted for it; one singleton connection per project, with an installable LF system row like every other provider |
 
 **Where the authority lives.** Tenancy is an operational fact about how the LF runs its ad
@@ -472,7 +472,7 @@ per project), so the "migrations are the sole authority" rule does not cover it.
 [Current Platform Accounts](#current-platform-accounts) below are the authority for tenancy. The
 account-monitor scope guards in `internal/dispatch` cite them.
 
-**Project scoping on shared accounts.** The Google Ads, Meta, Reddit and X account monitors return
+**Project scoping on shared accounts.** The Google Ads, LinkedIn (since #581), Meta, Reddit and X account monitors return
 only the requesting project's own campaigns — the `platform_campaign_id`s recorded on its
 `campaigns` rows for that platform — because the account they read is the one every foundation
 shares. The marker is the optional dispatcher capability `service.AccountMonitorScoper`: the
@@ -488,8 +488,10 @@ the scope, because a local delete does not stop the upstream campaign, unless on
 requested account — recorded under a different account (on Google Ads, Reddit and X, also recording
 none), or carrying an id the platform cannot read — or another project has since taken it over
 (holds it live, or recorded it later even if since deleted);
-such a campaign is omitted, never a 409. LinkedIn and Microsoft do not implement the capability, so their monitors
-stay account-wide. Implementing it is how a platform is recorded as shared in code: if a platform's
+such a campaign is omitted, never a 409. Microsoft does not implement the capability, so its monitor
+stays account-wide. LinkedIn implements it since #581 (its system row's grants make one credential serve several
+foundations' accounts), and like Google Ads it names the default account from the project's recorded campaigns
+when the caller omits one; a campaign recording no account fails its monitor, as on Google Ads, Reddit and X. Implementing it is how a platform is recorded as shared in code: if a platform's
 tenancy changes, change its dispatcher in the same change as the tables here.
 
 **Requested-account guards.** Five platforms carry one —
@@ -528,6 +530,13 @@ Each platform has a different tenancy model. Most platforms use a single shared 
 |----------|-----------|---------|
 | LinkedIn Ads | TLF | Account 538170226, Org 208777 |
 | LinkedIn Ads | LF Events | Account 509430019 |
+
+The LinkedIn rows above are the ones recorded here; #581 gives LF Events as account 509430019 / org
+208777 and CNCF as 500928401 / org 12893459. Which account the prod LF system row holds (TLF
+538170226 or LF Events 509430019) is not yet confirmed. Further foundation accounts reach the system
+row as grants installed with `bootstrap-system-account -linkedin-grant account:org[:label]`, each
+verified with LinkedIn before it is written; a grant is the only way the system row addresses an
+account other than its own.
 
 This distinction matters for the connection CRUD, but it does **not** change the cardinality: every project has at most one connection per provider. Google Ads, Meta, Reddit and X are shared upstream accounts, so multiple projects' singleton connections may point at the same `account_id`; LinkedIn uses separate accounts, so each of those projects' singleton connection points at its own. Either way the API and schema are singleton per project (see [Platform Connection Management](#platform-connection-management)).
 

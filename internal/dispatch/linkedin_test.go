@@ -1468,21 +1468,47 @@ func TestLinkedIn_DispatchStampsCreatingAccount(t *testing.T) {
 	}
 }
 
-// TestLinkedIn_ListAccountCampaignMetrics_RefusesSystemFallback pins round-16 review's Critical
-// finding: a project with no LinkedIn connection of its own must not have its monitor read
-// served from the shared LF system credential. scopedConnReader is configured with a valid
-// connection ONLY under model.SystemProjectID — if the fallback were still consulted, this read
-// would succeed against it, so a passing test here proves the fallback was actually refused, not
-// merely that some unrelated error was returned.
-func TestLinkedIn_ListAccountCampaignMetrics_RefusesSystemFallback(t *testing.T) {
-	d := NewLinkedInDispatcher(&scopedConnReader{
-		rows: map[string]*model.Connection{model.SystemProjectID: activeLinkedInConn(goodLinkedInCreds)},
-	}, identityEncryptor{})
+// TestLinkedIn_ListAccountCampaignMetrics_SystemRowReadsOnlyItsOwnAccounts: since #581 a project
+// with no LinkedIn connection of its own is monitored through the LF system row (the read is
+// campaign-scoped by the orchestrator, MonitorScopeForAccount), but only on an account that row is
+// configured for: its default or a grant. Any other account the shared token happens to reach
+// keeps round-16's 404, and LinkedIn is never contacted for it.
+func TestLinkedIn_ListAccountCampaignMetrics_SystemRowReadsOnlyItsOwnAccounts(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path+"?"+r.URL.RawQuery)
+		mu.Unlock()
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+	reached := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := paths
+		paths = nil
+		return out
+	}
+	d := NewLinkedInDispatcher(&scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}},
+		identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
 
 	_, err := d.ListAccountCampaignMetrics(context.Background(), "cncf", model.ProviderLinkedInAds, "123456789", 30)
 	if !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("err = %v, want domain.ErrNotFound — the read must refuse the system row and "+
-			"report the project as having no connection of its own", err)
+		t.Fatalf("err = %v, want domain.ErrNotFound for an account the system row is not configured for", err)
+	}
+	if r := reached(); len(r) != 0 {
+		t.Fatalf("LinkedIn was contacted for an ungranted account: %v", r)
+	}
+	for _, account := range []string{"538170226", "500928401"} {
+		_, err := d.ListAccountCampaignMetrics(context.Background(), "cncf", model.ProviderLinkedInAds, account, 30)
+		if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrAccountNotManagedByConnection) {
+			t.Fatalf("monitor on the system row's account %s was refused: %v", account, err)
+		}
+		r := reached()
+		if len(r) == 0 || !strings.Contains(r[0], account) {
+			t.Fatalf("monitor on %s reached %v, want a read of that account", account, r)
+		}
 	}
 }
 

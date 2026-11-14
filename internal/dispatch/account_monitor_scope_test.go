@@ -156,15 +156,59 @@ func TestMonitorScopePrecheck(t *testing.T) {
 	})
 }
 
-// TestMonitorScopeForAccount_LinkedInAndMicrosoftAreNotScoped pins that only the shared-tenancy
-// platforms carry the capability: LinkedIn and Microsoft monitors keep their account-wide read.
-func TestMonitorScopeForAccount_LinkedInAndMicrosoftAreNotScoped(t *testing.T) {
+// TestMonitorScopeForAccount_MicrosoftIsNotScoped pins that only the shared-tenancy platforms
+// carry the capability: the Microsoft monitor keeps its account-wide read. LinkedIn joined the
+// scoped set with #581, when its LF system row began serving several foundations' accounts.
+func TestMonitorScopeForAccount_MicrosoftIsNotScoped(t *testing.T) {
 	for name, d := range map[string]any{
-		"linkedin":  &LinkedInDispatcher{},
 		"microsoft": &MicrosoftDispatcher{},
 	} {
 		if _, ok := d.(service.AccountMonitorScoper); ok {
 			t.Errorf("%s dispatcher implements AccountMonitorScoper; its account is not recorded as shared", name)
 		}
+	}
+}
+
+// TestLinkedInMonitorScope pins LinkedIn's campaign-scoped monitor (#581): only campaigns
+// recorded under the monitored account are returned, any other recorded account or an unrecorded
+// campaign fails the whole read, a malformed id is ErrAudienceScopeInvalid, and the defaulter
+// names the one account the campaigns record.
+func TestLinkedInMonitorScope(t *testing.T) {
+	d := &LinkedInDispatcher{}
+	rec := func(id, account string) model.ProjectCampaignScope {
+		return model.ProjectCampaignScope{PlatformCampaignID: id, Result: json.RawMessage(`{"accountId":"` + account + `"}`)}
+	}
+	unrec := model.ProjectCampaignScope{PlatformCampaignID: "557", Result: json.RawMessage(`{}`)}
+
+	ids, err := d.MonitorScopeForAccount([]model.ProjectCampaignScope{rec("555", "500928401"), rec("556", "500928401")}, "500928401")
+	if err != nil || len(ids) != 2 {
+		t.Fatalf("matching scope = %v, %v; want both ids", ids, err)
+	}
+	for name, tc := range map[string]struct {
+		scope []model.ProjectCampaignScope
+		want  error
+	}{
+		"other account": {[]model.ProjectCampaignScope{rec("555", "500928401"), rec("556", "538170226")}, domain.ErrCampaignAccountMismatch},
+		"unrecorded":    {[]model.ProjectCampaignScope{rec("555", "500928401"), unrec}, domain.ErrCampaignProvenanceUnknown},
+		"malformed id":  {[]model.ProjectCampaignScope{rec("urn:li:x", "500928401")}, domain.ErrAudienceScopeInvalid},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := d.MonitorScopeForAccount(tc.scope, "500928401"); !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+		})
+	}
+	if err := d.MonitorScopePrecheck("acct-1"); !errors.Is(err, domain.ErrAccountIDMalformed) {
+		t.Fatalf("precheck on a malformed id = %v", err)
+	}
+
+	if got, err := d.MonitorAccountForScope([]model.ProjectCampaignScope{rec("555", "500928401"), unrec}); err != nil || got != "500928401" {
+		t.Fatalf("defaulter = %q, %v; want the one recorded account", got, err)
+	}
+	if _, err := d.MonitorAccountForScope([]model.ProjectCampaignScope{rec("555", "500928401"), rec("556", "538170226")}); !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+		t.Fatalf("defaulter over two accounts = %v, want ErrCampaignAccountMismatch", err)
+	}
+	if _, err := d.MonitorAccountForScope([]model.ProjectCampaignScope{unrec}); !errors.Is(err, domain.ErrCampaignProvenanceUnknown) {
+		t.Fatalf("defaulter over unrecorded campaigns = %v, want ErrCampaignProvenanceUnknown", err)
 	}
 }

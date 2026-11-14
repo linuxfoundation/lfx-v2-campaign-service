@@ -942,12 +942,10 @@ func (d *LinkedInDispatcher) resolveLinkedInDiscoveryCredentials(ctx context.Con
 }
 
 // resolveLinkedInOwnedDiscoveryCredentials is resolveLinkedInDiscoveryCredentials WITHOUT the
-// LF system fallback, for the monitor read. Round-16 review escalated the pre-existing
-// credential-scope gap to Critical, and membership-checking against ListAccounts would not have
-// closed it given LinkedIn's own shared-tenancy exposure through the fallback. LinkedIn's monitor
-// is not campaign-scoped (it does not implement service.AccountMonitorScoper), so the refusal
-// still stands here; Google dropped it in #591 only because its read is (see googleads.go's
-// resolveGoogleAdsMonitorClient).
+// LF system fallback, for the connection test (VerifyAccountOrg). It served the monitor read too
+// until #581 made that read campaign-scoped (resolveLinkedInMonitorCredentials); round-16 review's
+// refusal of the fallback still stands for the connection test, which verifies the project's own
+// pairing and has nothing to verify on a project with no row.
 //
 // It reuses resolveLinkedInCredentials, the same validation resolveLinkedInDiscoveryCredentials
 // itself calls, but bound to d.creds.resolveOwned instead of d.creds.resolve — so a project with
@@ -1099,19 +1097,9 @@ func (d *LinkedInDispatcher) ReadAccountMonitor(ctx context.Context, projectID s
 	if err := validateMonitorDays(days); err != nil {
 		return nil, err
 	}
-	res, creds, err := d.resolveLinkedInOwnedDiscoveryCredentials(ctx, projectID, platform)
+	res, creds, scopedAccountID, err := d.resolveLinkedInMonitorCredentials(ctx, projectID, platform, accountID)
 	if err != nil {
 		return nil, err
-	}
-	// Before the client is built, let alone a request issued: the account the caller named
-	// must be the one this project's connection manages. See requireLinkedInManagedAccount.
-	// The guard's trimmed return is what flows onward, not the caller's raw value: one
-	// validated value, used once. Forwarding the caller's string instead would be correct
-	// only because each platform's ValidateAccountID already refuses a padded id upstream —
-	// a second validator this code would then depend on without saying so.
-	scopedAccountID, aerr := requireLinkedInManagedAccount(res, projectID, accountID)
-	if aerr != nil {
-		return nil, aerr
 	}
 	// RuntimeConfig is left ZERO, same rationale as ListAccounts: the monitor read is scoped
 	// to accountID by the platform-client call itself, not by the client's own AccountConfig.
@@ -1146,6 +1134,47 @@ func (d *LinkedInDispatcher) ReadAccountMonitor(ctx context.Context, projectID s
 		})
 	}
 	return &model.AccountMonitorRead{Rows: out, Currency: currency}, nil
+}
+
+// resolveLinkedInMonitorCredentials resolves the credential for the account-monitor read of
+// accountID (#581), and returns accountID trimmed once it is proven to be the resolved account.
+//
+// It follows Google Ads' monitor (resolveGoogleAdsMonitorClient, #591): resolveExisting with
+// accountID as the creation account, so the project's own connection serves it when that is
+// configured for accountID, and otherwise the LF system row when accountID is the row's default
+// account or one of its grants (a grant-scoped copy). That is what lets a project creating
+// through the system row — tlf, an event child, any project that disconnected — monitor its own
+// campaigns, which the round-16 refusal of the fallback (resolveLinkedInOwnedDiscoveryCredentials)
+// made impossible. The refusal predates the monitor's campaign scope: LinkedIn now implements
+// service.AccountMonitorScoper, so the orchestrator reduces the read to this project's recorded
+// campaigns before anything leaves the service, and refuses a recorded campaign from another
+// account.
+//
+// Two rules are kept from the refusal. The LF system credential reads only an account the row is
+// configured for (its default or a grant): resolveExisting hands back the fallback row when
+// nothing matches, and that token reaches more accounts than the grant list, so that case keeps
+// the no-connection 404. And a project's OWN connection reads only its own account
+// (requireLinkedInManagedAccount): naming any other account is the request mismatch it was.
+func (d *LinkedInDispatcher) resolveLinkedInMonitorCredentials(ctx context.Context, projectID string, platform model.Provider, accountID string) (*resolved, linkedinCreds, string, error) {
+	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform, d.creds.existingResolver(accountID))
+	switch {
+	case err == nil:
+	case errors.Is(err, domain.ErrAccountNotSelected) && res != nil:
+		// An own row with no account selected: requireLinkedInManagedAccount names that state
+		// below, as it did before #581.
+	default:
+		return nil, linkedinCreds{}, "", err
+	}
+	if res.fromSystem && !matchesAccount(res.accountID, accountID) {
+		return nil, linkedinCreds{}, "", noOwnConnection(projectID, platform)
+	}
+	// The guard's trimmed return is what flows onward, not the caller's raw value: one validated
+	// value, used once.
+	scoped, aerr := requireLinkedInManagedAccount(res, projectID, accountID)
+	if aerr != nil {
+		return nil, linkedinCreds{}, "", aerr
+	}
+	return res, creds, scoped, nil
 }
 
 // VerifyAccountOrg cross-checks a project's stored LinkedIn connection against LinkedIn's own

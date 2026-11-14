@@ -11713,7 +11713,7 @@ func DecodeMonitorLinkedinAdsAccountRequest(mux goahttp.Muxer, decoder func(*htt
 		var payload *lfxv2campaignserviceconnections.MonitorLinkedinAdsAccountPayload
 		var (
 			projectID   string
-			accountID   string
+			accountID   *string
 			days        int
 			bearerToken *string
 			err         error
@@ -11722,13 +11722,17 @@ func DecodeMonitorLinkedinAdsAccountRequest(mux goahttp.Muxer, decoder func(*htt
 		)
 		projectID = params["project_id"]
 		qp := r.URL.Query()
-		accountID = qp.Get("account_id")
-		if accountID == "" {
-			err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "query string"))
+		accountIDRaw := qp.Get("account_id")
+		if accountIDRaw != "" {
+			accountID = &accountIDRaw
 		}
-		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^[0-9]+$"))
-		if utf8.RuneCountInString(accountID) > 64 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
+		if accountID != nil {
+			err = goa.MergeErrors(err, goa.ValidatePattern("account_id", *accountID, "^[0-9]+$"))
+		}
+		if accountID != nil {
+			if utf8.RuneCountInString(*accountID) > 64 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", *accountID, utf8.RuneCountInString(*accountID), 64, false))
+			}
 		}
 		{
 			daysRaw := qp.Get("days")
@@ -11779,6 +11783,19 @@ func EncodeMonitorLinkedinAdsAccountError(encoder func(context.Context, http.Res
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "Conflict":
+			var res *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorLinkedinAdsAccountConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
 		case "BadRequest":
 			var res *lfxv2campaignserviceconnections.BadRequestError
 			errors.As(v, &res)
