@@ -2866,7 +2866,8 @@ objective?: string              — awareness | traffic | engagement | leads | c
                                   it is a real Instant Form lead ad (OUTCOME_LEADS). This service
                                   never creates a form.
 geoTargets?: string[]           — ISO country codes, e.g. ['US', 'JP']. Optional: omitted or an
-                                  empty list defaults to ['US']. Supplied entries are uppercased,
+                                  empty list defaults to ['US'] (unless targeting.regions or
+                                  targeting.cities is set; see there). Supplied entries are uppercased,
                                   trimmed, and filtered to valid ISO-2 codes; if entries were
                                   supplied but NONE survive validation the request is REJECTED
                                   (it does not silently fall back to US). The client also DROPS
@@ -2980,8 +2981,8 @@ targeting?: object              — OPTIONAL audience targeting on the ad set (#
                                   with a 400 before any job exists unless the deployment sets
                                   META_AUDIENCE_TARGETING_ENABLED to exactly "true" (not yet
                                   live-verified); a block that sets only keys with their own
-                                  flag (locales, devicePlatforms, interests) needs only that
-                                  flag. null/absent → targeting
+                                  flag (locales, devicePlatforms, interests, regions, cities)
+                                  needs only that flag. null/absent → targeting
                                   unchanged. Keys:
   ageMin?, ageMax?: integer      — 18–65 each, ageMin ≤ ageMax → `age_min` / `age_max`. null or
                                   absent is Meta's default; an explicit 0 is out of range (400).
@@ -3022,6 +3023,24 @@ targeting?: object              — OPTIONAL audience targeting on the ad set (#
                                   unanswered, fails the job with nothing created. Refused with a
                                   400 unless META_INTEREST_TARGETING_ENABLED is exactly "true";
                                   not gated by global_marketing_ops.
+  regions?, cities?: string[]    — numeric Meta geo-location keys (the Targeting Search
+                                  `adgeolocation` type, e.g. region 3847 California), each list
+                                  de-duplicated, at most 25 → ADDED to the country targeting as
+                                  `geo_locations.regions` / `geo_locations.cities`
+                                  (`[{"key"}]`). With no geoTargets supplied the US default is
+                                  NOT applied: the regions and cities are the whole targeting,
+                                  and the campaign name's region segment follows their country.
+                                  Not an inclusion. Before anything is created every key is
+                                  looked up in one `GET /search?type=adgeolocationmeta&regions=[…]
+                                  &cities=[…]`; a key in a sanctioned or ineligible country (the
+                                  geoTargets list's), a regulated market (SG, TW, KR), a country
+                                  geoTargets already targets (Meta refuses overlapping
+                                  locations) or an EU territory without dsaBeneficiary and
+                                  dsaPayor, a key of the other type, a read that fails, or a key
+                                  left unanswered or without a country fails the job with
+                                  nothing created. Refused with a 400 unless
+                                  META_REGION_TARGETING_ENABLED is exactly "true"; not gated by
+                                  global_marketing_ops.
                                   Every invalid value is a synchronous 400 ("invalid campaign
                                   config: metaConfig.targeting: …"). Before anything is created
                                   each audience is read (`GET /{id}?fields=id,account_id,subtype`);

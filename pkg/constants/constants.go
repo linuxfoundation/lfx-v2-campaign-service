@@ -391,6 +391,13 @@ const (
 	// connection's Page, which the create already uses, so it needs no global_marketing_ops.
 	EnvMetaLeadFormsEnabled = "META_LEAD_FORMS_ENABLED"
 
+	// EnvMetaRegionTargetingEnabled opts a deployment IN to metaConfig.targeting.regions and
+	// metaConfig.targeting.cities (#550, gap 13): Meta geo-location keys added to the ad set's
+	// country targeting, each looked up (and its parent country checked) before anything is
+	// created. Same rules as EnvMetaLocaleTargetingEnabled. A location is Meta's own taxonomy, not
+	// an account resource, so it needs no global_marketing_ops.
+	EnvMetaRegionTargetingEnabled = "META_REGION_TARGETING_ENABLED"
+
 	// EnvGoogleAdsPMaxAudienceSignalEnabled opts a deployment IN to
 	// googleAdsConfig.performanceMaxAudienceSignal (#461): one existing Google Ads Audience
 	// attached to a Performance Max asset group as a signal. Only the exact value "true"
