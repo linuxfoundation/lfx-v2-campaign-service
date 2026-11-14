@@ -280,6 +280,11 @@ type CampaignInput struct {
 	StageToken string
 	Tactic     string
 	SlotToken  string
+	// Targeting is the caller's own targetingCriteria (#552). When set it REPLACES the profile
+	// clause (TargetingProfile is not read) and the hard-coded jobFunctions and
+	// seniorityExclusions; the runtime config's EmployerExclusions still join exclude.employers.
+	// CreateCampaign runs ValidateTargeting on it before any request. See targeting_criteria.go.
+	Targeting *Targeting
 	// Conversions are conversion rule ids (#552) associated with the campaign once it exists,
 	// through Campaign Conversions (conversions.go). CreateCampaign runs ValidateConversions on
 	// them before any request. A failed association does not stop the create.
@@ -320,6 +325,12 @@ type CampaignResult struct {
 	// A non-empty ConversionsFailed makes the dispatcher report the campaign created_degraded.
 	ConversionsAssociated []string `json:"conversionsAssociated,omitempty"`
 	ConversionsFailed     []string `json:"conversionsFailed,omitempty"`
+	// TargetingNotApplied marks the stop on a campaign found by name while linkedInConfig.targeting
+	// is set (#552): the campaign exists, but its criteria were neither checked nor written and no
+	// creative was added. The dispatcher records it as a retained partial (pending, campaign id
+	// kept), never created_degraded, which the orchestrator would reuse as complete. Set only on
+	// that path's partial, which is always returned with an error.
+	TargetingNotApplied bool `json:"targetingNotApplied,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -2074,7 +2085,7 @@ func (c *Client) readCampaignGroupEnd(ctx context.Context, path, groupID string)
 // single-flight claim is PLANNED but NOT provided here (tracked separately as
 // LFXV2-2665); until it exists, callers MUST NOT rely on any dedup guarantee and
 // must serialize concurrent calls for the same name on their own.
-func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, lifetimeBudget bool, bidding campaignBiddingPlan) (id string, reused bool, err error) {
+func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, custom *Targeting, lifetimeBudget bool, bidding campaignBiddingPlan) (id string, reused bool, err error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
 	// Scope the idempotency lookup to the resolved campaign group: the campaign
@@ -2113,7 +2124,12 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 		return "", false, fmt.Errorf("campaign start (now+%s buffer) is not before the end date — the run window is too short", startTimeBuffer)
 	}
 
-	targeting, err := c.buildTargetingCriteria(targetingProfile, geoURNs)
+	var targeting map[string]any
+	if custom != nil {
+		targeting, err = c.buildCustomTargetingCriteria(custom, geoURNs)
+	} else {
+		targeting, err = c.buildTargetingCriteria(targetingProfile, geoURNs)
+	}
 	if err != nil {
 		return "", false, err
 	}
@@ -2651,7 +2667,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, domain.WrapPreflightRefusal(err)
 	}
 
-	if err := c.validatePrerequisites(accountID, in.TargetingProfile); err != nil {
+	// Caller targeting (#552) replaces the profile, so the profile prerequisites are not read;
+	// the org and the configured employer exclusions still are, since both still reach the wire.
+	var targeting *Targeting
+	if in.Targeting != nil {
+		if targeting, err = ValidateTargeting(in.Targeting, c.cfg.EmployerExclusions); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+		if _, err := c.orgURN(accountID); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+	} else if err := c.validatePrerequisites(accountID, in.TargetingProfile); err != nil {
 		return nil, domain.WrapPreflightRefusal(err)
 	}
 
@@ -2904,7 +2930,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
-	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, in.LifetimeBudget, bidding)
+	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, targeting, in.LifetimeBudget, bidding)
 	if err != nil {
 		// findOrCreateCampaignGroup may have just created a PERMANENT campaign group
 		// (groupID) whose creation is a real side effect. Returning nil,err here
@@ -2948,6 +2974,30 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// The campaign carries its own bidding (objectiveType, optimizationTargetType, costType,
 		// unitCost) and a reused one keeps what it had (LFXV2-2665).
 		steps = append(steps, fmt.Sprintf("Warning: bid NOT applied to reused campaign %s; its existing bidding is unchanged — verify its bidding in Campaign Manager", campaignID))
+	}
+
+	// Caller targeting (#552) is written only into the body of a campaign THIS RUN creates. A
+	// campaign found by name keeps whatever targetingCriteria it has: an earlier attempt's, or
+	// an operator's edit, and nothing here reads it back to compare. Attaching creatives to it
+	// could serve them without the requested matched audiences or registrant exclusions while
+	// the row records the requested targeting, and rewriting a possibly-serving campaign's
+	// audience is not a retry's call. So the create stops here, before the conversions, images,
+	// dark posts and creatives, and returns the campaign for reconciliation — the conservative
+	// choice internal/platform/microsoft/campaign.go makes for its create-time-only targeting.
+	//
+	// A profile create (no targeting) keeps reusing the campaign as before: its criteria are
+	// derived from the service's own targeting profile rather than per-campaign caller input,
+	// and that retry path predates #552.
+	//
+	// The partial carries TargetingNotApplied so the dispatcher records it as pending rather than
+	// created_degraded: a campaign id with no creatives would otherwise read as a degraded success,
+	// which the orchestrator reuses, and a repeated request would report success for targeting that
+	// was never applied (#557 review).
+	if campaignReused && targeting != nil {
+		steps = append(steps, fmt.Sprintf("Stopped before the creatives: campaign %s was found by name (an earlier attempt or an operator made it), and linkedInConfig.targeting is applied only to a campaign this run creates; check its targeting in Campaign Manager and finish the campaign there", campaignID))
+		r := c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps)
+		r.TargetingNotApplied = true
+		return r, fmt.Errorf("linkedin targeting NOT applied to reused campaign %s (linkedInConfig.targeting is set only on a campaign this run creates; no conversion, image, dark post or creative was added): verify the campaign's targeting in Campaign Manager", campaignID)
 	}
 
 	// Conversions (#552) are associated as soon as the campaign exists, on a reused campaign too

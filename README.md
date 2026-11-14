@@ -445,6 +445,15 @@ openssl rand -base64 32
   sets it to `"false"`
   (`app.environment.GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED.value`);
   enable it per-environment in the ArgoCD overlay once the probe passes.
+- `LINKEDIN_ADS_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `linkedInConfig.targeting` (#552), the caller's own
+  LinkedIn targetingCriteria (facets, matched and retargeting audiences,
+  excludes) in place of the targeting profile. Only the exact value `true`
+  enables it; anything else fails closed, and a create naming it is refused
+  with a 400 before a job exists. Its `audienceMatchingSegments` and
+  `dynamicSegments` also require `global_marketing_ops`. The chart sets it to
+  `"false"` (`app.environment.LINKEDIN_ADS_TARGETING_ENABLED.value`); enable
+  it per-environment in the ArgoCD overlay once the probe passes.
 - `LINKEDIN_ADS_CONVERSIONS_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `linkedInConfig.conversions` (#552), conversion rule ids
   associated with the campaign through Campaign Conversions once it exists.

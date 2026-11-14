@@ -561,6 +561,18 @@ app:
     GOOGLE_ADS_DEMOGRAPHIC_TARGETING_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to linkedInConfig.targeting (#552): the caller's own
+    # LinkedIn targetingCriteria (professional facets, matched and retargeting
+    # audiences, excludes), which replaces the targeting profile. No shape has
+    # been exercised against a live LinkedIn account, and a wrong guess fails
+    # after the campaign group exists. Its ad-segment facets also require
+    # global_marketing_ops on the project. Set it to exactly "true" in
+    # lfx-v2-argocd once the probe in the PR passes. While off, a create naming
+    # targeting is refused before a job exists. Any value other than "true" is
+    # treated as off, so a typo fails closed.
+    LINKEDIN_ADS_TARGETING_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to linkedInConfig.conversions (#552): conversion
     # rule ids associated with the campaign through a Campaign Conversions PUT
     # once it exists. The PUT has not been exercised against a live LinkedIn
