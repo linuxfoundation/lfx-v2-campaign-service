@@ -582,6 +582,13 @@ convention — region from `linkedInConfig.naming` or the geo targets, audience 
 project names in the Project segment — instead of the legacy `LinkedIn` region and LFX project
 slug. See `docs/api-catalog.md` § LinkedInConfig naming.
 
+Meta (#587): `META_NAMING_V2_ENABLED` applies the same convention to new Meta campaigns
+(`metaConfig.naming`; region defaults to the one bucket every geo target falls in, intent to
+`Intent`, format `Static`) in place of the legacy `Social` format and LFX project slug. On every
+platform, an event campaign's business unit is the foundation that owns the event (`LF Events`
+only for an LF-run event with no foundation); the caller sends it. See `docs/api-catalog.md`
+§ MetaConfig naming and § Business unit of an event campaign.
+
 This service's own reads do not parse names. The project-scoped reads — the keyword and audience
 insights and the Google Ads, Meta, Reddit and X account monitors — attribute an upstream campaign to
 a project by `campaigns.project_id`, the row this service wrote when it created or adopted the

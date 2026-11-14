@@ -1143,7 +1143,7 @@ campaign keeps the legacy name, and `naming` is validated but has no effect).
 | objective | the bidding strategy, as before (`Traffic` automatic, `Conversions` manual) |
 | audienceIntent | `naming.audienceIntent`; omitted, `Retargeting` for a campaign labelled with the `retargeting` tactic or whose `targeting` includes `dynamicSegments`, else `Prospecting`. The tactic and a later slot's `#<n>` are still appended (`Retargeting retargeting #2`), because the name is the key LinkedIn reuses a campaign by |
 | format | derived from the creative, never sent: `Static` (single-image) for every campaign today; text ads will be `Text` and video `Motion` |
-| businessUnit | `naming.businessUnit`, one of the data pipeline's canonical project names (lf-dbt `normalize_project_name` / `map_paid_ads_project_id`): `Cloud Native Computing Foundation (CNCF)`, `LF Education`, `LF Events`, `PyTorch Project`, `OpenSearch Project`, `Open Source Security Foundation (OpenSSF)`, `RISC-V International`, `Agentic AI Foundation (AAIF)`, `Valkey`, `FinOps Project`, `LF Core`, `LF Corporate`, `LF Training`, `LFX Platform`, `The Linux Foundation` |
+| businessUnit | `naming.businessUnit`, one of the data pipeline's canonical project names (lf-dbt `normalize_project_name` / `map_paid_ads_project_id`): `Cloud Native Computing Foundation (CNCF)`, `LF Education`, `LF Events`, `PyTorch Project`, `OpenSearch Project`, `Open Source Security Foundation (OpenSSF)`, `RISC-V International`, `Agentic AI Foundation (AAIF)`, `Valkey`, `FinOps Project`, `LF Core`, `LF Corporate`, `LF Training`, `LFX Platform`, `The Linux Foundation`. For an event campaign, the foundation that owns the event (see [Business unit of an event campaign](#business-unit-of-an-event-campaign-587)) |
 | funnel | the claimed row's `funnel_stage`, as before (`MoFU` when unlabelled) |
 
 Values match case-insensitively and are stored in the spelling above. The campaign GROUP name is
@@ -3143,6 +3143,42 @@ before any upstream create — it must be an absolute **HTTPS** URL with a real 
 embedded userinfo/credentials, and have a cleanly parseable query. A URL that violates these
 fails the dispatch job pre-create (the brief endpoint accepts any string; this is enforced at
 dispatch, not at brief creation).
+
+#### MetaConfig naming (`metaConfig.naming`, #587)
+
+The same `naming` object as [`linkedInConfig.naming`](#linkedinconfig-naming-linkedinconfignaming-587)
+— `{region, audienceIntent, businessUnit}`, the same closed lists, case-insensitive matching,
+canonical spelling and refusals (`400 invalid campaign config: metaConfig.naming…`) — behind
+`META_NAMING_V2_ENABLED` (off by default; while off, `naming` is validated but every campaign
+keeps the legacy name). While the flag is on, `businessUnit` is required.
+
+```
+legacy  Events | <event> | <first geo target's region> | <objective> | Intent[ <tactic>][ #<n>] | Social | <project slug> | <funnel>
+v2      Events | <event> | <region> | <objective> | <audienceIntent>[ <tactic>][ #<n>] | <format> | <businessUnit> | <funnel>
+        Events | KubeCon NA 2026 | NA | Traffic | Intent | Static | Cloud Native Computing Foundation (CNCF) | MoFU
+```
+
+| Segment | Source |
+|---|---|
+| region | `naming.region`; omitted, the one region every (non-regulated) geo target falls in, bucketed as the legacy name buckets them (US, CA, MX → NA; GB, DE, FR, … → EMEA; IN → India; JP, KR, SG, AU, CN, TW, HK → APAC; BR → LATAM), else `Global`. Unlike the legacy name, a campaign spanning two regions is `Global`, not its first country's region |
+| objective | `metaConfig.objective`, as before (`Traffic`, `Awareness`, …) |
+| audienceIntent | `naming.audienceIntent`; omitted, `Retargeting` for a campaign labelled with the `retargeting` tactic, else `Intent` (the legacy value). A custom audience in `targeting` is not read as retargeting. The tactic and a later slot's `#<n>` are still appended |
+| format | derived from the creative, never sent: `Static` (single-image or link ad) for every Meta campaign today; a video creative will be `Motion` and a carousel `Carousel` |
+| businessUnit | `naming.businessUnit`, the closed list of `linkedInConfig.naming` |
+| funnel | the claimed row's `funnel_stage`, as before (`MoFU` when unlabelled) |
+
+The ad set name is unchanged. An existing campaign is never renamed: a retry sends the name the
+campaign row recorded, and on the by-name reconcile path (dormant until LFXV2-2665 sets it) a
+campaign found under the legacy name is reused under that name rather than duplicated.
+
+#### Business unit of an event campaign (#587)
+
+Owner decision, 2026-11-14, for every platform's `naming.businessUnit`: an EVENT campaign's
+business unit is the foundation that owns the event — KubeCon + CloudNativeCon is
+`Cloud Native Computing Foundation (CNCF)`, PyTorch Conference is `PyTorch Project` — and
+`LF Events` only for an event the Linux Foundation runs with no foundation behind it. The service
+holds no project→business-unit mapping, so self-serve must send the owning foundation's value; it
+is required on each platform while that platform's naming v2 flag is on.
 
 #### TwitterConfig (the `twitterConfig` object)
 

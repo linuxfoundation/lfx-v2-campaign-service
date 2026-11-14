@@ -415,6 +415,17 @@ const (
 	// (lf-dbt) parses the new names and self-serve sends naming.
 	EnvLinkedInAdsNamingV2Enabled = "LINKEDIN_ADS_NAMING_V2_ENABLED"
 
+	// EnvMetaNamingV2Enabled opts a deployment IN to Meta campaign naming v2 (#587): new campaigns
+	// are named by LF's convention, "Events | <event> | <region> | <objective> | <intent> |
+	// <format> | <business unit> | <funnel>", instead of the legacy name carrying the "Social"
+	// format and the LFX project slug as its business unit. Only the exact value "true" enables
+	// it; anything else keeps the legacy name byte for byte. While on,
+	// metaConfig.naming.businessUnit is required (a 400 before a job exists without it). Existing
+	// campaigns are never renamed, and a retry reuses the name the campaign row recorded. Turn it
+	// on per environment, in lfx-v2-argocd, only after lf-dbt parses the new names and self-serve
+	// sends naming.
+	EnvMetaNamingV2Enabled = "META_NAMING_V2_ENABLED"
+
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,
 	// so every campaign authenticates as the marketing-ops account regardless of any

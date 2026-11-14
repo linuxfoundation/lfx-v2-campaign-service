@@ -595,6 +595,15 @@ app:
     LINKEDIN_ADS_NAMING_V2_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to Meta campaign naming v2 (#587), the convention
+    # LINKEDIN_ADS_NAMING_V2_ENABLED applies to LinkedIn, in place of the legacy name with the
+    # "Social" format and the LFX project slug. While on, metaConfig.naming.businessUnit is required
+    # (an event's owning foundation). Existing campaigns are never renamed. Set it to exactly "true"
+    # in lfx-v2-argocd only after lf-dbt parses the new names and self-serve sends naming. Any other
+    # value is off, so a typo fails closed.
+    META_NAMING_V2_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to the X (Twitter) Ads ACCOUNT MONITOR
     # (/projects/{project_id}/connection-twitter-ads/account-monitor). Default
     # off for the same reason as MICROSOFT_METRICS_ENABLED above: the X account

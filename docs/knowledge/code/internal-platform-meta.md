@@ -1150,3 +1150,21 @@ into `no_conversions` as for every channel. Any other Meta campaign reads as bef
 `actions` requested, `ConversionsUnavailable`.
 
 Not verified live: no Meta call was made, and the action-type mapping is from the reference.
+
+**Naming v2 (#587, `naming.go`).** A non-nil `CampaignInput.Naming` (set by the dispatcher only
+while `META_NAMING_V2_ENABLED` is on) makes `CreateCampaign` name the campaign by LF's convention
+through the shared `internal/domain/campaignname`: `Events | <event> | <Region> | <Objective> |
+<AudienceIntent>[ <tactic>][ #<n>] | <Format> | <BusinessUnit> | <Funnel>`. `resolveCampaignName`
+picks, in order, `FrozenCampaignName` (the name the claimed row records, verbatim), the v2 name,
+else the legacy `buildCampaignName` byte for byte; a `Naming` off its closed lists or without a
+business unit is a PreflightRefusal before any request, and a v2 or frozen name is held to
+`maxLabelledCampaignNameRunes`. Defaults: region `campaignname.CountriesRegion` over the
+geo-filtered countries (the one bucket every country falls in, else `Global` — not the legacy
+first-country rule); intent `Retargeting` for the `retargeting` tactic, else `Intent`; format
+`campaignNameFormat`, always `Static` today, the hook where video (`Motion`) and carousel
+(`Carousel`) creatives map. The ad set name is unchanged. Retry safety: Meta reuses by name only on
+the `ReconcileByName` path (dormant); there, when nothing is frozen and no campaign has the v2 name,
+the LEGACY name is looked up too and a campaign found under it is reused under that name; when that
+lookup cannot settle, the legacy name stays the partial's handle. Pinned by
+`TestBuildCampaignNameV2`, `TestCreateCampaign_MetaNamingV2*` and
+`TestCreateCampaign_MetaFrozenNameWinsOverNamingV2`.

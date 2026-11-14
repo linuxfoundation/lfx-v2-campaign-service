@@ -1282,17 +1282,36 @@ type CampaignCreateInput struct {
 	// never renamed, and a retry reuses a campaign under the name it was created
 	// with. Refused with a 400 before any job exists, whatever the flag: an
 	// unknown key, an explicit null, a non-object or non-string value, and a value
-	// outside its list; while the flag is on, a missing businessUnit. REDDIT
-	// CONVERSION EVENT (#549): redditConfig.conversionEvent names the pixel event
-	// a conversions campaign optimizes toward, sent as the campaign's and the ad
-	// group's optimization_goal: PURCHASE, SIGN_UP, LEAD, PAGE_VISIT,
-	// VIEW_CONTENT, ADD_TO_CART, ADD_TO_WISHLIST or SEARCH, case-insensitive.
-	// Omitted means PURCHASE, as before. It is accepted only with objective
-	// conversions (also the default when objective is omitted) and only while the
-	// deployment sets REDDIT_CONVERSION_EVENT_ENABLED to "true". An unknown value,
-	// another objective, an explicit null, an empty or non-string value, a case
-	// variant of the key, or the field while the flag is off is refused
-	// synchronously with 400 "invalid campaign config:
+	// outside its list; while the flag is on, a missing businessUnit. META NAMING
+	// (#587) — metaConfig takes the same optional `naming` object as
+	// linkedInConfig, {"region": string, "audienceIntent": string, "businessUnit":
+	// string}, with the same closed lists, case-insensitive matching, canonical
+	// spelling and refusals, behind META_NAMING_V2_ENABLED (businessUnit required
+	// while it is on). With it on a new Meta campaign is named `Events | <event> |
+	// <region> | <objective> | <audienceIntent> | <format> | <businessUnit> |
+	// <funnel>` instead of the legacy `Events | <event> | <first geo target's
+	// region> | <objective> | Intent | Social | <project> | <funnel>`: region
+	// omitted means the one region every geo target falls in, else Global (a US
+	// and Germany campaign is Global, not NA); audienceIntent omitted means
+	// Retargeting for a retargeting tactic, else Intent; the format is derived,
+	// Static (a single-image or link ad) for every Meta campaign today. The ad set
+	// name is unchanged, an existing campaign is never renamed, and a retry sends
+	// the name the campaign row recorded. BUSINESS UNIT OF AN EVENT CAMPAIGN
+	// (#587, every platform's naming.businessUnit): the foundation that owns the
+	// event (KubeCon is Cloud Native Computing Foundation (CNCF), PyTorch
+	// Conference is PyTorch Project); LF Events only for an event the Linux
+	// Foundation runs with no foundation behind it. The service holds no
+	// project-to-business-unit mapping, so self-serve must send the foundation's
+	// business unit. REDDIT CONVERSION EVENT (#549): redditConfig.conversionEvent
+	// names the pixel event a conversions campaign optimizes toward, sent as the
+	// campaign's and the ad group's optimization_goal: PURCHASE, SIGN_UP, LEAD,
+	// PAGE_VISIT, VIEW_CONTENT, ADD_TO_CART, ADD_TO_WISHLIST or SEARCH,
+	// case-insensitive. Omitted means PURCHASE, as before. It is accepted only
+	// with objective conversions (also the default when objective is omitted) and
+	// only while the deployment sets REDDIT_CONVERSION_EVENT_ENABLED to "true". An
+	// unknown value, another objective, an explicit null, an empty or non-string
+	// value, a case variant of the key, or the field while the flag is off is
+	// refused synchronously with 400 "invalid campaign config:
 	// redditConfig.conversionEvent: ..." before any job exists. REDDIT EXCLUSIONS
 	// (#549): redditConfig takes `excludedSubreddits` (subreddit names, an
 	// optional r/ prefix stripped, each 2-21 letters, digits or underscores, at

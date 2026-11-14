@@ -33,6 +33,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/campaignname"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
@@ -2895,6 +2896,19 @@ type CampaignInput struct {
 	StageToken string
 	Tactic     string
 	SlotToken  string
+	// FrozenCampaignName is the campaign name the claimed row already records (#587), set by the
+	// dispatcher from model.DispatchCampaignName. Non-empty, it is used VERBATIM as the campaign
+	// name and neither the legacy nor the v2 name is composed, so a change to the naming rules (the
+	// META_NAMING_V2_ENABLED flip) between two attempts at one slot can never change the name a
+	// ReconcileByName lookup finds an earlier attempt's campaign by. Empty (every first attempt)
+	// composes the name as usual.
+	FrozenCampaignName string
+	// Naming selects campaign naming v2 (#587, naming.go): nil composes the legacy name byte for
+	// byte; non-nil composes LF's convention from its region, audience intent and business unit
+	// (an empty region and intent take their defaults from the geo targets and the tactic). The
+	// dispatcher sets it only while META_NAMING_V2_ENABLED is on. FrozenCampaignName wins over it,
+	// and on the ReconcileByName path so does an existing campaign under the legacy name.
+	Naming *campaignname.Naming
 }
 
 // CampaignResult mirrors MetaCampaignCreateResult.
@@ -3295,6 +3309,19 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return nil, domain.PreflightRefusalf("composed campaign name is too long: %d characters (max %d for a labelled or additional campaign); shorten the event name", n, maxLabelledCampaignNameRunes)
 		}
 	}
+	// The name this create uses (#587): the row's recorded name, else the v2 name while Naming is
+	// set, else the legacy one. A Naming off its closed lists is refused here, before any request.
+	// A v2 or recorded name is held to the same service bound as a labelled one; the unlabelled
+	// legacy name stays unbounded, as before.
+	campaignName, legacyName, nameSteps, err := resolveCampaignName(in, geoCountries)
+	if err != nil {
+		return nil, err
+	}
+	if campaignName != legacyName {
+		if n := utf8.RuneCountInString(campaignName); n > maxLabelledCampaignNameRunes {
+			return nil, domain.PreflightRefusalf("campaign name is too long: %d characters (max %d); shorten the event name", n, maxLabelledCampaignNameRunes)
+		}
+	}
 
 	// Step 1: Account preflight (GET the ad-account object). This both verifies
 	// access and fetches the account's ISO 4217 currency CODE — from which the
@@ -3414,7 +3441,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Geo targets skipped (require regional compliance declaration in Meta Ads Manager): %s", callerValueList(skippedGeos)))
 	}
 
-	campaignName := buildCampaignName(in, geoCountries)
+	steps = append(steps, nameSteps...)
 
 	// Step 2a: reconcile by name BEFORE creating. buildCampaignName is fully
 	// deterministic (same brief → same name), so a retry after a prior
@@ -3437,6 +3464,21 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	var lookupErr error
 	if in.ReconcileByName {
 		existingCampaignID, lookupErr = c.findCampaignByName(ctx, accountID, campaignName, objParams.CampaignObjective)
+		// Naming v2 (#587) must never duplicate a campaign an earlier attempt created under the
+		// LEGACY name. The frozen name covers a row that still records it; this covers a slot whose
+		// row is gone. A legacy-named campaign found here is reused under its legacy name — never
+		// renamed. When that lookup cannot settle the question the legacy name is kept as the
+		// handle, so the partial this create returns, and so the name a retry freezes, is the one
+		// that finds an earlier legacy-named campaign.
+		if lookupErr == nil && existingCampaignID == "" && in.Naming != nil && strings.TrimSpace(in.FrozenCampaignName) == "" && legacyName != campaignName {
+			existingCampaignID, lookupErr = c.findCampaignByName(ctx, accountID, legacyName, objParams.CampaignObjective)
+			if existingCampaignID != "" || lookupErr != nil {
+				campaignName = legacyName
+			}
+			if existingCampaignID != "" {
+				steps = append(steps, fmt.Sprintf("Campaign %s already exists under the legacy name %q; reused under that name (naming v2 never renames an existing campaign)", existingCampaignID, legacyName))
+			}
+		}
 	}
 	if lookupErr != nil {
 		// A DEFINITE conflict is checked before anything else, including the caller's

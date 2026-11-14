@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/campaignname"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
@@ -83,6 +84,25 @@ type metaConfig struct {
 	// not "true" (metaTargetingEnabled); validated by meta.NormalizeAudienceTargeting. Null or absent
 	// targets as before.
 	Targeting *meta.AudienceTargeting `json:"targeting,omitempty"`
+	// Naming is the caller's choice of the v2 campaign name's region, audience intent and business
+	// unit (#587), each from a closed list (campaignname.Validate). Validated whatever the
+	// deployment gate says; it shapes the name only while META_NAMING_V2_ENABLED is on.
+	Naming *campaignname.Naming `json:"naming,omitempty"`
+}
+
+// metaNamingV2Enabled reports whether this deployment opted in to Meta campaign naming v2 (#587).
+// Read per call so it flips without a rebuild. Off by default: the data pipeline must parse the
+// new names before any campaign carries one.
+func metaNamingV2Enabled() bool {
+	return os.Getenv(constants.EnvMetaNamingV2Enabled) == "true"
+}
+
+// metaNaming checks metaConfig.naming before any job or request and returns what the client
+// composes the name from: nil while the gate is off (the legacy name), else the canonical copy.
+// A value off its list is refused whatever the gate says; with the gate on a business unit is
+// required. See campaignname.ResolveRequest.
+func metaNaming(cfg metaConfig) (*campaignname.Naming, error) {
+	return campaignname.ResolveRequest("metaConfig", cfg.Naming, meta.ErrNamingInvalid, metaNamingV2Enabled(), constants.EnvMetaNamingV2Enabled)
 }
 
 // metaCreativeOptionDisabled refuses a creative option this deployment has not opted in to. It
@@ -723,9 +743,23 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 			domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid, brief.ProjectID)))
 	}
 
+	// A wrong-shaped metaConfig.naming (#587) is reported by its own refusal, not as the generic
+	// decode failure below.
+	if err := campaignname.CheckShape(config, "metaConfig"); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg metaConfig
 	if err := unmarshalPlatformConfig(config, "metaConfig", &cfg); err != nil {
 		return nil, notCreated(err)
+	}
+	// Campaign naming v2 (#587), validated before any upstream call. nil while the gate is off:
+	// the client then composes the legacy name. The snapshot records the canonical values.
+	naming, err := metaNaming(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	if naming != nil {
+		cfg.Naming = naming
 	}
 	// The bidding choice, validated before any upstream call; the one currency-dependent rule (a
 	// whole number of minor units) is the client's, after its account preflight read and still
@@ -850,6 +884,10 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		StageToken: stageToken,
 		Tactic:     tacticToken,
 		SlotToken:  model.SlotNameToken(model.DispatchSlotVersion(ctx)),
+		// The name the claimed row already records, if any (#587): sent verbatim so a retry never
+		// recomposes it under changed naming rules. See model.WithDispatchCampaignName.
+		FrozenCampaignName: model.DispatchCampaignName(ctx),
+		Naming:             naming,
 	}
 
 	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, account, d.opts...)
@@ -1691,6 +1729,15 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 		return err
 	}
 	if err := checkMetaTargeting(t); err != nil {
+		return err
+	}
+	// metaConfig.naming (#587) is promised as a synchronous 400 too: its shape, a value outside its
+	// closed list, and a missing business unit while naming v2 is on. The shape is checked on the
+	// raw JSON, since the best-effort decode above skips a wrong-typed value.
+	if err := campaignname.CheckShape(config, "metaConfig"); err != nil {
+		return err
+	}
+	if _, err := metaNaming(cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable

@@ -5622,3 +5622,10 @@ byte for byte); while it is on, a missing `businessUnit` is refused, and the can
 `CampaignInput.Naming` and replaces the snapshot's. `Dispatch` also passes
 `model.DispatchCampaignName(ctx)` as `CampaignInput.FrozenCampaignName`, the name the claimed row
 already records, so a retry never recomposes it.
+
+**Meta naming (#587).** `metaConfig.Naming` (`metaConfig.naming`) is checked by
+`campaignname.CheckShape` (before the decode, in `PreflightCreate` and again in `Dispatch`) and
+`metaNaming` (`campaignname.ResolveRequest` with `meta.ErrNamingInvalid`): a value off its list is a
+synchronous 400 whatever `META_NAMING_V2_ENABLED` says, and a missing `businessUnit` while it is on.
+`Dispatch` passes the canonical copy as `CampaignInput.Naming` (nil while the gate is off) and
+`model.DispatchCampaignName(ctx)` as `CampaignInput.FrozenCampaignName`.
