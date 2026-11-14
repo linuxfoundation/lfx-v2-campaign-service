@@ -277,6 +277,15 @@ const (
 	// the shared account until a live create confirms it.
 	EnvMicrosoftAdScheduleEnabled = "MICROSOFT_AD_SCHEDULE_ENABLED"
 
+	// EnvMicrosoftBidAdjustmentsEnabled opts a deployment IN to microsoftConfig.deviceBidAdjustments,
+	// ageBidAdjustments and genderBidAdjustments (#563 gap 8): biddable device, age and gender
+	// criteria on the new campaign. Only the exact value "true" enables them; unset or any other
+	// value fails closed, and a create naming any of them is refused with a 400 before any job
+	// exists (and again at dispatch). They name no account resource; the flag keeps UNVERIFIED
+	// request shapes (from the v13 reference) off the shared account until a live create confirms
+	// them, notably that a device criterion can be ADDED to a new campaign.
+	EnvMicrosoftBidAdjustmentsEnabled = "MICROSOFT_BID_ADJUSTMENTS_ENABLED"
+
 	// EnvMicrosoftAdExtensionsEnabled opts a deployment IN to microsoftConfig.sitelinks and
 	// microsoftConfig.callouts (#563), created at create time as SitelinkAdExtension and
 	// CalloutAdExtension entries and associated with the new Search campaign. Only the exact value
