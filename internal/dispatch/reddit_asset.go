@@ -15,6 +15,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/assetsign"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/campaignname"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
@@ -105,6 +106,10 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 	if err := checkRedditExclusionsShape(config); err != nil {
 		return err
 	}
+	// And a wrong-shaped redditConfig.naming (#587).
+	if err := campaignname.CheckShape(config, "redditConfig"); err != nil {
+		return err
+	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can past a type
 	// error, so the bid plan runs even when an unrelated field is broken — an invalid bidding is
 	// always the synchronous 400. The asset checks keep their old scope: they run only on a config
@@ -129,6 +134,11 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 	// unrelated mistyped field must not turn a gated or invalid exclusion list into an accepted
 	// job. checkRedditExclusionsShape above already refused a mistyped list, so the lists decoded.
 	if err := checkRedditTargetingExclusions(cfg); err != nil {
+		return err
+	}
+	// redditConfig.naming (#587): a value outside its closed list, and a missing business unit
+	// while naming v2 is on, on the best-effort decode like the rules above.
+	if _, err := redditNaming(cfg); err != nil {
 		return err
 	}
 	if decodeErr != nil {

@@ -589,6 +589,11 @@ platform, an event campaign's business unit is the foundation that owns the even
 only for an LF-run event with no foundation); the caller sends it. See `docs/api-catalog.md`
 § MetaConfig naming and § Business unit of an event campaign.
 
+Reddit (#587): `REDDIT_NAMING_V2_ENABLED` does the same for new Reddit campaigns
+(`redditConfig.naming`; format `Motion` for the video_views objective, `Social` for a promoted
+existing post, else `Static`). See
+`docs/api-catalog.md` § RedditConfig naming.
+
 This service's own reads do not parse names. The project-scoped reads — the keyword and audience
 insights and the Google Ads, Meta, Reddit and X account monitors — attribute an upstream campaign to
 a project by `campaigns.project_id`, the row this service wrote when it created or adopted the

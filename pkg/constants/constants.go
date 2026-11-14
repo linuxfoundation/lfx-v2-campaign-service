@@ -426,6 +426,15 @@ const (
 	// sends naming.
 	EnvMetaNamingV2Enabled = "META_NAMING_V2_ENABLED"
 
+	// EnvRedditNamingV2Enabled opts a deployment IN to Reddit campaign naming v2 (#587), the
+	// convention EnvMetaNamingV2Enabled applies to Meta, in place of the legacy name carrying the
+	// "Social" format and the LFX project slug as its business unit. Only the exact value "true"
+	// enables it. While on, redditConfig.naming.businessUnit is required (a 400 before a job exists
+	// without it). Existing campaigns are never renamed, and a retry reuses the name the campaign
+	// row recorded. Turn it on per environment only after lf-dbt parses the new names and
+	// self-serve sends naming.
+	EnvRedditNamingV2Enabled = "REDDIT_NAMING_V2_ENABLED"
+
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,
 	// so every campaign authenticates as the marketing-ops account regardless of any

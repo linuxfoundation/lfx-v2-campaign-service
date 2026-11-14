@@ -479,6 +479,13 @@ openssl rand -base64 32
   owning foundation's business unit. Existing campaigns are never renamed. The chart sets it to
   `"false"` (`app.environment.META_NAMING_V2_ENABLED.value`); enable it per-environment once lf-dbt
   parses the new names and self-serve sends `naming`.
+- `REDDIT_NAMING_V2_ENABLED` (default unset, i.e. OFF) — opts a deployment IN to Reddit campaign
+  naming v2 (#587), the same convention as `LINKEDIN_ADS_NAMING_V2_ENABLED`, in place of the legacy
+  name with the "Social" format and the LFX project slug. Only the exact value `true` enables it.
+  While on, `redditConfig.naming.businessUnit` is required (400 before a job exists); for an event
+  it is the owning foundation's business unit. Existing campaigns are never renamed. The chart sets
+  it to `"false"` (`app.environment.REDDIT_NAMING_V2_ENABLED.value`); enable it per-environment once
+  lf-dbt parses the new names and self-serve sends `naming`.
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request
   names no `source_workflow_url`. Unset or empty selects the in-code

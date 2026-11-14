@@ -1029,3 +1029,17 @@ Not verified live: neither read has been exercised against a live account. Befor
 turned on, a probe should confirm the interests shape (that the ad group takes the listed ids,
 and whether the list paginates) and whether the communities `names` filter ignores case. Names
 are sent as the caller spelled them and matched ignoring case.
+
+**Naming v2 (#587, `naming.go`).** A non-nil `CampaignInput.Naming` (set by the dispatcher only
+while `REDDIT_NAMING_V2_ENABLED` is on) makes `CreateCampaign` name the campaign by LF's convention
+through the shared `internal/domain/campaignname`. `resolveCampaignName` picks, in order,
+`FrozenCampaignName` (the name the claimed row records, verbatim), `buildRedditCampaignNameV2`, else
+the legacy `buildRedditCampaignName` byte for byte; a `Naming` off its closed lists or without a
+business unit is a PreflightRefusal before any request, and Reddit's 200-rune name check covers
+whichever name it is. Defaults: region `campaignname.CountriesRegion` over the targeted countries
+(US when none; the one bucket all fall in, else `Global`); intent `Retargeting` for the
+`retargeting` tactic, else `Intent`; format `campaignNameFormat` — `Motion` for `video_views`,
+`Social` for a `PostURL` (an existing post), else `Static` — the hook for other authored post kinds. The ad group name is unchanged. Reddit
+never reuses a campaign by name, so the frozen name is the whole retry guard; there is no
+legacy-name lookup. Pinned by `TestBuildRedditCampaignNameV2`, `TestCreateCampaign_RedditNamingV2*`
+and `TestCreateCampaign_RedditFrozenNameWinsOverNamingV2`.

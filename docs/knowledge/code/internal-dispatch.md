@@ -5629,3 +5629,10 @@ already records, so a retry never recomposes it.
 synchronous 400 whatever `META_NAMING_V2_ENABLED` says, and a missing `businessUnit` while it is on.
 `Dispatch` passes the canonical copy as `CampaignInput.Naming` (nil while the gate is off) and
 `model.DispatchCampaignName(ctx)` as `CampaignInput.FrozenCampaignName`.
+
+**Reddit naming (#587).** `redditConfig.Naming` follows the Meta pattern: `campaignname.CheckShape`
+in `PreflightCreate` (with the other raw-shape checks) and before the decode in `Dispatch`, and
+`redditNaming` (`campaignname.ResolveRequest` with `reddit.ErrNamingInvalid`) on the best-effort
+decode in `PreflightCreate` and before any request in `Dispatch`, gated by
+`REDDIT_NAMING_V2_ENABLED`; `Dispatch` passes the canonical copy as `CampaignInput.Naming` and the
+recorded name as `FrozenCampaignName`.

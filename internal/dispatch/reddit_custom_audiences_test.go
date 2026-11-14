@@ -45,6 +45,8 @@ var redditUngatedFields = map[string]bool{
 	"excludedSubreddits": true, "excludedGeoTargets": true,
 	// conversionEvent (#549) names a pixel event from Reddit's public optimization-goal enum.
 	"conversionEvent": true,
+	// naming (#587) picks name segments from closed lists; it names no ad-account resource.
+	"naming": true,
 }
 
 // TestEveryRedditConfigFieldIsClassifiedForTheMarketingOpsGate fails when a redditConfig field is

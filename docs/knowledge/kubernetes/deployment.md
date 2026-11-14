@@ -136,6 +136,12 @@ Only exactly `"true"` enables it. On, `metaConfig.naming.businessUnit` is requir
 after lf-dbt parses the new names and self-serve sends `naming`; existing campaigns are never
 renamed.
 
+`REDDIT_NAMING_V2_ENABLED` defaults to `"false"` (#587) and applies the same naming v2 convention to
+new Reddit campaigns, in place of the legacy name with the "Social" format and the LFX project slug.
+Only exactly `"true"` enables it. On, `redditConfig.naming.businessUnit` is required. Turn it on
+only after lf-dbt parses the new names and self-serve sends `naming`; existing campaigns are never
+renamed.
+
 `SURVEY_SEQUENCE_WORKFLOW_ID` is a plain value defaulting to `""`, which selects the in-code
 default `1841232183`: the LF Research survey-promo workflow a survey send series
 (`send-workflows`) is copied from when a request names none. That id exists only in the LF

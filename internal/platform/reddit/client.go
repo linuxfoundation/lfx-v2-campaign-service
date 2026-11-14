@@ -34,6 +34,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/campaignname"
 )
 
 // ---------------------------------------------------------------------------
@@ -545,6 +546,19 @@ type CampaignInput struct {
 	// The dispatcher admits them only behind REDDIT_CUSTOM_AUDIENCES_ENABLED.
 	CustomAudienceIDs         []string
 	ExcludedCustomAudienceIDs []string
+	// FrozenCampaignName is the campaign name the claimed row already records (#587), set by the
+	// dispatcher from model.DispatchCampaignName. Non-empty, it is used VERBATIM and neither the
+	// legacy nor the v2 name is composed, so a retry never changes a recorded campaign's name
+	// under changed naming rules (the REDDIT_NAMING_V2_ENABLED flip). Reddit never reuses a
+	// campaign by name, so it is the only retry guard naming needs here. Empty (every first
+	// attempt) composes the name as usual.
+	FrozenCampaignName string
+	// Naming selects campaign naming v2 (#587, naming.go): nil composes the legacy name byte for
+	// byte; non-nil composes LF's convention from its region, audience intent and business unit
+	// (an empty region and intent take their defaults from the targeted countries and the
+	// tactic). The dispatcher sets it only while REDDIT_NAMING_V2_ENABLED is on.
+	// FrozenCampaignName wins over it.
+	Naming *campaignname.Naming
 }
 
 // ManualCPCBidSupported reports whether a campaign with this objective can be created with a
@@ -1960,7 +1974,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	//
 	// campaignName is also the handle an ambiguous partial carries when no id exists yet, so
 	// composing it here serves both purposes.
-	campaignName := buildRedditCampaignName(in, objective, resolveRegion(geos))
+	// The name is the row's recorded one, else the v2 name while Naming is set, else the legacy
+	// one (#587); a Naming off its closed lists is refused here, before any request. Both length
+	// checks below cover whichever it is.
+	campaignName, nameStep, err := resolveCampaignName(in, objective, geos)
+	if err != nil {
+		return nil, err
+	}
+	if nameStep != "" {
+		steps = append(steps, nameStep)
+	}
 	geoLabel := strings.Join(geos, "+")
 	adGroupName := fmt.Sprintf("Events | %s | %s | Intent | Communities + Keywords", replacePipes(in.EventName), geoLabel)
 	if n := utf8.RuneCountInString(campaignName); n > redditMaxNameRunes {

@@ -56,7 +56,7 @@ const (
 const (
 	FormatStatic   = "Static"   // a single-image (or link-preview) ad
 	FormatMotion   = "Motion"   // a video ad
-	FormatSocial   = "Social"   // reserved: LF's list carries it; no creative this service creates maps to it
+	FormatSocial   = "Social"   // a promoted existing organic post, whose content the service does not read
 	FormatText     = "Text"     // a text-only ad (LinkedIn text ads, an X text post)
 	FormatCarousel = "Carousel" // a multi-card ad; no client creates one on main yet
 )

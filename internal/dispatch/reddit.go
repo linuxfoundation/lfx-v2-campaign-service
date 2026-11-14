@@ -14,6 +14,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/assetsign"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/campaignname"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
@@ -83,6 +84,25 @@ type redditConfig struct {
 	// (service.RedditMarketingOpsInputs), because the audiences belong to the shared ad account.
 	CustomAudienceIDs         []string `json:"customAudienceIds"`
 	ExcludedCustomAudienceIDs []string `json:"excludedCustomAudienceIds"`
+	// Naming is the caller's choice of the v2 campaign name's region, audience intent and business
+	// unit (#587), each from a closed list (campaignname.Validate). Validated whatever the
+	// deployment gate says; it shapes the name only while REDDIT_NAMING_V2_ENABLED is on.
+	Naming *campaignname.Naming `json:"naming,omitempty"`
+}
+
+// redditNamingV2Enabled reports whether this deployment opted in to Reddit campaign naming v2
+// (#587). Read per call so it flips without a rebuild. Off by default: the data pipeline must
+// parse the new names before any campaign carries one.
+func redditNamingV2Enabled() bool {
+	return os.Getenv(constants.EnvRedditNamingV2Enabled) == "true"
+}
+
+// redditNaming checks redditConfig.naming before any job or request and returns what the client
+// composes the name from: nil while the gate is off (the legacy name), else the canonical copy.
+// A value off its list is refused whatever the gate says; with the gate on a business unit is
+// required. See campaignname.ResolveRequest.
+func redditNaming(cfg redditConfig) (*campaignname.Naming, error) {
+	return campaignname.ResolveRequest("redditConfig", cfg.Naming, reddit.ErrNamingInvalid, redditNamingV2Enabled(), constants.EnvRedditNamingV2Enabled)
 }
 
 // redditBidPlan resolves redditConfig's bidding choice. Manual bidding creates campaign and ad
@@ -244,6 +264,10 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	if err := checkRedditCustomAudienceShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	// Likewise a wrong-shaped redditConfig.naming (#587).
+	if err := campaignname.CheckShape(config, "redditConfig"); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg redditConfig
 	if err := unmarshalPlatformConfig(config, "redditConfig", &cfg); err != nil {
 		// A wrong-typed conversionEvent also fails this decode; report it by its own field-specific
@@ -262,6 +286,15 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	plan, err := redditBidPlan(cfg)
 	if err != nil {
 		return nil, notCreated(err)
+	}
+	// Campaign naming v2 (#587), validated before any upstream call. nil while the gate is off:
+	// the client then composes the legacy name. The snapshot records the canonical values.
+	naming, err := redditNaming(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	if naming != nil {
+		cfg.Naming = naming
 	}
 	// Custom audiences (#549): the deployment gate and the id rules, before any Reddit call
 	// (PreflightCreate normally refused a bad list already, as a 400). Their type was checked on
@@ -383,6 +416,10 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		StageToken: stageToken,
 		Tactic:     tacticToken,
 		SlotToken:  model.SlotNameToken(model.DispatchSlotVersion(ctx)),
+		// The name the claimed row already records, if any (#587): sent verbatim so a retry never
+		// recomposes it under changed naming rules. See model.WithDispatchCampaignName.
+		FrozenCampaignName: model.DispatchCampaignName(ctx),
+		Naming:             naming,
 	}
 
 	// The reddit client's contract: (nil, err) ONLY when NOTHING was (or may have

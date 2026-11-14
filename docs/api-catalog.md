@@ -728,6 +728,33 @@ excludedCustomAudienceIds?: string[]
 
 The connection supplies the ad account id and OAuth2 credentials — not this campaign config.
 
+#### RedditConfig naming (`redditConfig.naming`, #587)
+
+The same `naming` object as [`linkedInConfig.naming`](#linkedinconfig-naming-linkedinconfignaming-587)
+— `{region, audienceIntent, businessUnit}`, the same closed lists, matching and refusals
+(`400 invalid campaign config: redditConfig.naming…`, from the pre-flight and again at dispatch) —
+behind `REDDIT_NAMING_V2_ENABLED` (off by default; while off, `naming` is validated but every
+campaign keeps the legacy name). While the flag is on, `businessUnit` is required; for an event it
+is the owning foundation (see [Business unit of an event campaign](#business-unit-of-an-event-campaign-587)).
+
+```
+legacy  Events | <event> | <first geo target's region> | <objective> | Intent[ <tactic>][ #<n>] | Social | <project slug> | <funnel>
+v2      Events | <event> | <region> | <objective> | <audienceIntent>[ <tactic>][ #<n>] | <format> | <businessUnit> | <funnel>
+        Events | KubeCon NA 2026 | NA | Traffic | Intent | Static | Cloud Native Computing Foundation (CNCF) | ToFU
+```
+
+| Segment | Source |
+|---|---|
+| region | `naming.region`; omitted, the one region every targeted country falls in (`geoTargets`, or the US default when it is empty; the legacy buckets), else `Global` — a two-region campaign is `Global`, not its first country's region |
+| objective | `redditConfig.objective`, as before (`Traffic`, `Conversions`, `Awareness`, `Video Views`) |
+| audienceIntent | `naming.audienceIntent`; omitted, `Retargeting` for a campaign labelled with the `retargeting` tactic, else `Intent` (the legacy value). A custom audience is not read as retargeting. The tactic and a later slot's `#<n>` are still appended |
+| format | derived, never sent: `Motion` for the `video_views` objective; else `Social` when `postUrl` promotes an existing post (its content is not read); else `Static`, the image post the service authors |
+| businessUnit | `naming.businessUnit`, the closed list of `linkedInConfig.naming` |
+| funnel | the claimed row's `funnel_stage`, as before (`ToFU` when unlabelled) |
+
+The ad group name is unchanged. Reddit never reuses a campaign by name, so the only retry guard is
+the recorded name: a retry sends the name the campaign row recorded, never a recomposed one.
+
 #### MicrosoftConfig (the `microsoftConfig` object)
 
 Microsoft Advertising (Bing) per-platform config. The dispatcher creates a PAUSED Search
