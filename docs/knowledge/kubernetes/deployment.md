@@ -121,6 +121,11 @@ no account resource, so it is not behind `global_marketing_ops`.
 `metaConfig.targeting.interests` (detailed targeting interest ids, validated with Meta before
 anything is created), with the same rules as `META_LOCALE_TARGETING_ENABLED`.
 
+`META_REGION_TARGETING_ENABLED` is the same kind of gate, defaulting to `"false"` (#550), for
+`metaConfig.targeting.regions` and `targeting.cities` (Meta geo-location keys added to the country
+targeting, each looked up and its parent country checked before anything is created), with the same
+rules as `META_LOCALE_TARGETING_ENABLED`.
+
 `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is the same kind of gate, defaulting to `"false"`
 (#461): it opts a cluster in to `googleAdsConfig.performanceMaxAudienceSignal`, one existing
 Google Ads Audience attached to a Performance Max asset group as a signal. Like the Demand Gen

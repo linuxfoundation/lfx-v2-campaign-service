@@ -1190,6 +1190,23 @@ not behind `global_marketing_ops`. Not built yet: behaviors and work positions, 
 `/search?type=adinterest` picker read. Not verified live: the validation read's answer shape and the
 `flexible_spec` payload.
 
+**Regions and cities (gap 13, `geo_targeting.go`).** `AudienceTargeting.Regions` and `.Cities`
+(`metaConfig.targeting.regions` / `.cities`) are numeric Meta geo-location keys, de-duplicated, at
+most `MaxGeoKeys` (25) each, ADDED to the ad set's `geo_locations` beside the countries
+(`adSetGeoLocations`: `regions` / `cities` as `[{"key": …}]`). A location is a hard constraint, not
+an inclusion. With no geoTargets supplied the US default is dropped (`allGeo = nil`), so a region-only
+create sends no `countries` and names its campaign after the parents' region; the "all regulated"
+refusal is skipped when a region or city remains. After the account preflight, before any write,
+`checkGeoLocations` sends one `GET /search?type=adgeolocationmeta&regions=[…]&cities=[…]` and reads
+`data.regions` / `data.cities` keyed by key: an unanswered key, a missing or non-ISO `country_code`,
+missing `data` or a failed read is an error; a key of the other `type`, or a parent country that is
+in `metaIneligibleCountries` (the sanctioned-country check), in `regulatedCountries`, already a
+country target (Meta refuses overlapping locations) or a DSA territory without both disclosures is a
+refusal. Its own flag, `META_REGION_TARGETING_ENABLED` (default off), gates it like the locale flag;
+not behind `global_marketing_ops`. Not built: a city radius (Meta's default radius applies) and zip
+codes. Not verified live: the lookup's answer shape, whether Meta refuses (rather than merges) an
+overlap, and the settings readback, which still reports countries only.
+
 ## Ads under an ad set (`ads.go`, decision D7 first step)
 
 `ListAdSetAds(ctx, adSetID, campaignID, accountID, window)` is read-only: `GET /{ad_set}/ads`

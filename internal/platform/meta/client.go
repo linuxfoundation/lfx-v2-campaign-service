@@ -3272,6 +3272,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			suppliedGeos++
 		}
 	}
+	// Regions and cities (#550, gap 13) are ADDED to the country targeting. With no country
+	// supplied they are the whole targeting: the US default would overlap a US region (Meta refuses
+	// overlapping locations) and would target a country the caller did not ask for.
+	if suppliedGeos == 0 && audience.subCountryGeo() {
+		allGeo = nil
+	}
 	// Surface geos that were supplied but dropped by validateGeoTargets (bogus/
 	// non-ISO codes, or Meta-ineligible/sanctioned countries like IR/CU/KP/RU) as
 	// an explicit step, so a caller who mixed eligible + ineligible codes isn't
@@ -3328,7 +3334,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			geoCountries = append(geoCountries, g)
 		}
 	}
-	if len(geoCountries) == 0 {
+	if len(geoCountries) == 0 && !audience.subCountryGeo() {
 		// skippedGeos holds only codes that passed validateGeoTargets AND are keys of the
 		// fixed regulatedCountries table, so the list is service-vetted, not free caller text.
 		return nil, domain.PreflightRefusalf("meta campaign skipped: all selected geo targets (%s) are regulated and excluded from API targeting; supply at least one eligible (non-regulated) geo target", strings.Join(skippedGeos, ", "))
@@ -3391,6 +3397,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// The Instant Form is read the same way (#550, gap 8): it must be an ACTIVE form of this Page.
 	if err := c.checkLeadForm(ctx, in.LeadFormID); err != nil {
 		return nil, err
+	}
+	// Every region and city is looked up the same way (#550, gap 13), and its parent country must
+	// pass the country rules. A region- or city-only create names its campaign after those countries.
+	geoParents, err := c.checkGeoLocations(ctx, audience, geoCountries, in.DSABeneficiary != "" && in.DSAPayor != "")
+	if err != nil {
+		return nil, err
+	}
+	nameGeo := geoCountries
+	if len(nameGeo) == 0 {
+		nameGeo = geoParents
 	}
 
 	// Resolve the currency offset used to convert the whole-currency-unit budget to
@@ -3468,7 +3484,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Geo targets skipped (require regional compliance declaration in Meta Ads Manager): %s", callerValueList(skippedGeos)))
 	}
 
-	campaignName := buildCampaignName(in, geoCountries)
+	campaignName := buildCampaignName(in, nameGeo)
 
 	// Step 2a: reconcile by name BEFORE creating. buildCampaignName is fully
 	// deterministic (same brief → same name), so a retry after a prior
@@ -3662,7 +3678,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
-	targeting := map[string]any{"geo_locations": map[string]any{"countries": geoCountries}}
+	targeting := map[string]any{"geo_locations": adSetGeoLocations(geoCountries, audience)}
 	for k, v := range placementTargeting {
 		targeting[k] = v
 	}
@@ -3830,7 +3846,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		// Currency-neutral: Meta interprets the budget in the ad account's currency,
 		// which may not be USD, so don't prefix with '$'.
-		steps = append(steps, fmt.Sprintf("Ad set created: %s (%.2f %s budget, geo: %s)", adSetID, in.Budget, budgetLabel, strings.Join(geoCountries, ", ")))
+		steps = append(steps, fmt.Sprintf("Ad set created: %s (%.2f %s budget, geo: %s)", adSetID, in.Budget, budgetLabel, geoSummary(geoCountries, audience)))
 	}
 
 	// Step 4: creative + ad per variant (per-variant failures are non-fatal).

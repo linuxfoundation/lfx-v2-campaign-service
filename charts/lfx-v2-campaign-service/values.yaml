@@ -578,6 +578,17 @@ app:
     META_INTEREST_TARGETING_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to metaConfig.targeting.regions and
+    # metaConfig.targeting.cities (#550): Meta geo-location keys added to the ad
+    # set's country targeting. Every key is looked up before anything is
+    # created; a key whose country is sanctioned, regulated, already targeted
+    # as a whole, or in the EU without the DSA disclosures fails the job with
+    # nothing created. Same rules as META_LOCALE_TARGETING_ENABLED. A location
+    # is Meta's own taxonomy, so it needs no global_marketing_ops. Any value
+    # other than "true" is treated as off.
+    META_REGION_TARGETING_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to googleAdsConfig.performanceMaxAudienceSignal
     # (#461): one existing Google Ads Audience attached to a Performance Max
     # asset group as a signal. A per-deployment opt-in, off by default, like

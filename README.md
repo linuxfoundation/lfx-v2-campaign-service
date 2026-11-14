@@ -443,6 +443,13 @@ openssl rand -base64 32
   validated with Meta's interest validation read before anything is
   created. Same rules as `META_LOCALE_TARGETING_ENABLED`. The chart sets it
   to `"false"`; enable it per-environment in the ArgoCD overlay.
+- `META_REGION_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `metaConfig.targeting.regions` and `targeting.cities`
+  (#550), Meta geo-location keys added to the ad set's country targeting.
+  Every key is looked up before anything is created, and its parent country
+  must pass the sanctioned, regulated, overlap and EU DSA rules. Same rules as
+  `META_LOCALE_TARGETING_ENABLED`. The chart sets it to `"false"`; enable it
+  per-environment in the ArgoCD overlay.
 - `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.performanceMaxAudienceSignal`,
   one existing Google Ads Audience attached to a Performance Max asset

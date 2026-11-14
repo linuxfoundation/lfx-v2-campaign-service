@@ -55,6 +55,14 @@ type AudienceTargeting struct {
 	// Advantage+ flag explicit (see inclusion). Gated by its own deployment flag. Each id is checked
 	// with Meta's interest validation read before anything is created (checkInterests).
 	Interests []string `json:"interests"`
+	// Regions and Cities are Meta geo-location keys (numeric strings; the Targeting Search
+	// `adgeolocation` type lists them), at most MaxGeoKeys distinct each (#550, gap 13). They are
+	// ADDED to the country targeting in the ad set's `geo_locations` (`regions` and `cities`, each a
+	// list of `{"key": …}`); a location is a hard constraint, not an inclusion. Every key is looked
+	// up before anything is created and its parent country must be targetable (checkGeoLocations).
+	// Gated by its own deployment flag.
+	Regions []string `json:"regions"`
+	Cities  []string `json:"cities"`
 }
 
 const (
@@ -88,12 +96,14 @@ var metaDevicePlatforms = map[string]bool{"mobile": true, "desktop": true}
 func (t *AudienceTargeting) IsZero() bool {
 	return t == nil || (t.AgeMin == nil && t.AgeMax == nil && len(t.Genders) == 0 &&
 		len(t.CustomAudiences) == 0 && len(t.ExcludedCustomAudiences) == 0 && t.AdvantageAudience == nil &&
-		len(t.Locales) == 0 && len(t.DevicePlatforms) == 0 && len(t.Interests) == 0)
+		len(t.Locales) == 0 && len(t.DevicePlatforms) == 0 && len(t.Interests) == 0 &&
+		len(t.Regions) == 0 && len(t.Cities) == 0)
 }
 
 // HasAudienceFields reports whether t sets any of the six fields META_AUDIENCE_TARGETING_ENABLED
 // gates — age, gender, the two custom audience lists, advantageAudience — as opposed to only the
-// later fields (locales, devicePlatforms, interests) that have their own deployment flags.
+// later fields (locales, devicePlatforms, interests, regions, cities) that have their own deployment
+// flags.
 func (t *AudienceTargeting) HasAudienceFields() bool {
 	return t != nil && (t.AgeMin != nil || t.AgeMax != nil || len(t.Genders) > 0 ||
 		len(t.CustomAudiences) > 0 || len(t.ExcludedCustomAudiences) > 0 || t.AdvantageAudience != nil)
@@ -150,6 +160,12 @@ func NormalizeAudienceTargeting(t *AudienceTargeting) (*AudienceTargeting, error
 		return nil, err
 	}
 	if out.Interests, err = normalizeNumericIDs("interests", "Meta interest id", t.Interests, MaxInterests); err != nil {
+		return nil, err
+	}
+	if out.Regions, err = normalizeNumericIDs("regions", "Meta region key", t.Regions, MaxGeoKeys); err != nil {
+		return nil, err
+	}
+	if out.Cities, err = normalizeNumericIDs("cities", "Meta city key", t.Cities, MaxGeoKeys); err != nil {
 		return nil, err
 	}
 	seenDevice := map[string]bool{}

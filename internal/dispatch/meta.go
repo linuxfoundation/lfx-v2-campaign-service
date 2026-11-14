@@ -80,7 +80,8 @@ type metaConfig struct {
 	ConversionEvent string `json:"conversionEvent"`
 	// Targeting is the optional audience targeting (#550): age, gender, custom audiences to include
 	// and exclude, and the Advantage+ audience flag. Refused while META_AUDIENCE_TARGETING_ENABLED is
-	// not "true" (metaTargetingEnabled); the later fields (locales, devicePlatforms, interests) have their own flags
+	// not "true" (metaTargetingEnabled); the later fields (locales, devicePlatforms, interests, regions,
+	// cities) have their own flags
 	// (checkMetaTargeting). Validated by meta.NormalizeAudienceTargeting. Null or absent targets as
 	// before.
 	Targeting *meta.AudienceTargeting `json:"targeting,omitempty"`
@@ -175,7 +176,7 @@ func metaTargetingEnabled() bool {
 
 // checkMetaTargeting refuses a metaConfig.targeting the create cannot send: a field whose
 // deployment flag is off, and otherwise a block meta.NormalizeAudienceTargeting refuses. Each later
-// field (locales, devicePlatforms, interests) has its own flag; META_AUDIENCE_TARGETING_ENABLED gates the six audience fields
+// field (locales, devicePlatforms, interests, regions and cities) has its own flag; META_AUDIENCE_TARGETING_ENABLED gates the six audience fields
 // and any block that sets none of the later ones, an empty block included, as it did before. A
 // desktop-only device list is also checked against the placements (meta.CheckDevicePlacements).
 // Every refusal is a domain.PreflightRefusal, so PreflightCreate answers it with a 400 before any
@@ -200,6 +201,18 @@ func checkMetaTargeting(t *meta.AudienceTargeting, placements meta.Placement) er
 	if len(t.Interests) > 0 {
 		if os.Getenv(constants.EnvMetaInterestTargetingEnabled) != "true" {
 			return metaCreativeOptionDisabled("targeting.interests", constants.EnvMetaInterestTargetingEnabled)
+		}
+		ownFlag = true
+	}
+	for _, geo := range []struct {
+		field string
+		n     int
+	}{{"targeting.regions", len(t.Regions)}, {"targeting.cities", len(t.Cities)}} {
+		if geo.n == 0 {
+			continue
+		}
+		if os.Getenv(constants.EnvMetaRegionTargetingEnabled) != "true" {
+			return metaCreativeOptionDisabled(geo.field, constants.EnvMetaRegionTargetingEnabled)
 		}
 		ownFlag = true
 	}
@@ -1801,7 +1814,7 @@ var metaStringConfigKeys = []string{"instagramUserId", "callToAction", "conversi
 // best-effort decode skips a field it cannot decode. See decodeMetaConfigObject.
 func decodeMetaTargeting(config json.RawMessage) (*meta.AudienceTargeting, error) {
 	return decodeMetaConfigObject[meta.AudienceTargeting](config, "targeting",
-		"ageMin, ageMax (integers), genders, customAudiences, excludedCustomAudiences (string lists), advantageAudience (boolean), locales (an integer list), devicePlatforms and interests (string lists)")
+		"ageMin, ageMax (integers), genders, customAudiences, excludedCustomAudiences (string lists), advantageAudience (boolean), locales (an integer list), devicePlatforms, interests, regions and cities (string lists)")
 }
 
 // decodeMetaFrequencyCap decodes metaConfig.frequencyCap on its own, for the same reason as
