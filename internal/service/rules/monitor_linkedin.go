@@ -102,7 +102,15 @@ func EvaluateLinkedInMonitor(rows []model.AccountCampaignMetrics, days int, now 
 // starts 6 days back, not 7) — not `now - days days` as an earlier draft of this comment said.
 //
 // Deliberately UNROUNDED — see model.AccountMonitorRow.PacingPct.
+//
+// now is taken in UTC before any arithmetic. AddDate steps calendar days in the instant's own
+// location, so a `now` in a zone with daylight saving whose window crosses a transition put
+// rangeStart 29 days ± 1 hour back; the fall-back hour then rounded the day count up through
+// math.Ceil (29 → 30, so 600 against 100/day read 20% instead of 20.69%). UTC has no
+// transitions, and it is the calendar the flight bounds (parseMonitorDate) and the analytics
+// window (linkedin.Client.dateRangeForWindow) already use.
 func linkedinPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) float64 {
+	now = now.UTC()
 	rangeStart := now.AddDate(0, 0, -(days - 1))
 	schedStart := parseMonitorDate(m.StartDate)
 	schedEnd := parseMonitorDate(m.EndDate)

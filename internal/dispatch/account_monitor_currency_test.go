@@ -103,7 +103,14 @@ func TestReadAccountMonitor_CarriesCurrency(t *testing.T) {
 // they were (costInLocalCurrency is USD there); and budgets that disagree give no currency and
 // unknown pacing for the rows whose budget named one.
 func TestLinkedInMonitor_LocalCurrency(t *testing.T) {
-	now := time.Now()
+	// A pinned instant, not time.Now(): this one sits 12 days after Los Angeles fell back, the
+	// window in which a zone-local clock once stretched the 29-day window by an hour and read
+	// 20% (see rules.TestLinkedinPacingPct_DaylightSavingDoesNotShiftTheWindow).
+	pacific, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatalf("load zone: %v", err)
+	}
+	now := time.Date(2026, 11, 13, 16, 0, 0, 0, pacific)
 	serve := func(t *testing.T, list string) *LinkedInDispatcher {
 		t.Helper()
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
