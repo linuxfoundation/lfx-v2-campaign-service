@@ -264,6 +264,11 @@ func SearchMetaTargetingOptionsLfxV2CampaignServiceConnectionsPath(projectID str
 	return fmt.Sprintf("/projects/%v/meta-ads/targeting-search", projectID)
 }
 
+// ListMetaLeadFormsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-meta-lead-forms HTTP endpoint.
+func ListMetaLeadFormsLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/meta-ads/lead-forms", projectID)
+}
+
 // ListRedditAdsCustomAudiencesLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-reddit-ads-custom-audiences HTTP endpoint.
 func ListRedditAdsCustomAudiencesLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/reddit-ads/custom-audiences", projectID)

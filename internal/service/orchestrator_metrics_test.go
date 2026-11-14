@@ -437,6 +437,13 @@ func (d upstreamCapableDispatcher) SearchMetaTargeting(context.Context, string, 
 	return []model.MetaTargetingOption{}, true, nil
 }
 
+func (d upstreamCapableDispatcher) ListMetaLeadForms(context.Context, string, model.Provider) (*model.MetaLeadForms, bool, error) {
+	if d.err != nil {
+		return nil, true, d.err
+	}
+	return &model.MetaLeadForms{Forms: []model.MetaLeadForm{}}, true, nil
+}
+
 func (d upstreamCapableDispatcher) ListRedditCustomAudiences(context.Context, string, model.Provider) (*model.RedditCustomAudiences, bool, error) {
 	if d.err != nil {
 		return nil, true, d.err
@@ -731,6 +738,14 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opSearchMetaTargeting,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ReadMetaTargeting(ctx, "p1", platform, model.MetaTargetingQuery{Kind: "interest", Query: "go"})
+				return err
+			},
+		},
+		{
+			name: "list meta lead forms",
+			op:   opListMetaLeadForms,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadMetaLeadForms(ctx, "p1", platform)
 				return err
 			},
 		},

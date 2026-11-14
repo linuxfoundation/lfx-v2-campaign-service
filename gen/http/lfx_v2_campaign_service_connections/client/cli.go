@@ -2047,6 +2047,30 @@ func BuildSearchMetaTargetingOptionsPayload(lfxV2CampaignServiceConnectionsSearc
 	return v, nil
 }
 
+// BuildListMetaLeadFormsPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-meta-lead-forms endpoint from CLI
+// flags.
+func BuildListMetaLeadFormsPayload(lfxV2CampaignServiceConnectionsListMetaLeadFormsProjectID *string, lfxV2CampaignServiceConnectionsListMetaLeadFormsBearerToken *string) (*lfxv2campaignserviceconnections.ListMetaLeadFormsPayload, error) {
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsListMetaLeadFormsProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsListMetaLeadFormsProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListMetaLeadFormsBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsListMetaLeadFormsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListMetaLeadFormsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildListRedditAdsCustomAudiencesPayload builds the payload for the
 // lfx-v2-campaign-service-connections list-reddit-ads-custom-audiences
 // endpoint from CLI flags.

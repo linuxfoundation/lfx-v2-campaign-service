@@ -77,6 +77,26 @@ var MetaTargetingOptions = Type("meta-targeting-options", func() {
 	Required("type", "options", "option_count")
 })
 
+// MetaLeadForm is one Instant Form of the connection's Page.
+var MetaLeadForm = Type("meta-lead-form", func() {
+	Attribute("id", String, "The form id, exactly what metaConfig.leadFormId takes", func() { Example("1234567890123456") })
+	Attribute("name", String, "The form's name in Ads Manager. Not an identifier; empty when Meta sent none.", func() { Example("KubeCon NA interest") })
+	Attribute("status", String, "Meta's form status, verbatim (ACTIVE, ARCHIVED, DELETED, DRAFT, …). Only an ACTIVE form is accepted by a create.", func() {
+		Example("ACTIVE")
+	})
+	Required("id", "name", "status")
+})
+
+// MetaLeadForms is the Instant Form read.
+var MetaLeadForms = Type("meta-lead-forms", func() {
+	Attribute("page_id", String, "The Facebook Page the forms were read from: the Page of the connection a Meta create for this project uses", func() {
+		Example("104000000000001")
+	})
+	Attribute("forms", ArrayOf(MetaLeadForm), "Every form of the Page, sorted by name (ignoring case), then id")
+	Attribute("form_count", Int, "How many forms are in `forms`", func() { Example(1) })
+	Required("page_id", "forms", "form_count")
+})
+
 // metaAdsLookupMethods declares the Meta create-form reads inside the connections service, beside
 // googleAdsLookupMethods, so they share its security scheme and error types.
 func metaAdsLookupMethods() {
@@ -163,6 +183,38 @@ func metaAdsLookupMethods() {
 			connectionAuthErrorResponses()
 			Param("type")
 			Param("query")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("list-meta-lead-forms", func() {
+		Description("List the Instant Forms (lead forms) of the Facebook Page on the Meta connection a Meta create " +
+			"for this project uses, live from the Page's leadgen_forms edge, for picking metaConfig.leadFormId " +
+			"(#550). Credentials and the Page resolve as for a create, so every id is one the create can read. Every " +
+			"status is listed (only ACTIVE passes a create), sorted by name ignoring case, then id. The read walks at " +
+			"most 1000 forms; more fails it with 503 rather than truncating, and that 503 does not clear on retry. " +
+			"The forms belong to the Page of the shared LF connection for every project without its own, so the " +
+			"response can list other foundations' forms; like list-meta-custom-audiences it is gated on " +
+			"global_marketing_ops of {project_id}, not campaign_manager. Off (400) unless the deployment sets " +
+			"META_LEAD_FORMS_ENABLED to \"true\", the flag that gates metaConfig.leadFormId. A pure read: nothing " +
+			"is persisted.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Required("project_id")
+		})
+		Result(MetaLeadForms)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/meta-ads/lead-forms")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)

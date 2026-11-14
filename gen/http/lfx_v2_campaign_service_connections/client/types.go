@@ -919,6 +919,19 @@ type SearchMetaTargetingOptionsResponseBody struct {
 	OptionCount *int `form:"option_count,omitempty" json:"option_count,omitempty" xml:"option_count,omitempty"`
 }
 
+// ListMetaLeadFormsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-lead-forms"
+// endpoint HTTP response body.
+type ListMetaLeadFormsResponseBody struct {
+	// The Facebook Page the forms were read from: the Page of the connection a
+	// Meta create for this project uses
+	PageID *string `form:"page_id,omitempty" json:"page_id,omitempty" xml:"page_id,omitempty"`
+	// Every form of the Page, sorted by name (ignoring case), then id
+	Forms []*MetaLeadFormResponseBody `form:"forms,omitempty" json:"forms,omitempty" xml:"forms,omitempty"`
+	// How many forms are in `forms`
+	FormCount *int `form:"form_count,omitempty" json:"form_count,omitempty" xml:"form_count,omitempty"`
+}
+
 // ListRedditAdsCustomAudiencesResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-reddit-ads-custom-audiences" endpoint HTTP response body.
@@ -4687,6 +4700,66 @@ type SearchMetaTargetingOptionsUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListMetaLeadFormsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-lead-forms"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListMetaLeadFormsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaLeadFormsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-lead-forms"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListMetaLeadFormsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaLeadFormsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-lead-forms"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListMetaLeadFormsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaLeadFormsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-lead-forms"
+// endpoint HTTP response body for the "NotFound" error.
+type ListMetaLeadFormsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaLeadFormsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-lead-forms"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListMetaLeadFormsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaLeadFormsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-lead-forms"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListMetaLeadFormsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ListRedditAdsCustomAudiencesBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-reddit-ads-custom-audiences" endpoint HTTP response body for the
@@ -7045,6 +7118,17 @@ type MetaTargetingOptionResponseBody struct {
 	// Meta's estimated audience size (work positions). Absent when Meta reported
 	// none.
 	Coverage *int64 `form:"coverage,omitempty" json:"coverage,omitempty" xml:"coverage,omitempty"`
+}
+
+// MetaLeadFormResponseBody is used to define fields on response body types.
+type MetaLeadFormResponseBody struct {
+	// The form id, exactly what metaConfig.leadFormId takes
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// The form's name in Ads Manager. Not an identifier; empty when Meta sent none.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Meta's form status, verbatim (ACTIVE, ARCHIVED, DELETED, DRAFT, …). Only an
+	// ACTIVE form is accepted by a create.
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 }
 
 // RedditAdsCustomAudienceResponseBody is used to define fields on response
@@ -12872,6 +12956,97 @@ func NewSearchMetaTargetingOptionsUnauthorized(body *SearchMetaTargetingOptionsU
 	return v
 }
 
+// NewListMetaLeadFormsMetaLeadFormsOK builds a
+// "lfx-v2-campaign-service-connections" service "list-meta-lead-forms"
+// endpoint result from a HTTP "OK" response.
+func NewListMetaLeadFormsMetaLeadFormsOK(body *ListMetaLeadFormsResponseBody) *lfxv2campaignserviceconnections.MetaLeadForms {
+	v := &lfxv2campaignserviceconnections.MetaLeadForms{
+		PageID:    *body.PageID,
+		FormCount: *body.FormCount,
+	}
+	v.Forms = make([]*lfxv2campaignserviceconnections.MetaLeadForm, len(body.Forms))
+	for i, val := range body.Forms {
+		if val == nil {
+			v.Forms[i] = nil
+			continue
+		}
+		v.Forms[i] = unmarshalMetaLeadFormResponseBodyToLfxv2campaignserviceconnectionsMetaLeadForm(val)
+	}
+
+	return v
+}
+
+// NewListMetaLeadFormsBadRequest builds a lfx-v2-campaign-service-connections
+// service list-meta-lead-forms endpoint BadRequest error.
+func NewListMetaLeadFormsBadRequest(body *ListMetaLeadFormsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaLeadFormsServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service list-meta-lead-forms endpoint
+// ServiceUnavailable error.
+func NewListMetaLeadFormsServiceUnavailable(body *ListMetaLeadFormsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaLeadFormsInternalServerError builds a
+// lfx-v2-campaign-service-connections service list-meta-lead-forms endpoint
+// InternalServerError error.
+func NewListMetaLeadFormsInternalServerError(body *ListMetaLeadFormsInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaLeadFormsNotFound builds a lfx-v2-campaign-service-connections
+// service list-meta-lead-forms endpoint NotFound error.
+func NewListMetaLeadFormsNotFound(body *ListMetaLeadFormsNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaLeadFormsPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service list-meta-lead-forms endpoint
+// PayloadTooLarge error.
+func NewListMetaLeadFormsPayloadTooLarge(body *ListMetaLeadFormsPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaLeadFormsUnauthorized builds a
+// lfx-v2-campaign-service-connections service list-meta-lead-forms endpoint
+// Unauthorized error.
+func NewListMetaLeadFormsUnauthorized(body *ListMetaLeadFormsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewListRedditAdsCustomAudiencesRedditAdsCustomAudiencesOK builds a
 // "lfx-v2-campaign-service-connections" service
 // "list-reddit-ads-custom-audiences" endpoint result from a HTTP "OK" response.
@@ -16963,6 +17138,28 @@ func ValidateSearchMetaTargetingOptionsResponseBody(body *SearchMetaTargetingOpt
 	for _, e := range body.Options {
 		if e != nil {
 			if err2 := validateMetaTargetingOptionResponseBody(e, "body.options[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateListMetaLeadFormsResponseBody runs the validations defined on
+// ListMetaLeadFormsResponseBody
+func ValidateListMetaLeadFormsResponseBody(body *ListMetaLeadFormsResponseBody) (err error) {
+	if body.PageID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("page_id", "body"))
+	}
+	if body.Forms == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("forms", "body"))
+	}
+	if body.FormCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("form_count", "body"))
+	}
+	for _, e := range body.Forms {
+		if e != nil {
+			if err2 := validateMetaLeadFormResponseBody(e, "body.forms[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -21843,6 +22040,78 @@ func ValidateSearchMetaTargetingOptionsUnauthorizedResponseBody(body *SearchMeta
 	return
 }
 
+// ValidateListMetaLeadFormsBadRequestResponseBody runs the validations defined
+// on ListMetaLeadFormsBadRequestResponseBody
+func ValidateListMetaLeadFormsBadRequestResponseBody(body *ListMetaLeadFormsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaLeadFormsServiceUnavailableResponseBody runs the validations
+// defined on ListMetaLeadFormsServiceUnavailableResponseBody
+func ValidateListMetaLeadFormsServiceUnavailableResponseBody(body *ListMetaLeadFormsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaLeadFormsInternalServerErrorResponseBody runs the
+// validations defined on ListMetaLeadFormsInternalServerErrorResponseBody
+func ValidateListMetaLeadFormsInternalServerErrorResponseBody(body *ListMetaLeadFormsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaLeadFormsNotFoundResponseBody runs the validations defined
+// on ListMetaLeadFormsNotFoundResponseBody
+func ValidateListMetaLeadFormsNotFoundResponseBody(body *ListMetaLeadFormsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaLeadFormsPayloadTooLargeResponseBody runs the validations
+// defined on ListMetaLeadFormsPayloadTooLargeResponseBody
+func ValidateListMetaLeadFormsPayloadTooLargeResponseBody(body *ListMetaLeadFormsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaLeadFormsUnauthorizedResponseBody runs the validations
+// defined on ListMetaLeadFormsUnauthorizedResponseBody
+func ValidateListMetaLeadFormsUnauthorizedResponseBody(body *ListMetaLeadFormsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateListRedditAdsCustomAudiencesBadRequestResponseBody runs the
 // validations defined on ListRedditAdsCustomAudiencesBadRequestResponseBody
 func ValidateListRedditAdsCustomAudiencesBadRequestResponseBody(body *ListRedditAdsCustomAudiencesBadRequestResponseBody) (err error) {
@@ -24839,6 +25108,36 @@ func validateMetaTargetingOptionResponseBody(body *MetaTargetingOptionResponseBo
 	}
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	return
+}
+
+// ValidateMetaLeadFormResponseBody runs the validations defined on
+// meta-lead-form
+func ValidateMetaLeadFormResponseBody(body *MetaLeadFormResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	return
+}
+
+// validateMetaLeadFormResponseBody checks meta-lead-form and reports errors
+// using the path supplied by its caller
+func validateMetaLeadFormResponseBody(body *MetaLeadFormResponseBody, path string) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", path))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", path))
 	}
 	return
 }

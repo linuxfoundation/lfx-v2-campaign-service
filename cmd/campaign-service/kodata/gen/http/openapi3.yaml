@@ -17366,6 +17366,104 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/meta-ads/lead-forms:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-meta-lead-forms lfx-v2-campaign-service-connections
+            description: 'List the Instant Forms (lead forms) of the Facebook Page on the Meta connection a Meta create for this project uses, live from the Page''s leadgen_forms edge, for picking metaConfig.leadFormId (#550). Credentials and the Page resolve as for a create, so every id is one the create can read. Every status is listed (only ACTIVE passes a create), sorted by name ignoring case, then id. The read walks at most 1000 forms; more fails it with 503 rather than truncating, and that 503 does not clear on retry. The forms belong to the Page of the shared LF connection for every project without its own, so the response can list other foundations'' forms; like list-meta-custom-audiences it is gated on global_marketing_ops of {project_id}, not campaign_manager. Off (400) unless the deployment sets META_LEAD_FORMS_ENABLED to "true", the flag that gates metaConfig.leadFormId. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#list-meta-lead-forms
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/MetaLeadForms'
+                            example:
+                                form_count: 1
+                                forms:
+                                    - id: "1234567890123456"
+                                      name: KubeCon NA interest
+                                      status: ACTIVE
+                                    - id: "1234567890123456"
+                                      name: KubeCon NA interest
+                                      status: ACTIVE
+                                page_id: "104000000000001"
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/meta-ads/targeting-search:
         get:
             tags:
@@ -27595,6 +27693,67 @@ components:
                 - audiences
                 - audience_count
                 - truncated
+        MetaLeadForm:
+            type: object
+            properties:
+                id:
+                    type: string
+                    description: The form id, exactly what metaConfig.leadFormId takes
+                    example: "1234567890123456"
+                name:
+                    type: string
+                    description: The form's name in Ads Manager. Not an identifier; empty when Meta sent none.
+                    example: KubeCon NA interest
+                status:
+                    type: string
+                    description: Meta's form status, verbatim (ACTIVE, ARCHIVED, DELETED, DRAFT, …). Only an ACTIVE form is accepted by a create.
+                    example: ACTIVE
+            example:
+                id: "1234567890123456"
+                name: KubeCon NA interest
+                status: ACTIVE
+            required:
+                - id
+                - name
+                - status
+        MetaLeadForms:
+            type: object
+            properties:
+                form_count:
+                    type: integer
+                    description: How many forms are in `forms`
+                    example: 1
+                    format: int64
+                forms:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/MetaLeadForm'
+                    description: Every form of the Page, sorted by name (ignoring case), then id
+                    example:
+                        - id: "1234567890123456"
+                          name: KubeCon NA interest
+                          status: ACTIVE
+                        - id: "1234567890123456"
+                          name: KubeCon NA interest
+                          status: ACTIVE
+                page_id:
+                    type: string
+                    description: 'The Facebook Page the forms were read from: the Page of the connection a Meta create for this project uses'
+                    example: "104000000000001"
+            example:
+                form_count: 1
+                forms:
+                    - id: "1234567890123456"
+                      name: KubeCon NA interest
+                      status: ACTIVE
+                    - id: "1234567890123456"
+                      name: KubeCon NA interest
+                      status: ACTIVE
+                page_id: "104000000000001"
+            required:
+                - page_id
+                - forms
+                - form_count
         MetaTargetingOption:
             type: object
             properties:

@@ -140,6 +140,11 @@ func TestMetaTargetingSearchIsACampaignManagerRead(t *testing.T) {
 // TestMetaCustomAudiencesIsAMarketingOpsRead pins that.
 const metaCustomAudiencesPath = "/projects/:projectId/meta-ads/custom-audiences"
 
+// metaLeadFormsPath is the Meta Instant Form list (#550). It lists the forms of the Page on the
+// connection a create uses, the shared LF connection for every project without its own, so it is
+// ruled by marketing-ops-api only, and TestMetaLeadFormsIsAMarketingOpsRead pins that.
+const metaLeadFormsPath = "/projects/:projectId/meta-ads/lead-forms"
+
 // redditCustomAudiencesPath is the Reddit custom-audience list (#549). It lists every
 // foundation's audiences on the shared LF Reddit ad account, so it is ruled by marketing-ops-api
 // only, and TestRedditCustomAudiencesIsAMarketingOpsRead pins that.
@@ -159,7 +164,7 @@ const (
 )
 
 // marketingOpsPaths is every path the marketing-ops-api rule must hold, in order, and nothing else.
-var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, redditCustomAudiencesPath, twitterCustomAudiencesPath, linkedInAudiencesPath, linkedInConversionsPath, metaCustomAudiencesPath}
+var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, redditCustomAudiencesPath, twitterCustomAudiencesPath, linkedInAudiencesPath, linkedInConversionsPath, metaCustomAudiencesPath, metaLeadFormsPath}
 
 // ruleBlock isolates one rendered Heimdall rule (from its `- id: "<id>"` line up to
 // the next `- id:` or EOF) so path/authorizer extraction is scoped to a SINGLE rule.
@@ -247,6 +252,13 @@ func TestMetaCustomAudiencesIsAMarketingOpsRead(t *testing.T) {
 	if !matched {
 		t.Errorf("%s rule no longer matches %s, the campaign_manager Meta audience insights read", projectAPIRuleID, insights)
 	}
+}
+
+// TestMetaLeadFormsIsAMarketingOpsRead pins the same for the Meta Instant Form list (#550): the
+// forms belong to the Page of the shared LF connection for every project without its own, so a
+// campaign_manager (executive_director included) must not reach it.
+func TestMetaLeadFormsIsAMarketingOpsRead(t *testing.T) {
+	assertMarketingOpsRead(t, metaLeadFormsPath, "/projects/p1/meta-ads/lead-forms")
 }
 
 // TestGoogleAudiencesIsAMarketingOpsRead pins the same for the Google audience list (#496): it
@@ -746,6 +758,10 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/meta-ads/targeting-search", true},
 		{"/projects/p1/meta-ads/targeting-search/x", false},
 		{"/projects/p1/linkedin-ads/targeting-search", false},
+		// The Meta Instant Form list (#550): a marketing-ops read at the base path only.
+		{"/projects/p1/meta-ads/lead-forms", true},
+		{"/projects/p1/meta-ads/lead-forms/x", false},
+		{"/projects/p1/reddit-ads/lead-forms", false},
 		{"/projects/p1/twitter-ads/custom-audiences", true},
 		{"/projects/p1/twitter-ads/custom-audiences/x", false},
 		{"/projects/p1/google-ads/conversion-actions/x", false},

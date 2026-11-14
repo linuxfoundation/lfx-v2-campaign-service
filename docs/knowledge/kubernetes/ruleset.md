@@ -72,7 +72,8 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    all families because they share the identical authorization. The exceptions are
    `google-ads/conversion-actions`, `google-ads/audiences`, `google-ads/user-lists`,
    `reddit-ads/custom-audiences`, `twitter-ads/custom-audiences`, `linkedin-ads/audiences`,
-   `linkedin-ads/conversions` and `meta-ads/custom-audiences`, ruled by `marketing-ops-api` below.
+   `linkedin-ads/conversions`, `meta-ads/custom-audiences` and `meta-ads/lead-forms`, ruled by
+   `marketing-ops-api` below.
    The Meta targeting search, `meta-ads/targeting-search` (#550), stays here: it answers Meta's own
    taxonomy, the same for every token, and `TestMetaTargetingSearchIsACampaignManagerRead` pins it
    to `project-api` and off `marketing-ops-api`.
@@ -82,13 +83,16 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    `GET /projects/:projectId/reddit-ads/custom-audiences` (#549),
    `GET /projects/:projectId/twitter-ads/custom-audiences` (#564),
    `GET /projects/:projectId/linkedin-ads/audiences`,
-   `GET /projects/:projectId/linkedin-ads/conversions` (#552) and
-   `GET /projects/:projectId/meta-ads/custom-audiences` (#550) only. The Google three list every
+   `GET /projects/:projectId/linkedin-ads/conversions` (#552),
+   `GET /projects/:projectId/meta-ads/custom-audiences` (#550) and
+   `GET /projects/:projectId/meta-ads/lead-forms` (#550) only. The Google three list every
    foundation's conversion actions, audiences and user lists on the shared Google Ads customer,
    and the Reddit, X and Meta ones every foundation's custom audiences on the shared Reddit, X or
    Meta ad account; the LinkedIn two read the account a LinkedIn create uses, which is the LF system
    account for every project without its own connection, so they can list other foundations'
-   segments and conversion rules. In both cases
+   segments and conversion rules; the Meta Instant Form list reads the Page of the connection a Meta
+   create uses, the shared LF connection for every project without its own, so it can list other
+   foundations' forms. In every case
    `campaign_manager` includes the project's `executive_director`, a foundation-scoped role
    (lfx-v2-helm `model.fga`). So it runs the same slug/UUID branches as `project-api`, on
    relation `global_marketing_ops`: the LF marketing team, granted on every project, so no ROOT
@@ -105,7 +109,8 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    read the account a LinkedIn create uses, the LF system account for every project without its
    own connection), `TestMetaCustomAudiencesIsAMarketingOpsRead` does the same for
    `meta-ads/custom-audiences` (and that `meta-ads/audience`, the insights read, stays on
-   `project-api`), `TestTwitterCustomAudiencesIsAMarketingOpsRead` does the same for
+   `project-api`), `TestMetaLeadFormsIsAMarketingOpsRead` does the same for `meta-ads/lead-forms`,
+   `TestTwitterCustomAudiencesIsAMarketingOpsRead` does the same for
    `twitter-ads/custom-audiences` (and that `twitter-ads/audience`, the insights read, stays on
    `project-api`), and `TestMarketingOpsRuleHoldsExactlyItsReads` pins the rule's whole path set.
 5. **`campaigns-placeholder:deny`** — the reserved `/campaigns`, `/campaigns/*`,

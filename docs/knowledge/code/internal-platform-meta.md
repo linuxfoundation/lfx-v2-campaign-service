@@ -1254,6 +1254,21 @@ not behind `global_marketing_ops`. Not built: a city radius (Meta's default radi
 codes. Not verified live: the lookup's answer shape, whether Meta refuses (rather than merges) an
 overlap, and the settings readback, which still reports countries only.
 
+## Instant Form list (`lead_forms.go`, #550 gap 8 picker read)
+
+`ListLeadForms(ctx, pageID)` lists every Instant Form of the connection's Page, all or nothing, for
+the `metaConfig.leadFormId` picker: `GET /{page}/leadgen_forms?fields=id,name,status&limit=100`,
+following the opaque `after` cursor (never Meta's token-bearing `paging.next`) for at most
+`leadFormListMaxPages` (10) pages. Every page passes `identityjson`; every row needs a numeric id
+(`graphID`) and a status token (`statusTokenRE`) and must appear once; a page id that is not numeric
+is refused before any request; more than 1000 forms is `ErrLeadFormListTooLarge`. The dispatcher
+(`internal/dispatch/meta_lead_forms_list.go`) resolves like a create and reads the same `page_id`
+Dispatch does (missing → `ErrConnectionNotUsable` + `ErrProviderConfigInvalid`), so an ACTIVE id it
+lists passes `checkLeadForm`. The service (`list-meta-lead-forms`) is behind
+`META_LEAD_FORMS_ENABLED` and the gateway's `marketing-ops-api` rule. Not verified live: the Page
+reference documents only POST on `leadgen_forms`; the read is the Lead Ads retrieval guide's and
+may need a Page access token (`pages_manage_ads`, `leads_retrieval`) rather than the connection's.
+
 ## Targeting search (`targeting_search.go`, #550 gap 7 picker read)
 
 `SearchTargeting(ctx, kind, query)` runs one Targeting Search for the metaConfig.targeting pickers:
