@@ -84,6 +84,11 @@ ad's button) and `metaConfig.conversionEvent` (the conversions objective's `cust
 Only exactly `"true"` enables each; off, a create carrying the field is refused with a 400 before
 any job exists. Neither names an account resource, so neither is behind `global_marketing_ops`.
 
+`META_VIDEO_ENABLED` is the same kind of gate, defaulting to `"false"` (#550 gap 9): it opts a
+cluster in to `metaConfig.variants[].videoAssetId` (a stored MP4 run as a Meta video ad). Off, a
+create naming one is refused with a 400 before any job exists. See
+[Meta Video Ads](../architecture/meta-video-ads.md).
+
 `META_AUDIENCE_TARGETING_ENABLED` is the same kind of gate for Meta, defaulting to `"false"`
 (#550): it opts a cluster in to `metaConfig.targeting` (age, gender, custom audiences to include
 and exclude, and the Advantage+ audience flag on the ad set). Each custom audience is read and must

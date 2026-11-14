@@ -116,6 +116,31 @@ func checkMetaCreativeOptions(cfg metaConfig) error {
 	return nil
 }
 
+// checkMetaVideoVariants refuses a variant's videoAssetId the create cannot send (#550 gap 9): any
+// while META_VIDEO_ENABLED is not exactly "true" (read per call), one that is not a uuid, and one
+// alongside an image (imageUrl or imageAssetId) — Meta uses the video's auto-generated thumbnail.
+// Every refusal wraps domain.ErrCreateConfigInvalid and is a PreflightRefusal, so PreflightCreate
+// answers 400 and Dispatch fails the job before any Meta request. The client re-checks the image
+// exclusion and the resolved MP4 (meta.ValidateVideoVariant).
+func checkMetaVideoVariants(cfg metaConfig) error {
+	for i, v := range cfg.Variants {
+		id := strings.TrimSpace(v.VideoAssetID)
+		if id == "" {
+			continue
+		}
+		if os.Getenv(constants.EnvMetaVideoEnabled) != "true" {
+			return metaCreativeOptionDisabled("variants[].videoAssetId", constants.EnvMetaVideoEnabled)
+		}
+		if _, err := uuid.Parse(id); err != nil {
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig.variants[%d].videoAssetId: %s is not a valid asset id", domain.ErrCreateConfigInvalid, i, domain.CallerValue(id)))
+		}
+		if strings.TrimSpace(v.ImageURL) != "" || strings.TrimSpace(v.ImageAssetID) != "" {
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig.variants[%d].videoAssetId: a video variant carries no imageUrl or imageAssetId; Meta uses one of the video's auto-generated thumbnails", domain.ErrCreateConfigInvalid, i))
+		}
+	}
+	return nil
+}
+
 // metaTargetingEnabled reports whether this deployment opted in to metaConfig.targeting (#550).
 // Read per call, like googleAdsDisplayAudiencesEnabled; only the exact value "true" enables it.
 func metaTargetingEnabled() bool {
@@ -432,14 +457,17 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 			releaseAll()
 		}
 	}()
-	for i := range out {
-		assetID := strings.TrimSpace(out[i].ImageAssetID)
+	// resolveSlot resolves one variant slot: the image (imageAssetId) or, since #550 gap 9, the
+	// video (videoAssetId). Both share the dedupe cache and the reservation; each slot refuses an
+	// asset of the other kind before anything is created.
+	resolveSlot := func(i int, raw string, video bool) error {
+		assetID := strings.TrimSpace(raw)
 		if assetID == "" {
-			continue
+			return nil
 		}
 		parsed, perr := uuid.Parse(assetID)
 		if perr != nil {
-			return nil, func() {}, domain.PreflightRefusalf("meta variant %d references creative asset %s, which is not a valid asset id", i+1, domain.CallerValue(assetID))
+			return domain.PreflightRefusalf("meta variant %d references creative asset %s, which is not a valid asset id", i+1, domain.CallerValue(assetID))
 		}
 		// CANONICALIZE before the id is used as a cache key or a lookup value.
 		//
@@ -460,12 +488,18 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		if b, seen := byID[assetID]; seen {
 			// Already resolved for an earlier variant: no second read, no second buffer,
 			// and no second charge against the aggregate budget.
-			out[i].ImageBytes = b
-			out[i].ImageMIME = mimeByID[assetID]
-			continue
+			if err := checkMetaSlotMime(i, assetID, mimeByID[assetID], video); err != nil {
+				return err
+			}
+			if video {
+				out[i].VideoBytes, out[i].VideoMIME = b, mimeByID[assetID]
+			} else {
+				out[i].ImageBytes, out[i].ImageMIME = b, mimeByID[assetID]
+			}
+			return nil
 		}
 		if d.creatives == nil {
-			return nil, func() {}, domain.PreflightRefusalf("meta variant %d references creative asset %s but the creative-asset store is not configured", i+1, assetID)
+			return domain.PreflightRefusalf("meta variant %d references creative asset %s but the creative-asset store is not configured", i+1, assetID)
 		}
 		// PRICE THE ASSET BEFORE LOADING IT.
 		//
@@ -476,9 +510,9 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		size, serr := d.creatives.GetAssetSize(ctx, brief.ProjectID, brief.ID, assetID)
 		if serr != nil {
 			if errors.Is(serr, domain.ErrNotFound) {
-				return nil, func() {}, domain.PreflightRefusalf("meta variant %d references creative asset %s, which does not exist for this brief", i+1, assetID)
+				return domain.PreflightRefusalf("meta variant %d references creative asset %s, which does not exist for this brief", i+1, assetID)
 			}
-			return nil, func() {}, fmt.Errorf("meta variant %d: size creative asset %s: %w", i+1, assetID, serr)
+			return fmt.Errorf("meta variant %d: size creative asset %s: %w", i+1, assetID, serr)
 		}
 
 		// The PER-DISPATCH ceiling, now also applied before the read rather than after it. The
@@ -486,7 +520,7 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		// "peak is the cap plus one asset" overshoot is gone.
 		totalBytes += size
 		if totalBytes > maxVariantAssetBytes {
-			return nil, func() {}, domain.PreflightRefusalf("meta variants reference more than %d bytes of distinct creative assets (%d bytes at variant %d); split the campaign or reuse fewer images",
+			return domain.PreflightRefusalf("meta variants reference more than %d bytes of distinct creative assets (%d bytes at variant %d); split the campaign or reuse fewer images",
 				maxVariantAssetBytes, totalBytes, i+1)
 		}
 
@@ -494,16 +528,16 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		// rather than once at the end for exactly the ordering reason above.
 		relOne, ok := d.assets.reserve(ctx, size)
 		if !ok {
-			return nil, func() {}, domain.PreflightRefusalf("meta variants reference %d bytes of creative assets, which exceeds the memory concurrently available for dispatch; retry when other dispatches finish", totalBytes)
+			return domain.PreflightRefusalf("meta variants reference %d bytes of creative assets, which exceeds the memory concurrently available for dispatch; retry when other dispatches finish", totalBytes)
 		}
 		releases = append(releases, relOne)
 
 		asset, gerr := d.creatives.GetAsset(ctx, brief.ProjectID, brief.ID, assetID)
 		if gerr != nil {
 			if errors.Is(gerr, domain.ErrNotFound) {
-				return nil, func() {}, domain.PreflightRefusalf("meta variant %d references creative asset %s, which does not exist for this brief", i+1, assetID)
+				return domain.PreflightRefusalf("meta variant %d references creative asset %s, which does not exist for this brief", i+1, assetID)
 			}
-			return nil, func() {}, fmt.Errorf("meta variant %d: load creative asset %s: %w", i+1, assetID, gerr)
+			return fmt.Errorf("meta variant %d: load creative asset %s: %w", i+1, assetID, gerr)
 		}
 		// The reservation was priced from byte_size; the CHECK on that column
 		// (migration 000029) ties it to octet_length(bytes), so the two agree by construction.
@@ -514,15 +548,27 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		// than proceed: leaving ImageBytes empty here would build a LINK-ONLY ad for a
 		// variant that asked for an image — a silent downgrade that spends money.
 		if len(asset.Bytes) == 0 {
-			return nil, func() {}, domain.PreflightRefusalf("meta variant %d references creative asset %s, which has no stored image bytes", i+1, assetID)
+			return domain.PreflightRefusalf("meta variant %d references creative asset %s, which has no stored image bytes", i+1, assetID)
 		}
-		if asset.MimeType == model.MimeTypeMP4 {
-			return nil, func() {}, domain.PreflightRefusalf("meta variant %d references creative asset %s, which is a video, not an image", i+1, assetID)
+		if err := checkMetaSlotMime(i, assetID, asset.MimeType, video); err != nil {
+			return err
 		}
 		byID[assetID] = asset.Bytes
 		mimeByID[assetID] = asset.MimeType
-		out[i].ImageBytes = asset.Bytes
-		out[i].ImageMIME = asset.MimeType
+		if video {
+			out[i].VideoBytes, out[i].VideoMIME = asset.Bytes, asset.MimeType
+		} else {
+			out[i].ImageBytes, out[i].ImageMIME = asset.Bytes, asset.MimeType
+		}
+		return nil
+	}
+	for i := range out {
+		if err := resolveSlot(i, out[i].ImageAssetID, false); err != nil {
+			return nil, func() {}, err
+		}
+		if err := resolveSlot(i, out[i].VideoAssetID, true); err != nil {
+			return nil, func() {}, err
+		}
 	}
 	// Every asset was reserved BEFORE it was loaded, so by here the aggregate budget already
 	// accounts for exactly what this dispatch holds. releaseAll returns all of it at once.
@@ -533,6 +579,19 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 	// unwind above must NOT fire.
 	succeeded = true
 	return out, releaseAll, nil
+}
+
+// checkMetaSlotMime refuses an asset in the wrong slot before anything is created: a video
+// (model.MimeTypeMP4) named as a variant's image, or anything but a video named as its video
+// (#550 gap 9).
+func checkMetaSlotMime(i int, assetID, mime string, video bool) error {
+	if video && mime != model.MimeTypeMP4 {
+		return domain.PreflightRefusalf("meta variant %d references creative asset %s as its video, but it is not an MP4 video", i+1, assetID)
+	}
+	if !video && mime == model.MimeTypeMP4 {
+		return domain.PreflightRefusalf("meta variant %d references creative asset %s, which is a video, not an image", i+1, assetID)
+	}
+	return nil
 }
 
 // resolveMetaCredentials fetches the project's Meta connection and validates it is usable
@@ -749,6 +808,10 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	}
 	// The call-to-action and conversion event gates and allow-lists (#550), before any request.
 	if err := checkMetaCreativeOptions(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// The video variant gate and shape (#550 gap 9), before any request.
+	if err := checkMetaVideoVariants(cfg); err != nil {
 		return nil, notCreated(err)
 	}
 	// The audience targeting gate and its shape (#550), before any Meta request. The client
@@ -1332,9 +1395,10 @@ func metaRunStatus(status string) (string, error) {
 // Kept verbatim: Objective (refused by the client unless it names a known objective),
 // CallToAction and ConversionEvent (#550: refused unless allow-listed, so only their casing can
 // differ from what was sent),
-// InstagramUserID (refused unless numeric), Variants[].ImageAssetID (a stored asset key),
-// numbers, flags and dates. ImageBytes and
-// ImageMIME are json:"-" and never reach the snapshot.
+// InstagramUserID (refused unless numeric), Variants[].ImageAssetID and VideoAssetID (stored
+// asset keys; the snapshot guard reads both),
+// numbers, flags and dates. ImageBytes, ImageMIME, VideoBytes and VideoMIME are json:"-" and
+// never reach the snapshot.
 // Bidding is kept verbatim too: resolveBidding refuses a strategy other than automatic or
 // manual before anything is sent, and bidAmount is a number
 // (TestConfigSnapshot_BiddingRoundTripsThroughTheValidator replays the stored copy).
@@ -1685,6 +1749,10 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 	// The call-to-action and conversion event (#550). A wrong-typed one is refused on its type by
 	// checkMetaStringFieldShape above, so it is never read here as absent.
 	if err := checkMetaCreativeOptions(cfg); err != nil {
+		return err
+	}
+	// The video variants (#550 gap 9): the gate, the id shape and no image alongside.
+	if err := checkMetaVideoVariants(cfg); err != nil {
 		return err
 	}
 	// The audience targeting (#550): a wrong-typed block would decode to nil above and pass as

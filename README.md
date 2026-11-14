@@ -390,6 +390,14 @@ openssl rand -base64 32
   fails closed, and a create carrying the field is refused with a 400 before
   any job exists. The chart sets both to `"false"`; enable them
   per-environment in the ArgoCD overlay.
+- `META_VIDEO_ENABLED` (default unset, i.e. OFF) — opts a deployment IN to
+  Meta video ads (#550): `metaConfig.variants[].videoAssetId`, a stored MP4
+  uploaded to `/act_<id>/advideos`, awaited until encoded (one 60 s wait
+  inside the two-minute provider call) and run as a `video_data` creative.
+  Only the exact value `true` enables it; anything else fails closed, and a
+  create naming a `videoAssetId` is refused with a 400 before any job exists.
+  The chart sets it to `"false"`; enable it per-environment in the ArgoCD
+  overlay once Meta's encoding time for a 20-30 MiB MP4 is measured.
 - `META_AUDIENCE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `metaConfig.targeting` (#550): `ageMin`/`ageMax`,
   `genders`, `customAudiences`, `excludedCustomAudiences` and

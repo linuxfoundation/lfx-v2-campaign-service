@@ -331,6 +331,16 @@ const (
 	// LEAD, …) instead of the fixed PURCHASE. Same rules as EnvMetaCallToActionEnabled.
 	EnvMetaConversionEventEnabled = "META_CONVERSION_EVENT_ENABLED"
 
+	// EnvMetaVideoEnabled opts a deployment IN to Meta video ads (#550 gap 9):
+	// metaConfig.variants[].videoAssetId, a stored MP4 uploaded to /act_<id>/advideos and run as a
+	// video_data creative. Only the exact value "true" enables it; unset or any other value fails
+	// closed, and a create naming a videoAssetId is refused with a 400 before any job exists. It
+	// keeps the UNVERIFIED upload, readiness poll, thumbnail and video_data shapes off the live ad
+	// account until a probe passes. Blocker before enabling: measure Meta's encoding time for a
+	// 20-30 MiB MP4 against the 60 s readiness wait, which runs inside the two-minute provider
+	// call and must not be lengthened.
+	EnvMetaVideoEnabled = "META_VIDEO_ENABLED"
+
 	// EnvMetaAudienceTargetingEnabled opts a deployment IN to metaConfig.targeting (#550): age,
 	// gender, custom audiences to include and exclude, and the Advantage+ audience flag on the ad
 	// set. Only the exact value "true" enables it; unset or any other value fails closed, and a

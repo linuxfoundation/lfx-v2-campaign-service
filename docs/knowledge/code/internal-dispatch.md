@@ -5614,3 +5614,10 @@ refuses a `model.MimeTypeMP4` asset before any request. Reddit holds no bytes, s
 and ad group exist. Pinned by the `video asset in the image slot` case of
 `TestRedditAsset_RefusedBeforeAnyUpstreamCall`, the Microsoft pre-create refusal table and the
 `video asset named as an image` case of `TestMeta_DispatchBadAssetRefusesBeforeAnySpend`.
+
+**Meta video variants (#550 gap 9).** `checkMetaVideoVariants` (gate `META_VIDEO_ENABLED`, uuid
+shape, no image alongside) runs in `PreflightCreate` and `Dispatch`. `resolveVariantAssets` resolves
+each variant's image slot and video slot through one `resolveSlot` closure (shared dedupe cache and
+`AssetReserver` reservation); `checkMetaSlotMime` refuses a non-MP4 named as a video and an MP4 named
+as an image. `TestPlatformConfigsNameTheirAssetUnderOneKey` accepts `videoAssetId` as the second
+snapshot key. See [Meta Video Ads](../architecture/meta-video-ads.md).

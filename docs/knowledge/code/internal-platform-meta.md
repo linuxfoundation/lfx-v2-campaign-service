@@ -1066,6 +1066,18 @@ a 400 rather than absent. `CampaignResult.ConversionEvent` records the event on 
 was reused by name, as `BidApplied` is), which is what a conversions read must filter on. Not live-verified: whether every listed button is accepted with every
 objective.
 
+## Video ads (`video.go`, #550 gap 9)
+
+`AdVariant.VideoAssetID` (config) with `VideoBytes`/`VideoMIME` (`json:"-"`, set by the dispatcher)
+makes a variant a video ad. `ValidateVideoVariant` refuses an image alongside, unresolved bytes and
+a non-MP4 before any request. After the ad set exists, `prepareVideos` uploads each distinct video
+once to `/act_<id>/advideos` (`uploadVideo`: one attempt, multipart `source` framed in place by
+`multipartFramingNamed`), polls `video_status` within one shared wait (`WithVideoPolling`; defaults
+3 s / 60 s) and reads the preferred auto-generated thumbnail; `createVariantAd` then builds
+`videoStorySpec` (`video_data`) instead of `objectStorySpec`. Per-variant video failures are
+non-fatal Steps lines; a cancelled caller returns the partial. `CampaignResult.VideoIDs` and
+`AdResult.VideoID` record the minted ids. See [Meta Video Ads](../architecture/meta-video-ads.md).
+
 ## Audience targeting (`targeting.go`, #550)
 
 `CampaignInput.Targeting` (`metaConfig.targeting`) adds an age range, a gender, custom audiences to

@@ -3015,6 +3015,33 @@ imageAssetId?: string            — OPTIONAL id of a creative asset previously 
                                   than discovered at the per-variant creative step where the
                                   campaign and ad set already exist. Supply one or neither;
                                   neither still yields the bare-link creative.
+videoAssetId?: string            — OPTIONAL id of an MP4 creative asset uploaded against THIS
+                                  brief (content_type video/mp4), #550 gap 9. The variant
+                                  becomes a VIDEO ad. Refused with a synchronous 400 unless
+                                  META_VIDEO_ENABLED is exactly "true"; a non-UUID id, or an
+                                  `imageUrl`/`imageAssetId` alongside it (Meta uses one of the
+                                  video's auto-generated thumbnails), is a synchronous 400 too.
+                                  Image and video variants may mix in one ad set. Resolved
+                                  before anything is created like `imageAssetId` (same brief
+                                  scope, same 240 MiB distinct-asset bound and reservation);
+                                  an asset that is not video/mp4 fails the job with nothing
+                                  created. After the ad set exists and before the first
+                                  creative, each DISTINCT video is uploaded ONCE to
+                                  `/act_<id>/advideos` (multipart `source`, never retried —
+                                  every upload creates a new video), then `GET /{video_id}
+                                  ?fields=status` is polled every 3 s until `video_status` is
+                                  `ready`, within ONE 60 s wait shared by every video, and the
+                                  preferred auto-generated thumbnail (`GET /{video_id}/thumbnails`)
+                                  becomes the creative's image. The creative carries
+                                  `object_story_spec.video_data` {video_id, image_url, message =
+                                  primaryText, title = headline, link_description = description,
+                                  call_to_action {type, value.link = the UTM-tagged URL}}. A video
+                                  that fails to upload, ends `error`, is still processing when
+                                  the wait ends, or has no thumbnail fails only its variants
+                                  (Steps say why; nothing is re-uploaded — the campaign persists
+                                  as created_degraded and is reused as-is). Every uploaded video
+                                  id is recorded in the result's `VideoIDs` (asset id -> video
+                                  id) and on each ad as `VideoID`.
 ```
 
 Copy limits are enforced by the client before any upstream call, so a variant that

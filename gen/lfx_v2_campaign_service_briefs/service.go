@@ -163,8 +163,13 @@ type Service interface {
 	// than conversions, or either one while its deployment flag
 	// (META_CALL_TO_ACTION_ENABLED, META_CONVERSION_EVENT_ENABLED) is not "true",
 	// is a synchronous 400 "invalid campaign config: metaConfig.callToAction..."
-	// or "invalid campaign config: metaConfig.conversionEvent...". REDDIT
-	// SHARED-ACCOUNT INPUTS (#549): a redditConfig that sets customAudienceIds or
+	// or "invalid campaign config: metaConfig.conversionEvent...". META VIDEO
+	// (#550): a metaConfig.variants[].videoAssetId while META_VIDEO_ENABLED is not
+	// "true", one that is not a UUID, or one alongside imageUrl or imageAssetId on
+	// the same variant is a synchronous 400 "invalid campaign config:
+	// metaConfig.variants[...].videoAssetId..."; with the flag on, the stored MP4
+	// is uploaded to the ad account and run as a video ad. REDDIT SHARED-ACCOUNT
+	// INPUTS (#549): a redditConfig that sets customAudienceIds or
 	// excludedCustomAudienceIds (any non-empty list) on a create that selects
 	// reddit-ads requires global_marketing_ops on this project in the same single
 	// check, with the same 403 and 503; the custom audiences belong to the LF
