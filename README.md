@@ -463,6 +463,13 @@ openssl rand -base64 32
   must pass the sanctioned, regulated, overlap and EU DSA rules. Same rules as
   `META_LOCALE_TARGETING_ENABLED`. The chart sets it to `"false"`; enable it
   per-environment in the ArgoCD overlay.
+- `META_BEHAVIOR_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `metaConfig.targeting.behaviors` and
+  `targeting.workPositions` (#550), detailed targeting ids sent in the ad
+  set's `flexible_spec` beside the interests, each validated with Meta's ad
+  account targeting validation read before anything is created. Same rules
+  as `META_LOCALE_TARGETING_ENABLED`. The chart sets it to `"false"`; enable
+  it per-environment in the ArgoCD overlay.
 - `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.performanceMaxAudienceSignal`,
   one existing Google Ads Audience attached to a Performance Max asset

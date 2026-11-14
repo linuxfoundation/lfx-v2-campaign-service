@@ -135,6 +135,11 @@ anything is created), with the same rules as `META_LOCALE_TARGETING_ENABLED`.
 targeting, each looked up and its parent country checked before anything is created), with the same
 rules as `META_LOCALE_TARGETING_ENABLED`.
 
+`META_BEHAVIOR_TARGETING_ENABLED` is the same kind of gate, defaulting to `"false"` (#550), for
+`metaConfig.targeting.behaviors` and `targeting.workPositions` (detailed targeting ids, validated
+with Meta's ad account targeting validation read before anything is created), with the same rules
+as `META_LOCALE_TARGETING_ENABLED`.
+
 `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is the same kind of gate, defaulting to `"false"`
 (#461): it opts a cluster in to `googleAdsConfig.performanceMaxAudienceSignal`, one existing
 Google Ads Audience attached to a Performance Max asset group as a signal. Like the Demand Gen

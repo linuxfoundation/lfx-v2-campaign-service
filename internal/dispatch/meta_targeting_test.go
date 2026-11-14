@@ -160,7 +160,7 @@ func TestMeta_DispatchCarriesTargetingToTheAdSet(t *testing.T) {
 // classifying it here fails, so a new account-resource field cannot skip the role check.
 func TestEveryMetaTargetingFieldIsClassifiedForTheMarketingOpsGate(t *testing.T) {
 	gated := map[string]string{"customAudiences": `["1"]`, "excludedCustomAudiences": `["1"]`}
-	notGated := map[string]string{"ageMin": `30`, "ageMax": `40`, "genders": `["male"]`, "advantageAudience": `false`, "locales": `[6]`, "devicePlatforms": `["mobile"]`, "interests": `["6003"]`, "regions": `["3847"]`, "cities": `["2420605"]`}
+	notGated := map[string]string{"ageMin": `30`, "ageMax": `40`, "genders": `["male"]`, "advantageAudience": `false`, "locales": `[6]`, "devicePlatforms": `["mobile"]`, "interests": `["6003"]`, "regions": `["3847"]`, "cities": `["2420605"]`, "behaviors": `["6002714895372"]`, "workPositions": `["105763692790962"]`}
 	typ := reflect.TypeOf(meta.AudienceTargeting{})
 	for i := 0; i < typ.NumField(); i++ {
 		name := strings.Split(typ.Field(i).Tag.Get("json"), ",")[0]

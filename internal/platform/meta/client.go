@@ -3425,6 +3425,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err := c.checkInterests(ctx, audience); err != nil {
 		return nil, err
 	}
+	// Every behavior and work position is validated the same way, in one read (#550, gap 7).
+	if err := c.checkDetailedTargeting(ctx, accountID, audience); err != nil {
+		return nil, err
+	}
 	// The Instant Form is read the same way (#550, gap 8): it must be an ACTIVE form of this Page.
 	if err := c.checkLeadForm(ctx, in.LeadFormID); err != nil {
 		return nil, err

@@ -609,6 +609,16 @@ app:
     META_REGION_TARGETING_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to metaConfig.targeting.behaviors and
+    # metaConfig.targeting.workPositions (#550): detailed targeting ids sent in
+    # the ad set's flexible_spec beside the interests, each validated with
+    # Meta's ad account targeting validation read before anything is created.
+    # Same rules as META_LOCALE_TARGETING_ENABLED. Both are Meta's own taxonomy,
+    # so they need no global_marketing_ops. Any value other than "true" is
+    # treated as off.
+    META_BEHAVIOR_TARGETING_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to googleAdsConfig.performanceMaxAudienceSignal
     # (#461): one existing Google Ads Audience attached to a Performance Max
     # asset group as a signal. A per-deployment opt-in, off by default, like
