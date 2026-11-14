@@ -655,6 +655,24 @@ excludedGeoTargets?: string[]   — OPTIONAL ISO 3166-1 alpha-2 country codes to
                                   exists, and is re-checked at dispatch before any Reddit call.
                                   Built from Reddit's published v3 targeting schema; no live create
                                   has sent either field yet.
+placements?: string[]           — OPTIONAL ad placements (#549 gap 7): FEED | COMMENTS_PAGE, sent as the
+                                  ad group's `targeting.locations`. Omitted or empty = both (the
+                                  long-standing default).
+platforms?: string[]            — OPTIONAL devices (#549 gap 7): DESKTOP | MOBILE_NATIVE | MOBILE_WEB,
+                                  sent as `targeting.platforms`. Omitted or empty = ALL ('ALL' itself
+                                  is not an accepted entry).
+expandTargeting?: boolean       — OPTIONAL (#549 gap 7), sent as `targeting.expand_targeting`. Omitted =
+                                  true. Set false for a community-only test. For all three: values are
+                                  case-insensitive, de-duplicated and sent upper-case in the fixed
+                                  order above; they are sent on EVERY ad-group attempt (the
+                                  communities/interests retry keeps them). A blank or unknown entry, a
+                                  list that is not an array of strings, an expandTargeting that is not
+                                  a boolean (null reads as absent), or any of the three while
+                                  REDDIT_PLACEMENT_TARGETING_ENABLED is not "true" (expandTargeting:
+                                  true included) is a synchronous **400** "invalid campaign config:
+                                  redditConfig.<field>: ..." before any job exists, re-checked at
+                                  dispatch before any Reddit call. No live create has sent a
+                                  non-default value yet.
 variants?: [{headline, body}]   — Ad copy variants. When no `postUrl`/`imageUrl` drives an ad, one
                                   "ready" instruction per variant is emitted (headline + display UTM
                                   URL) for manual ad creation. On the author-a-post path the FIRST

@@ -545,6 +545,14 @@ type CampaignInput struct {
 	// The dispatcher admits them only behind REDDIT_CUSTOM_AUDIENCES_ENABLED.
 	CustomAudienceIDs         []string
 	ExcludedCustomAudienceIDs []string
+	// Placements, Platforms and ExpandTargeting are the ad group's targeting.locations,
+	// targeting.platforms and targeting.expand_targeting (#549 gap 7). Empty / nil keep the
+	// long-standing defaults (FEED + COMMENTS_PAGE, ALL, true). Checked with
+	// NormalizePlacementTargeting before any upstream call and sent on EVERY ad-group attempt.
+	// The dispatcher admits them only behind REDDIT_PLACEMENT_TARGETING_ENABLED.
+	Placements      []string
+	Platforms       []string
+	ExpandTargeting *bool
 }
 
 // ManualCPCBidSupported reports whether a campaign with this objective can be created with a
@@ -1945,6 +1953,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, domain.PreflightRefusalf("%s", err.Error())
 	}
+	// Placements, platforms and expansion (#549 gap 7), refused before any mutating call with the
+	// rule set the dispatcher's PreflightCreate applies.
+	placement, err := NormalizePlacementTargeting(in.Placements, in.Platforms, in.ExpandTargeting)
+	if err != nil {
+		return nil, domain.PreflightRefusalf("%s", err.Error())
+	}
 
 	// Compose BOTH names (campaign + ad group) and validate their lengths. The per-field
 	// EventName/Project bounds keep caller inputs sane, but the composed names also include
@@ -2270,9 +2284,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	baseTargeting := map[string]any{
 		"geolocations":     geos,
-		"locations":        []string{"FEED", "COMMENTS_PAGE"},
-		"platforms":        []string{"ALL"},
-		"expand_targeting": true,
+		"locations":        placement.Locations,
+		"platforms":        placement.Platforms,
+		"expand_targeting": placement.ExpandTargeting,
 	}
 	if len(in.Keywords) > 0 {
 		baseTargeting["keywords"] = in.Keywords
@@ -2476,6 +2490,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	if n := len(exclusions.Geolocations); n > 0 {
 		surviving = append(surviving, fmt.Sprintf("%d excluded geos", n))
+	}
+	if !placement.IsDefault() {
+		surviving = append(surviving, fmt.Sprintf("placements %s, platforms %s, expansion %t",
+			strings.Join(placement.Locations, "+"), strings.Join(placement.Platforms, "+"), placement.ExpandTargeting))
 	}
 	steps = append(steps, "Targeting: "+strings.Join(surviving, ", "))
 

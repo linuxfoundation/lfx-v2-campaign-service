@@ -83,6 +83,14 @@ type redditConfig struct {
 	// (service.RedditMarketingOpsInputs), because the audiences belong to the shared ad account.
 	CustomAudienceIDs         []string `json:"customAudienceIds"`
 	ExcludedCustomAudienceIDs []string `json:"excludedCustomAudienceIds"`
+	// Placements, Platforms and ExpandTargeting are the ad group's targeting.locations,
+	// targeting.platforms and targeting.expand_targeting (#549 gap 7), behind
+	// REDDIT_PLACEMENT_TARGETING_ENABLED (reddit_placement_targeting.go). omitempty: an omitted
+	// choice stays ABSENT in the persisted ConfigSnapshot, so a snapshot replays through the gate
+	// exactly as the request did.
+	Placements      []string `json:"placements,omitempty"`
+	Platforms       []string `json:"platforms,omitempty"`
+	ExpandTargeting *bool    `json:"expandTargeting,omitempty"`
 }
 
 // redditBidPlan resolves redditConfig's bidding choice. Manual bidding creates campaign and ad
@@ -244,6 +252,10 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	if err := checkRedditCustomAudienceShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	// Likewise a mistyped placements, platforms or expandTargeting (#549 gap 7).
+	if err := checkRedditPlacementShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg redditConfig
 	if err := unmarshalPlatformConfig(config, "redditConfig", &cfg); err != nil {
 		// A wrong-typed conversionEvent also fails this decode; report it by its own field-specific
@@ -272,6 +284,11 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	// The exclusions' deployment gate and rules, re-checked here for any path that skipped
 	// PreflightCreate (which normally refused a bad or gated one as a synchronous 400).
 	if err := checkRedditTargetingExclusions(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// Placements, platforms and expansion (#549 gap 7): the same, for any path that skipped
+	// PreflightCreate.
+	if err := checkRedditPlacementTargeting(cfg); err != nil {
 		return nil, notCreated(err)
 	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
@@ -375,6 +392,10 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 
 		CustomAudienceIDs:         cfg.CustomAudienceIDs,
 		ExcludedCustomAudienceIDs: cfg.ExcludedCustomAudienceIDs,
+
+		Placements:      cfg.Placements,
+		Platforms:       cfg.Platforms,
+		ExpandTargeting: cfg.ExpandTargeting,
 
 		// The name labels of the CLAIMED row (multi-campaign cs-3): its stored funnel stage and
 		// tactic (model.DispatchLabels) and its slot version, never the request's. A retry of

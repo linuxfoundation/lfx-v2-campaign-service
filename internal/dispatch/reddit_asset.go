@@ -86,8 +86,9 @@ func (d *RedditDispatcher) checkRedditAssetChoice(cfg redditConfig) (string, err
 // PreflightCreate refuses, before the create job exists, a Reddit config that names a stored
 // asset the service cannot serve (the feature off, imageAssetId together with imageUrl or
 // postUrl, or a malformed id), whose bidding cannot be created as asked (redditBidPlan), whose
-// custom audience lists are mistyped, malformed or off on this deployment (#549), or whose
-// conversionEvent is refused (checkRedditConversionEvent). It
+// custom audience lists are mistyped, malformed or off on this deployment (#549), whose
+// conversionEvent is refused (checkRedditConversionEvent), or whose placements, platforms or
+// expandTargeting are refused (checkRedditPlacementTargeting, #549 gap 7). It
 // never calls Reddit, so every other outcome is ErrPreflightNotApplicable. Whether the asset belongs to the brief cannot be checked here (the
 // pre-check is not given the brief); Dispatch checks it before any upstream call. A config that does
 // not decode is left to Dispatch, except a wrong-typed `bidding` (checkBiddingShape).
@@ -103,6 +104,10 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 	}
 	// A wrong-typed exclusion list is a synchronous 400 too (#549).
 	if err := checkRedditExclusionsShape(config); err != nil {
+		return err
+	}
+	// And a wrong-typed placements, platforms or expandTargeting (#549 gap 7).
+	if err := checkRedditPlacementShape(config); err != nil {
 		return err
 	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can past a type
@@ -129,6 +134,11 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 	// unrelated mistyped field must not turn a gated or invalid exclusion list into an accepted
 	// job. checkRedditExclusionsShape above already refused a mistyped list, so the lists decoded.
 	if err := checkRedditTargetingExclusions(cfg); err != nil {
+		return err
+	}
+	// Placements, platforms and expansion (#549 gap 7): gate and rules on the best-effort decode,
+	// like the exclusions; checkRedditPlacementShape above already refused a mistyped value.
+	if err := checkRedditPlacementTargeting(cfg); err != nil {
 		return err
 	}
 	if decodeErr != nil {

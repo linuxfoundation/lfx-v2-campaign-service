@@ -965,6 +965,26 @@ The dispatcher keeps both behind `REDDIT_TARGETING_EXCLUSIONS_ENABLED` (default 
 create has sent either field. What Reddit answers for an excluded community that does not exist
 is unknown, so it is not part of the communities-fallback match.
 
+## Placements, platforms and expansion (`placement_targeting.go`, #549 gap 7)
+
+`CampaignInput.Placements`, `Platforms` and `ExpandTargeting` become the ad group's
+`targeting.locations`, `targeting.platforms` and `targeting.expand_targeting`, which the create
+used to fix at `FEED` + `COMMENTS_PAGE`, `ALL` and `true`. `NormalizePlacementTargeting` is the one
+rule set: entries are trimmed and uppercased, must be in `Placements()` (FEED, COMMENTS_PAGE) or
+`Platforms()` (DESKTOP, MOBILE_NATIVE, MOBILE_WEB), and are returned de-duplicated in that fixed
+order; a blank or unknown entry is a `PlacementError` naming the field and the 1-based entry. An
+empty list or a nil `ExpandTargeting` keeps the old default, and `ALL` is not an accepted entry, so
+the default has one spelling. `CreateCampaign` applies it before any upstream call; the dispatcher
+applies it in `PreflightCreate` (`checkRedditPlacementTargeting`, plus `checkRedditPlacementShape`
+for a wrong JSON type) so a breach is a synchronous 400.
+
+All three go in `baseTargeting`, so the communities/interests retry keeps them: a retry that turned
+expansion back on would serve beyond what the operator limited the ad group to. Pinned by
+`TestCreateCampaign_RetryKeepsPlacementChoices`. A non-default choice is added to the
+`Targeting:` step. The dispatcher keeps the three behind `REDDIT_PLACEMENT_TARGETING_ENABLED`
+(default off): no live create has sent a non-default value. The config snapshot omits an absent
+choice (`omitempty`, `*bool`), so a stored snapshot replays through the gate as the request did.
+
 ## Campaign name (multi-campaign cs-3)
 
 `buildRedditCampaignName` composes the data pipeline's 8-segment name, `Events | <event> |
