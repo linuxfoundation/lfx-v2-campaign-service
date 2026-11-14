@@ -33,7 +33,7 @@ func twitterWebsiteCardEnabled() bool {
 }
 
 // checkTwitterWebsiteCard refuses a card while the gate is off, one whose headline breaks
-// NormalizeWebsiteCardHeadline, one with no media (imageAssetId) and one on a create that authors no
+// NormalizeWebsiteCardHeadline, one with no media (imageAssetId or videoAssetId) and one on a create that authors no
 // tweet (tweetId set, or neither tweetText nor variants), and otherwise returns the card input
 // (nil when unset). Every refusal is a domain.ErrCreateConfigInvalid wrapped as a PreflightRefusal.
 func checkTwitterWebsiteCard(cfg twitterConfig) (*twitter.WebsiteCardInput, error) {
@@ -61,8 +61,8 @@ func checkTwitterWebsiteCard(cfg twitterConfig) (*twitter.WebsiteCardInput, erro
 	if strings.TrimSpace(cfg.TweetID) != "" || (strings.TrimSpace(cfg.TweetText) == "" && len(cfg.Variants) == 0) {
 		return nil, refuse("a website card rides on an authored tweet, so it requires tweetText (or variants) and no tweetId")
 	}
-	if strings.TrimSpace(cfg.ImageAssetID) == "" {
-		return nil, refuse("a website card needs media, so it requires imageAssetId")
+	if strings.TrimSpace(cfg.ImageAssetID) == "" && strings.TrimSpace(cfg.VideoAssetID) == "" {
+		return nil, refuse("a website card needs media, so it requires imageAssetId or videoAssetId")
 	}
 	return &twitter.WebsiteCardInput{Headline: h}, nil
 }

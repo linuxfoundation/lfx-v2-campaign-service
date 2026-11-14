@@ -52,6 +52,8 @@ var twitterUngatedFields = map[string]bool{
 	"variants": true,
 	// #564 gap 6: a headline and the create's own image name no account resource.
 	"card": true,
+	// #564 gap 7: a stored asset of this brief names no account resource.
+	"videoAssetId": true,
 }
 
 // TestEveryTwitterConfigFieldIsClassifiedForTheMarketingOpsGate fails when a twitterConfig field

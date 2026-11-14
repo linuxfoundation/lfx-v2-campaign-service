@@ -44,6 +44,7 @@ func TestPlatformConfigsNameTheirAssetUnderOneKey(t *testing.T) {
 	for name, config := range map[string]any{
 		"reddit":    redditConfig{ImageAssetID: assetID},
 		"twitter":   twitterConfig{ImageAssetID: assetID},
+		"x-video":   twitterConfig{VideoAssetID: assetID}, // #564 gap 7: the second key
 		"microsoft": microsoftConfig{ImageAssetID: assetID},
 		"meta":      metaConfig{Variants: []meta.AdVariant{{ImageAssetID: assetID}}},
 		"linkedin":  linkedinConfig{Variants: []linkedin.CreativeVariant{{ImageAssetID: assetID}}},

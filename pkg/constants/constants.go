@@ -267,6 +267,15 @@ const (
 	// ad account until a live create confirms it.
 	EnvTwitterWebsiteCardEnabled = "TWITTER_WEBSITE_CARD_ENABLED"
 
+	// EnvTwitterVideoEnabled opts a deployment IN to twitterConfig.videoAssetId (#564 gap 7): a
+	// stored MP4 uploaded as amplify_video (chunked initialize/append/finalize, then STATUS polled
+	// for at most 30 s) and attached to the tweet(s) an X create authors. Only the exact value
+	// "true" enables it; unset or any other value fails closed, and a create setting it is refused
+	// with a 400 before any job exists (and again at dispatch). Blocker before enabling: measure
+	// X's amplify_video processing time for a 20-30 MiB MP4 against the 30 s bound, which runs
+	// inside the two-minute provider call and must not be lengthened.
+	EnvTwitterVideoEnabled = "TWITTER_VIDEO_ENABLED"
+
 	// EnvTwitterKeywordAddEnabled opts a deployment IN to the positive keyword add lever on an
 	// existing X campaign (#564 gap 12): POST .../keyword-targeting/additions, one BROAD_KEYWORD
 	// targeting criterion (operator_type EQ) per keyword on the line item this service created.
