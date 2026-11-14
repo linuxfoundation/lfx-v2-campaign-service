@@ -4,14 +4,10 @@
 package linkedin
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"image"
 	"net/http"
-
-	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // LinkedIn Text Ads (#586).
@@ -138,27 +134,9 @@ func ValidateTextAds(ads []TextAd) error {
 // ValidateTextAdImage reports whether in can be uploaded as a Text Ad image: PNG or JPEG, at
 // most MaxTextAdImageBytes, exactly 100x100. It decodes only the header and never quotes bytes.
 func ValidateTextAdImage(in ImageUpload) error {
-	if len(in.Data) == 0 {
-		return fmt.Errorf("%w: the image has no bytes", ErrImageInvalid)
-	}
-	if len(in.Data) > MaxTextAdImageBytes {
-		return fmt.Errorf("%w: the image is %d bytes; LinkedIn text ads accept at most %d", ErrImageInvalid, len(in.Data), MaxTextAdImageBytes)
-	}
-	var wantFormat string
-	switch in.MimeType {
-	case "image/png":
-		wantFormat = "png"
-	case "image/jpeg":
-		wantFormat = "jpeg"
-	default:
-		return fmt.Errorf("%w: only PNG and JPEG images are supported", ErrImageInvalid)
-	}
-	cfg, format, err := image.DecodeConfig(bytes.NewReader(in.Data))
+	cfg, err := decodeImageHeader(in, MaxTextAdImageBytes, "text ads")
 	if err != nil {
-		return fmt.Errorf("%w: the image header could not be decoded", ErrImageInvalid)
-	}
-	if format != wantFormat {
-		return fmt.Errorf("%w: the image bytes are %s, not the recorded %s", ErrImageInvalid, domain.CallerValue(format), domain.MIMEValue(in.MimeType))
+		return err
 	}
 	if cfg.Width != textAdImageSide || cfg.Height != textAdImageSide {
 		return fmt.Errorf("%w: the image is %dx%d; LinkedIn text ads require %dx%d", ErrImageInvalid, cfg.Width, cfg.Height, textAdImageSide, textAdImageSide)

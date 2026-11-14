@@ -20,7 +20,10 @@ import (
 //
 // A LinkedIn variant may name a stored creative asset (linkedInConfig.variants[].imageAssetId),
 // which becomes that variant's dark-post thumbnail through LinkedIn's Images API (see
-// internal/platform/linkedin/images.go). The safety properties are Meta's and Microsoft's:
+// internal/platform/linkedin/images.go); on a format "text" create (#586) a text ad may name one
+// instead (linkedInConfig.textAds[].imageAssetId), checked against the Text Ad image rules, and
+// every refusal names the field the asset came from. The safety properties are Meta's and
+// Microsoft's:
 //
 //   - VALIDATE BEFORE MUTATING. Every named asset is resolved within the brief, sized, charged
 //     against the shared AssetReserver, loaded and checked against LinkedIn's single image ad
@@ -112,15 +115,17 @@ func (d *LinkedInDispatcher) resolveLinkedInImages(ctx context.Context, brief *m
 		}
 	}
 	maxBytes := linkedin.MaxImageBytesForFormat(cfg.Format)
-	adKind := "single image ads"
+	// The refusals below name the field the assets came from: a text create references them
+	// from textAds[].imageAssetId and may not carry variants at all.
+	adKind, field := "single image ads", "variants"
 	if cfg.Format == linkedin.FormatText {
-		adKind = "text ads"
+		adKind, field = "text ads", "textAds"
 	}
 	if len(order) == 0 {
 		return nil, noop, nil
 	}
 	if d.creatives == nil {
-		return nil, noop, domain.PreflightRefusalf("linkedInConfig.variants reference creative asset %s but the creative-asset store is not configured", order[0])
+		return nil, noop, domain.PreflightRefusalf("linkedInConfig.%s reference creative asset %s but the creative-asset store is not configured", field, order[0])
 	}
 
 	// PRICE BEFORE LOADING: one BIGINT per asset, so an oversized asset is refused on its
@@ -130,7 +135,7 @@ func (d *LinkedInDispatcher) resolveLinkedInImages(ctx context.Context, brief *m
 		size, err := d.creatives.GetAssetSize(ctx, brief.ProjectID, brief.ID, assetID)
 		if err != nil {
 			if errors.Is(err, domain.ErrNotFound) {
-				return nil, noop, domain.PreflightRefusalf("linkedInConfig.variants reference creative asset %s, which does not exist for this brief", assetID)
+				return nil, noop, domain.PreflightRefusalf("linkedInConfig.%s reference creative asset %s, which does not exist for this brief", field, assetID)
 			}
 			return nil, noop, fmt.Errorf("size creative asset %s: %w", assetID, err)
 		}
@@ -140,7 +145,7 @@ func (d *LinkedInDispatcher) resolveLinkedInImages(ctx context.Context, brief *m
 		total += size
 	}
 	if total > maxVariantAssetBytes {
-		return nil, noop, domain.PreflightRefusalf("linkedInConfig.variants reference %d bytes of distinct creative assets; at most %d may be used in one dispatch", total, maxVariantAssetBytes)
+		return nil, noop, domain.PreflightRefusalf("linkedInConfig.%s reference %d bytes of distinct creative assets; at most %d may be used in one dispatch", field, total, maxVariantAssetBytes)
 	}
 
 	release := noop
@@ -161,7 +166,7 @@ func (d *LinkedInDispatcher) resolveLinkedInImages(ctx context.Context, brief *m
 		asset, err := d.creatives.GetAsset(ctx, brief.ProjectID, brief.ID, assetID)
 		if err != nil {
 			if errors.Is(err, domain.ErrNotFound) {
-				return nil, noop, domain.PreflightRefusalf("linkedInConfig.variants reference creative asset %s, which does not exist for this brief", assetID)
+				return nil, noop, domain.PreflightRefusalf("linkedInConfig.%s reference creative asset %s, which does not exist for this brief", field, assetID)
 			}
 			return nil, noop, fmt.Errorf("load creative asset %s: %w", assetID, err)
 		}

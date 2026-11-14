@@ -405,7 +405,8 @@ func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ mode
 	// stays "not applicable" — only bidding is promised as a synchronous 400.
 	var cfg linkedinConfig
 	_ = unmarshalPlatformConfig(config, "linkedInConfig", &cfg)
-	if _, err := linkedinBidPlan(cfg); err != nil {
+	plan, err := linkedinBidPlan(cfg)
+	if err != nil {
 		return err
 	}
 	// linkedInConfig.targeting (#552) is promised as a synchronous 400 too. checkTargetingShape
@@ -426,11 +427,10 @@ func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ mode
 		return err
 	}
 	// linkedInConfig.format and textAds (#586) are promised as a synchronous 400 too, a wrong
-	// JSON type included. The bid plan is re-resolved: a text create needs a manual one.
+	// JSON type included. The bid plan resolved above is reused: a text create needs a manual one.
 	if err := checkFormatShape(config); err != nil {
 		return err
 	}
-	plan, _ := linkedinBidPlan(cfg)
 	if _, err := linkedinFormat(cfg, plan); err != nil {
 		return err
 	}

@@ -36,7 +36,9 @@ the claim is released and nothing exists upstream:
 1. Each id must parse as a uuid and is canonicalized into the config (the snapshot never stores
    a caller spelling). A variant with both `imageUrn` and `imageAssetId` is refused.
 2. `GetAssetSize` is scoped to the brief's project and id. An asset of another brief or project
-   is "does not exist for this brief".
+   is "does not exist for this brief". Refusals that name the referencing field say
+   `linkedInConfig.variants reference …`, or `linkedInConfig.textAds reference …` on a
+   `format: "text"` create, whose assets come from `textAds[].imageAssetId`.
 3. Anything over `linkedin.MaxImageBytes` (5,000,000) is refused on its `byte_size`, before the
    blob is loaded. LinkedIn's [single image ad spec](https://www.linkedin.com/help/lms/answer/a426534)
    says "5 MB"; the decimal reading is used so nothing LinkedIn could count as larger is sent.

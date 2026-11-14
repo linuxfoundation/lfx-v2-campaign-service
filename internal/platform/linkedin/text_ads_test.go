@@ -124,6 +124,9 @@ type textAdServer struct {
 	creatives []map[string]any
 	failAt    int // 1-based creative POST that answers failStatus; 0 never
 	failCode  int
+	// existingCampaign, when set, is the campaign-search answer: a same-name campaign in group
+	// 100. The search filters by name server-side, so it is returned for any campaign GET.
+	existingCampaign string
 }
 
 func (s *textAdServer) handler(t *testing.T, base func() string) http.HandlerFunc {
@@ -140,6 +143,8 @@ func (s *textAdServer) handler(t *testing.T, base func() string) http.HandlerFun
 			_, _ = io.WriteString(w, `{"value":{"uploadUrl":"`+base()+`/dms-uploads/IMG1/0?ut=sig","image":"urn:li:image:IMG1"}}`)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/images/"):
 			_, _ = io.WriteString(w, `{"status":"AVAILABLE"}`)
+		case r.Method == http.MethodGet && s.existingCampaign != "" && strings.HasSuffix(r.URL.Path, "/adCampaigns"):
+			_, _ = io.WriteString(w, s.existingCampaign)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 		case strings.Contains(r.URL.Path, "adCampaignGroups"):
@@ -397,6 +402,41 @@ func TestFindCampaignByNameInGroup_RefusesAnotherCampaignType(t *testing.T) {
 	}
 	if id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", "N", "100", "", campaignTypeSponsoredUpdates); err != nil || id != "555" {
 		t.Fatalf("same type: id %q, err %v; want reuse of 555", id, err)
+	}
+}
+
+// TestCreateCampaign_TextAdRefusesSameNameCampaignOfAnotherType pins the type guard at the
+// CreateCampaign call site, not only in the helper: a same-name SPONSORED_UPDATES campaign in the
+// group is refused for a text create, which returns the group partial and sends no campaign or
+// creative POST (#586).
+func TestCreateCampaign_TextAdRefusesSameNameCampaignOfAnotherType(t *testing.T) {
+	// The campaign name is deterministic under the fixed clock; take it from a clean create.
+	first := &textAdServer{}
+	ok, err := newTextAdClient(t, first).CreateCampaign(context.Background(), textAdInput())
+	if err != nil {
+		t.Fatalf("clean create: %v", err)
+	}
+	el, _ := json.Marshal(map[string]any{"elements": []map[string]any{{
+		"name": ok.CampaignName, "status": "PAUSED", "id": 555, "type": "SPONSORED_UPDATES",
+		"campaignGroup": "urn:li:sponsoredCampaignGroup:100",
+	}}, "metadata": map[string]any{}})
+	s := &textAdServer{existingCampaign: string(el)}
+	res, err := newTextAdClient(t, s).CreateCampaign(context.Background(), textAdInput())
+	if err == nil || !strings.Contains(err.Error(), "with type SPONSORED_UPDATES, not TEXT_AD") {
+		t.Fatalf("err = %v, want the type-mismatch refusal", err)
+	}
+	if res == nil || res.CampaignGroupID != "100" || res.CampaignID != "" {
+		t.Errorf("partial = %+v; want group 100 and no campaign", res)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, call := range s.calls {
+		if strings.HasPrefix(call, http.MethodPost) && (strings.HasSuffix(call, "/adCampaigns") || strings.Contains(call, "creatives")) {
+			t.Errorf("a refused reuse still sent %s", call)
+		}
+	}
+	if s.campaign != nil || len(s.creatives) != 0 {
+		t.Errorf("campaign body %v, %d creatives recorded; want none", s.campaign, len(s.creatives))
 	}
 }
 

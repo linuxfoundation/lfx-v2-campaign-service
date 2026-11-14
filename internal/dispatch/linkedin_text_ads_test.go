@@ -245,19 +245,33 @@ func TestLinkedIn_DefaultFormatSnapshotUnchanged(t *testing.T) {
 }
 
 // TestLinkedIn_TextAdStoredImageRefusedBeforeAnythingIsCreated: a stored asset that is not a
-// 100x100 text ad image fails pre-create with nothing sent.
+// 100x100 text ad image, or that does not exist for the brief, fails pre-create with nothing
+// sent, and a refusal that names the referencing field names textAds — the field the asset came
+// from on a text create, which may not carry variants at all.
 func TestLinkedIn_TextAdStoredImageRefusedBeforeAnythingIsCreated(t *testing.T) {
 	t.Setenv(constants.EnvLinkedInAdsTextAdsEnabled, "true")
-	api := newLITextAPI(t)
-	d := newLITextDispatcher(api, liPNGAsset(t, 1200, 627))
-	cfg := linkedInTextConfig(`"format":"text","textAds":[{"headline":"h","description":"d","imageAssetId":"` + msAssetID + `"}]`)
-	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
-	if !isNoUpstreamCreate(err) || !strings.Contains(err.Error(), "require 100x100") {
-		t.Fatalf("Dispatch = %v, want a not-created 100x100 refusal", err)
-	}
-	api.mu.Lock()
-	defer api.mu.Unlock()
-	if len(api.calls) != 0 {
-		t.Errorf("requests sent: %v", api.calls)
+	const unknownAssetID = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+	for _, tc := range []struct {
+		name    string
+		assetID string
+		want    string
+	}{
+		{"not 100x100", msAssetID, "require 100x100"},
+		{"asset does not exist", unknownAssetID, "linkedInConfig.textAds reference creative asset " + unknownAssetID + ", which does not exist for this brief"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := newLITextAPI(t)
+			d := newLITextDispatcher(api, liPNGAsset(t, 1200, 627))
+			cfg := linkedInTextConfig(`"format":"text","textAds":[{"headline":"h","description":"d","imageAssetId":"` + tc.assetID + `"}]`)
+			_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+			if !isNoUpstreamCreate(err) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Dispatch = %v, want a not-created refusal containing %q", err, tc.want)
+			}
+			api.mu.Lock()
+			defer api.mu.Unlock()
+			if len(api.calls) != 0 {
+				t.Errorf("requests sent: %v", api.calls)
+			}
+		})
 	}
 }

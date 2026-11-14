@@ -5620,5 +5620,7 @@ default), needs a manual bid plan, no variants and `linkedin.ValidateTextAds`-va
 under any other format is refused. `Dispatch` stores `"text"` or `""` — an explicit
 `"single_image"` is stored as the omitted default, so a default create's snapshot is unchanged.
 `resolveLinkedInImages` resolves `textAds[].imageAssetId` like a variant's, under the text ad size
-and 100x100 rules (`linkedin.ValidateImageForFormat`); the snapshot redacts text-ad copy like
+and 100x100 rules (`linkedin.ValidateImageForFormat`), and its refusals name the field the asset
+came from — `linkedInConfig.textAds reference creative asset …` on a text create, `variants`
+otherwise; the snapshot redacts text-ad copy like
 variant copy, and `linkedinCreativeCount` gives `campaignFromLinkedIn` the requested creative count.

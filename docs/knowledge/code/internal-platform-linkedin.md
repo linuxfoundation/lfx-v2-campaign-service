@@ -1051,7 +1051,9 @@ None, CPC or CPM). So a text create requires `ManualCPCBid > 0` and uses the exi
 
 Everything is checked before the campaign group: `NormalizeFormat`, `ValidateTextAds` (copy
 normalised exactly as the wire copy is, counted in runes, REFUSED rather than truncated, at most
-100 ads, image URN shape, not both image fields), and `ValidateTextAdImage` for stored assets;
+100 ads, image URN shape, not both image fields), and `ValidateTextAdImage` for stored assets
+(it shares `decodeImageHeader` — bytes present, byte ceiling, PNG/JPEG, header format matches the
+MIME type — with `ValidateImage`, and keeps only the exact-100x100 rule);
 text ads under another format, and variants under the text format, are refused. The campaign
 name's Ad Format segment is `Text` instead of `Static` (`adFormatNameSegment`), so a text campaign
 never shares a name with a single-image one, and `findCampaignByNameInGroup` now also refuses a

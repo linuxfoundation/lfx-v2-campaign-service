@@ -106,27 +106,9 @@ func WithImagePolling(interval, wait time.Duration) Option {
 // ValidateImage reports whether in can be uploaded as a single image ad thumbnail. It decodes
 // only the image HEADER, never the pixels. The bytes are never quoted in the error.
 func ValidateImage(in ImageUpload) error {
-	if len(in.Data) == 0 {
-		return fmt.Errorf("%w: the image has no bytes", ErrImageInvalid)
-	}
-	if len(in.Data) > MaxImageBytes {
-		return fmt.Errorf("%w: the image is %d bytes; LinkedIn single image ads accept at most %d", ErrImageInvalid, len(in.Data), MaxImageBytes)
-	}
-	var wantFormat string
-	switch in.MimeType {
-	case "image/png":
-		wantFormat = "png"
-	case "image/jpeg":
-		wantFormat = "jpeg"
-	default:
-		return fmt.Errorf("%w: only PNG and JPEG images are supported", ErrImageInvalid)
-	}
-	cfg, format, err := image.DecodeConfig(bytes.NewReader(in.Data))
+	cfg, err := decodeImageHeader(in, MaxImageBytes, "single image ads")
 	if err != nil {
-		return fmt.Errorf("%w: the image header could not be decoded", ErrImageInvalid)
-	}
-	if format != wantFormat {
-		return fmt.Errorf("%w: the image bytes are %s, not the recorded %s", ErrImageInvalid, domain.CallerValue(format), domain.MIMEValue(in.MimeType))
+		return err
 	}
 	w, h := cfg.Width, cfg.Height
 	if int64(w)*int64(h) >= maxImagePixels {
@@ -149,6 +131,36 @@ func ValidateImage(in ImageUpload) error {
 		return fmt.Errorf("%w: the %s image is %dx%d; LinkedIn accepts at most %dx%d", ErrImageInvalid, shape, w, h, maxW, maxH)
 	}
 	return nil
+}
+
+// decodeImageHeader holds the checks every LinkedIn image validator shares: the image has bytes,
+// at most maxBytes of them (adKind names the ad kind in that refusal, e.g. "text ads"), a PNG or
+// JPEG MIME type, and a decodable header whose format matches that MIME type. It decodes only the
+// HEADER, never the pixels, and never quotes the bytes; each caller keeps its own dimension rule.
+func decodeImageHeader(in ImageUpload, maxBytes int, adKind string) (image.Config, error) {
+	if len(in.Data) == 0 {
+		return image.Config{}, fmt.Errorf("%w: the image has no bytes", ErrImageInvalid)
+	}
+	if len(in.Data) > maxBytes {
+		return image.Config{}, fmt.Errorf("%w: the image is %d bytes; LinkedIn %s accept at most %d", ErrImageInvalid, len(in.Data), adKind, maxBytes)
+	}
+	var wantFormat string
+	switch in.MimeType {
+	case "image/png":
+		wantFormat = "png"
+	case "image/jpeg":
+		wantFormat = "jpeg"
+	default:
+		return image.Config{}, fmt.Errorf("%w: only PNG and JPEG images are supported", ErrImageInvalid)
+	}
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(in.Data))
+	if err != nil {
+		return image.Config{}, fmt.Errorf("%w: the image header could not be decoded", ErrImageInvalid)
+	}
+	if format != wantFormat {
+		return image.Config{}, fmt.Errorf("%w: the image bytes are %s, not the recorded %s", ErrImageInvalid, domain.CallerValue(format), domain.MIMEValue(in.MimeType))
+	}
+	return cfg, nil
 }
 
 // imageUploadError is a failed image step. It carries the step's own classification, because
