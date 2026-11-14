@@ -1796,3 +1796,38 @@ picker answers 400). `conversionGoalIds` also needs `global_marketing_ops`
 (`service.MicrosoftMarketingOpsInputs`, pinned to the dispatcher by
 `TestMicrosoftSharedAccountInputDetectionAgreesWithTheCreateGate`), and the picker route is on the
 gateway's `marketing-ops-api` rule.
+
+## Multiple ad groups at create (`ad_groups.go`, #563 gap 12)
+
+`microsoftConfig.adGroups` builds 1-5 ad groups under the campaign instead of the single one, each
+with its own `nameSuffix`, keywords and responsive search ad copy (`AdGroupInput`); the
+dispatcher attaches each group's negatives (ad-group level, `AddAdGroupNegativeKeywords`,
+EntityType `AdGroup`) and remarketing lists afterwards. With no `AdGroups` the client takes the
+single-group path unchanged: the same `createAdGroupAndAd` call, the same ad group name, and no
+`adGroups` key in the result.
+
+`validateAdGroups` runs inside CreateCampaign's up-front checks, before anything exists: the
+suffixes (`ValidateAdGroupNameSuffixes`: 1-40 characters, a letter or digit, no control character
+or `|`, unique ignoring case), each composed name (`composeAdGroupName` plus ` | <suffix>`)
+against the 256-character limit, at least one keyword per group, the copy, and each group's
+display paths against the registration URL's domain.
+
+`createAdGroups` calls `createAdGroupAndAd` once per group, in order, on a per-group copy of the
+input, sharing the campaign-wide bid, flight, language and network. PARTIAL RULES (owner decision:
+degraded success, no rollback): the first group failing returns today's partial and error; a later
+group failing is recorded (`AdGroupResult.Status` `failed`, with the error), the remaining groups
+are still built unless the context ended (`not_attempted`), and the result is returned without an
+error; `FailedAdGroups` names them and the dispatcher marks the campaign `created_degraded` with
+one step. The top-level `AdGroupID`/`AdID`/`KeywordIDs` are the first group's; `BidApplied`,
+`FlightApplied` and `AlreadyExisted` hold only when they hold for every group.
+
+`UpdateAdGroupChildrenStatus` sets one further group's ad group, ad and keywords without the
+campaign. The dispatcher's toggle activates every further created group (narrowed to its live
+keywords) BEFORE `UpdateCampaignAndChildrenStatus` opens the gate, and pauses them AFTER the gate
+is closed (a failure there is logged; delivery is already stopped). The bid lever re-bids every
+created group (a failure after the first is UNCONFIRMED), and the keyword lever accepts any
+created group, one per batch. The monitor, metrics and keyword report are campaign-level.
+
+Not verified live. Behind `MICROSOFT_AD_GROUPS_ENABLED` (default off); each per-group field also
+stays behind its single-group flag, and a group's lists need `global_marketing_ops`
+(`service.MicrosoftMarketingOpsInputs` names them `adGroups entry N audienceIds`).

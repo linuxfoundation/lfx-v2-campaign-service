@@ -526,6 +526,17 @@ app:
     MICROSOFT_CONVERSION_GOALS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to microsoftConfig.adGroups (#563 gap 12): up to
+    # five ad groups under one Microsoft campaign, each with its own name
+    # suffix, keywords, negative keywords, remarketing lists and ad copy. Each
+    # per-group field also stays behind its single-group flag
+    # (MICROSOFT_AD_COPY_ENABLED, MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED,
+    # MICROSOFT_AUDIENCES_ENABLED). Not yet exercised by a live create. While
+    # off, a create naming adGroups is refused with a 400 before any job exists.
+    # Any value other than "true" is treated as off.
+    MICROSOFT_AD_GROUPS_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to googleAdsConfig.demandGenAudience (#459): one
     # existing Google Ads Audience on a Demand Gen ad group. The same flag
     # gates each googleAdsConfig.demandGenAdGroups[].audience (#460), the same

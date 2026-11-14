@@ -58,8 +58,9 @@ func (d *MicrosoftDispatcher) microsoftKeywordLeverClient(ctx context.Context, p
 //
 //  1. The batch is validated locally — a permanent input fault masks any contingent one.
 //  2. The campaign must be provisioned: a platform campaign id and an ad group.
-//  3. Every action must name THIS campaign's ad group, checked against the row before
-//     Microsoft is contacted. A Microsoft campaign built here has exactly one ad group.
+//  3. Every action must name one of THIS campaign's ad groups, checked against the row before
+//     Microsoft is contacted, and one batch names one ad group. A campaign built here has one ad
+//     group, or up to five with microsoftConfig.adGroups (#563 gap 12).
 //  4. Provenance fails closed, then the account must match (microsoftKeywordLeverClient).
 //  5. Every keyword id must be a live, non-deleted keyword IN that ad group — a READ
 //     (GetKeywordsByAdGroupId), so a refusal here has changed nothing. Without it a keyword id
@@ -89,10 +90,26 @@ func (d *MicrosoftDispatcher) ApplyKeywordActions(ctx context.Context, projectID
 	if adGroupID == "" {
 		return nil, fmt.Errorf("%w: microsoft campaign %s has no provisioned ad group, so it has no keywords to act on", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 	}
+	// A multi-ad-group create (#563 gap 12) records further ad groups: an action may name any of
+	// them, but one batch acts on ONE ad group (the client's call and the live-keyword read below
+	// are per ad group), so a batch naming two is refused.
+	owned := map[string]bool{adGroupID: true}
+	for _, g := range microsoftExtraAdGroups(campaign.Result) {
+		if g.adGroupID != "" {
+			owned[g.adGroupID] = true
+		}
+	}
+	if len(validated) > 0 {
+		adGroupID = validated[0].AdGroupID
+	}
 	for i, a := range validated {
-		if a.AdGroupID != adGroupID {
+		if !owned[a.AdGroupID] {
 			return nil, fmt.Errorf("%w: keyword action %d names ad group %s, which does not belong to campaign %s",
 				domain.ErrKeywordActionInvalid, i, a.AdGroupID, campaign.PlatformCampaignID)
+		}
+		if a.AdGroupID != adGroupID {
+			return nil, fmt.Errorf("%w: keyword action %d names ad group %s, but action 0 names ad group %s; send one batch per ad group",
+				domain.ErrKeywordActionInvalid, i, a.AdGroupID, adGroupID)
 		}
 	}
 

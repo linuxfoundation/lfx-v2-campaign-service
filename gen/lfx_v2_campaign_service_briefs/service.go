@@ -192,29 +192,33 @@ type Service interface {
 	// "targetCpa", that breaks its rules or is sent while
 	// MICROSOFT_CONVERSION_GOALS_ENABLED is not "true"; conversionGoalIds also
 	// requires global_marketing_ops in the same single check, since the goals
-	// belong to the LF Microsoft Advertising account. An X custom audience list is
-	// also refused synchronously with 400 "invalid campaign config:
-	// twitterConfig.<field>: ..." when it is not an array of strings, when an id
-	// is not 1-32 letters or digits, repeats, or is in both lists, when a list
-	// holds more than 60 ids or the X targeting lists together name more than 60
-	// criteria, and when TWITTER_CUSTOM_AUDIENCES_ENABLED is not "true" on this
-	// deployment. When both platforms' inputs are refused, the 403 names each
-	// platform's fields in its own sentence. A Reddit custom audience list is also
-	// refused synchronously with 400 "invalid campaign config:
-	// redditConfig.<field>: ..." when it is not an array of strings, when an id is
-	// not 1-64 letters, digits or underscores, repeats, or is in both lists, when
-	// a list holds more than 100 ids, and when REDDIT_CUSTOM_AUDIENCES_ENABLED is
-	// not "true" on this deployment. META SHARED-ACCOUNT INPUTS: likewise a
-	// metaConfig.targeting that sets customAudiences or excludedCustomAudiences
-	// (any non-empty list) names custom audiences of the Meta ad account every
-	// foundation shares and requires global_marketing_ops on this project (403
-	// naming them, 503 when the check cannot be made); age, gender and
-	// advantageAudience are not gated. An invalid metaConfig.targeting, or any
-	// targeting block while META_AUDIENCE_TARGETING_ENABLED is not "true" on the
-	// deployment, is a synchronous 400 "invalid campaign config:
-	// metaConfig.targeting...". An invalid per-platform `bidding` object (see the
-	// config attribute) is also refused synchronously, with 400 "invalid campaign
-	// config: <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
+	// belong to the LF Microsoft Advertising account. So is a
+	// microsoftConfig.adGroups that breaks its rules or is sent while
+	// MICROSOFT_AD_GROUPS_ENABLED is not "true"; an adGroups entry's audienceIds
+	// or excludedAudienceIds also require global_marketing_ops in the same single
+	// check. An X custom audience list is also refused synchronously with 400
+	// "invalid campaign config: twitterConfig.<field>: ..." when it is not an
+	// array of strings, when an id is not 1-32 letters or digits, repeats, or is
+	// in both lists, when a list holds more than 60 ids or the X targeting lists
+	// together name more than 60 criteria, and when
+	// TWITTER_CUSTOM_AUDIENCES_ENABLED is not "true" on this deployment. When both
+	// platforms' inputs are refused, the 403 names each platform's fields in its
+	// own sentence. A Reddit custom audience list is also refused synchronously
+	// with 400 "invalid campaign config: redditConfig.<field>: ..." when it is not
+	// an array of strings, when an id is not 1-64 letters, digits or underscores,
+	// repeats, or is in both lists, when a list holds more than 100 ids, and when
+	// REDDIT_CUSTOM_AUDIENCES_ENABLED is not "true" on this deployment. META
+	// SHARED-ACCOUNT INPUTS: likewise a metaConfig.targeting that sets
+	// customAudiences or excludedCustomAudiences (any non-empty list) names custom
+	// audiences of the Meta ad account every foundation shares and requires
+	// global_marketing_ops on this project (403 naming them, 503 when the check
+	// cannot be made); age, gender and advantageAudience are not gated. An invalid
+	// metaConfig.targeting, or any targeting block while
+	// META_AUDIENCE_TARGETING_ENABLED is not "true" on the deployment, is a
+	// synchronous 400 "invalid campaign config: metaConfig.targeting...". An
+	// invalid per-platform `bidding` object (see the config attribute) is also
+	// refused synchronously, with 400 "invalid campaign config:
+	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
 	// Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc)
 	// and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are
 	// immediately eligible for the bid lever, and eligibility follows the
@@ -1527,7 +1531,40 @@ type CampaignCreateInput struct {
 	// "invalid campaign config: microsoftConfig.<field>: ..." before any job
 	// exists. The goals belong to the shared LF account, so conversionGoalIds
 	// needs global_marketing_ops (403, or 503 when the check cannot be made); the
-	// strategies alone are not role-gated.
+	// strategies alone are not role-gated. MICROSOFT AD GROUPS (#563):
+	// microsoftConfig takes `adGroups`, 1-5 objects {nameSuffix, keywords,
+	// negativeKeywords?, audienceIds?, excludedAudienceIds?,
+	// audienceBidAdjustment?, headlines?, descriptions?, path1?, path2?}, building
+	// that many ad groups under the campaign instead of the single one. nameSuffix
+	// is required, 1-40 characters with a letter or digit, no control character or
+	// '|', no leading or trailing space, unique ignoring case; the ad group is
+	// named like the single one plus " | <nameSuffix>". Each group needs at least
+	// one keyword; every per-group field has the rules of its single-group twin
+	// and stays behind that twin's flag (copy MICROSOFT_AD_COPY_ENABLED, negatives
+	// MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED and sent at the AD GROUP level,
+	// lists MICROSOFT_AUDIENCES_ENABLED, read before anything is created, one read
+	// per group). The single-group keywords, headlines, descriptions, path1,
+	// path2, audienceIds, excludedAudienceIds and audienceBidAdjustment are
+	// refused alongside adGroups; the campaign-level fields (budget, bidding,
+	// cpcBid, dates, searchPartners, the campaign negativeKeywords and the rest)
+	// apply to every group. Groups are built in order. The first group failing is
+	// the single-group failure (the partial campaign is reported and retained); a
+	// later group failing leaves the earlier ones in place, the remaining ones are
+	// still built, and the campaign is created_degraded with a step naming every
+	// group not created (no rollback; repeating the create does not retry them).
+	// The result records every group as adGroups [{nameSuffix, adGroupName,
+	// adGroupId, adGroupReused?, adId, keywordIds, status
+	// created|failed|not_attempted, error?, negativeKeywords?, audiences?}], and
+	// its top-level adGroupId, adId and keywordIds are the first group's. Pause
+	// and resume address every created group (resume opens them all before the
+	// campaign; pause closes the campaign first), update-campaign-bid re-bids
+	// every created group, and keyword actions may name any created group, one ad
+	// group per request. OFF unless MICROSOFT_AD_GROUPS_ENABLED is exactly "true".
+	// A wrong JSON type (null reads as absent), a rule breach, or adGroups while
+	// the flag is off is refused with 400 "invalid campaign config:
+	// microsoftConfig.adGroups..." before any job exists. A group's audienceIds or
+	// excludedAudienceIds need global_marketing_ops (403, or 503 when the check
+	// cannot be made).
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed
