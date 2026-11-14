@@ -280,6 +280,14 @@ type CampaignInput struct {
 	StageToken string
 	Tactic     string
 	SlotToken  string
+	// FrozenCampaignName is the campaign name the claimed row already records (#587), set by the
+	// dispatcher from model.DispatchCampaignName. Non-empty, it is used VERBATIM as the campaign
+	// name — the reuse key findCampaignByNameInGroup looks the campaign up by and the utm_term
+	// source — and buildCampaignName is not consulted. Empty (every first attempt) composes the
+	// name as usual. It exists so that a change to the naming rules between two attempts at one
+	// slot can never make the lookup miss the campaign the first attempt created and create a
+	// second, paid one beside it. The group name is unaffected: it is always composed.
+	FrozenCampaignName string
 	// Targeting is the caller's own targetingCriteria (#552). When set it REPLACES the profile
 	// clause (TargetingProfile is not read) and the hard-coded jobFunctions and
 	// seniorityExclusions; the runtime config's EmployerExclusions still join exclude.employers.
@@ -2865,6 +2873,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// buildCampaignName. The 255-character check below covers the labelled name too, before any
 	// request.
 	campaignName := buildCampaignName(eventName, bidding.nameObjective, project, in)
+	// A name the row already records wins over the composed one (#587): see FrozenCampaignName.
+	// It is still held to the 255-character limit below, before any request.
+	if frozen := strings.TrimSpace(in.FrozenCampaignName); frozen != "" {
+		if frozen != campaignName {
+			steps = append(steps, fmt.Sprintf("Campaign name reused from the campaign's recorded name %q (not recomposed, so an existing campaign is found by it)", frozen))
+		}
+		campaignName = frozen
+	}
 	// LinkedIn limits campaign-group and campaign names to 255 characters. Validate
 	// both generated names before the first create so an over-long event name/project
 	// fails fast instead of after the group is created.

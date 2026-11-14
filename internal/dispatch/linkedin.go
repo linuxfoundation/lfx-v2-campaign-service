@@ -620,6 +620,10 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		StageToken: stageToken,
 		Tactic:     tacticToken,
 		SlotToken:  model.SlotNameToken(model.DispatchSlotVersion(ctx)),
+		// The name the claimed row already records, if any (#587): sent verbatim so a retry
+		// reuses the campaign an earlier attempt created under that name, whatever the current
+		// naming rules would compose. See model.WithDispatchCampaignName.
+		FrozenCampaignName: model.DispatchCampaignName(ctx),
 	}
 
 	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), runtime, d.opts...)

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -383,6 +384,54 @@ func DispatchLabels(ctx context.Context) CampaignLabels {
 		return l
 	}
 	return CampaignLabels{}
+}
+
+// RecordedCampaignName is the upstream campaign name a row already records, or "" when it records
+// none: the campaign_name column first, then the "campaignName" field of its Result blob (the
+// partial a retained claim persists carries it even when the column was not written). Surrounding
+// whitespace is trimmed; nothing else is changed, because the value is the reuse key a name-based
+// platform finds an existing campaign by and must be sent back byte for byte.
+func RecordedCampaignName(c *Campaign) string {
+	if c == nil {
+		return ""
+	}
+	if name := strings.TrimSpace(c.CampaignName); name != "" {
+		return name
+	}
+	if len(c.Result) == 0 {
+		return ""
+	}
+	var blob struct {
+		CampaignName string `json:"campaignName"`
+	}
+	if json.Unmarshal(c.Result, &blob) != nil {
+		return ""
+	}
+	return strings.TrimSpace(blob.CampaignName)
+}
+
+type dispatchCampaignNameKey struct{}
+
+// WithDispatchCampaignName returns ctx carrying the campaign name the slot being dispatched has
+// already recorded (RecordedCampaignName), or "" when it has none. The orchestrator sets it; a
+// dispatcher whose platform reuses a campaign BY NAME sends that name verbatim instead of
+// composing one (#587).
+//
+// Why it exists: the composed name is the idempotency key (LinkedIn's findCampaignByNameInGroup).
+// If the naming rules change between the attempt that created an upstream campaign and a later
+// re-dispatch of the same slot, a recomposed name misses that campaign and a second PAID one is
+// created beside it. A name recorded once is therefore frozen for every later attempt.
+func WithDispatchCampaignName(ctx context.Context, name string) context.Context {
+	return context.WithValue(ctx, dispatchCampaignNameKey{}, strings.TrimSpace(name))
+}
+
+// DispatchCampaignName returns the name set by WithDispatchCampaignName, or "" when none was set
+// (a slot that never recorded a name composes a fresh one).
+func DispatchCampaignName(ctx context.Context) string {
+	if n, ok := ctx.Value(dispatchCampaignNameKey{}).(string); ok {
+		return n
+	}
+	return ""
 }
 
 type Campaign struct {

@@ -976,6 +976,19 @@ event-level. Pinned by `TestBuildCampaignName_LabelTokens`,
 `TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest` and
 `TestBuildUTMURL_SlotTokenIsEscaped`; see the dispatch concept for the dispatcher side.
 
+**Frozen name (#587).** `CampaignInput.FrozenCampaignName`, when non-empty, is used VERBATIM as
+the campaign name (and so as the reuse key and the `utm_term` source); `buildCampaignName` is not
+consulted, and the 255-character check still runs before any request. The dispatcher sets it from
+`model.DispatchCampaignName`, which the orchestrator fills from the name the slot already records
+(`model.RecordedCampaignName`: the row's `campaign_name`, else `campaignName` in its Result blob —
+the partial a retained claim persists — else the row the request read at the same slot version,
+when that row was cleared before the claim). The group name is always composed. This is what makes
+a change to the naming rules safe: a retry of a slot whose campaign was created under an earlier
+rule finds it by its recorded name instead of missing it and POSTing a duplicate paid campaign into
+the same group. Pinned by `TestCreateCampaign_FrozenNameReusesTheCampaignAnEarlierAttemptCreated`
+(and its control), `TestLinkedInDispatch_FrozenNameReusesTheEarlierCampaign` and the
+`TestOrchestrator_DispatchCarries*` tests.
+
 A reused group's schedule is widened before the campaign POST. `findOrCreateCampaignGroup`
 reports whether the group already existed, and for a reused one `CreateCampaign` calls
 `ensureCampaignGroupCoversEnd`: an identity-checked single-entity GET of the group

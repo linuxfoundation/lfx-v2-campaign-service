@@ -1929,6 +1929,14 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// Every new_version claim, whichever version it targets, also refuses a version a concurrent
 	// request completed and deleted since this request read the slot (ClaimNewCampaignVersion): the
 	// live-row index alone would admit it again and recompose the deleted campaign's upstream name.
+	// The name the slot version about to be claimed already records, read from the row the
+	// lookup returned BEFORE the claim replaces `existing` (#587). The claim returns a fresh row
+	// when it wins, so this is the only copy of a name recorded by a row that was cleared between
+	// this read and the claim. See model.WithDispatchCampaignName.
+	readRecordedName := ""
+	if lerr == nil && existing != nil && existing.SlotVersion == slotVersion {
+		readRecordedName = model.RecordedCampaignName(existing)
+	}
 	claim := o.campaigns.ClaimCampaignDispatch
 	if opts.NewVersion {
 		claim = o.campaigns.ClaimNewCampaignVersion
@@ -2025,7 +2033,16 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// labels, read from the row the claim RETURNED rather than from the request: a name is
 	// always composed from what the row stores (model.WithDispatchLabels), and an unlabelled
 	// row composes the legacy name byte for byte.
-	dispatchCtx := model.WithDispatchLabels(model.WithDispatchSlotVersion(callCtx, slotVersion), existing)
+	//
+	// The campaign name is frozen the same way (#587): a name the claimed row — or, failing that,
+	// the row this request read at the same slot version — already records is sent back verbatim,
+	// never recomposed, so a naming-rule change between two attempts at one slot can never make a
+	// name-based reuse lookup miss the campaign the first attempt created upstream.
+	recordedName := model.RecordedCampaignName(existing)
+	if recordedName == "" {
+		recordedName = readRecordedName
+	}
+	dispatchCtx := model.WithDispatchCampaignName(model.WithDispatchLabels(model.WithDispatchSlotVersion(callCtx, slotVersion), existing), recordedName)
 	campaign, derr := d.Dispatch(dispatchCtx, brief, p, config)
 	if derr != nil {
 		// A dispatch error usually does NOT prove the provider rejected the create —
