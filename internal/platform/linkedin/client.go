@@ -370,9 +370,9 @@ type linkedInResponse struct {
 }
 
 // linkedInMetadata carries the cursor-pagination block used by the LinkedIn
-// search APIs at LinkedIn-Version 202602: the response advertises the next
-// page via metadata.nextPageToken, which the client echoes back as the
-// `pageToken` request param. An empty nextPageToken means the result set is
+// search APIs (cursor paging since LinkedIn-Version 202401, unchanged through
+// 202610): the response advertises the next page via metadata.nextPageToken,
+// which the client echoes back as the `pageToken` request param. An empty nextPageToken means the result set is
 // exhausted.
 type linkedInMetadata struct {
 	NextPageToken string `json:"nextPageToken"`
@@ -1451,9 +1451,9 @@ const maxListPages = 1000
 // Statuses in skipStatuses are ignored. Mirrors findByName() (paginated search
 // across all statuses).
 //
-// At LinkedIn-Version 202602 the search APIs use CURSOR pagination, not offset
-// pagination: each response carries metadata.nextPageToken, and the client
-// echoes that token back as the `pageToken` request param to fetch the next
+// Since LinkedIn-Version 202401 (and still at 202610) the search APIs use
+// CURSOR pagination, not offset pagination: each response carries
+// metadata.nextPageToken, and the client echoes that token back as the `pageToken` request param to fetch the next
 // page. Pagination stops when nextPageToken comes back empty. An offset-based
 // walk (start/count) or a "full page" heuristic is the wrong model for this API
 // version and can miss results or loop, so it is not used.
@@ -1557,7 +1557,7 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 			// buildRawQuery writes this value through untouched — see
 			// preEncodedParams.
 			"search": "(name:(values:List(" + restliEncode(name) + ")))",
-			// Cursor pagination at LinkedIn-Version 202602 uses `pageSize` (paired
+			// Cursor pagination (202401 onward, incl. 202610) uses `pageSize` (paired
 			// with `pageToken`), NOT the legacy offset param `count`. Sending
 			// `count` here was ignored by the cursor contract, so the page size the
 			// caller asked for silently did not take effect. No offset param

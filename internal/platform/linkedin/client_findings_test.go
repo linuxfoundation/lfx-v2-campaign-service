@@ -2019,8 +2019,10 @@ func TestDoRequest_SendsAuthAndVersionHeaders(t *testing.T) {
 	if gotAuth != "Bearer tok-abc" {
 		t.Errorf("Authorization = %q, want 'Bearer tok-abc'", gotAuth)
 	}
-	if gotVer != apiVersion {
-		t.Errorf("LinkedIn-Version = %q, want the exact required contract value %q", gotVer, apiVersion)
+	// The literal, not the constant: a version change must be a deliberate edit here too, made
+	// alongside the Recent Changes audit the apiVersion comment asks for (#580).
+	if gotVer != "202610" {
+		t.Errorf("LinkedIn-Version = %q, want the audited contract value 202610", gotVer)
 	}
 	if gotProto != "2.0.0" {
 		t.Errorf("X-RestLi-Protocol-Version = %q, want 2.0.0", gotProto)

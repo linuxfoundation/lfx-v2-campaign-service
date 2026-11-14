@@ -557,7 +557,7 @@ The full table definitions — per-provider connection tables **plus** `campaign
 | Platform | Auth | API Style | Key Details |
 |----------|------|-----------|-------------|
 | Google Ads | OAuth 2.0 | gRPC | Budget in micros (write: ×1M; read: ÷1M), no GAQL date fields in v23+ |
-| LinkedIn Ads | OAuth 2.0 | REST (v202602) | Targeting profiles (skills + groups), geo URN resolution, `feedDistribution: NONE` for dark posts |
+| LinkedIn Ads | OAuth 2.0 | REST (v202610) | Targeting profiles (skills + groups), geo URN resolution, `feedDistribution: NONE` for dark posts |
 | Meta Ads | Bearer token | REST (Graph API) | ISO geo codes, objective-to-parameter mapping |
 | Reddit Ads | OAuth 2.0 | REST | Token refresh with expiry buffer, subreddit targeting |
 | X/Twitter Ads | OAuth 1.0a (HMAC-SHA1) | REST (v12) | 1 req/sec write rate limit, exponential backoff retry |
