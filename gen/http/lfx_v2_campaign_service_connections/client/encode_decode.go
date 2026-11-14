@@ -10599,6 +10599,205 @@ func DecodeListRedditAdsCustomAudiencesResponse(decoder func(*http.Response) goa
 	}
 }
 
+// BuildListRedditAdsPixelsRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "list-reddit-ads-pixels" endpoint
+func (c *Client) BuildListRedditAdsPixelsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.ListRedditAdsPixelsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", "*lfxv2campaignserviceconnections.ListRedditAdsPixelsPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ListRedditAdsPixelsLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeListRedditAdsPixelsRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-connections list-reddit-ads-pixels server.
+func EncodeListRedditAdsPixelsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.ListRedditAdsPixelsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", "*lfxv2campaignserviceconnections.ListRedditAdsPixelsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		return nil
+	}
+}
+
+// DecodeListRedditAdsPixelsResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-connections list-reddit-ads-pixels endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeListRedditAdsPixelsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeListRedditAdsPixelsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ListRedditAdsPixelsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", err)
+			}
+			err = ValidateListRedditAdsPixelsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", err)
+			}
+			res := NewListRedditAdsPixelsRedditAdsPixelsOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ListRedditAdsPixelsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", err)
+			}
+			err = ValidateListRedditAdsPixelsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", err)
+			}
+			return nil, NewListRedditAdsPixelsBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ListRedditAdsPixelsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", err)
+			}
+			err = ValidateListRedditAdsPixelsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", err)
+			}
+			return nil, NewListRedditAdsPixelsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ListRedditAdsPixelsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", err)
+			}
+			err = ValidateListRedditAdsPixelsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", err)
+			}
+			return nil, NewListRedditAdsPixelsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ListRedditAdsPixelsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", err)
+			}
+			err = ValidateListRedditAdsPixelsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", err)
+			}
+			return nil, NewListRedditAdsPixelsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ListRedditAdsPixelsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", err)
+			}
+			err = ValidateListRedditAdsPixelsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", err)
+			}
+			return nil, NewListRedditAdsPixelsPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ListRedditAdsPixelsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", err)
+			}
+			err = ValidateListRedditAdsPixelsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", err)
+			}
+			return nil, NewListRedditAdsPixelsUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-reddit-ads-pixels", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildListTwitterAdsCustomAudiencesRequest instantiates a HTTP request object
 // with method and path set to call the "lfx-v2-campaign-service-connections"
 // service "list-twitter-ads-custom-audiences" endpoint
@@ -17580,6 +17779,19 @@ func unmarshalRedditAdsCustomAudienceResponseBodyToLfxv2campaignserviceconnectio
 		Status:    *v.Status,
 		SizeLower: v.SizeLower,
 		SizeUpper: v.SizeUpper,
+	}
+
+	return res
+}
+
+// unmarshalRedditAdsPixelResponseBodyToLfxv2campaignserviceconnectionsRedditAdsPixel
+// builds a value of type *lfxv2campaignserviceconnections.RedditAdsPixel from
+// a value of type *RedditAdsPixelResponseBody.
+func unmarshalRedditAdsPixelResponseBodyToLfxv2campaignserviceconnectionsRedditAdsPixel(v *RedditAdsPixelResponseBody) *lfxv2campaignserviceconnections.RedditAdsPixel {
+	res := &lfxv2campaignserviceconnections.RedditAdsPixel{
+		ID:         *v.ID,
+		Name:       *v.Name,
+		BusinessID: v.BusinessID,
 	}
 
 	return res

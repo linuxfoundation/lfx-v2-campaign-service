@@ -1053,6 +1053,21 @@ public v3 OpenAPI document and are unverified live; the dispatcher gates them on
 `REDDIT_CUSTOM_AUDIENCES_ENABLED`. See
 [Reddit Custom Audiences](../architecture/reddit-custom-audiences.md).
 
+## Pixel list (`pixels.go`, #549 gap 10)
+
+`ListPixels` reads `GET /ad_accounts/{ad_account_id}/pixels` (`list_pixels_by_ad_account` in
+Reddit's public v3 OpenAPI document: a required `data` array of `components_schema_pixel` and a
+required `pagination`) on the client's account, following `pagination.next_url` with the same
+walk as the custom-audience list for at most 10 pages and reporting `truncated` past that. Only
+`id`, `name` and `business_id` are decoded. Each id must be 1-64 letters, digits or underscores
+(`ValidPixelID`, the form `conversionPixelId` takes); a missing or non-array `data`, an unusable or
+repeated id, or more than 5000 items is `ErrPixelsMalformed` with nothing partial. The dispatcher's
+`ListRedditPixels` resolves credentials as a create does and is off unless
+`REDDIT_PIXEL_LIST_ENABLED` is `"true"` (400 not supported otherwise). The service sorts by name
+ignoring case, then id, and serves it as `GET /projects/{project_id}/reddit-ads/pixels`, which the
+gateway admits only to `global_marketing_ops` (the shared account lists every foundation's
+pixels). Not yet exercised against a live account.
+
 ## Community validation and interest resolution (`targeting_resolution.go`, #549 gaps 4 and 8)
 
 `NormalizeSubreddits` now holds the subreddit rules `CreateCampaign` applied inline (trim, strip

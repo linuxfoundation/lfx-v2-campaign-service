@@ -444,6 +444,13 @@ func (d upstreamCapableDispatcher) ListTwitterCustomAudiences(context.Context, s
 	return &model.TwitterCustomAudiences{Audiences: []model.TwitterCustomAudience{}}, true, nil
 }
 
+func (d upstreamCapableDispatcher) ListRedditPixels(context.Context, string, model.Provider) (*model.RedditPixels, bool, error) {
+	if d.err != nil {
+		return nil, true, d.err
+	}
+	return &model.RedditPixels{Pixels: []model.RedditPixel{}}, true, nil
+}
+
 func (d upstreamCapableDispatcher) SearchEmails(context.Context, string, model.Provider, string) ([]model.MarketingEmail, error) {
 	if d.err != nil {
 		return nil, d.err
@@ -724,6 +731,14 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opListTwitterCustomAudiences,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ReadTwitterCustomAudiences(ctx, "p1", platform)
+				return err
+			},
+		},
+		{
+			name: "list reddit pixels",
+			op:   opListRedditPixels,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadRedditPixels(ctx, "p1", platform)
 				return err
 			},
 		},

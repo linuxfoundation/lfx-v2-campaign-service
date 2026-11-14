@@ -261,6 +261,22 @@ type Service interface {
 	// or repeated id) is 503 with nothing partial. A pure read: nothing is
 	// persisted.
 	ListRedditAdsCustomAudiences(context.Context, *ListRedditAdsCustomAudiencesPayload) (res *RedditAdsCustomAudiences, err error)
+	// List the conversion pixels on the Reddit ad account a Reddit create for this
+	// project uses, live from Reddit Ads API v3 GET
+	// /ad_accounts/{ad_account_id}/pixels (list_pixels_by_ad_account), for picking
+	// redditConfig.conversionPixelId (#549 gap 10). Follows Reddit's pagination
+	// for at most 10 pages; `truncated` is set when more remained. Sorted by name,
+	// ignoring case, then id. Credentials resolve as for a create: the project's
+	// own Reddit connection, or the LF system account when the deployment forces
+	// it. The Reddit ad account is shared by every foundation, so the response
+	// lists EVERY foundation's pixels; like list-reddit-ads-custom-audiences it is
+	// therefore gated on global_marketing_ops of {project_id}, not
+	// campaign_manager. Disabled (400 not supported) unless
+	// REDDIT_PIXEL_LIST_ENABLED is "true": the read is built from Reddit's public
+	// OpenAPI document and has not been exercised against a live ad account. An
+	// answer this service cannot believe (no data list, an unusable or repeated
+	// id) is 503 with nothing partial. A pure read: nothing is persisted.
+	ListRedditAdsPixels(context.Context, *ListRedditAdsPixelsPayload) (res *RedditAdsPixels, err error)
 	// List the custom audiences on the X ad account an X create for this project
 	// uses, live from X Ads API v12 GET accounts/:account_id/custom_audiences
 	// (count=1000), for picking twitterConfig.customAudienceIds and
@@ -842,7 +858,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [82]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "list-google-ads-audiences", "list-meta-custom-audiences", "list-reddit-ads-custom-audiences", "list-twitter-ads-custom-audiences", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "list-linkedin-ads-audiences", "list-linkedin-ads-conversions", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
+var MethodNames = [83]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "list-google-ads-audiences", "list-meta-custom-audiences", "list-reddit-ads-custom-audiences", "list-reddit-ads-pixels", "list-twitter-ads-custom-audiences", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "list-linkedin-ads-audiences", "list-linkedin-ads-conversions", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -2309,6 +2325,15 @@ type ListRedditAdsCustomAudiencesPayload struct {
 	ProjectID string
 }
 
+// ListRedditAdsPixelsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service list-reddit-ads-pixels method.
+type ListRedditAdsPixelsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
 // ListTwitterAdsAccountsPayload is the payload type of the
 // lfx-v2-campaign-service-connections service list-twitter-ads-accounts method.
 type ListTwitterAdsAccountsPayload struct {
@@ -2913,6 +2938,32 @@ type RedditAdsKeywords struct {
 	// True when this project's campaigns have more (campaign, keyword) rows than
 	// were returned. The rows are the TOP ones by impressions — do not total them
 	// as the project's whole spend.
+	Truncated bool
+}
+
+type RedditAdsPixel struct {
+	// The pixel id, in the form redditConfig.conversionPixelId and the
+	// connection's conversion_pixel_id take. Send it as-is.
+	ID string
+	// The pixel's display name. Not an identifier; may be empty.
+	Name string
+	// The Reddit business that owns the pixel, verbatim. Absent when Reddit sent
+	// none.
+	BusinessID *string
+}
+
+// RedditAdsPixels is the result type of the
+// lfx-v2-campaign-service-connections service list-reddit-ads-pixels method.
+type RedditAdsPixels struct {
+	// The Reddit ad account the pixels were read from: the account a Reddit create
+	// for this project uses
+	AccountID string
+	// The account's pixels, sorted by name (ignoring case), then id
+	Pixels []*RedditAdsPixel
+	// How many pixels are in `pixels`
+	PixelCount int
+	// True when Reddit still had more pages after the 10 this read follows; the
+	// list is then incomplete
 	Truncated bool
 }
 

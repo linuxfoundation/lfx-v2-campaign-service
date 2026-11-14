@@ -921,6 +921,22 @@ type ListRedditAdsCustomAudiencesResponseBody struct {
 	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
 }
 
+// ListRedditAdsPixelsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-pixels"
+// endpoint HTTP response body.
+type ListRedditAdsPixelsResponseBody struct {
+	// The Reddit ad account the pixels were read from: the account a Reddit create
+	// for this project uses
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The account's pixels, sorted by name (ignoring case), then id
+	Pixels []*RedditAdsPixelResponseBody `form:"pixels" json:"pixels" xml:"pixels"`
+	// How many pixels are in `pixels`
+	PixelCount int `form:"pixel_count" json:"pixel_count" xml:"pixel_count"`
+	// True when Reddit still had more pages after the 10 this read follows; the
+	// list is then incomplete
+	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
+}
+
 // ListTwitterAdsCustomAudiencesResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-twitter-ads-custom-audiences" endpoint HTTP response body.
@@ -4673,6 +4689,66 @@ type ListRedditAdsCustomAudiencesUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListRedditAdsPixelsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-pixels"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListRedditAdsPixelsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListRedditAdsPixelsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-pixels"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListRedditAdsPixelsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListRedditAdsPixelsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-pixels"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListRedditAdsPixelsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListRedditAdsPixelsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-pixels"
+// endpoint HTTP response body for the "NotFound" error.
+type ListRedditAdsPixelsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListRedditAdsPixelsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-pixels"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListRedditAdsPixelsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListRedditAdsPixelsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-pixels"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListRedditAdsPixelsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ListTwitterAdsCustomAudiencesBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
@@ -6965,6 +7041,18 @@ type RedditAdsCustomAudienceResponseBody struct {
 	SizeUpper *int64 `form:"size_upper,omitempty" json:"size_upper,omitempty" xml:"size_upper,omitempty"`
 }
 
+// RedditAdsPixelResponseBody is used to define fields on response body types.
+type RedditAdsPixelResponseBody struct {
+	// The pixel id, in the form redditConfig.conversionPixelId and the
+	// connection's conversion_pixel_id take. Send it as-is.
+	ID string `form:"id" json:"id" xml:"id"`
+	// The pixel's display name. Not an identifier; may be empty.
+	Name string `form:"name" json:"name" xml:"name"`
+	// The Reddit business that owns the pixel, verbatim. Absent when Reddit sent
+	// none.
+	BusinessID *string `form:"business_id,omitempty" json:"business_id,omitempty" xml:"business_id,omitempty"`
+}
+
 // TwitterAdsCustomAudienceResponseBody is used to define fields on response
 // body types.
 type TwitterAdsCustomAudienceResponseBody struct {
@@ -8677,6 +8765,30 @@ func NewListRedditAdsCustomAudiencesResponseBody(res *lfxv2campaignserviceconnec
 		}
 	} else {
 		body.Audiences = []*RedditAdsCustomAudienceResponseBody{}
+	}
+	return body
+}
+
+// NewListRedditAdsPixelsResponseBody builds the HTTP response body from the
+// result of the "list-reddit-ads-pixels" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListRedditAdsPixelsResponseBody(res *lfxv2campaignserviceconnections.RedditAdsPixels) *ListRedditAdsPixelsResponseBody {
+	body := &ListRedditAdsPixelsResponseBody{
+		AccountID:  res.AccountID,
+		PixelCount: res.PixelCount,
+		Truncated:  res.Truncated,
+	}
+	if res.Pixels != nil {
+		body.Pixels = make([]*RedditAdsPixelResponseBody, len(res.Pixels))
+		for i, val := range res.Pixels {
+			if val == nil {
+				body.Pixels[i] = nil
+				continue
+			}
+			body.Pixels[i] = marshalLfxv2campaignserviceconnectionsRedditAdsPixelToRedditAdsPixelResponseBody(val)
+		}
+	} else {
+		body.Pixels = []*RedditAdsPixelResponseBody{}
 	}
 	return body
 }
@@ -13074,6 +13186,72 @@ func NewListRedditAdsCustomAudiencesUnauthorizedResponseBody(res *lfxv2campaigns
 	return body
 }
 
+// NewListRedditAdsPixelsBadRequestResponseBody builds the HTTP response body
+// from the result of the "list-reddit-ads-pixels" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListRedditAdsPixelsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListRedditAdsPixelsBadRequestResponseBody {
+	body := &ListRedditAdsPixelsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListRedditAdsPixelsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "list-reddit-ads-pixels" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewListRedditAdsPixelsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListRedditAdsPixelsServiceUnavailableResponseBody {
+	body := &ListRedditAdsPixelsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListRedditAdsPixelsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "list-reddit-ads-pixels" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewListRedditAdsPixelsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListRedditAdsPixelsInternalServerErrorResponseBody {
+	body := &ListRedditAdsPixelsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListRedditAdsPixelsNotFoundResponseBody builds the HTTP response body
+// from the result of the "list-reddit-ads-pixels" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListRedditAdsPixelsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListRedditAdsPixelsNotFoundResponseBody {
+	body := &ListRedditAdsPixelsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListRedditAdsPixelsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "list-reddit-ads-pixels" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListRedditAdsPixelsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListRedditAdsPixelsPayloadTooLargeResponseBody {
+	body := &ListRedditAdsPixelsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListRedditAdsPixelsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "list-reddit-ads-pixels" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListRedditAdsPixelsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListRedditAdsPixelsUnauthorizedResponseBody {
+	body := &ListRedditAdsPixelsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewListTwitterAdsCustomAudiencesBadRequestResponseBody builds the HTTP
 // response body from the result of the "list-twitter-ads-custom-audiences"
 // endpoint of the "lfx-v2-campaign-service-connections" service.
@@ -15814,6 +15992,16 @@ func NewListMetaCustomAudiencesPayload(projectID string, q *string, bearerToken 
 // endpoint payload.
 func NewListRedditAdsCustomAudiencesPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListRedditAdsCustomAudiencesPayload {
 	v := &lfxv2campaignserviceconnections.ListRedditAdsCustomAudiencesPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListRedditAdsPixelsPayload builds a lfx-v2-campaign-service-connections
+// service list-reddit-ads-pixels endpoint payload.
+func NewListRedditAdsPixelsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListRedditAdsPixelsPayload {
+	v := &lfxv2campaignserviceconnections.ListRedditAdsPixelsPayload{}
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken
 

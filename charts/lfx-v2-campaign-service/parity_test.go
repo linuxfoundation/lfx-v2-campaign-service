@@ -119,6 +119,11 @@ const metaCustomAudiencesPath = "/projects/:projectId/meta-ads/custom-audiences"
 // only, and TestRedditCustomAudiencesIsAMarketingOpsRead pins that.
 const redditCustomAudiencesPath = "/projects/:projectId/reddit-ads/custom-audiences"
 
+// redditPixelsPath is the Reddit pixel list (#549 gap 10). It lists every foundation's pixels on
+// the shared LF Reddit ad account, so it is ruled by marketing-ops-api only, and
+// TestRedditPixelsIsAMarketingOpsRead pins that.
+const redditPixelsPath = "/projects/:projectId/reddit-ads/pixels"
+
 // twitterCustomAudiencesPath is the X custom-audience list (#564). It lists every foundation's
 // audiences on the shared LF X ad account, so it is ruled by marketing-ops-api only, and
 // TestTwitterCustomAudiencesIsAMarketingOpsRead pins that.
@@ -133,7 +138,7 @@ const (
 )
 
 // marketingOpsPaths is every path the marketing-ops-api rule must hold, in order, and nothing else.
-var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, redditCustomAudiencesPath, twitterCustomAudiencesPath, linkedInAudiencesPath, linkedInConversionsPath, metaCustomAudiencesPath}
+var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, redditCustomAudiencesPath, redditPixelsPath, twitterCustomAudiencesPath, linkedInAudiencesPath, linkedInConversionsPath, metaCustomAudiencesPath}
 
 // ruleBlock isolates one rendered Heimdall rule (from its `- id: "<id>"` line up to
 // the next `- id:` or EOF) so path/authorizer extraction is scoped to a SINGLE rule.
@@ -275,6 +280,13 @@ func TestTwitterCustomAudiencesIsAMarketingOpsRead(t *testing.T) {
 	if !matched {
 		t.Errorf("%s rule no longer matches %s, the campaign_manager X audience insights read", projectAPIRuleID, insights)
 	}
+}
+
+// TestRedditPixelsIsAMarketingOpsRead pins the same for the Reddit pixel list (#549 gap 10): it
+// lists every foundation's pixels on the shared LF Reddit ad account, so a campaign_manager
+// (executive_director included) must not reach it.
+func TestRedditPixelsIsAMarketingOpsRead(t *testing.T) {
+	assertMarketingOpsRead(t, redditPixelsPath, "/projects/p1/reddit-ads/pixels")
 }
 
 // TestRedditCustomAudiencesIsAMarketingOpsRead pins the same for the Reddit custom-audience list
@@ -714,6 +726,9 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/meta-ads/custom-audiences/x", false},
 		{"/projects/p1/twitter-ads/custom-audiences", true},
 		{"/projects/p1/twitter-ads/custom-audiences/x", false},
+		{"/projects/p1/reddit-ads/pixels", true},
+		{"/projects/p1/reddit-ads/pixels/x", false},
+		{"/projects/p1/google-ads/pixels", false},
 		{"/projects/p1/google-ads/conversion-actions/x", false},
 		{"/projects/p1/microsoft-ads/conversion-actions", false},
 		{"/projects/p1/connection-google-ads/conversion-actions", false},
