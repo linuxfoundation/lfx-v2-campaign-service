@@ -107,47 +107,67 @@ func linkedinPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) 
 	schedStart := parseMonitorDate(m.StartDate)
 	schedEnd := parseMonitorDate(m.EndDate)
 
-	if m.TotalBudget > 0 {
-		flightStart := schedStart
-		if flightStart.IsZero() {
-			flightStart = rangeStart
-		}
-		flightEnd := schedEnd
-		if flightEnd.IsZero() {
-			flightEnd = now
-		}
-		totalFlightDays := maxFloat(1, math.Ceil(flightEnd.Sub(flightStart).Hours()/24))
-		effectiveStart := flightStart
-		if rangeStart.After(effectiveStart) {
-			effectiveStart = rangeStart
-		}
-		effectiveEnd := flightEnd
-		if now.Before(effectiveEnd) {
-			effectiveEnd = now
-		}
-		windowDays := maxFloat(1, math.Ceil(effectiveEnd.Sub(effectiveStart).Hours()/24))
-		expected := m.TotalBudget / totalFlightDays * windowDays
-		if expected > 0 {
-			return m.Spend / expected * 100
-		}
-		return 0
+	// A campaign carrying BOTH budgets is a lifetime total with a daily cap (#584), and LinkedIn
+	// pairs those with a continuous schedule — no runSchedule.end. Without an end the lifetime
+	// branch below takes the flight as ending today, so a week's window of a month-long campaign
+	// would be paced against the WHOLE total and read as badly underspending. With no end the
+	// daily cap is the only figure that says what the window should have spent; with one, the
+	// campaign can spend no more than the smaller of the two expectations.
+	var expected float64
+	switch {
+	case m.TotalBudget > 0 && m.BudgetDay > 0 && schedEnd.IsZero():
+		expected = linkedinDailyExpected(m, rangeStart, schedStart, schedEnd, now)
+	case m.TotalBudget > 0 && m.BudgetDay > 0:
+		expected = math.Min(linkedinTotalExpected(m, rangeStart, schedStart, schedEnd, now),
+			linkedinDailyExpected(m, rangeStart, schedStart, schedEnd, now))
+	case m.TotalBudget > 0:
+		expected = linkedinTotalExpected(m, rangeStart, schedStart, schedEnd, now)
+	case m.BudgetDay > 0:
+		expected = linkedinDailyExpected(m, rangeStart, schedStart, schedEnd, now)
 	}
-	if m.BudgetDay > 0 {
-		effectiveStart := schedStart
-		if effectiveStart.IsZero() || rangeStart.After(effectiveStart) {
-			effectiveStart = rangeStart
-		}
-		effectiveEnd := schedEnd
-		if effectiveEnd.IsZero() || now.Before(effectiveEnd) {
-			effectiveEnd = now
-		}
-		flightDays := maxFloat(1, math.Ceil(effectiveEnd.Sub(effectiveStart).Hours()/24))
-		expected := m.BudgetDay * flightDays
-		if expected > 0 {
-			return m.Spend / expected * 100
-		}
+	if expected > 0 {
+		return m.Spend / expected * 100
 	}
 	return 0
+}
+
+// linkedinTotalExpected is the lifetime branch: the total spread evenly over the flight, times
+// the days of the window that fall inside it.
+func linkedinTotalExpected(m model.AccountCampaignMetrics, rangeStart, schedStart, schedEnd, now time.Time) float64 {
+	flightStart := schedStart
+	if flightStart.IsZero() {
+		flightStart = rangeStart
+	}
+	flightEnd := schedEnd
+	if flightEnd.IsZero() {
+		flightEnd = now
+	}
+	totalFlightDays := maxFloat(1, math.Ceil(flightEnd.Sub(flightStart).Hours()/24))
+	effectiveStart := flightStart
+	if rangeStart.After(effectiveStart) {
+		effectiveStart = rangeStart
+	}
+	effectiveEnd := flightEnd
+	if now.Before(effectiveEnd) {
+		effectiveEnd = now
+	}
+	windowDays := maxFloat(1, math.Ceil(effectiveEnd.Sub(effectiveStart).Hours()/24))
+	return m.TotalBudget / totalFlightDays * windowDays
+}
+
+// linkedinDailyExpected is the daily branch: the daily budget times the days of the window that
+// fall inside the flight.
+func linkedinDailyExpected(m model.AccountCampaignMetrics, rangeStart, schedStart, schedEnd, now time.Time) float64 {
+	effectiveStart := schedStart
+	if effectiveStart.IsZero() || rangeStart.After(effectiveStart) {
+		effectiveStart = rangeStart
+	}
+	effectiveEnd := schedEnd
+	if effectiveEnd.IsZero() || now.Before(effectiveEnd) {
+		effectiveEnd = now
+	}
+	flightDays := maxFloat(1, math.Ceil(effectiveEnd.Sub(effectiveStart).Hours()/24))
+	return m.BudgetDay * flightDays
 }
 
 // linkedinPausedBudgeted is the subset of rows the paused-with-real-budget rule would examine

@@ -144,6 +144,70 @@ func ValidateBudgetAmount(budgetUSD float64, lifetime bool) (wire string, rounde
 	return wire, rounded, nil
 }
 
+// ValidateBudgetPair validates a lifetime total together with a daily cap — the "daily budget and
+// total budget" option LinkedIn documents for a campaign (#584) — and returns both wire strings.
+//
+// Each amount goes through ValidateBudgetAmount under its own minimum ($100 for the total, $10 for
+// the daily cap), so the pair can never admit an amount either single-budget path would refuse.
+// On top of that the daily cap may not exceed the total: LinkedIn stops a two-budget campaign when
+// it reaches "either daily spend limit and/or the total spend limit" (Create and Manage Campaigns,
+// Budget section), so a daily cap above the total is a cap that can never bind. The check is on the
+// ROUNDED wire values, the amounts LinkedIn is actually given.
+func ValidateBudgetPair(totalUSD, dailyUSD float64) (totalWire, dailyWire string, err error) {
+	totalWire, total, err := ValidateBudgetAmount(totalUSD, true)
+	if err != nil {
+		return "", "", err
+	}
+	dailyWire, daily, err := ValidateBudgetAmount(dailyUSD, false)
+	if err != nil {
+		return "", "", err
+	}
+	if err := CheckDailyCapWithinTotal(daily, total); err != nil {
+		return "", "", err
+	}
+	return totalWire, dailyWire, nil
+}
+
+// CheckDailyCapWithinTotal refuses a daily cap above the lifetime total. It is shared by the
+// create path (ValidateBudgetPair) and the budget write, which changes one of the two amounts on a
+// campaign that carries both and must not leave the other one larger than it.
+func CheckDailyCapWithinTotal(daily, total float64) error {
+	if daily > total {
+		return invalidBudgetAmount("daily budget %v is above the lifetime budget %v; a daily cap cannot exceed the total it caps", daily, total)
+	}
+	return nil
+}
+
+// campaignBudgetPlan is the validated budget createSponsoredCampaign writes: amountUSD as
+// totalBudget (lifetime) or dailyBudget, plus, on a lifetime budget only, dailyCapUSD as
+// dailyBudget beside it. A zero dailyCapUSD is the single-budget create.
+type campaignBudgetPlan struct {
+	amountUSD   float64
+	lifetime    bool
+	dailyCapUSD float64
+}
+
+// validateCampaignBudget checks CampaignInput's budget fields before any request: the single
+// budget through ValidateBudgetAmount, as before #584, or the lifetime total and its daily cap
+// through ValidateBudgetPair. A daily cap without a lifetime budget is refused, because a daily
+// campaign's BudgetUSD already is its daily budget and there would be two of them. A negative or
+// non-finite cap is refused by ValidateBudgetPair; zero means no cap.
+func validateCampaignBudget(in CampaignInput) (campaignBudgetPlan, error) {
+	plan := campaignBudgetPlan{amountUSD: in.BudgetUSD, lifetime: in.LifetimeBudget}
+	if in.DailyBudgetUSD == 0 {
+		_, _, err := ValidateBudgetAmount(in.BudgetUSD, in.LifetimeBudget)
+		return plan, err
+	}
+	if !in.LifetimeBudget {
+		return campaignBudgetPlan{}, invalidBudgetAmount("a daily budget cap needs a lifetime budget: without lifetimeBudget the budget is already the daily budget")
+	}
+	if _, _, err := ValidateBudgetPair(in.BudgetUSD, in.DailyBudgetUSD); err != nil {
+		return campaignBudgetPlan{}, err
+	}
+	plan.dailyCapUSD = in.DailyBudgetUSD
+	return plan, nil
+}
+
 // GetCampaignBudget reads one campaign's live budget state. It is a PURE READ and mutates
 // nothing, so its failure is always definite — a caller must not classify it as an unconfirmed
 // write outcome, because no write was built.
@@ -226,7 +290,8 @@ func (c *Client) GetCampaignBudget(ctx context.Context, campaignID string) (*Cam
 }
 
 // UpdateCampaignBudget sets a campaign's budget amount on the platform. lifetime selects which
-// of the two mutually exclusive fields is written (totalBudget vs dailyBudget); the caller is
+// of the two fields is written (totalBudget vs dailyBudget) — only that one, so on a campaign
+// carrying both (#584) the other is left in force; the caller is
 // responsible for having established that this matches the campaign's CURRENT pacing model —
 // this function writes what it is told.
 //

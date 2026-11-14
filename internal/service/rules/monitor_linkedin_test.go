@@ -31,6 +31,54 @@ func TestLinkedinPacingPct_IsUnrounded(t *testing.T) {
 	}
 }
 
+// TestLinkedinPacingPct_LifetimeWithDailyCap pins #584's pacing: a campaign carrying both a
+// totalBudget and a dailyBudget is paced against the daily cap when it has no end (LinkedIn's
+// continuous schedule for the pair), and against the smaller expectation when it has one. A
+// lifetime-only campaign is paced exactly as before.
+func TestLinkedinPacingPct_LifetimeWithDailyCap(t *testing.T) {
+	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	// days=7 → rangeStart 2026-06-09, a 6-day window up to now.
+	cases := []struct {
+		name string
+		m    model.AccountCampaignMetrics
+		want float64
+	}{
+		{
+			// Daily expectation 20*6 = 120. Paced against the total with the flight ending
+			// "today" it would be 1000/14*6 ≈ 428.6, reading 28% for a campaign at its cap.
+			name: "both budgets, no end: paced against the daily cap",
+			m:    model.AccountCampaignMetrics{TotalBudget: 1000, BudgetDay: 20, StartDate: "2026-06-01", Spend: 120},
+			want: 100,
+		},
+		{
+			// With no end the total spread over the days elapsed (100/14*6 ≈ 42.9) says nothing
+			// about the window, so the smaller expectation is NOT taken: the cap (120) is.
+			name: "both budgets, no end, small total: still the daily cap",
+			m:    model.AccountCampaignMetrics{TotalBudget: 100, BudgetDay: 20, StartDate: "2026-06-01", Spend: 120},
+			want: 100,
+		},
+		{
+			// Total expectation 1000/30*6 = 200, daily 120: the smaller binds.
+			name: "both budgets with an end: the smaller expectation",
+			m:    model.AccountCampaignMetrics{TotalBudget: 1000, BudgetDay: 20, StartDate: "2026-06-01", EndDate: "2026-07-01", Spend: 120},
+			want: 100,
+		},
+		{
+			name: "lifetime only: unchanged",
+			m:    model.AccountCampaignMetrics{TotalBudget: 1000, StartDate: "2026-06-01", EndDate: "2026-07-01", Spend: 200},
+			want: 100,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := linkedinPacingPct(tc.m, 7, now)
+			if diff := got - tc.want; diff > 1e-9 || diff < -1e-9 {
+				t.Fatalf("pacingPct = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestLinkedinActionItems_UnderspendingAndConstrained exercise the two label-driven rules and
 // the CTR/conversions/paused rules in isolation.
 func TestLinkedinActionItems_UnderspendingAndConstrained(t *testing.T) {

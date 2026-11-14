@@ -240,11 +240,17 @@ type CreativeVariant struct {
 // CampaignInput is the full campaign-creation request. Mirrors
 // LinkedInCampaignCreateRequest (the fields CreateCampaign consumes).
 type CampaignInput struct {
-	EventName        string
-	RegistrationURL  string
-	HSToken          string // optional
-	BudgetUSD        float64
-	LifetimeBudget   bool
+	EventName       string
+	RegistrationURL string
+	HSToken         string // optional
+	BudgetUSD       float64
+	LifetimeBudget  bool
+	// DailyBudgetUSD is an optional daily cap on a LIFETIME budget (#584): with LifetimeBudget
+	// set, BudgetUSD is sent as totalBudget and this as dailyBudget on the same campaign. Zero
+	// means no cap, the single-budget create as before. It is refused without LifetimeBudget (a
+	// daily campaign's BudgetUSD already is its daily budget) and checked by ValidateBudgetPair.
+	// A two-budget campaign is sent with no runSchedule.end: see createSponsoredCampaign.
+	DailyBudgetUSD   float64
 	StartDate        string // YYYY-MM-DD
 	EndDate          string // YYYY-MM-DD
 	GeoTargets       []GeoTarget
@@ -2079,7 +2085,7 @@ func (c *Client) readCampaignGroupEnd(ctx context.Context, path, groupID string)
 // single-flight claim is PLANNED but NOT provided here (tracked separately as
 // LFXV2-2665); until it exists, callers MUST NOT rely on any dedup guarantee and
 // must serialize concurrent calls for the same name on their own.
-func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, custom *Targeting, lifetimeBudget bool, bidding campaignBiddingPlan) (id string, reused bool, err error) {
+func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budget campaignBudgetPlan, geoURNs []string, targetingProfile string, custom *Targeting, bidding campaignBiddingPlan) (id string, reused bool, err error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
 	// Scope the idempotency lookup to the resolved campaign group: the campaign
@@ -2129,11 +2135,12 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 	}
 
 	// Budget as a decimal string, e.g. "100.00" — not micros. Mirrors toFixed(2).
-	amount := strconv.FormatFloat(budgetUSD, 'f', 2, 64)
+	amount := strconv.FormatFloat(budget.amountUSD, 'f', 2, 64)
 	budgetField := "dailyBudget"
-	if lifetimeBudget {
+	if budget.lifetime {
 		budgetField = "totalBudget"
 	}
+	runSchedule := map[string]any{"start": startMs, "end": endMs}
 
 	body := map[string]any{
 		"account":       accountURN(accountID),
@@ -2154,7 +2161,18 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 		"offsiteDeliveryEnabled": false,
 		"politicalIntent":        "NOT_POLITICAL",
 		budgetField:              map[string]any{"amount": amount, "currencyCode": "USD"},
-		"runSchedule":            map[string]any{"start": startMs, "end": endMs},
+		"runSchedule":            runSchedule,
+	}
+	// A daily cap on a lifetime budget (#584) is LinkedIn's "Use a Daily Budget and a Total Budget
+	// with a Continuous Schedule" option: dailyBudget, totalBudget and runSchedule.start, with NO
+	// end (Create and Manage Campaigns, Lifetime Pacing; Campaign Manager likewise allows only a
+	// continuous schedule when both budgets are set, help answer a422101). The end is not lost:
+	// the campaign group this campaign sits in carries it (findOrCreateCampaignGroup and
+	// ensureCampaignGroupCoversEnd), and LinkedIn serves under the more restrictive of the group's
+	// and the campaign's schedules.
+	if budget.dailyCapUSD > 0 {
+		body["dailyBudget"] = map[string]any{"amount": strconv.FormatFloat(budget.dailyCapUSD, 'f', 2, 64), "currencyCode": "USD"}
+		delete(runSchedule, "end")
 	}
 	// Merge the bidding fields, then the targetingCriteria block.
 	for k, v := range bidding.fields {
@@ -2721,7 +2739,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Sharing it is what makes it impossible to EDIT a campaign to an amount this
 	// path would have refused to CREATE it with. The rules and their error texts
 	// are unchanged by the extraction.
-	if _, _, err := ValidateBudgetAmount(in.BudgetUSD, in.LifetimeBudget); err != nil {
+	budget, err := validateCampaignBudget(in)
+	if err != nil {
 		return nil, domain.WrapPreflightRefusal(err)
 	}
 	// The bidding fields, resolved BEFORE any POST: a manual bid that is not a whole number of cents
@@ -2924,7 +2943,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
-	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, targeting, in.LifetimeBudget, bidding)
+	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, budget, geoURNs, in.TargetingProfile, targeting, bidding)
 	if err != nil {
 		// findOrCreateCampaignGroup may have just created a PERMANENT campaign group
 		// (groupID) whose creation is a real side effect. Returning nil,err here

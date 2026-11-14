@@ -28,9 +28,10 @@ import (
 //     cannot be attached to a second campaign, so the shared-budget refusal that dominates the
 //     Google path has no analogue and is deliberately absent rather than forgotten. Meta is
 //     the platform where that guard reappears, in the CBO form.
-//   - The two amount fields ARE still mutually exclusive in practice, and which one a campaign
-//     uses is the pacing model. So the pacing-match guard below is the same guard Google makes,
-//     reached through a different fact.
+//   - Which amount field a campaign carries is its pacing model, so the pacing-match guard below
+//     is the same guard Google makes, reached through a different fact. A campaign carrying BOTH
+//     is a lifetime budget with a daily cap (#584): its pacing is lifetime, only the total is
+//     written here, and the new total may not fall below the cap.
 //
 // NOTHING IS MUTATED UNTIL EVERY GUARD HAS PASSED, so a caller seeing any refusal below knows
 // the platform is untouched — which is what lets the service answer them 409 rather than
@@ -107,15 +108,20 @@ func (d *LinkedInDispatcher) WriteBudget(ctx context.Context, projectID string, 
 	// operator seeing it stated.
 	//
 	// LinkedIn reports the pacing model by WHICH FIELD IS PRESENT. A campaign reporting
-	// NEITHER has no budget this service can identify the shape of, and a campaign
-	// reporting BOTH is the genuinely ambiguous row — writing one of them would leave the
-	// other in force and the effective budget would be neither what was asked for nor what
-	// was there. Both are refused.
+	// NEITHER has no budget this service can identify the shape of, and is refused.
+	//
+	// A campaign reporting BOTH is a lifetime budget with a daily cap (#584) — the shape the
+	// create path sends for linkedInConfig.dailyBudgetUsd, and one LF also sets by hand in
+	// Campaign Manager. It is paced as LIFETIME: the row records the total as its budget, and
+	// the daily amount is a cap on top of it. So only a lifetime write is accepted, and it
+	// writes totalBudget and leaves the cap in force; a daily request is the pacing mismatch
+	// below. Refusing the shape outright, as this guard did before, made the budget of every
+	// such campaign uneditable here.
 	hasDaily := current.DailyBudget != nil
 	hasTotal := current.TotalBudget != nil
 	switch {
-	case hasDaily && hasTotal:
-		return fmt.Errorf("write linkedin campaign budget: campaign %s reports BOTH a daily and a total budget, so writing either would leave the other in force; resolve which one applies in LinkedIn Campaign Manager: %w",
+	case hasDaily && hasTotal && budget.Type == model.BudgetDaily:
+		return fmt.Errorf("write linkedin campaign budget: campaign %s carries a lifetime budget with a daily cap; this endpoint changes the lifetime amount only — change the daily cap in LinkedIn Campaign Manager: %w",
 			campaign.PlatformCampaignID, domain.ErrBudgetUnwritable)
 	case !hasDaily && !hasTotal:
 		return fmt.Errorf("write linkedin campaign budget: campaign %s reports no budget at all, so which of the two mutually exclusive amount fields to write cannot be established: %w",
@@ -160,7 +166,12 @@ func (d *LinkedInDispatcher) WriteBudget(ctx context.Context, projectID string, 
 	// STRING it returns is what is sent — the float is never re-formatted downstream —
 	// so the amount validated is byte-for-byte the amount written.
 	lifetime := upstreamType == model.BudgetLifetime
-	wire, _, err := linkedin.ValidateBudgetAmount(budget.Amount, lifetime)
+	wire, rounded, err := linkedin.ValidateBudgetAmount(budget.Amount, lifetime)
+	if err == nil && lifetime && hasDaily {
+		// The daily cap stays in force, so the new total may not fall below it (#584) — the same
+		// rule the create path applies to the pair, on the same rounded amount that is sent.
+		err = linkedin.CheckDailyCapWithinTotal(*current.DailyBudget, rounded)
+	}
 	if err != nil {
 		// A refused AMOUNT is a permanent request fault, not an upstream one. LinkedIn's
 		// $10 daily / $100 lifetime minimums have no equivalent in the service layer (which

@@ -196,6 +196,17 @@ shared UI constants also define `normal` (90), but on the brief view it names th
 derived from `Constrained` — the healthy band runs up to and including it. Carrying it as a
 field would offer a knob a caller could turn with no effect.
 
+## LinkedIn lifetime budget with a daily cap (#584)
+
+`linkedinPacingPct` paces a TOTAL budget prorated over the flight, else a DAILY budget times the
+window's days inside it. A campaign carrying BOTH (a lifetime total with a daily cap, as
+`linkedInConfig.dailyBudgetUsd` creates) is created with no `runSchedule.end`, and the lifetime
+branch reads a missing end as "the flight ends today" — so a week's window of a month-long
+campaign would be paced against the whole total and read as badly underspending. Such a row is
+therefore paced against the daily cap when it has no end, and against the smaller of the two
+expectations when it has one (`linkedinTotalExpected`, `linkedinDailyExpected`;
+`TestLinkedinPacingPct_LifetimeWithDailyCap`). A single-budget row paces as before.
+
 ## Currency
 
 The account monitors' money thresholds — the placeholder daily budget (≤ about 1 USD;

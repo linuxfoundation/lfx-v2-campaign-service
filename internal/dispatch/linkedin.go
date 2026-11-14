@@ -187,8 +187,12 @@ func linkedinConnID(res *resolved) string {
 // the connection (targeting profiles, employer exclusions, extra accounts) may be
 // supplied here for the client to resolve TargetingProfile against.
 type linkedinConfig struct {
-	BudgetUSD          float64                           `json:"budgetUsd"`
-	LifetimeBudget     bool                              `json:"lifetimeBudget"`
+	BudgetUSD      float64 `json:"budgetUsd"`
+	LifetimeBudget bool    `json:"lifetimeBudget"`
+	// DailyBudgetUSD is an optional daily cap on a lifetime budget (#584): with lifetimeBudget
+	// true, budgetUsd is the campaign's totalBudget and this its dailyBudget. Omitted or 0 means
+	// no cap. See linkedinBudget for the rules, all synchronous 400s.
+	DailyBudgetUSD     float64                           `json:"dailyBudgetUsd,omitempty"`
 	StartDate          string                            `json:"startDate"` // YYYY-MM-DD
 	EndDate            string                            `json:"endDate"`   // YYYY-MM-DD
 	GeoTargets         []linkedin.GeoTarget              `json:"geoTargets"`
@@ -294,6 +298,56 @@ func linkedinTargeting(cfg linkedinConfig) (*linkedin.Targeting, error) {
 		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.targeting: %w", domain.ErrCreateConfigInvalid, err))
 	}
 	return t, nil
+}
+
+// checkDailyBudgetShape refuses a linkedInConfig.dailyBudgetUsd that is not a JSON number (#584).
+// PreflightCreate decodes best-effort and encoding/json skips a wrong-typed field, so a string
+// "20" would decode to 0 — no cap — and the campaign would be created with only its lifetime
+// budget, spending faster than the caller asked. An explicit null reads as absent. Anything it
+// cannot attribute to dailyBudgetUsd is left to the ordinary decode.
+func checkDailyBudgetShape(config json.RawMessage) error {
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(config, &envelope) != nil {
+		return nil
+	}
+	var platformCfg map[string]json.RawMessage
+	if json.Unmarshal(envelope["linkedInConfig"], &platformCfg) != nil {
+		return nil
+	}
+	for k, raw := range platformCfg {
+		if !strings.EqualFold(k, "dailyBudgetUsd") || isJSONNull(raw) {
+			continue
+		}
+		var n float64
+		if json.Unmarshal(raw, &n) != nil {
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.dailyBudgetUsd must be a number of US dollars, e.g. 20", domain.ErrCreateConfigInvalid))
+		}
+	}
+	return nil
+}
+
+// linkedinBudget checks a linkedInConfig daily cap (#584) before any job or request. Without
+// dailyBudgetUsd it checks nothing — budgetUsd alone keeps its existing job-time validation in the
+// client. With it: lifetimeBudget must be true, budgetUsd must meet LinkedIn's $100 lifetime
+// minimum, dailyBudgetUsd its $10 daily minimum, and the daily cap may not exceed the total
+// (linkedin.ValidateBudgetPair). Each refusal is an ErrCreateConfigInvalid pre-flight refusal, so
+// PreflightCreate answers it with a synchronous 400 and Dispatch fails the job with the same
+// sentence.
+func linkedinBudget(cfg linkedinConfig) error {
+	if cfg.DailyBudgetUSD == 0 {
+		return nil
+	}
+	if !cfg.LifetimeBudget {
+		return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.dailyBudgetUsd is a daily cap on a lifetime budget and needs lifetimeBudget: true; without it budgetUsd already is the daily budget", domain.ErrCreateConfigInvalid))
+	}
+	if _, _, err := linkedin.ValidateBudgetPair(cfg.BudgetUSD, cfg.DailyBudgetUSD); err != nil {
+		reason, ok := linkedin.BudgetAmountReason(err)
+		if !ok {
+			reason = "the budgets are not accepted by LinkedIn"
+		}
+		return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig budget: %s", domain.ErrCreateConfigInvalid, reason))
+	}
+	return nil
 }
 
 // linkedinConversionsEnabled reports whether this deployment opted in to
@@ -418,6 +472,14 @@ func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ mode
 	if _, err := linkedinConversions(cfg); err != nil {
 		return err
 	}
+	// A daily cap on a lifetime budget (#584) is promised as a synchronous 400 too, a wrong JSON
+	// type included.
+	if err := checkDailyBudgetShape(config); err != nil {
+		return err
+	}
+	if err := linkedinBudget(cfg); err != nil {
+		return err
+	}
 	return domain.ErrPreflightNotApplicable
 }
 
@@ -527,6 +589,13 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if cfg.Conversions, err = linkedinConversions(cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// A daily cap on a lifetime budget (#584), checked before any upstream call.
+	if err := checkDailyBudgetShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	if err := linkedinBudget(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
 	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
 	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
@@ -601,6 +670,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		Project:          brief.ProjectID,
 		BudgetUSD:        cfg.BudgetUSD,
 		LifetimeBudget:   cfg.LifetimeBudget,
+		DailyBudgetUSD:   cfg.DailyBudgetUSD,
 		StartDate:        cfg.StartDate,
 		EndDate:          cfg.EndDate,
 		GeoTargets:       cfg.GeoTargets,

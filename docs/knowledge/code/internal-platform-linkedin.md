@@ -431,6 +431,19 @@ to zero at the API boundary, and enforces `minDailyBudgetUSD = 10.0` / `minLifet
 as `"10.00"` and so meets the $10 minimum; checking the raw float would refuse an amount the
 platform accepts. The wire string it returns is what callers send verbatim.
 
+**A lifetime budget with a daily cap (#584).** `CampaignInput.DailyBudgetUSD` (zero = none) adds a
+`dailyBudget` beside the `totalBudget` on a lifetime create. `validateCampaignBudget` runs before
+any request: without a cap it is the old single `ValidateBudgetAmount` call; with one it refuses a
+cap without `LifetimeBudget` and otherwise calls `ValidateBudgetPair(total, daily)`, which runs
+each amount through `ValidateBudgetAmount` under its own minimum and then
+`CheckDailyCapWithinTotal` on the rounded values (a cap above the total can never bind). The
+two-budget campaign is POSTed with `runSchedule.start` and **no end** — LinkedIn's "Daily Budget
+and a Total Budget with a Continuous Schedule" option (Create and Manage Campaigns, li-lms-2026-02,
+Lifetime Pacing; Campaign Manager allows only a continuous schedule with both, help answer
+a422101). The campaign group keeps the end, and LinkedIn serves under the more restrictive of the
+group's and campaign's schedules (Create and Manage Campaign Groups, "Budgeting and Run Schedule").
+`budget_create_test.go` asserts the wire bodies.
+
 **Every refusal it makes also wraps `ErrBudgetAmountInvalid`**, so a caller classifies the
 refusal without matching on its text; `BudgetAmountReason(err)` returns the refusal's sentence
 for a caller that needs to show one. The sentinel is attached through an `Unwrap` method rather
@@ -450,7 +463,8 @@ absent `dailyBudget` would otherwise read as "this campaign does not use it". Th
 `GetCampaignSettings` on the same resource and the Reddit and X budget reads.
 
 `UpdateCampaignBudget(ctx, campaignID, amount string, lifetime bool)` sends a single
-`PARTIAL_UPDATE` setting exactly one of the two fields, with the caller's wire string passed
+`PARTIAL_UPDATE` setting exactly one of the two fields (on a campaign carrying both, the other
+stays in force), with the caller's wire string passed
 through untouched and `currencyCode` always `"USD"`. An amount that did not come from
 `ValidateBudgetAmount` is refused at construction, naming the validator, so a caller that
 formatted its own string cannot bypass every minimum. **The guard RE-RUNS the validator rather

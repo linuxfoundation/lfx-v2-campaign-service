@@ -132,6 +132,32 @@ func TestLinkedIn_WriteBudget_Lifetime(t *testing.T) {
 	}
 }
 
+func liLifetimeWithCap(total, daily string) string {
+	return `{"id":777,"status":"ACTIVE","dailyBudget":{"amount":"` + daily + `","currencyCode":"USD"},` +
+		`"totalBudget":{"amount":"` + total + `","currencyCode":"USD"}}`
+}
+
+// TestLinkedIn_WriteBudget_LifetimeWithDailyCap pins #584's write: a campaign carrying both a
+// totalBudget and a dailyBudget (what linkedInConfig.dailyBudgetUsd creates) takes a LIFETIME
+// write, which sets totalBudget only and leaves the daily cap untouched. Before #584 the shape
+// was refused outright, so the budget of every such campaign was uneditable.
+func TestLinkedIn_WriteBudget_LifetimeWithDailyCap(t *testing.T) {
+	d, calls := liBudgetDispatcher(t, liLifetimeWithCap("1000.00", "20.00"), http.StatusNoContent)
+
+	err := d.WriteBudget(context.Background(), "proj", model.ProviderLinkedInAds, liBudgetCampaign(),
+		model.BudgetChange{Amount: 1500, Type: model.BudgetLifetime})
+	if err != nil {
+		t.Fatalf("WriteBudget: %v", err)
+	}
+	writes := liWrites(calls())
+	if len(writes) != 1 {
+		t.Fatalf("want exactly one write, got %d: %+v", len(writes), writes)
+	}
+	if want := `{"patch":{"$set":{"totalBudget":{"amount":"1500.00","currencyCode":"USD"}}}}`; writes[0].Body != want {
+		t.Errorf("write body = %s, want %s (totalBudget only; the daily cap is left in force)", writes[0].Body, want)
+	}
+}
+
 // TestLinkedIn_WriteBudget_Guards is the refusal table. Every case must return the named
 // sentinel AND leave the platform untouched — the second half is what makes a 409 honest.
 func TestLinkedIn_WriteBudget_Guards(t *testing.T) {
@@ -159,12 +185,22 @@ func TestLinkedIn_WriteBudget_Guards(t *testing.T) {
 			wantText: "denominated in EUR",
 		},
 		{
-			name: "BOTH budgets present is ambiguous and refused",
-			readJSON: `{"id":777,"dailyBudget":{"amount":"100.00","currencyCode":"USD"},
-				"totalBudget":{"amount":"1000.00","currencyCode":"USD"}}`,
+			// #584: a campaign carrying both is a lifetime budget with a daily cap. A DAILY
+			// request would overwrite the cap while the row records the lifetime total.
+			name:     "a daily write on a lifetime budget with a daily cap is refused",
+			readJSON: liLifetimeWithCap("1000.00", "20.00"),
 			change:   model.BudgetChange{Amount: 250, Type: model.BudgetDaily},
 			wantErr:  domain.ErrBudgetUnwritable,
-			wantText: "BOTH a daily and a total budget",
+			wantText: "lifetime budget with a daily cap",
+		},
+		{
+			// #584: the cap stays in force, so the new total may not drop below it. A refused
+			// AMOUNT (400), not an unwritable budget (409): a larger total succeeds.
+			name:     "a lifetime write below the campaign's daily cap is refused",
+			readJSON: liLifetimeWithCap("1000.00", "150.00"),
+			change:   model.BudgetChange{Amount: 120, Type: model.BudgetLifetime},
+			wantErr:  domain.ErrBudgetAmountRejected,
+			wantText: "above the lifetime budget",
 		},
 		{
 			// The currency guard sits BELOW the pacing guard precisely so this case is

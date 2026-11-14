@@ -1512,8 +1512,11 @@ modified" is then the one claim that cannot be made — the cause is not lost ei
 `LinkedInDispatcher.WriteBudget` refuses, before any mutate: an unparseable current amount
 (`ErrBudgetUnwritable` — a value that failed to parse reads as "this field is unused", which is
 the answer that selects the wrong field to write); the same pacing guard Google makes, reached
-through a different fact — LinkedIn reports its pacing model by WHICH FIELD IS PRESENT, so BOTH
-present is ambiguous and NEITHER present identifies no shape to write; and then a campaign whose
+through a different fact — LinkedIn reports its pacing model by WHICH FIELD IS PRESENT, so
+NEITHER present identifies no shape to write, and BOTH present is a lifetime budget with a daily
+cap (#584, what `linkedInConfig.dailyBudgetUsd` creates): it is paced `lifetime`, a `daily`
+request is refused, and a `lifetime` request writes `totalBudget` only, leaving the cap in force
+(before #584 the shape was refused outright, so such a campaign's budget was uneditable); and then a campaign whose
 currency is not USD, because the minimums are USD-specific and this client only ever SENDS
 `currencyCode "USD"`, so writing over another currency would silently redenominate the campaign.
 
@@ -1530,8 +1533,10 @@ path calls — `$10` daily and `$100` lifetime minimums — and **the WIRE STRIN
 is sent**, never a re-formatted float, so the amount validated is byte-for-byte the amount
 written. Its rules are checked against the ROUNDED value, which is load-bearing: `9.999` is sent
 as `"10.00"` and therefore meets the $10 minimum, where checking the raw float would refuse an
-amount the platform accepts. The mutate is a `PARTIAL_UPDATE` that returns **no body**, so the
-2xx itself is the confirmation.
+amount the platform accepts. On a campaign carrying a daily cap the new total is also checked
+against it (`linkedin.CheckDailyCapWithinTotal`, the create path's pair rule), on the same rounded
+value; a total below the cap is a refused amount (400), not an unwritable budget. The mutate is a
+`PARTIAL_UPDATE` that returns **no body**, so the 2xx itself is the confirmation.
 
 **A refused AMOUNT is classified, not passed through as a generic failure.** Every refusal
 `ValidateBudgetAmount` makes wraps `linkedin.ErrBudgetAmountInvalid` and carries a client-safe
