@@ -427,6 +427,14 @@ app:
     TWITTER_TWEET_VARIANTS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to twitterConfig.card (#564 gap 6): a website card (the
+    # creative image, a headline, the UTM'd registration URL) created with POST
+    # accounts/:id/cards and attached by card_uri to the authored tweet(s). Default off: built
+    # from X's published reference; no live create has sent it. While off, a create setting it
+    # is refused with a 400 before any job exists. Any value other than "true" is treated as off.
+    TWITTER_WEBSITE_CARD_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to the positive keyword add lever on an existing X
     # campaign (#564 gap 12): POST .../keyword-targeting/additions, one
     # BROAD_KEYWORD criterion (operator_type EQ) per keyword on the line item this

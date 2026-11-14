@@ -135,6 +135,8 @@ type Service interface {
 	// while TWITTER_FOLLOWER_LOOKALIKES_ENABLED is off (#564 gap 4c). So is a
 	// twitterConfig.variants list that breaks its rules, or is sent while
 	// TWITTER_TWEET_VARIANTS_ENABLED is off (#564 gap 10). So is a
+	// twitterConfig.card that breaks its rules, or is sent while
+	// TWITTER_WEBSITE_CARD_ENABLED is off (#564 gap 6). So is a
 	// microsoftConfig.sitelinks or callouts list that breaks its rules, or is sent
 	// while MICROSOFT_AD_EXTENSIONS_ENABLED is off (#563). So is a
 	// microsoftConfig.negativeKeywords list that breaks its rules or is sent while
@@ -1404,7 +1406,24 @@ type CampaignCreateInput struct {
 	// unless TWITTER_TWEET_VARIANTS_ENABLED is exactly "true"; a non-empty list
 	// while off, a rule breach or a wrong shape (null reads as absent) is refused
 	// with 400 "invalid campaign config: twitterConfig.variants: ..." before any
-	// job exists. Not role-gated. X CUSTOM AUDIENCES (#564): twitterConfig takes
+	// job exists. Not role-gated. X WEBSITE CARD (#564 gap 6): twitterConfig takes
+	// `card`, {"headline": string} (trimmed, 1-70 characters, no control
+	// character; headline is the only key). It needs media (imageAssetId) and an
+	// authored tweet (tweetText or variants, never tweetId). Once the campaign and
+	// line item exist and a tweet is about to be authored, one website card is
+	// created with POST accounts/:account_id/cards (a MEDIA component carrying the
+	// creative image's media_key and a DETAILS component carrying the headline and
+	// a WEBSITE destination: the registration URL with this service's UTMs and
+	// utm_content=website-card), and its card_uri is sent on every tweet the
+	// create authors (media_keys is then not sent; the image rides in the card).
+	// The result records it as CardURI. A card that cannot be created publishes
+	// nothing: the row is created_degraded with a step to post the tweet manually
+	// (UNCONFIRMED when the card may exist; a card is neither public nor
+	// billable). A create that reuses an earlier attempt's promoted tweet creates
+	// no card. OFF unless TWITTER_WEBSITE_CARD_ENABLED is exactly "true"; a card
+	// while off, a rule breach or a wrong shape (null reads as absent) is refused
+	// with 400 "invalid campaign config: twitterConfig.card: ..." before any job
+	// exists. Not role-gated. X CUSTOM AUDIENCES (#564): twitterConfig takes
 	// `customAudienceIds` and `excludedCustomAudienceIds`, arrays of X custom
 	// audience ids (list-twitter-ads-custom-audiences offers them) to target and
 	// to exclude, sent as CUSTOM_AUDIENCE targeting criteria on the new line item

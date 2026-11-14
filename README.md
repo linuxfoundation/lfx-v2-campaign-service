@@ -313,6 +313,13 @@ openssl rand -base64 32
   that fails after another was published leaves the row `created_degraded`;
   nothing is rolled back. The chart sets it to `"false"`
   (`app.environment.TWITTER_TWEET_VARIANTS_ENABLED.value`).
+- `TWITTER_WEBSITE_CARD_ENABLED` (default unset, i.e. OFF) — opts a deployment
+  IN to `twitterConfig.card` (#564 gap 6): a website card (the creative image,
+  a headline, the UTM'd registration URL; `POST accounts/:id/cards`) attached
+  by `card_uri` to the tweet(s) an X create authors. Only the exact value
+  `true` enables it; anything else fails closed, and a create setting it is
+  refused with a 400 before any job exists. The chart sets it to `"false"`
+  (`app.environment.TWITTER_WEBSITE_CARD_ENABLED.value`).
 - `TWITTER_KEYWORD_ADD_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to the positive keyword add lever on an existing X campaign
   (#564 gap 12): `POST .../campaigns/{campaign_id}/keyword-targeting/additions`

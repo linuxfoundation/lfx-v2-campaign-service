@@ -136,7 +136,7 @@ func authoredTweetsStatus(results []PromotedTweetResult) string {
 // promotion that is refused, UNCONFIRMED, reported duplicate or answered without an id leaves the
 // variant's tweet published but not (provably) promoted. Each is recorded on its variant and named
 // in the summary, and the dispatcher persists the row as created_degraded.
-func (c *Client) promoteTweetVariants(ctx context.Context, texts []string, pinnedUser, mediaKey, lineItemID string, lineItemReused bool, steps *[]string) ([]PromotedTweetResult, string, error) {
+func (c *Client) promoteTweetVariants(ctx context.Context, texts []string, pinnedUser, mediaKey string, ensureCard func() (string, error), lineItemID string, lineItemReused bool, steps *[]string) ([]PromotedTweetResult, string, error) {
 	if lineItemReused {
 		existing, err := c.listPromotedTweets(ctx, lineItemID)
 		switch {
@@ -163,6 +163,16 @@ func (c *Client) promoteTweetVariants(ctx context.Context, texts []string, pinne
 		*steps = append(*steps, fmt.Sprintf("Tweet variants skipped: %s", err.Error()))
 		return nil, fmt.Sprintf("could not author the tweet variants: %s — post them manually, then add each as a promoted tweet in X Ads Manager", err.Error()), nil
 	}
+	// One website card (#564 gap 6) for every variant, created before the first authoring write. A
+	// card that cannot be created publishes nothing.
+	var cardURI string
+	if ensureCard != nil {
+		if cardURI, err = ensureCard(); err != nil {
+			why := websiteCardFailure(err)
+			*steps = append(*steps, "Tweet variants skipped: "+why)
+			return nil, why, nil
+		}
+	}
 
 	var out []PromotedTweetResult
 	var failed []int
@@ -176,7 +186,7 @@ func (c *Client) promoteTweetVariants(ctx context.Context, texts []string, pinne
 		if err := c.pace(ctx); err != nil {
 			return out, "", err
 		}
-		resp, authorErr := c.createNullcastTweet(ctx, text, asUserID, mediaKey)
+		resp, authorErr := c.createNullcastTweet(ctx, text, asUserID, mediaKey, cardURI)
 		var tweetID string
 		switch {
 		case authorErr != nil && createOutcomeAmbiguous(authorErr):

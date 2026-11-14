@@ -54,6 +54,12 @@ type mediaFakeX struct {
 	// released before the library add, is caught every time.
 	initWaitsForLookups int
 	initWaitMax         time.Duration
+
+	// cardBody is the last website card POST's JSON body (#564 gap 6); cardStatus makes it answer
+	// that status, and cardResponse overrides its 2xx body.
+	cardBody     string
+	cardStatus   int
+	cardResponse string
 }
 
 func newMediaFakeX() *mediaFakeX {
@@ -171,6 +177,19 @@ func (f *mediaFakeX) handler(t *testing.T) http.HandlerFunc {
 			_, _ = w.Write([]byte(`{"data":[{"user_id":"u1"}],"next_cursor":null}`))
 		case r.Method == http.MethodGet:
 			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(p, "/accounts/acc1/cards"):
+			f.hit("card")
+			b, _ := io.ReadAll(r.Body)
+			f.cardBody = string(b)
+			if f.cardStatus != 0 {
+				w.WriteHeader(f.cardStatus)
+				return
+			}
+			if f.cardResponse != "" {
+				_, _ = w.Write([]byte(f.cardResponse))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":{"name":"lfx-card","card_uri":"card://1250013836219531264"}}`))
 		case r.Method == http.MethodPost && strings.HasSuffix(p, "campaigns"):
 			f.hit("campaign")
 			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))

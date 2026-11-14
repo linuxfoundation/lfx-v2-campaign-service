@@ -94,6 +94,10 @@ type twitterConfig struct {
 	// twitter_tweet_variants.go): 1-5 entries, never with tweetId or tweetText. Behind
 	// TWITTER_TWEET_VARIANTS_ENABLED.
 	Variants []twitterTweetVariant `json:"variants,omitempty"`
+	// Card is a website card (headline, the creative image, the UTM'd registration URL) attached to
+	// the authored tweet(s) by card_uri (#564 gap 6, twitter_website_card.go). Behind
+	// TWITTER_WEBSITE_CARD_ENABLED; needs imageAssetId and an authored tweet.
+	Card *twitterWebsiteCard `json:"card,omitempty"`
 	// CustomAudienceIDs and ExcludedCustomAudienceIDs are X custom audience ids to target and to
 	// exclude on the new line item (#564 gap 3, twitter_custom_audiences.go). Behind
 	// TWITTER_CUSTOM_AUDIENCES_ENABLED, and global_marketing_ops only
@@ -152,6 +156,10 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 	if err := checkTwitterTweetVariantsShape(config); err != nil {
 		return err
 	}
+	// And a mis-shaped card (#564 gap 6).
+	if err := checkTwitterWebsiteCardShape(config); err != nil {
+		return err
+	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
 	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
 	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
@@ -179,6 +187,9 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 		return err
 	}
 	if _, err := checkTwitterTweetVariants(cfg); err != nil {
+		return err
+	}
+	if _, err := checkTwitterWebsiteCard(cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -350,6 +361,9 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if err := checkTwitterTweetVariantsShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	if err := checkTwitterWebsiteCardShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg twitterConfig
 	if err := unmarshalPlatformConfig(config, "twitterConfig", &cfg); err != nil {
 		return nil, notCreated(err)
@@ -388,6 +402,11 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	}
 	// And the tweet variants gate and rules (#564 gap 10).
 	variants, err := checkTwitterTweetVariants(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	// And the website card gate and rules (#564 gap 6).
+	card, err := checkTwitterWebsiteCard(cfg)
 	if err != nil {
 		return nil, notCreated(err)
 	}
@@ -517,6 +536,7 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		FollowerLookalikeUserIDs: tgt.lookalikes,
 
 		TweetVariants: variants,
+		WebsiteCard:   card,
 
 		CustomAudienceIDs:         cfg.CustomAudienceIDs,
 		ExcludedCustomAudienceIDs: cfg.ExcludedCustomAudienceIDs,
@@ -595,6 +615,10 @@ func campaignFromTwitter(ctx context.Context, r *twitter.CampaignResult, cfg twi
 	// Keywords (#564 gap 4) are caller free text bound for the same column, so they are reduced
 	// the same way (sanitizeSnapshotTexts reallocates, leaving the list sent to X untouched).
 	snapshot.Keywords = sanitizeSnapshotTexts(cfg.Keywords)
+	// The card headline (#564 gap 6) is operator text bound for the same column.
+	if cfg.Card != nil {
+		snapshot.Card = &twitterWebsiteCard{Headline: sanitizeSnapshotText(cfg.Card.Headline)}
+	}
 	// Variant copy (#564 gap 10) is the same operator prose as tweetText, reduced the same way, in
 	// a fresh slice so the variants sent to X are untouched.
 	if cfg.Variants != nil {
