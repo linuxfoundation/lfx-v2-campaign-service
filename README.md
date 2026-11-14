@@ -291,6 +291,15 @@ openssl rand -base64 32
   it; anything else fails closed, and a create that sets the field is
   refused with a 400 before any job exists. Not role-gated. No live create
   has sent `DAILY_SPEND` yet. The chart sets it to `"false"`.
+- `REDDIT_AD_PER_VARIANT_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to one ad per variant (#549 gap 6): a Reddit create that
+  authors its post (`imageUrl` or `imageAssetId`, no `postUrl`) and carries
+  2-5 `variants` authors one post and one ad per variant, recording every ad
+  id (`adIds`) on the campaign. A failed variant leaves the others in place
+  and the campaign `created_degraded`. While on, more than 5 variants or a
+  blank or over-long variant headline is a 400 before any job exists. Only
+  the exact value `true` enables it. Not role-gated. No live create has put
+  more than one ad in an ad group yet. The chart sets it to `"false"`.
 - `TWITTER_CREATE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `twitterConfig.geoTargets`, `languages`, `keywords` and
   `interestIds` (#564), country, language, broad keyword and interest

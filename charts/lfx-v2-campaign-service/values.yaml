@@ -408,6 +408,16 @@ app:
     REDDIT_DAILY_BUDGET_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to one ad per variant (#549 gap 6): a Reddit
+    # create that authors its post (imageUrl / imageAssetId, no postUrl) with
+    # 2-5 variants authors one post and one ad per variant instead of one ad.
+    # Default off: no live create has put more than one ad in an ad group. Not
+    # role-gated. While on, more than 5 variants or a blank or over-long
+    # variant headline is refused with a 400 before any job exists. Any value
+    # other than "true" is treated as off.
+    REDDIT_AD_PER_VARIANT_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to twitterConfig.geoTargets, languages, keywords
     # and interestIds (#564), sent at create time as LOCATION, LANGUAGE,
     # BROAD_KEYWORD and INTEREST targeting criteria on the new X line item.

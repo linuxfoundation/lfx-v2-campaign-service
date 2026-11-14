@@ -304,6 +304,13 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	if err := checkRedditBudgetType(config); err != nil {
 		return nil, notCreated(err)
 	}
+	// One ad per variant (#549 gap 6): the cap and headlines, for any path that skipped
+	// PreflightCreate. The flag is read once here and handed to the client, so the check and the
+	// create agree on the path.
+	adPerVariant := redditAdPerVariantEnabled()
+	if err := checkRedditAdPerVariant(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
 	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
 	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
@@ -342,7 +349,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	// ImageURLSource immediately before the post request that hands it to Reddit, so the
 	// account verification and any throttle wait in between cannot expire it. cfg itself is
 	// left untouched, so the persisted config snapshot records imageAssetId and never a URL.
-	var signedURL string
+	var signedURLs []string
 	var imageURLSource func(context.Context) (string, error)
 	assetID, err := d.checkRedditAssetChoice(cfg)
 	if err != nil {
@@ -354,7 +361,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		if err := d.checkRedditAsset(ctx, brief, assetID); err != nil {
 			return nil, notCreated(err)
 		}
-		imageURLSource = d.lateAssetURL(brief, assetID, &signedURL)
+		imageURLSource = d.lateAssetURL(brief, assetID, &signedURLs)
 	}
 
 	// Community and interest resolution (#549 gaps 4 and 8), before anything is created and
@@ -411,6 +418,8 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		Platforms:       cfg.Platforms,
 		ExpandTargeting: cfg.ExpandTargeting,
 
+		AdPerVariant: adPerVariant,
+
 		// The name labels of the CLAIMED row (multi-campaign cs-3): its stored funnel stage and
 		// tactic (model.DispatchLabels) and its slot version, never the request's. A retry of
 		// that row composes the same name; an unlabelled slot-1 row composes its legacy name
@@ -438,10 +447,10 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	//                       orphan as reconciliation-required, not a false success.
 	//   - (result, nil)   → success.
 	result, cerr := client.CreateCampaign(ctx, in)
-	if signedURL != "" {
+	for _, signedURL := range signedURLs {
 		// Reddit may echo media_url in an error body, which would carry the signature into the
 		// job error and the persisted Steps/AdWarning. Scrub it; classification is unaffected
-		// (scrubErr preserves errors.Is/As).
+		// (scrubErr preserves errors.Is/As). A one-ad-per-variant create mints one URL per post.
 		cerr = scrubErr(cerr, signedURL)
 		if result != nil {
 			result.AdWarning = scrubSignedURL(result.AdWarning, signedURL)
@@ -719,7 +728,7 @@ func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, p
 	if err := verifyRedditAccountMatch("toggle reddit campaign status", campaign, client); err != nil {
 		return err
 	}
-	adGroupID, adID := redditChildIDs(campaign)
+	adGroupID, adIDs := redditChildIDs(campaign)
 	// ACTIVATE requires the FULL servable tree. A reddit create can legitimately land a
 	// campaign + ad group but NO ad (the no-PostURL path returns AdCount 0 / empty AdID) and
 	// the dispatcher still persists that row as "created" — which passes the service's
@@ -728,10 +737,10 @@ func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, p
 	// unless BOTH child ids are known, and return ErrCampaignNotProvisioned so the service
 	// classifies it as a 409 state error (the platform is never called), not a 503. Pausing
 	// needs no child ids — pausing the parent already stops delivery.
-	if redditStatus == reddit.StatusActive && (strings.TrimSpace(adGroupID) == "" || strings.TrimSpace(adID) == "") {
+	if redditStatus == reddit.StatusActive && (strings.TrimSpace(adGroupID) == "" || len(adIDs) == 0) {
 		return fmt.Errorf("%w: reddit campaign %s cannot be activated because this service has no record of a fully-created ad group + ad — either they were never fully provisioned, or the campaign was ADOPTED, which records no serving resources and leaves un-pausing to Reddit Ads Manager", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 	}
-	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, redditStatus); uerr != nil {
+	if uerr := client.UpdateCampaignTreeStatus(ctx, campaign.PlatformCampaignID, adGroupID, adIDs, redditStatus); uerr != nil {
 		// An UNCONFIRMED outcome (transport/5xx/3xx-mutating) means the PATCH MAY have
 		// applied upstream — wrap it in an error that reports Unconfirmed() so the caller
 		// (across the package boundary, via errors.As on the behavioral interface — same
@@ -1094,20 +1103,30 @@ func verifyRedditAccountMatch(op string, campaign *model.Campaign, client *reddi
 }
 
 // redditChildIDs pulls the ad group + ad ids the create path stored in the persisted
-// CampaignResult blob. A missing/unparseable blob yields empty ids (only the campaign is
-// toggled) rather than an error — the service already blocks toggling a degraded campaign.
-func redditChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
+// CampaignResult blob: every ad of a one-ad-per-variant create (adIds, #549 gap 6), else the one
+// adId. A missing/unparseable blob yields empty ids (only the campaign is toggled) rather than
+// an error — the service already blocks toggling a degraded campaign.
+func redditChildIDs(campaign *model.Campaign) (adGroupID string, adIDs []string) {
 	if campaign == nil || len(campaign.Result) == 0 {
-		return "", ""
+		return "", nil
 	}
 	var blob struct {
-		AdGroupID string `json:"adGroupId"`
-		AdID      string `json:"adId"`
+		AdGroupID string   `json:"adGroupId"`
+		AdID      string   `json:"adId"`
+		AdIDs     []string `json:"adIds"`
 	}
 	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
-		return "", ""
+		return "", nil
 	}
-	return blob.AdGroupID, blob.AdID
+	for _, id := range blob.AdIDs {
+		if strings.TrimSpace(id) != "" {
+			adIDs = append(adIDs, id)
+		}
+	}
+	if len(adIDs) == 0 && strings.TrimSpace(blob.AdID) != "" {
+		adIDs = []string{blob.AdID}
+	}
+	return blob.AdGroupID, adIDs
 }
 
 // unconfirmedToggleError wraps a toggle whose platform outcome is unknowable (the change may

@@ -89,7 +89,8 @@ func (d *RedditDispatcher) checkRedditAssetChoice(cfg redditConfig) (string, err
 // custom audience lists are mistyped, malformed or off on this deployment (#549), whose
 // conversionEvent is refused (checkRedditConversionEvent), or whose placements, platforms or
 // expandTargeting are refused (checkRedditPlacementTargeting, #549 gap 7), or whose budgetType is
-// refused (checkRedditBudgetType, #549 gap 9). It
+// refused (checkRedditBudgetType, #549 gap 9), or whose variants break the one-ad-per-variant
+// rules (checkRedditAdPerVariant, #549 gap 6). It
 // never calls Reddit, so every other outcome is ErrPreflightNotApplicable. Whether the asset belongs to the brief cannot be checked here (the
 // pre-check is not given the brief); Dispatch checks it before any upstream call. A config that does
 // not decode is left to Dispatch, except a wrong-typed `bidding` (checkBiddingShape).
@@ -153,6 +154,11 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 	if _, err := d.checkRedditAssetChoice(cfg); err != nil {
 		return err
 	}
+	// One ad per variant (#549 gap 6): the cap and every variant headline, on a config that
+	// decoded cleanly (variants is a plain list, so a mistyped one is the decode failure above).
+	if err := checkRedditAdPerVariant(cfg); err != nil {
+		return err
+	}
 	// Community and interest resolution (#549 gaps 4 and 8): the one check here that reads
 	// Reddit, so it runs last, after every refusal decidable from the config alone. Behind
 	// REDDIT_TARGETING_RESOLUTION_ENABLED; see reddit_targeting_resolution.go.
@@ -193,13 +199,13 @@ func (d *RedditDispatcher) checkRedditAsset(ctx context.Context, brief *model.Ca
 // fetches it. The post request itself may still refresh the token after minting, which adds
 // at most one more request timeout; assetsign.MinTTL covers it. The minted URL is also written to *minted so the caller
 // can scrub it from anything that comes back.
-func (d *RedditDispatcher) lateAssetURL(brief *model.CampaignBrief, assetID string, minted *string) func(context.Context) (string, error) {
+func (d *RedditDispatcher) lateAssetURL(brief *model.CampaignBrief, assetID string, minted *[]string) func(context.Context) (string, error) {
 	return func(ctx context.Context) (string, error) {
 		signed, exp, err := d.assetURLs.Mint(brief.ProjectID, brief.ID, assetID)
 		if err != nil {
 			return "", fmt.Errorf("reddit: cannot mint a signed URL for creative asset %s: %w", assetID, err)
 		}
-		*minted = signed
+		*minted = append(*minted, signed) // one per post on a one-ad-per-variant create (#549 gap 6)
 		// The URL is a bearer credential for the image until exp: log the id and expiry only.
 		slog.InfoContext(ctx, "minted signed creative-asset URL for a Reddit promoted post",
 			"asset_id", assetID, "brief_id", brief.ID, "exp", exp.Unix())
