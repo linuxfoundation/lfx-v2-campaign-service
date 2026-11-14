@@ -5192,7 +5192,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: list-meta-ads lfx-v2-campaign-service-briefs
-            description: 'Read the ADS under ONE ad set of a Meta campaign live (decision D7, first step): each ad''s name, configured and effective status and creative, with its impressions, clicks, spend and CTR over the window. STRICTLY READ-ONLY — the platform is only read and nothing is persisted; there is no per-ad pause or edit. Before anything is read the campaign must record which ad account it was created under and that account must be the connection''s (409 otherwise); a campaign with no platform campaign id is 409; any platform but Meta is 400; `ad_set_id` is validated before any connection work (400). Upstream: GET /{ad_set_id}?fields=id,campaign_id,account_id,status, which must report THIS campaign under THAT account (409 otherwise — the ad set does not belong to this campaign), then GET /{ad_set_id}/ads (bounded cursor paging; past the cap `truncated` is true), GET /act_{id}?fields=currency, and ONE level=ad Insights read on the ad account filtered to this ad set (bounded cursor paging, all or nothing). Every page is checked as raw bytes before it is decoded (a duplicated key, malformed UTF-8 or an unpaired surrogate escape refuses the read), every ad must report THIS ad set, THIS campaign and the connection''s ad account, every Insights row must name this ad set and campaign and the account''s currency, and an explicit null counter is refused while an absent one is 0. **404 when the campaign row does not exist or the project has no Meta connection** — never because of anything Meta answers: Meta''s 100/33 is a 503 like every other unverifiable upstream answer.'
+            description: 'Read the ADS under ONE ad set of a Meta campaign live (decision D7, first step): each ad''s name, configured and effective status and creative, with its impressions, clicks, spend and CTR over the window. STRICTLY READ-ONLY — the platform is only read and nothing is persisted; an ad is paused or resumed with toggle-meta-ad-status, and `deliberately_paused` reports that lever''s record. Before anything is read the campaign must record which ad account it was created under and that account must be the connection''s (409 otherwise); a campaign with no platform campaign id is 409; any platform but Meta is 400; `ad_set_id` is validated before any connection work (400). Upstream: GET /{ad_set_id}?fields=id,campaign_id,account_id,status, which must report THIS campaign under THAT account (409 otherwise — the ad set does not belong to this campaign), then GET /{ad_set_id}/ads (bounded cursor paging; past the cap `truncated` is true), GET /act_{id}?fields=currency, and ONE level=ad Insights read on the ad account filtered to this ad set (bounded cursor paging, all or nothing). Every page is checked as raw bytes before it is decoded (a duplicated key, malformed UTF-8 or an unpaired surrogate escape refuses the read), every ad must report THIS ad set, THIS campaign and the connection''s ad account, every Insights row must name this ad set and campaign and the account''s currency, and an explicit null counter is refused while an absent one is 0. **404 when the campaign row does not exist or the project has no Meta connection** — never because of anything Meta answers: Meta''s 100/33 is a 503 like every other unverifiable upstream answer.'
             operationId: lfx-v2-campaign-service-briefs#list-meta-ads
             parameters:
                 - name: window
@@ -5268,6 +5268,7 @@ paths:
                                       creative_id: "120210000000000777"
                                       creative_name: KubeCon NA — Image A
                                       ctr: 0.0228
+                                      deliberately_paused: false
                                       effective_status: ACTIVE
                                       id: "120210000000000999"
                                       impressions: 920
@@ -5334,6 +5335,196 @@ paths:
                             example:
                                 code: "413"
                                 message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets/{ad_set_id}/ads/{ad_id}/status:
+        post:
+            tags:
+                - lfx-v2-campaign-service-briefs
+            summary: toggle-meta-ad-status lfx-v2-campaign-service-briefs
+            description: 'Pause or resume ONE ad of one ad set of a Meta campaign (#550). The per-ad sibling of toggle-meta-ad-set-status, with its guards, outcomes and failures: If-Match carries the campaign row''s ETag (428 when missing, 412 when stale) and the campaign''s write lock is held for the call. Refused with 400 before anything else unless the deployment sets META_AD_PAUSE_ENABLED to exactly "true" (off by default until the cascade and the record are verified against a live account). `ad_set_id` and `ad_id` are validated before any connection work (400). The campaign must record its ad account and that account must be the connection''s (409), and the ad is then READ (GET /{ad_id}?fields=id,adset_id,campaign_id,account_id,status) and must report `ad_set_id`, THIS campaign and THAT account (409 otherwise) — all before anything is written. ACTIVE is allowed ONLY on an ad of the ad set this service created for the campaign (409 otherwise — the campaign resume never activates any other ad), and on an ADOPTED campaign it is refused exactly as the campaign toggle refuses it; PAUSED is allowed on any of the campaign''s ads. An ad Meta reports DELETED or ARCHIVED is 409. When the read shows the requested status already, NOTHING is sent and the outcome is ALREADY_IN_STATE. Otherwise ONE POST /{ad_id} {status} is sent, never retried: 200 APPLIED when Meta confirms it; a failed pre-write read, a write never sent or one Meta definitely refused is 503 saying nothing was changed; a write whose outcome is unknown is 503 saying the change is UNCONFIRMED — read the ads before retrying — and the campaign''s write lock is held for a cooldown. No Meta connection is 404; an unusable connection or one with no ad account is 409; a problem with the LF system connection, stored-credential decryption or this service itself is 500. A DELIBERATE PAUSE OF AN AD OF THE RECORDED AD SET SURVIVES A CAMPAIGN PAUSE/RESUME: it is recorded on the campaign row (before the pause is sent, withdrawn if Meta definitely refused it), toggle-campaign-status ACTIVE then leaves that ad PAUSED, and only a CONFIRMED resume here (APPLIED or ALREADY_IN_STATE) clears the record — exactly the ad-set lever''s record rules, including the ETag and re-read advice after any error. list-meta-ads reports it as `deliberately_paused`. Pausing an ad of any other ad set, or anything on an ADOPTED campaign, records nothing, since the campaign cascade never re-activates it. Any platform but Meta is 400.'
+            operationId: lfx-v2-campaign-service-briefs#toggle-meta-ad-status
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+                - name: brief_id
+                  in: path
+                  description: Brief UUID
+                  required: true
+                  schema:
+                    type: string
+                    description: Brief UUID
+                    example: 73c8e20e-530a-457d-ad83-899801815457
+                    format: uuid
+                  example: 73c8e20e-530a-457d-ad83-899801815457
+                - name: campaign_id
+                  in: path
+                  description: Campaign UUID
+                  required: true
+                  schema:
+                    type: string
+                    description: Campaign UUID
+                    example: 5e2b7572-9d2a-4de5-8383-14527272c334
+                    format: uuid
+                  example: 5e2b7572-9d2a-4de5-8383-14527272c334
+                - name: ad_set_id
+                  in: path
+                  description: 'The Meta ad set id: digits, no leading zero, at most 32.'
+                  required: true
+                  schema:
+                    type: string
+                    description: 'The Meta ad set id: digits, no leading zero, at most 32.'
+                    example: "120210000000000888"
+                    pattern: ^[1-9][0-9]*$
+                    maxLength: 32
+                  example: "120210000000000888"
+                - name: ad_id
+                  in: path
+                  description: 'The Meta ad id: digits, no leading zero, at most 32.'
+                  required: true
+                  schema:
+                    type: string
+                    description: 'The Meta ad id: digits, no leading zero, at most 32.'
+                    example: "120210000000000999"
+                    pattern: ^[1-9][0-9]*$
+                    maxLength: 32
+                  example: "120210000000000999"
+                - name: If-Match
+                  in: header
+                  description: If-Match header carrying the current ETag/version
+                  schema:
+                    type: string
+                    description: If-Match header carrying the current ETag/version
+                    example: "3"
+                  example: "3"
+            requestBody:
+                description: Request body for toggle-meta-ad-status.
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ToggleMetaAdSetStatusRequestBody'
+                        example:
+                            status: PAUSED
+            responses:
+                "200":
+                    description: OK response.
+                    headers:
+                        ETag:
+                            description: 'ETag header value: the campaign row''s version after this call. It CHANGES when the call records or clears the deliberate pause of an ad of the campaign''s recorded ad set; otherwise it is UNCHANGED — the ad''s status itself is not stored on the campaign row.'
+                            schema:
+                                type: string
+                                description: 'ETag header value: the campaign row''s version after this call. It CHANGES when the call records or clears the deliberate pause of an ad of the campaign''s recorded ad set; otherwise it is UNCHANGED — the ad''s status itself is not stored on the campaign row.'
+                                example: Sunt magnam aspernatur aut consectetur atque.
+                            example: Sunt magnam aspernatur aut consectetur atque.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/MetaAdStatusChange'
+                            example:
+                                ad_id: "120210000000000999"
+                                ad_set_id: "120210000000000888"
+                                campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                                outcome: APPLIED
+                                previous_status: ACTIVE
+                                requested_status: PAUSED
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "412":
+                    description: 'PreconditionFailed: ETag mismatch'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PreconditionFailedError'
+                            example:
+                                code: "412"
+                                message: The supplied ETag does not match the current version.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "428":
+                    description: 'PreconditionRequired: If-Match header required'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PreconditionRequiredError'
+                            example:
+                                code: "428"
+                                message: An If-Match header is required.
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -5989,7 +6180,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: toggle-campaign-status lfx-v2-campaign-service-briefs
-            description: 'Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist the new status. Unlike update-campaign (which only writes the DB row), this dispatches the status change to the platform and updates the row only after the platform confirms. Support is per-platform: a campaign whose platform has no status-toggle dispatcher wired returns 400. Reddit, LinkedIn, Meta, X, Google Ads and Microsoft Ads are wired; HubSpot is not, because an email send has no run state to pause. ONE EXCEPTION to the persist: pausing a campaign in ''created_degraded'' pauses it upstream and returns 200 with the status and ETag UNCHANGED. ''created_degraded'' records that the campaign''s wiring was never verified, and this schema has one status column, so writing ''paused'' would spend the reconciliation marker to record a run state the platform already holds authoritatively. Resuming such a campaign is refused outright (409). ADOPTED campaigns (campaign `adopted: true`) can be paused but not resumed here: a resume is refused 409 with reason=campaign_adopted, distinct from the reason-less 409 for a campaign that is not fully provisioned, and the campaign is resumed in the ad platform''s own UI. Read the pause''s effect from the ad platform, not from this row. META: ACTIVE cascades to the campaign''s recorded ad set and its ads, EXCEPT that a recorded ad set deliberately paused through toggle-meta-ad-set-status (list-meta-ad-sets `deliberately_paused`) is left PAUSED — its ads and the campaign are still activated. That record is this service''s, not Meta''s, so the held ad set is READ first (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and nothing is written unless Meta reports it PAUSED (or DELETED/ARCHIVED, which cannot serve): an ad set Meta reports ACTIVE is 409 (pause it, or resume it to clear the record, through toggle-meta-ad-set-status first), and an unreadable one is 503 with the campaign not modified.'
+            description: 'Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist the new status. Unlike update-campaign (which only writes the DB row), this dispatches the status change to the platform and updates the row only after the platform confirms. Support is per-platform: a campaign whose platform has no status-toggle dispatcher wired returns 400. Reddit, LinkedIn, Meta, X, Google Ads and Microsoft Ads are wired; HubSpot is not, because an email send has no run state to pause. ONE EXCEPTION to the persist: pausing a campaign in ''created_degraded'' pauses it upstream and returns 200 with the status and ETag UNCHANGED. ''created_degraded'' records that the campaign''s wiring was never verified, and this schema has one status column, so writing ''paused'' would spend the reconciliation marker to record a run state the platform already holds authoritatively. Resuming such a campaign is refused outright (409). ADOPTED campaigns (campaign `adopted: true`) can be paused but not resumed here: a resume is refused 409 with reason=campaign_adopted, distinct from the reason-less 409 for a campaign that is not fully provisioned, and the campaign is resumed in the ad platform''s own UI. Read the pause''s effect from the ad platform, not from this row. META: ACTIVE cascades to the campaign''s recorded ad set and its ads, EXCEPT that a recorded ad set deliberately paused through toggle-meta-ad-set-status (list-meta-ad-sets `deliberately_paused`) is left PAUSED — its ads and the campaign are still activated. That record is this service''s, not Meta''s, so the held ad set is READ first (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and nothing is written unless Meta reports it PAUSED (or DELETED/ARCHIVED, which cannot serve): an ad set Meta reports ACTIVE is 409 (pause it, or resume it to clear the record, through toggle-meta-ad-set-status first), and an unreadable one is 503 with the campaign not modified. Likewise every ad deliberately paused through toggle-meta-ad-status (list-meta-ads `deliberately_paused`) is left PAUSED while its siblings, the ad set and the campaign are activated; each held ad is READ first (GET /{ad_id}?fields=id,adset_id,campaign_id,account_id,status), an ad Meta reports ACTIVE is 409 (pause it, or resume it to clear the record, through toggle-meta-ad-status first), and an unreadable one is 503 with the campaign not modified.'
             operationId: lfx-v2-campaign-service-briefs#toggle-campaign-status
             parameters:
                 - name: project_id
@@ -26357,6 +26548,10 @@ components:
                     description: clicks/impressions, 0 when impressions is 0.
                     example: 0.0228
                     format: double
+                deliberately_paused:
+                    type: boolean
+                    description: 'true when this is an ad of the campaign''s recorded ad set and the campaign row holds a DELIBERATE pause of it made through toggle-meta-ad-status (#550): resuming the campaign (toggle-campaign-status ACTIVE) leaves this ad PAUSED, and only resuming it through toggle-meta-ad-status clears this. It is this service''s record, not Meta''s — `status` is what Meta reports. The same caveats as list-meta-ad-sets `deliberately_paused` apply after an UNCONFIRMED 503.'
+                    example: false
                 effective_status:
                     type: string
                     description: The ad's EFFECTIVE status as Meta reports it (e.g. ADSET_PAUSED, PENDING_REVIEW, DISAPPROVED). Reported verbatim; Meta grows this set without notice. Absent when not reported.
@@ -26388,6 +26583,7 @@ components:
                 creative_id: "120210000000000777"
                 creative_name: KubeCon NA — Image A
                 ctr: 0.0228
+                deliberately_paused: false
                 effective_status: ACTIVE
                 id: "120210000000000999"
                 impressions: 920
@@ -26401,6 +26597,7 @@ components:
                 - clicks
                 - cost_micros
                 - ctr
+                - deliberately_paused
         MetaAdSet:
             type: object
             properties:
@@ -26660,6 +26857,52 @@ components:
                 - read_at
                 - ad_sets
                 - ad_set_count
+        MetaAdStatusChange:
+            type: object
+            properties:
+                ad_id:
+                    type: string
+                    description: The ad whose status was addressed
+                    example: "120210000000000999"
+                ad_set_id:
+                    type: string
+                    description: The ad set the ad was proven to belong to
+                    example: "120210000000000888"
+                campaign_id:
+                    type: string
+                    description: Campaign UUID
+                    example: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                outcome:
+                    type: string
+                    description: 'APPLIED — Meta confirmed the change. ALREADY_IN_STATE — the pre-write read showed the ad already at the requested status, so NOTHING WAS SENT. (A write whose outcome is unknown is never a 200: it is a 503 saying the change is unconfirmed.)'
+                    example: APPLIED
+                    enum:
+                        - APPLIED
+                        - ALREADY_IN_STATE
+                previous_status:
+                    type: string
+                    description: The configured status the pre-write read observed.
+                    example: ACTIVE
+                requested_status:
+                    type: string
+                    description: The status requested
+                    example: PAUSED
+                    enum:
+                        - ACTIVE
+                        - PAUSED
+            example:
+                ad_id: "120210000000000999"
+                ad_set_id: "120210000000000888"
+                campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                outcome: APPLIED
+                previous_status: ACTIVE
+                requested_status: PAUSED
+            required:
+                - campaign_id
+                - ad_set_id
+                - ad_id
+                - requested_status
+                - outcome
         MetaAds:
             type: object
             properties:
@@ -26683,6 +26926,7 @@ components:
                           creative_id: "120210000000000777"
                           creative_name: KubeCon NA — Image A
                           ctr: 0.0228
+                          deliberately_paused: false
                           effective_status: ACTIVE
                           id: "120210000000000999"
                           impressions: 920
@@ -26694,6 +26938,7 @@ components:
                           creative_id: "120210000000000777"
                           creative_name: KubeCon NA — Image A
                           ctr: 0.0228
+                          deliberately_paused: false
                           effective_status: ACTIVE
                           id: "120210000000000999"
                           impressions: 920
@@ -26705,6 +26950,7 @@ components:
                           creative_id: "120210000000000777"
                           creative_name: KubeCon NA — Image A
                           ctr: 0.0228
+                          deliberately_paused: false
                           effective_status: ACTIVE
                           id: "120210000000000999"
                           impressions: 920
@@ -26753,6 +26999,7 @@ components:
                       creative_id: "120210000000000777"
                       creative_name: KubeCon NA — Image A
                       ctr: 0.0228
+                      deliberately_paused: false
                       effective_status: ACTIVE
                       id: "120210000000000999"
                       impressions: 920

@@ -2573,6 +2573,20 @@ written on either. See
 [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
 Tests: `meta_ad_sets_test.go`, `meta_ad_set_pause_test.go`.
 
+## Meta per-ad pause/resume (`meta_ad_status.go`, #550 gap 14)
+
+`ToggleMetaAdStatus` implements `service.MetaAdStatusToggler`, mirroring `ToggleMetaAdSetStatus`:
+both ids validated (`ErrMetaAdSetInvalid` and then `ErrMetaAdInvalid`), provenance (`metaAdSetScope`), the
+ACTIVATE refusals before any request (`ErrCampaignNotProvisioned` on a row with no recorded ad set,
+`ErrMetaAdNotRecorded` under another ad set), the ad read (`meta.Client.GetAdState`) proving ad set,
+campaign and account (`ErrMetaAdNotInAdSet`), `ErrMetaAdUnwritable` for DELETED/ARCHIVED,
+ALREADY_IN_STATE without a write, the beforeWrite hook, and one `UpdateAdStatusOnce` classified by
+`meta.ClassifyAdSetWrite`. `ToggleStatus`'s ACTIVATE now also reads every ad in the row's
+`UserPausedAdIDs` (`verifyMetaHeldAdsPaused`: ACTIVE → `ErrMetaHeldAdActive`, anything unreadable or
+foreign → an ordinary error, nothing written) and activates through
+`meta.Client.ActivateCampaignHolding`, which leaves those ads (and a held ad set) untouched.
+`ReadMetaAds` sets `DeliberatelyPaused` for an ad of the recorded ad set on that record.
+
 ## Meta ads under an ad set (`meta_ads.go`, decision D7 first step)
 
 `MetaDispatcher` implements `service.MetaAdReader` (`ReadMetaAds`), read-only. Window, `ad_set_id`

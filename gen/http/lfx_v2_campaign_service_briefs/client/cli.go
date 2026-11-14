@@ -1912,6 +1912,109 @@ func BuildToggleMetaAdSetStatusPayload(lfxV2CampaignServiceBriefsToggleMetaAdSet
 	return v, nil
 }
 
+// BuildToggleMetaAdStatusPayload builds the payload for the
+// lfx-v2-campaign-service-briefs toggle-meta-ad-status endpoint from CLI flags.
+func BuildToggleMetaAdStatusPayload(lfxV2CampaignServiceBriefsToggleMetaAdStatusBody *string, lfxV2CampaignServiceBriefsToggleMetaAdStatusProjectID *string, lfxV2CampaignServiceBriefsToggleMetaAdStatusBriefID *string, lfxV2CampaignServiceBriefsToggleMetaAdStatusCampaignID *string, lfxV2CampaignServiceBriefsToggleMetaAdStatusAdSetID *string, lfxV2CampaignServiceBriefsToggleMetaAdStatusAdID *string, lfxV2CampaignServiceBriefsToggleMetaAdStatusBearerToken *string, lfxV2CampaignServiceBriefsToggleMetaAdStatusIfMatch *string) (*lfxv2campaignservicebriefs.ToggleMetaAdStatusPayload, error) {
+	var err error
+	var body ToggleMetaAdStatusRequestBody
+	{
+		if lfxV2CampaignServiceBriefsToggleMetaAdStatusBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*lfxV2CampaignServiceBriefsToggleMetaAdStatusBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"status\": \"PAUSED\"\n   }'")
+		}
+		if !(body.Status == "ACTIVE" || body.Status == "PAUSED") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", body.Status, []any{"ACTIVE", "PAUSED"}))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var projectID string
+	{
+		if lfxV2CampaignServiceBriefsToggleMetaAdStatusProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceBriefsToggleMetaAdStatusProjectID
+	}
+	var briefID string
+	{
+		if lfxV2CampaignServiceBriefsToggleMetaAdStatusBriefID == nil {
+			return nil, fmt.Errorf("missing required flag --brief-id")
+		}
+		briefID = *lfxV2CampaignServiceBriefsToggleMetaAdStatusBriefID
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var campaignID string
+	{
+		if lfxV2CampaignServiceBriefsToggleMetaAdStatusCampaignID == nil {
+			return nil, fmt.Errorf("missing required flag --campaign-id")
+		}
+		campaignID = *lfxV2CampaignServiceBriefsToggleMetaAdStatusCampaignID
+		err = goa.MergeErrors(err, goa.ValidateFormat("campaign_id", campaignID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var adSetID string
+	{
+		if lfxV2CampaignServiceBriefsToggleMetaAdStatusAdSetID == nil {
+			return nil, fmt.Errorf("missing required flag --ad-set-id")
+		}
+		adSetID = *lfxV2CampaignServiceBriefsToggleMetaAdStatusAdSetID
+		err = goa.MergeErrors(err, goa.ValidatePattern("ad_set_id", adSetID, "^[1-9][0-9]*$"))
+		if utf8.RuneCountInString(adSetID) > 32 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("ad_set_id", adSetID, utf8.RuneCountInString(adSetID), 32, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var adID string
+	{
+		if lfxV2CampaignServiceBriefsToggleMetaAdStatusAdID == nil {
+			return nil, fmt.Errorf("missing required flag --ad-id")
+		}
+		adID = *lfxV2CampaignServiceBriefsToggleMetaAdStatusAdID
+		err = goa.MergeErrors(err, goa.ValidatePattern("ad_id", adID, "^[1-9][0-9]*$"))
+		if utf8.RuneCountInString(adID) > 32 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("ad_id", adID, utf8.RuneCountInString(adID), 32, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceBriefsToggleMetaAdStatusBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceBriefsToggleMetaAdStatusBearerToken
+		}
+	}
+	var ifMatch *string
+	{
+		if lfxV2CampaignServiceBriefsToggleMetaAdStatusIfMatch != nil {
+			ifMatch = lfxV2CampaignServiceBriefsToggleMetaAdStatusIfMatch
+		}
+	}
+	v := &lfxv2campaignservicebriefs.ToggleMetaAdStatusPayload{
+		Status: body.Status,
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.CampaignID = campaignID
+	v.AdSetID = adSetID
+	v.AdID = adID
+	v.BearerToken = bearerToken
+	v.IfMatch = ifMatch
+
+	return v, nil
+}
+
 // BuildDeleteCampaignPayload builds the payload for the
 // lfx-v2-campaign-service-briefs delete-campaign endpoint from CLI flags.
 func BuildDeleteCampaignPayload(lfxV2CampaignServiceBriefsDeleteCampaignProjectID *string, lfxV2CampaignServiceBriefsDeleteCampaignBriefID *string, lfxV2CampaignServiceBriefsDeleteCampaignCampaignID *string, lfxV2CampaignServiceBriefsDeleteCampaignBearerToken *string, lfxV2CampaignServiceBriefsDeleteCampaignIfMatch *string) (*lfxv2campaignservicebriefs.DeleteCampaignPayload, error) {

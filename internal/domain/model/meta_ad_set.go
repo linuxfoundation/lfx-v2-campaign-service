@@ -92,6 +92,20 @@ type MetaAd struct {
 	// CostMicros is spend over the window in micros of MetaAds.Currency.
 	CostMicros int64
 	Ctr        float64
+	// DeliberatelyPaused marks an ad of the campaign's recorded ad set whose deliberate pause, made
+	// through toggle-meta-ad-status, is on record (model.MetaAdHeldPaused): a campaign ACTIVATE
+	// leaves it PAUSED until it is resumed through that lever (#550, gap 14). The row's record, not
+	// Meta's.
+	DeliberatelyPaused bool
+}
+
+// MetaAdStatusResult is a toggle-meta-ad-status outcome that is not a definite failure (#550,
+// gap 14). Outcome is MetaAdSetApplied or MetaAdSetAlreadyInState — the ad lever shares the ad-set
+// lever's outcome vocabulary.
+type MetaAdStatusResult struct {
+	AdID           string
+	Outcome        string
+	PreviousStatus string
 }
 
 // MetaAds is the ad read for one ad set of one campaign.

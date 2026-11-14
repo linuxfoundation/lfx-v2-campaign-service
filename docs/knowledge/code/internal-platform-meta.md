@@ -1124,6 +1124,14 @@ live: whether the connection's token may read the form node (it may need `pages_
 `leads_retrieval`), the lead-ad CTA subset, the ON_AD ad set payload, and lead ads on the Audience
 Network placement.
 
+**Per-ad status (gap 14, `ad_status.go`).** `GetAdState` reads
+`GET /{ad}?fields=id,adset_id,campaign_id,account_id,status` (id echoed, every field present and
+canonical) and `UpdateAdStatusOnce` sends one unretried `POST /{ad} {status}`, sharing
+`updateStatusOnce` (the raw-byte success check) with `UpdateAdSetStatusOnce`. `ValidateAdID` is the
+campaign-id rule. `ActivateCampaignHolding(campaign, adSet, holdAdSet, heldAdIDs)` is the ACTIVATE
+cascade that skips each held ad's POST (and the ad set's when held); `updateCampaignTree` /
+`updateAdSetAndAds` carry the held set, which PAUSE never uses.
+
 ## Audience targeting (`targeting.go`, #550)
 
 `CampaignInput.Targeting` (`metaConfig.targeting`) adds an age range, a gender, custom audiences to

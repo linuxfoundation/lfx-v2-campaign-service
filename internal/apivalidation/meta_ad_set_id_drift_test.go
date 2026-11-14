@@ -67,3 +67,43 @@ func TestMetaAdsAdSetIDPattern_MatchesPlatformValidator(t *testing.T) {
 		}
 	}
 }
+
+// TestMetaAdIDPattern_MatchesPlatformValidator is the same pin for toggle-meta-ad-status (#550):
+// both its ad_set_id and its ad_id are interpolated into Graph paths, so each Pattern must accept
+// exactly what meta.ValidateAdSetID / meta.ValidateAdID accept.
+func TestMetaAdIDPattern_MatchesPlatformValidator(t *testing.T) {
+	mux := goahttp.NewMuxer()
+	decode := briefsrv.DecodeToggleMetaAdStatusRequest(mux, goahttp.RequestDecoder)
+	var routed *http.Request
+	briefsrv.MountToggleMetaAdStatusHandler(mux, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { routed = r }))
+	const brief = "6f9619ff-8b86-d011-b42d-00c04fc964ff"
+	cases := []string{"120210000000000888", "1", "0", "01", "12a", " 1", "1 ", "act_1", "-1",
+		strings.Repeat("9", 32), strings.Repeat("9", 33)}
+	for _, id := range cases {
+		for _, which := range []string{"ad set", "ad"} {
+			adSet, ad := "888", "901"
+			if which == "ad set" {
+				adSet = id
+			} else {
+				ad = id
+			}
+			routed = nil
+			path := "/projects/cncf/briefs/" + brief + "/campaigns/" + brief + "/meta-ad-sets/" + url.PathEscape(adSet) + "/ads/" + url.PathEscape(ad) + "/status"
+			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"status":"PAUSED"}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("If-Match", `"1"`)
+			mux.ServeHTTP(httptest.NewRecorder(), req)
+			if routed == nil {
+				t.Fatalf("%s id %q: POST %s was not routed", which, id, path)
+			}
+			_, err := decode(routed)
+			platformOK := meta.ValidateAdID(id) == nil
+			if which == "ad set" {
+				platformOK = meta.ValidateAdSetID(id) == nil
+			}
+			if designOK := err == nil; designOK != platformOK {
+				t.Errorf("%s id %q: design accepts=%v (%v), platform validator accepts=%v", which, id, designOK, err, platformOK)
+			}
+		}
+	}
+}

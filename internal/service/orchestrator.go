@@ -923,6 +923,7 @@ const (
 	opReadMetaAdSets             = "read_meta_ad_sets"
 	opToggleMetaAdSetStatus      = "toggle_meta_ad_set_status"
 	opReadMetaAds                = "read_meta_ads"
+	opToggleMetaAdStatus         = "toggle_meta_ad_status"
 	opVerifyAccountOrg           = "verify_account_org"
 	opProbeConnection            = "probe_connection"
 	opListAccountCampaigns       = "list_account_campaigns"

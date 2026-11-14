@@ -2496,6 +2496,18 @@ and adopted rows record nothing. `classifyMetaAdSetError` maps every failure to 
 missing row is `domain.ErrConnectionAbsent` (no connection), never a bare `ErrNotFound`. See
 [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
 
+
+**Per-ad lever (`meta_ad_status.go`, #550 gap 14).** `ToggleMetaAdStatus` serves
+`toggle-meta-ad-status` through the optional `MetaAdStatusToggler` (`Orchestrator.ToggleMetaAdStatus`
+under `toggleCallTimeout`, upstream op `toggle_meta_ad_status`). It answers 400 first unless
+`META_AD_PAUSE_ENABLED` is exactly `"true"`, then follows `ToggleMetaAdSetStatus` step for step. Its
+record is `UserPausedAdIDs` (ads of the recorded ad set only), driven through the same
+`writeMetaAdSetRecord` / `settleMetaAdSetRecord` / `withdrawMetaAdSetRecord` reconciliation, which now
+takes a `metaPauseRecord` (`meta_pause_record.go`: `apply`, `holds`, `actor`) so both levers share it;
+the fixed client messages are templated by `metaLeverNoun` ("ad set"/"ad sets", "ad"/"ads"), the
+ad-set strings unchanged. `classifyMetaAdSetError` has a `toggle_ad` verb mapping the ad sentinels
+(`ErrMetaAdInvalid` 400, `ErrMetaAdNotInAdSet`/`ErrMetaAdNotRecorded`/`ErrMetaAdUnwritable` 409).
+`ToggleCampaignStatus` maps `ErrMetaHeldAdActive` to 409 next to `ErrMetaHeldAdSetActive`.
 ## Meta ads under an ad set (`meta_ads.go`, decision D7 first step)
 
 `ListMetaAds` serves `list-meta-ads` through the optional `MetaAdReader` capability

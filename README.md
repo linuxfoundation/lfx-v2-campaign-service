@@ -404,6 +404,12 @@ openssl rand -base64 32
   anything else fails closed, and a create carrying the field is refused
   with a 400 before any job exists. The chart sets it to `"false"`; enable
   it per-environment in the ArgoCD overlay.
+- `META_AD_PAUSE_ENABLED` (default unset, i.e. OFF) — opts a deployment IN
+  to `toggle-meta-ad-status` (#550), the per-ad pause/resume lever
+  (`POST .../meta-ad-sets/{ad_set_id}/ads/{ad_id}/status`). Off, the
+  endpoint answers 400. A campaign resume honours a per-ad deliberate-pause
+  record whatever this says. The chart sets it to `"false"`; enable it
+  per-environment in the ArgoCD overlay.
 - `META_AD_SCHEDULE_ENABLED` (default unset, i.e. OFF) — opts a deployment
   IN to `metaConfig.adSchedule` (#550): days and whole hours, in the ad
   account's time zone, sent as the ad set's `adset_schedule` with
