@@ -1478,6 +1478,26 @@ on the campaign, after this run or as a retry's lookup counted them (`findCampai
 returns the count), serve none. `CampaignResult.SitelinkAdExtensionIDs` /
 `CalloutAdExtensionIDs` are set by the dispatcher. Not verified live.
 
+## Campaign structured snippet extensions (`structured_snippets.go`, #563 gap 13)
+
+`microsoftConfig.structuredSnippets` adds campaign-level `StructuredSnippetAdExtension` entries
+(`{Type, Header, Values}`) on the sitelink/callout transport: `AttachCampaignStructuredSnippets`
+runs `attachTextExtensionsOfType` for the type, so one association read decides whether the
+campaign already has a snippet (then none is added, with a step), and each snippet is then one
+`AddAdExtensions` and one `SetAdExtensionsAssociations`, classified definite or UNCONFIRMED like
+the image extension. `ValidateStructuredSnippets` holds the rules before any request: at most 10
+snippets (this service's cap, as for Google); `Header` one of Microsoft's 13 English headers,
+matched ignoring case and inner-space runs and sent in Microsoft's spelling, each once; 3-10
+`Values`, each trimmed, 1-25 characters (12 with a double-width character), no control character,
+no repeat ignoring case. The dispatcher (`internal/dispatch/microsoft_structured_snippets.go`)
+refuses a wrong JSON type and the list while `MICROSOFT_STRUCTURED_SNIPPETS_ENABLED` is off (a 400,
+re-checked in Dispatch), attaches only to a confirmed campaign right after the sitelinks and
+callouts, records `StructuredSnippetAdExtensionIDs`, and degrades the campaign on any shortfall.
+The snapshot reduces header and values as caller free text. Not verified live; not role-gated.
+
+The logo extension the issue lists with snippets is deferred: it needs Microsoft's logo image
+limits and a media upload distinct from the campaign image extension's, none of it verified.
+
 ## Create-time campaign bid strategy (`CampaignInput.BiddingScheme`, LFXV2-2665)
 
 `BiddingScheme` sets the CAMPAIGN's `BiddingScheme` (`msBiddingScheme`, `{"Type": ...}`) on the

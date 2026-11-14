@@ -168,6 +168,10 @@ create (#563) the same way, defaulting to `"false"`: the `GetSharedEntities` pre
 Only exactly `"true"` enables it, read per call; off, a create naming it is a 400 before any job
 exists, and Dispatch refuses it again before any Microsoft call.
 
+`MICROSOFT_STRUCTURED_SNIPPETS_ENABLED` gates `microsoftConfig.structuredSnippets` at create (#563)
+on the same terms, defaulting to `"false"`: the `StructuredSnippetAdExtension` shape is from the v13
+reference and has not been sent live.
+
 `TWITTER_METRICS_ENABLED` is the third gate of this kind, defaulting to `"false"`, and it
 covers BOTH X Ads features built on stats jobs (LFXV2-2665) — the ACCOUNT MONITOR and the
 AUDIENCE READ (`twitter-ads/audience`, `twitterAudienceEnabled` in

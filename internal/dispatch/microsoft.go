@@ -157,6 +157,10 @@ type microsoftConfig struct {
 	// global_marketing_ops only (service.MicrosoftMarketingOpsInputs): the lists belong to the
 	// shared LF account.
 	SharedNegativeKeywordListIDs []string `json:"sharedNegativeKeywordListIds,omitempty"`
+	// StructuredSnippets are OPTIONAL campaign-level StructuredSnippetAdExtension entries (#563 gap
+	// 13, microsoft_structured_snippets.go), {header, values}, attached only to a confirmed
+	// campaign. Behind MICROSOFT_STRUCTURED_SNIPPETS_ENABLED; not role-gated.
+	StructuredSnippets []microsoftStructuredSnippetConfig `json:"structuredSnippets,omitempty"`
 }
 
 // MicrosoftDispatcher creates Microsoft Advertising (Bing) campaigns for the orchestrator.
@@ -268,6 +272,10 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err := checkMicrosoftSharedNegativeListsShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	// And a wrong-typed structuredSnippets (#563 gap 13).
+	if err := checkMicrosoftStructuredSnippetsShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg microsoftConfig
 	if err := unmarshalPlatformConfig(config, "microsoftConfig", &cfg); err != nil {
 		return nil, notCreated(err)
@@ -334,6 +342,10 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// Shared negative keyword lists (#563 gap 9): gated and validated BEFORE any upstream call.
 	// The role check ran before the job existed (service.MicrosoftMarketingOpsInputs).
 	if err := checkMicrosoftSharedNegativeLists(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// Structured snippets (#563 gap 13): gated and validated BEFORE any upstream call.
+	if err := checkMicrosoftStructuredSnippets(cfg); err != nil {
 		return nil, notCreated(err)
 	}
 	bf, err := decodeBriefFields(brief)
@@ -463,6 +475,10 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if d.attachMicrosoftTextExtensions(ctx, client, result, cfg) {
 		degraded = true
 	}
+	// The structured snippets follow the same rule (attachMicrosoftStructuredSnippets).
+	if attachMicrosoftStructuredSnippets(ctx, client, result, cfg) {
+		degraded = true
+	}
 	// The negatives follow the same rule: only on a CONFIRMED campaign, and a shortfall degrades
 	// it rather than failing the job (applyMicrosoftNegativeKeywords).
 	if applyMicrosoftNegativeKeywords(ctx, client, result, negatives) {
@@ -536,14 +552,18 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 	if err := checkMicrosoftSharedNegativeListsShape(config); err != nil {
 		return err
 	}
+	// And a wrong-typed structuredSnippets (#563 gap 13).
+	if err := checkMicrosoftStructuredSnippetsShape(config); err != nil {
+		return err
+	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
 	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
 	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
 	// not decode is its zero value, which no plan rule reads as a refusal. The decode error itself
 	// stays "not applicable" — only bidding, the caller ad copy, sitelinks/callouts,
 	// negativeKeywords, the remarketing lists, the create-time targeting, the search network, the ad
-	// schedule, the bid adjustments and the shared negative keyword lists are promised as
-	// synchronous 400s.
+	// schedule, the bid adjustments, the shared negative keyword lists and the structured snippets
+	// are promised as synchronous 400s.
 	var cfg microsoftConfig
 	_ = unmarshalPlatformConfig(config, "microsoftConfig", &cfg)
 	if _, err := microsoftBidPlan(cfg); err != nil {
@@ -575,6 +595,9 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 		return err
 	}
 	if err := checkMicrosoftSharedNegativeLists(cfg); err != nil {
+		return err
+	}
+	if err := checkMicrosoftStructuredSnippets(cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -731,6 +754,17 @@ func microsoftSnapshotConfig(cfg microsoftConfig) microsoftConfig {
 		}
 	}
 	snapshot.Callouts = sanitizeSnapshotTexts(cfg.Callouts)
+	// Structured snippets (#563 gap 13) are caller free text too, copied before they are reduced
+	// for the same reason.
+	if cfg.StructuredSnippets != nil {
+		snapshot.StructuredSnippets = make([]microsoftStructuredSnippetConfig, len(cfg.StructuredSnippets))
+		for i, s := range cfg.StructuredSnippets {
+			snapshot.StructuredSnippets[i] = microsoftStructuredSnippetConfig{
+				Header: sanitizeSnapshotText(s.Header),
+				Values: sanitizeSnapshotTexts(s.Values),
+			}
+		}
+	}
 	// A radius target's name (#563) is caller free text too: copied before it is reduced, since
 	// the caller's slice shares its backing array with the config sent to Microsoft.
 	if cfg.ProximityTargets != nil {
