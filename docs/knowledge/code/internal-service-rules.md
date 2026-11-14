@@ -155,6 +155,16 @@ shared by `ComputePacing` and `WindowDaysWithinFlight` so the two cannot drift a
 platform adapter already read the column this way — Meta sends `EndDate + "T23:59:59+0000"`, X
 adds a day, LinkedIn uses end-of-day — and this package was the outlier.
 
+**LinkedIn's monitor pacing counts days on the UTC calendar.** `linkedinPacingPct` converts `now`
+to UTC before it computes the window start (`now.AddDate(0, 0, -(days-1))`), and both the daily
+and the total-budget branch use that start. Flight dates (`parseMonitorDate`) and LinkedIn's
+analytics window (`linkedin.Client.dateRangeForWindow`) are already UTC, and the Reddit daily
+branch converts the same way. Without the conversion, a caller whose clock carries a zone with
+daylight saving got a window starting 29 days and one hour back for the 30 days after a fall-back
+transition, and `math.Ceil` counted the extra hour as a 30th day (20% instead of ≈20.69% for
+600 against 100/day). Production runs in UTC; `TestLinkedinPacingPct_DaylightSavingDoesNotShiftTheWindow`
+pins it in four zones for every day of 2026.
+
 Using the raw midnight cut the last day off every flight, in two places at once. `daysBetween`
 counted a two-day flight as one, so a $100/day campaign that had correctly spent $200 was priced
 against a single day of plan and reported 200%, `overspending`. And `WindowDaysWithinFlight`
