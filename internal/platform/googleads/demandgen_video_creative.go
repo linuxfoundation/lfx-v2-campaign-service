@@ -73,12 +73,17 @@ const (
 )
 
 // demandGenVideoCallToActions is the CallToActionType values DemandGenVideoCreative
-// accepts: the five an event campaign uses, each accepted by a validateOnly probe on
-// 2026-11-03. The list is deliberately short rather than Google's whole enum — names that
-// look plausible are not all values (the same probe got 400 "Invalid value" for REGISTER
-// and GET_STARTED), so anything outside it is refused before the budget. Widen it value by
-// value, each with a probe.
-var demandGenVideoCallToActions = []string{"SIGN_UP", "LEARN_MORE", "BOOK_NOW", "VISIT_SITE", "WATCH_NOW"}
+// accepts: exactly the values a validateOnly googleAds:mutate probe on 2026-11-14 (#604,
+// v23, account 8666746580) accepted on a Demand Gen video ad. The first five were also
+// accepted on 2026-11-03. The list is deliberately the probed set rather than Google's whole
+// enum: names that look plausible are not all values (REGISTER and GET_STARTED got 400
+// "Invalid value" on 2026-11-03), so anything outside it is refused before the budget.
+// Google also took the lower-case enum names ("sign_up"); this client takes only the
+// canonical spelling and sends it unchanged. Widen it value by value, each with a probe.
+var demandGenVideoCallToActions = []string{
+	"SIGN_UP", "LEARN_MORE", "BOOK_NOW", "VISIT_SITE", "WATCH_NOW",
+	"APPLY_NOW", "CONTACT_US", "DOWNLOAD", "GET_QUOTE", "SUBSCRIBE", "SHOP_NOW",
+}
 
 // demandGenVideoLogoSlot is the logo's slot: the image ad's logo geometry (square, at
 // least 128x128 — Google states the same rule for this ad type's logo_images), under a
