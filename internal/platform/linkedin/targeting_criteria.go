@@ -134,6 +134,10 @@ func cleanFacet(key string, values []string, where string, exclude bool) ([]stri
 	}
 	// A set, and a stop at the first value past the cap, keep this linear in the input however
 	// long the caller's list is: it runs in the synchronous pre-flight.
+	//
+	// Employers are de-duplicated by employerKey, keeping the first URN: urn:li:company:<n> and
+	// urn:li:organization:<n> are one employer to mergeEmployersCapped and to the wire, so the cap
+	// counts identities, not spellings (#557 review).
 	out := make([]string, 0, min(len(values), f.max+1))
 	seen := make(map[string]struct{}, min(len(values), f.max+1))
 	for _, v := range values {
@@ -150,10 +154,14 @@ func cleanFacet(key string, values []string, where string, exclude bool) ([]stri
 		} else if !f.pattern.MatchString(v) {
 			return nil, targetingInvalid("%s.%s value %s is not %s", where, key, quoteValue(v), f.shape)
 		}
-		if _, dup := seen[v]; dup {
+		k := v
+		if key == "employers" {
+			k = employerKey(v)
+		}
+		if _, dup := seen[k]; dup {
 			continue
 		}
-		seen[v] = struct{}{}
+		seen[k] = struct{}{}
 		out = append(out, v)
 		if len(out) > f.max {
 			return nil, targetingInvalid("%s.%s holds more than %d distinct values; LinkedIn allows at most %d", where, key, f.max, f.max)

@@ -102,6 +102,99 @@ func TestCreateCampaign_CustomTargetingReachesTheWire(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_ReusedCampaignWithTargetingStopsBeforeCreatives pins the #557 review guard:
+// when linkedInConfig.targeting is set and the campaign is found by name, its existing criteria are
+// not the requested ones as far as this run can tell, so the create stops before any conversion,
+// dark post or creative, leaves the campaign untouched, and returns it as a partial alongside an
+// error for reconciliation. The same lookup without targeting (a profile create) still reuses the
+// campaign and attaches the creatives.
+func TestCreateCampaign_ReusedCampaignWithTargetingStopsBeforeCreatives(t *testing.T) {
+	newInput := func(targeting *Targeting) CampaignInput {
+		return CampaignInput{
+			EventName: "KubeCon", RegistrationURL: "https://events.example.org/kubecon",
+			BudgetUSD: 100, StartDate: "2099-01-01", EndDate: "2099-02-01",
+			GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+			TargetingProfile: "cloud-native",
+			Variants:         []CreativeVariant{{IntroText: "Join us — it's great", Headline: "KubeCon 2099"}},
+			Project:          "CNCF",
+			Conversions:      []string{"104012"},
+			Targeting:        targeting,
+		}
+	}
+	for _, tc := range []struct {
+		name      string
+		targeting *Targeting
+		wantStop  bool
+	}{
+		{"caller targeting", eventTargeting(), true},
+		{"profile", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := newInput(tc.targeting)
+			plan, err := campaignBidding(0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			name := buildCampaignName("KubeCon", plan.nameObjective, "CNCF", in)
+			var mu sync.Mutex
+			var writes []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodGet {
+					if strings.Contains(r.URL.Path, "adCampaigns") && !strings.Contains(r.URL.Path, "adCampaignGroups") {
+						_, _ = io.WriteString(w, `{"elements":[{"id":777,"name":"`+name+`","status":"ACTIVE","campaignGroup":"urn:li:sponsoredCampaignGroup:100","objectiveType":"`+plan.objectiveType+`"}],"metadata":{}}`)
+						return
+					}
+					_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
+					return
+				}
+				if !strings.Contains(r.URL.Path, "adCampaignGroups") {
+					mu.Lock()
+					writes = append(writes, r.Method+" "+r.URL.Path)
+					mu.Unlock()
+				}
+				switch {
+				case strings.Contains(r.URL.Path, "adCampaignGroups"):
+					_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+				case strings.Contains(r.URL.Path, "posts"):
+					_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+				case strings.Contains(r.URL.Path, "creatives"):
+					_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:400"}`)
+				default:
+					w.WriteHeader(http.StatusNoContent)
+				}
+			}))
+			defer srv.Close()
+			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+			res, err := c.CreateCampaign(context.Background(), in)
+			mu.Lock()
+			got := strings.Join(writes, "\n")
+			mu.Unlock()
+			if !tc.wantStop {
+				if err != nil {
+					t.Fatalf("profile reuse: %v", err)
+				}
+				if res.CampaignID != "777" || res.CreativeCount != 1 {
+					t.Fatalf("profile reuse: campaign %q, %d creatives; want 777 with its creative", res.CampaignID, res.CreativeCount)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "targeting NOT applied to reused campaign 777") {
+				t.Fatalf("want a reconciliation error for the reused campaign, got %v", err)
+			}
+			if res == nil || res.CampaignID != "777" || res.CampaignGroupID != "100" || res.CampaignName != name || res.CreativeCount != 0 {
+				t.Fatalf("partial = %+v; want campaign 777 in group 100 with no creative", res)
+			}
+			if !strings.Contains(strings.Join(res.Steps, "\n"), "Stopped before the creatives: campaign 777") {
+				t.Errorf("steps %v lack the stop step", res.Steps)
+			}
+			if got != "" {
+				t.Errorf("writes below the campaign group on a reused targeted campaign:\n%s", got)
+			}
+		})
+	}
+}
+
 // TestBuildTargetingCriteria_ProfileKeepsFixedFacets pins that without targeting the campaign
 // still carries the profile clause and the hard-coded job functions and seniority exclusions.
 func TestBuildTargetingCriteria_ProfileKeepsFixedFacets(t *testing.T) {
@@ -224,6 +317,69 @@ func TestValidateTargeting_DropsDuplicatesAndKeepsInput(t *testing.T) {
 	}
 	if got := in.Include[0]["skills"]; len(got) != 2 {
 		t.Errorf("the caller's value was mutated: %v", got)
+	}
+}
+
+// TestValidateTargeting_EmployerAliasesCountOnce pins that urn:li:company:<n> and
+// urn:li:organization:<n> are counted as ONE employer against the cap, as mergeEmployersCapped and
+// the wire builder count them, and that the first URN of each id is the one kept (#557 review).
+func TestValidateTargeting_EmployerAliasesCountOnce(t *testing.T) {
+	// aliases lists both forms for ids 1..n; odd ids lead with company, even ids with organization.
+	aliases := func(n int) []string {
+		out := make([]string, 0, 2*n)
+		for i := 1; i <= n; i++ {
+			org, co := "urn:li:organization:"+strconv.Itoa(i), "urn:li:company:"+strconv.Itoa(i)
+			if i%2 == 1 {
+				out = append(out, co, org)
+			} else {
+				out = append(out, org, co)
+			}
+		}
+		return out
+	}
+	firsts := func(n int) []string {
+		out := make([]string, 0, n)
+		for i, v := range aliases(n) {
+			if i%2 == 0 {
+				out = append(out, v)
+			}
+		}
+		return out
+	}
+	skills := []map[string][]string{{"skills": {"urn:li:skill:1"}}}
+	cases := []struct {
+		name    string
+		in      *Targeting
+		include bool // the employers list under test sits in include[0], not exclude
+		n       int  // distinct employer ids supplied
+		want    string
+	}{
+		{"exclude, both forms, 101 ids", &Targeting{Include: skills, Exclude: map[string][]string{"employers": aliases(101)}}, false, 101, ""},
+		{"exclude, both forms, at the cap", &Targeting{Include: skills, Exclude: map[string][]string{"employers": aliases(maxEmployerFacetValues)}}, false, maxEmployerFacetValues, ""},
+		{"exclude, both forms, one id over the cap", &Targeting{Include: skills, Exclude: map[string][]string{"employers": aliases(maxEmployerFacetValues + 1)}}, false, maxEmployerFacetValues + 1, "more than 200 distinct values"},
+		{"include, both forms, at the cap", &Targeting{Include: []map[string][]string{{"employers": aliases(maxEmployerFacetValues)}}}, true, maxEmployerFacetValues, ""},
+		{"include, both forms, one id over the cap", &Targeting{Include: []map[string][]string{{"employers": aliases(maxEmployerFacetValues + 1)}}}, true, maxEmployerFacetValues + 1, "more than 200 distinct values"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := ValidateTargeting(tc.in, nil)
+			if tc.want != "" {
+				if err == nil || !errors.Is(err, ErrTargetingInvalid) || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("want a refusal containing %q, got %v", tc.want, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("refused: %v", err)
+			}
+			got := out.Exclude["employers"]
+			if tc.include {
+				got = out.Include[0]["employers"]
+			}
+			if want := firsts(tc.n); strings.Join(got, ",") != strings.Join(want, ",") {
+				t.Errorf("employers kept %d values, want the first URN of each of %d ids:\n got %v\nwant %v", len(got), tc.n, got, want)
+			}
+		})
 	}
 }
 
