@@ -55,6 +55,8 @@ var microsoftUngatedFields = map[string]bool{
 	"deviceBidAdjustments": true, "ageBidAdjustments": true, "genderBidAdjustments": true,
 	// #563 gap 13: structured snippets are created new for the campaign and name no resource.
 	"structuredSnippets": true,
+	// #563 gap 13: the logo is a newly uploaded image; its business name is free text.
+	"logoAssetId": true, "logoBusinessName": true,
 }
 
 // TestEveryMicrosoftConfigFieldIsClassifiedForTheMarketingOpsGate fails when a microsoftConfig

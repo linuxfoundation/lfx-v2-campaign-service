@@ -25,8 +25,8 @@ import (
 // the JSON-type check, turns a refusal into the synchronous 400 shape ("invalid campaign config:
 // microsoftConfig.structuredSnippets: ..."), and attaches the snippets after the campaign exists.
 //
-// The logo extension the issue lists with it is deferred: it needs its own image limits and an
-// upload path distinct from the campaign image extension, and none of it is verified.
+// The logo extension the issue lists with it has its own file (microsoft_logo_extension.go): it
+// needs an image upload and its own limits.
 
 // microsoftStructuredSnippetConfig is one microsoftConfig.structuredSnippets entry. Same keys as
 // googleAdsStructuredSnippetConfig, so a caller mirroring a Google Search campaign reuses its list.

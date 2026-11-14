@@ -392,6 +392,15 @@ openssl rand -base64 32
   keeps a shape no live create has sent off the shared account. The chart sets
   it to `"false"`
   (`app.environment.MICROSOFT_STRUCTURED_SNIPPETS_ENABLED.value`).
+- `MICROSOFT_LOGO_EXTENSION_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `microsoftConfig.logoAssetId` and `logoBusinessName` (#563):
+  a stored square PNG/JPEG creative asset uploaded as an `Image1x1` media and
+  attached to the confirmed campaign as a `LogoAdExtension`. Only the exact
+  value `true` enables it; anything else fails closed, and a create naming
+  either field is refused with a 400 before any job exists. A newly uploaded
+  image names no account resource; the flag keeps a shape no live create has
+  sent off the shared account. The chart sets it to `"false"`
+  (`app.environment.MICROSOFT_LOGO_EXTENSION_ENABLED.value`).
 - `MICROSOFT_CONVERSION_GOALS_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `microsoftConfig.conversionGoalIds` and the conversion
   bidding strategies `bidding.strategy` `"maxConversions"` and `"targetCpa"`

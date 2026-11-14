@@ -118,9 +118,13 @@ func newMSTextDispatcher(t *testing.T, api *msTextAPI) *MicrosoftDispatcher {
 				typ = "SitelinkAdExtension"
 			case strings.Contains(body, "StructuredSnippetAdExtension"):
 				typ = "StructuredSnippetAdExtension"
+			case strings.Contains(body, "LogoAdExtension"):
+				typ = "LogoAdExtension"
 			}
 			api.pending[id] = typ
 			_, _ = fmt.Fprintf(w, `{"AdExtensionIdentities":[{"Id":%s,"Version":1}],"NestedPartialErrors":[]}`, id)
+		case "Media":
+			_, _ = io.WriteString(w, `{"MediaIds":[5551]}`)
 		case "AdExtensionsAssociations/Set":
 			var s struct {
 				AdExtensionIdToEntityIdAssociations []struct{ AdExtensionId json.Number }

@@ -158,6 +158,8 @@ func (a *textExtAPI) handle(path, body string) (int, string) {
 		return 200, fmt.Sprintf(`{"AdExtensionIdentities":[{"Id":%d,"Version":1}],"NestedPartialErrors":[]}`, 9000+a.next)
 	case "AdExtensionsAssociations/Set":
 		return 200, `{"PartialErrors":[]}`
+	case "Media":
+		return 200, `{"MediaIds":[5551]}`
 	}
 	return 404, `{}`
 }

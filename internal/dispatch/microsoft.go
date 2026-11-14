@@ -161,6 +161,12 @@ type microsoftConfig struct {
 	// 13, microsoft_structured_snippets.go), {header, values}, attached only to a confirmed
 	// campaign. Behind MICROSOFT_STRUCTURED_SNIPPETS_ENABLED; not role-gated.
 	StructuredSnippets []microsoftStructuredSnippetConfig `json:"structuredSnippets,omitempty"`
+	// LogoAssetID and LogoBusinessName are the OPTIONAL campaign-level LogoAdExtension (#563 gap
+	// 13, microsoft_logo_extension.go): a stored PNG/JPEG creative asset of THIS brief, square,
+	// 128-2048 px, uploaded as an Image1x1 media, and the BusinessName shown beside it. Behind
+	// MICROSOFT_LOGO_EXTENSION_ENABLED; not role-gated.
+	LogoAssetID      string `json:"logoAssetId,omitempty"`
+	LogoBusinessName string `json:"logoBusinessName,omitempty"`
 	// ConversionGoalIDs are EXISTING conversion goals set as the new campaign's GoalIds (#563 gap
 	// 7, microsoft_conversion_goals.go), each verified before anything is created; they are what
 	// bidding.strategy "maxConversions" and "targetCpa" require. Behind
@@ -287,6 +293,10 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err := checkMicrosoftStructuredSnippetsShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	// And a wrong-typed logoAssetId or logoBusinessName (#563 gap 13).
+	if err := checkMicrosoftLogoShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	// And a wrong-typed conversionGoalIds (#563 gap 7).
 	if err := checkMicrosoftConversionGoalsShape(config); err != nil {
 		return nil, notCreated(err)
@@ -367,6 +377,11 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err := checkMicrosoftStructuredSnippets(cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// The logo extension's config-level rules (#563 gap 13), BEFORE any upstream call; the asset
+	// itself is resolved with the campaign image below.
+	if err := checkMicrosoftLogo(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	// Conversion goals (#563 gap 7): gated and validated BEFORE any upstream call. The role check
 	// ran before the job existed (service.MicrosoftMarketingOpsInputs); the conversion strategies
 	// were checked with the bid plan above.
@@ -397,6 +412,13 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// release is never nil and never double-released).
 	img, releaseImage, err := d.resolveMicrosoftImage(ctx, brief, &cfg, bf.EventName)
 	defer releaseImage()
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	// The logo (#563 gap 13) on the same terms: loaded and checked against the logo limits
+	// (bytes, PNG/JPEG, square, 128-2048 px) here, so an unusable asset creates nothing.
+	logo, releaseLogo, err := d.resolveMicrosoftLogo(ctx, brief, &cfg)
+	defer releaseLogo()
 	if err != nil {
 		return nil, notCreated(err)
 	}
@@ -532,6 +554,11 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if attachMicrosoftStructuredSnippets(ctx, client, result, cfg) {
 		degraded = true
 	}
+	// And the logo extension (attachMicrosoftLogo): one per campaign, none added on a retry onto
+	// a campaign that already has one.
+	if attachMicrosoftLogo(ctx, client, result, logo) {
+		degraded = true
+	}
 	// The negatives follow the same rule: only on a CONFIRMED campaign, and a shortfall degrades
 	// it rather than failing the job (applyMicrosoftNegativeKeywords).
 	if applyMicrosoftNegativeKeywords(ctx, client, result, negatives) {
@@ -614,6 +641,10 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 	if err := checkMicrosoftStructuredSnippetsShape(config); err != nil {
 		return err
 	}
+	// And a wrong-typed logoAssetId or logoBusinessName (#563 gap 13).
+	if err := checkMicrosoftLogoShape(config); err != nil {
+		return err
+	}
 	// And a wrong-typed conversionGoalIds (#563 gap 7).
 	if err := checkMicrosoftConversionGoalsShape(config); err != nil {
 		return err
@@ -629,7 +660,7 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 	// stays "not applicable" — only bidding, the caller ad copy, sitelinks/callouts,
 	// negativeKeywords, the remarketing lists, the create-time targeting, the search network, the ad
 	// schedule, the bid adjustments, the shared negative keyword lists, the structured snippets,
-	// the conversion goals and the ad groups are promised as synchronous 400s.
+	// the conversion goals, the ad groups and the logo extension are promised as synchronous 400s.
 	var cfg microsoftConfig
 	_ = unmarshalPlatformConfig(config, "microsoftConfig", &cfg)
 	if _, err := microsoftBidPlan(cfg); err != nil {
@@ -664,6 +695,9 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 		return err
 	}
 	if err := checkMicrosoftStructuredSnippets(cfg); err != nil {
+		return err
+	}
+	if err := checkMicrosoftLogo(cfg); err != nil {
 		return err
 	}
 	if err := checkMicrosoftConversionGoals(cfg); err != nil {
@@ -804,6 +838,9 @@ func microsoftSnapshotConfig(cfg microsoftConfig) microsoftConfig {
 	// ImageAltText is caller free text like TimeZone. ImageAssetID needs no reduction: by the
 	// time a snapshot is written resolveMicrosoftImage has replaced it with the canonical uuid.
 	snapshot.ImageAltText = sanitizeSnapshotText(cfg.ImageAltText)
+	// The logo's business name (#563 gap 13) likewise; LogoAssetID is the canonical uuid by then
+	// (resolveMicrosoftLogo).
+	snapshot.LogoBusinessName = sanitizeSnapshotText(cfg.LogoBusinessName)
 	// The caller ad copy (#563) is caller free text bound for the same unencrypted column, so it
 	// is reduced the same way. Both slices are REALLOCATED before they are rewritten.
 	snapshot.Headlines = sanitizeSnapshotTexts(cfg.Headlines)

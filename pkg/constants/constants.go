@@ -315,6 +315,15 @@ const (
 	// confirms it.
 	EnvMicrosoftStructuredSnippetsEnabled = "MICROSOFT_STRUCTURED_SNIPPETS_ENABLED"
 
+	// EnvMicrosoftLogoExtensionEnabled opts a deployment IN to microsoftConfig.logoAssetId and
+	// logoBusinessName (#563 gap 13): a stored PNG/JPEG creative asset uploaded as an Image1x1
+	// media and attached to the confirmed campaign as a LogoAdExtension. Only the exact value
+	// "true" enables it; unset or any other value fails closed, and a create naming either field
+	// is refused with a 400 before any job exists (and again at dispatch). A newly uploaded image
+	// names no account resource; the flag keeps an UNVERIFIED request shape (from the v13
+	// reference) off the shared account until a live create confirms it.
+	EnvMicrosoftLogoExtensionEnabled = "MICROSOFT_LOGO_EXTENSION_ENABLED"
+
 	// EnvMicrosoftConversionGoalsEnabled opts a deployment IN to microsoftConfig.conversionGoalIds
 	// and the conversion bidding strategies (bidding.strategy "maxConversions" and "targetCpa")
 	// (#563 gap 7): EXISTING conversion goals verified with one GetConversionGoalsByIds read before
