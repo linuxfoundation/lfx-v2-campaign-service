@@ -85,7 +85,7 @@ func TestLinkedIn_SearchTargetingEntitiesNeedsNoAccount(t *testing.T) {
 func TestLinkedIn_SearchTargetingEntitiesRefusesLocallyAndClassifies(t *testing.T) {
 	srv, calls, _ := linkedInTypeaheadServer(t, http.StatusOK, `{"elements":[]}`)
 	d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
-	for _, q := range []model.TargetingEntityQuery{{Facet: "dynamicSegments", Query: "a"}, {Facet: "skills", Query: " "}} {
+	for _, q := range []model.TargetingEntityQuery{{Facet: "dynamicSegments", Query: "go"}, {Facet: "skills", Query: " "}, {Facet: "skills", Query: " g "}} {
 		if _, called, err := d.SearchTargetingEntities(context.Background(), "cncf", model.ProviderLinkedInAds, q); called || !errors.Is(err, domain.ErrTargetingQueryInvalid) {
 			t.Errorf("%+v = %v (called %v), want ErrTargetingQueryInvalid before any request", q, err, called)
 		}

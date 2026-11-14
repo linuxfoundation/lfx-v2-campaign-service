@@ -69,8 +69,17 @@ var LinkedInAdsConversionRules = Type("linkedin-ads-conversion-rules", func() {
 // linkedInConfig.geoTargets. Mirrors linkedin.TypeaheadFacetKeys, which a service test pins.
 var linkedInTypeaheadFacets = []any{"employers", "groups", "industries", "interests", "locations", "skills", "titles"}
 
-// linkedInTypeaheadQueryMax mirrors linkedin.MaxTypeaheadQueryLen.
-const linkedInTypeaheadQueryMax = 100
+// linkedInTypeaheadQueryMax mirrors linkedin.MaxTypeaheadQueryLen, and linkedInTypeaheadQueryMin
+// linkedin.MinTypeaheadQueryLen. Goa applies both to the raw parameter; the service applies them
+// again after trimming.
+const (
+	linkedInTypeaheadQueryMax = 100
+	linkedInTypeaheadQueryMin = 2
+)
+
+// linkedInTypeaheadQueryPattern requires a non-space character and refuses any control character
+// (Unicode category Cc), so the decoder refuses what linkedin.NormalizeTypeaheadQuery would.
+const linkedInTypeaheadQueryPattern = `^\P{Cc}*[^\s\p{Cc}]\P{Cc}*$`
 
 // LinkedInAdsTargetingEntity is one entity of the targeting typeahead read.
 var LinkedInAdsTargetingEntity = Type("linkedin-ads-targeting-entity", func() {
@@ -163,8 +172,9 @@ func linkedInAdsLookupMethods() {
 			"are returned. The answer is LinkedIn's own taxonomy, the same for every token, and names nothing any " +
 			"ad account holds, so it is gated on campaign_manager of {project_id} like every other project read, " +
 			"and a project with no LinkedIn connection of its own reads through the shared LF system credential, " +
-			"as a create would. No ad account need be selected. Answers are cached for up to six hours. A pure " +
-			"read: nothing is persisted.")
+			"as a create would. No ad account need be selected. Answers are cached for up to six hours by facet " +
+			"and query, which serves a repeated identical search, not a new prefix. A 429 from LinkedIn is not " +
+			"retried and answers 503. A pure read: nothing is persisted.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -172,10 +182,14 @@ func linkedInAdsLookupMethods() {
 				Enum(linkedInTypeaheadFacets...)
 				Example("skills")
 			})
-			Attribute("query", String, "Text to match against entity names; surrounding space is ignored", func() {
-				MinLength(1)
+			Attribute("query", String, "Text to match against entity names: 2 to 100 characters, no control "+
+				"characters. The limits apply to the value as sent, and surrounding space is then trimmed, so the "+
+				"trimmed text must still be at least 2 characters. Every distinct query is a LinkedIn call on a "+
+				"shared rate limit (only a repeated identical search is served from cache), so callers should "+
+				"debounce keystrokes rather than search on each one.", func() {
+				MinLength(linkedInTypeaheadQueryMin)
 				MaxLength(linkedInTypeaheadQueryMax)
-				Pattern(`\S`)
+				Pattern(linkedInTypeaheadQueryPattern)
 				Example("kubernetes")
 			})
 			Required("project_id", "facet", "query")

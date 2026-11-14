@@ -103,6 +103,7 @@ func TestSearchLinkedinAdsTargetingEntities_RefusesBadInputBeforeTheDispatcher(t
 		{"segment facet", "cncf", "audienceMatchingSegments", "go"},
 		{"non-typeahead facet", "cncf", "seniorities", "senior"},
 		{"blank query", "cncf", "skills", "   "},
+		{"one character after trimming", "cncf", "skills", " g "},
 		{"long query", "cncf", "skills", strings.Repeat("x", linkedin.MaxTypeaheadQueryLen+1)},
 		{"control character", "cncf", "skills", "go\r\nlang"},
 	}

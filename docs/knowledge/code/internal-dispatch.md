@@ -5611,7 +5611,11 @@ redirect included, but no ad account required: the finder takes none) and uses t
 for the connection, so a refresh-capable credential mints one token per connection, not per
 keystroke. Successful answers are cached by facet and lower-cased query in
 `targetingEntityCache` (6 h TTL, 2048 entries, consulted after resolution, failures not cached);
-a hit reports `called` false. Dropped entries are logged as counts with the facet, never the
+a hit reports `called` false. The key is the whole query, so the cache serves a repeated
+identical search, not the next keystroke: each new prefix is a new upstream call on the shared
+LF token. That spend is bounded by the 2-character floor (`linkedin.MinTypeaheadQueryLen`, in the
+design and in `NormalizeTypeaheadQuery`), the caller's debounce (which the API asks for), and the
+platform client sending the request once, so a 429 fails fast as a 503 instead of being retried. Dropped entries are logged as counts with the facet, never the
 query.
 
 **LinkedIn conversions (#552).** `linkedinConfig.Conversions` is gated by

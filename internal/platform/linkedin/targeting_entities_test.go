@@ -12,9 +12,13 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
-func typeaheadServer(t *testing.T, status int, body string, gotQuery *string) (*httptest.Server, *atomic.Int32) {
+// typeaheadServer serves every request with status and body. When gotQuery is non-nil it stores
+// each request's raw query string there; an atomic.Value, because the handler runs on the
+// server's goroutine and the test reads it from its own.
+func typeaheadServer(t *testing.T, status int, body string, gotQuery *atomic.Value) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -26,7 +30,7 @@ func typeaheadServer(t *testing.T, status int, body string, gotQuery *string) (*
 			t.Errorf("LinkedIn-Version %q, want %q", v, apiVersion)
 		}
 		if gotQuery != nil {
-			*gotQuery = r.URL.RawQuery
+			gotQuery.Store(r.URL.RawQuery)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
@@ -37,8 +41,8 @@ func typeaheadServer(t *testing.T, status int, body string, gotQuery *string) (*
 }
 
 func TestSearchTargetingEntities_RequestShape(t *testing.T) {
-	var raw string
-	srv, _ := typeaheadServer(t, http.StatusOK, `{"elements":[]}`, &raw)
+	var gotQuery atomic.Value
+	srv, _ := typeaheadServer(t, http.StatusOK, `{"elements":[]}`, &gotQuery)
 	c := NewClient(Credentials{AccessToken: "t"}, RuntimeConfig{}, WithBaseURL(srv.URL))
 
 	got, dropped, err := c.SearchTargetingEntities(context.Background(), "skills", "  C++ (dev) & R&D, 50%  ")
@@ -52,7 +56,7 @@ func TestSearchTargetingEntities_RequestShape(t *testing.T) {
 	// percent-encoded (so & ( , cannot split the parameter or break the Rest.li parser), and a
 	// space is %20, never "+".
 	want := "facet=urn%3Ali%3AadTargetingFacet%3Askills&q=typeahead&query=C%2B%2B%20%28dev%29%20%26%20R%26D%2C%2050%25&queryVersion=QUERY_USES_URNS"
-	if raw != want {
+	if raw, _ := gotQuery.Load().(string); raw != want {
 		t.Errorf("query string\n got %s\nwant %s", raw, want)
 	}
 }
@@ -127,6 +131,9 @@ func TestSearchTargetingEntities_RefusesBeforeAnyRequest(t *testing.T) {
 		{"audienceMatchingSegments", "x"},
 		{"Skills", "go"},
 		{"skills", "   "},
+		{"skills", "g"},
+		{"skills", "  g  "},
+		{"skills", "é"},
 		{"skills", strings.Repeat("a", MaxTypeaheadQueryLen+1)},
 		{"skills", "go\x00lang"},
 		{"skills", "go\nlang"},
@@ -139,6 +146,13 @@ func TestSearchTargetingEntities_RefusesBeforeAnyRequest(t *testing.T) {
 	}
 	if n := calls.Load(); n != 0 {
 		t.Errorf("%d requests sent for refused searches, want 0", n)
+	}
+	// The shortest accepted query is MinTypeaheadQueryLen characters after trimming, counted as
+	// runes.
+	for _, q := range []string{"go", "  go  ", "éé"} {
+		if got, err := NormalizeTypeaheadQuery(q); err != nil || got != strings.TrimSpace(q) {
+			t.Errorf("NormalizeTypeaheadQuery(%q) = %q, %v; want it accepted, trimmed", q, got, err)
+		}
 	}
 	// The longest accepted query is MaxTypeaheadQueryLen characters, counted as runes.
 	if _, err := NormalizeTypeaheadQuery(strings.Repeat("é", MaxTypeaheadQueryLen)); err != nil {
@@ -155,6 +169,18 @@ func TestSearchTargetingEntities_UpstreamFailures(t *testing.T) {
 			t.Errorf("err = %v, want a failure that does not quote the query", err)
 		}
 	})
+	t.Run("429 is not retried", func(t *testing.T) {
+		// A throttled typeahead fails fast: one request, the 429 returned, no backoff. The
+		// backoff is shrunk only so that a regression fails on the count, not on a slow run.
+		srv, calls := typeaheadServer(t, http.StatusTooManyRequests, `{"message":"throttled"}`, nil)
+		c := NewClient(Credentials{AccessToken: "t"}, RuntimeConfig{}, WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+		if _, _, err := c.SearchTargetingEntities(context.Background(), "titles", "eng"); err == nil {
+			t.Error("a 429 must fail")
+		}
+		if n := calls.Load(); n != 1 {
+			t.Errorf("%d requests sent for a 429, want 1 (no in-call retry)", n)
+		}
+	})
 	t.Run("no elements field", func(t *testing.T) {
 		srv, _ := typeaheadServer(t, http.StatusOK, `{}`, nil)
 		c := NewClient(Credentials{AccessToken: "t"}, RuntimeConfig{}, WithBaseURL(srv.URL))
@@ -166,7 +192,8 @@ func TestSearchTargetingEntities_UpstreamFailures(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			hj, ok := w.(http.Hijacker)
 			if !ok {
-				t.Fatal("no hijacker")
+				t.Errorf("no hijacker")
+				return
 			}
 			conn, _, _ := hj.Hijack()
 			_ = conn.Close()

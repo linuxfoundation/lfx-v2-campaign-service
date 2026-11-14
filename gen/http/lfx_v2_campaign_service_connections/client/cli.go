@@ -2231,9 +2231,9 @@ func BuildSearchLinkedinAdsTargetingEntitiesPayload(lfxV2CampaignServiceConnecti
 			return nil, fmt.Errorf("missing required flag --query")
 		}
 		query = *lfxV2CampaignServiceConnectionsSearchLinkedinAdsTargetingEntitiesQuery
-		err = goa.MergeErrors(err, goa.ValidatePattern("query", query, "\\S"))
-		if utf8.RuneCountInString(query) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("query", query, utf8.RuneCountInString(query), 1, true))
+		err = goa.MergeErrors(err, goa.ValidatePattern("query", query, "^\\P{Cc}*[^\\s\\p{Cc}]\\P{Cc}*$"))
+		if utf8.RuneCountInString(query) < 2 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("query", query, utf8.RuneCountInString(query), 2, true))
 		}
 		if utf8.RuneCountInString(query) > 100 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("query", query, utf8.RuneCountInString(query), 100, false))

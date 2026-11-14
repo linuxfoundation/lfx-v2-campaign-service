@@ -382,8 +382,10 @@ type Service interface {
 	// account holds, so it is gated on campaign_manager of {project_id} like every
 	// other project read, and a project with no LinkedIn connection of its own
 	// reads through the shared LF system credential, as a create would. No ad
-	// account need be selected. Answers are cached for up to six hours. A pure
-	// read: nothing is persisted.
+	// account need be selected. Answers are cached for up to six hours by facet
+	// and query, which serves a repeated identical search, not a new prefix. A 429
+	// from LinkedIn is not retried and answers 503. A pure read: nothing is
+	// persisted.
 	SearchLinkedinAdsTargetingEntities(context.Context, *SearchLinkedinAdsTargetingEntitiesPayload) (res *LinkedinAdsTargetingEntities, err error)
 	// Read Microsoft Advertising keyword performance for this project's own
 	// campaigns, in the same row shape as get-google-ads-keywords. Scoped to the
@@ -3075,7 +3077,12 @@ type SearchLinkedinAdsTargetingEntitiesPayload struct {
 	// The targeting facet to search. locations answers linkedInConfig.geoTargets;
 	// the rest are linkedInConfig.targeting keys.
 	Facet string
-	// Text to match against entity names; surrounding space is ignored
+	// Text to match against entity names: 2 to 100 characters, no control
+	// characters. The limits apply to the value as sent, and surrounding space is
+	// then trimmed, so the trimmed text must still be at least 2 characters. Every
+	// distinct query is a LinkedIn call on a shared rate limit (only a repeated
+	// identical search is served from cache), so callers should debounce
+	// keystrokes rather than search on each one.
 	Query string
 }
 

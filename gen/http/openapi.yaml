@@ -11272,7 +11272,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: search-linkedin-ads-targeting-entities lfx-v2-campaign-service-connections
-            description: 'Search LinkedIn''s targeting taxonomy by name, live from LinkedIn''s Ad Targeting Entities typeahead finder (GET /rest/adTargetingEntities?q=typeahead), for picking linkedInConfig.targeting values (skills, groups, titles, interests, industries, employers) and linkedInConfig.geoTargets (locations) by name instead of by URN (#585). Only URNs of the shape a create accepts for the facet are returned. The answer is LinkedIn''s own taxonomy, the same for every token, and names nothing any ad account holds, so it is gated on campaign_manager of {project_id} like every other project read, and a project with no LinkedIn connection of its own reads through the shared LF system credential, as a create would. No ad account need be selected. Answers are cached for up to six hours. A pure read: nothing is persisted.'
+            description: 'Search LinkedIn''s targeting taxonomy by name, live from LinkedIn''s Ad Targeting Entities typeahead finder (GET /rest/adTargetingEntities?q=typeahead), for picking linkedInConfig.targeting values (skills, groups, titles, interests, industries, employers) and linkedInConfig.geoTargets (locations) by name instead of by URN (#585). Only URNs of the shape a create accepts for the facet are returned. The answer is LinkedIn''s own taxonomy, the same for every token, and names nothing any ad account holds, so it is gated on campaign_manager of {project_id} like every other project read, and a project with no LinkedIn connection of its own reads through the shared LF system credential, as a create would. No ad account need be selected. Answers are cached for up to six hours by facet and query, which serves a repeated identical search, not a new prefix. A 429 from LinkedIn is not retried and answers 503. A pure read: nothing is persisted.'
             operationId: lfx-v2-campaign-service-connections#search-linkedin-ads-targeting-entities
             parameters:
                 - name: facet
@@ -11290,12 +11290,12 @@ paths:
                     - titles
                 - name: query
                   in: query
-                  description: Text to match against entity names; surrounding space is ignored
+                  description: 'Text to match against entity names: 2 to 100 characters, no control characters. The limits apply to the value as sent, and surrounding space is then trimmed, so the trimmed text must still be at least 2 characters. Every distinct query is a LinkedIn call on a shared rate limit (only a repeated identical search is served from cache), so callers should debounce keystrokes rather than search on each one.'
                   required: true
                   type: string
                   maxLength: 100
-                  minLength: 1
-                  pattern: \S
+                  minLength: 2
+                  pattern: ^\P{Cc}*[^\s\p{Cc}]\P{Cc}*$
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection

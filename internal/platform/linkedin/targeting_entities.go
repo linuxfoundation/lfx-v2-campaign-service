@@ -31,6 +31,13 @@ import (
 // none, and no skill, title or place name is longer.
 const MaxTypeaheadQueryLen = 100
 
+// MinTypeaheadQueryLen is the shortest query searched, in characters after trimming. A
+// one-character prefix matches a large slice of the taxonomy and is the keystroke a picker
+// sends first, so refusing it keeps the cheapest, least useful search off the shared LF token's
+// adTargetingEntities quota. Callers should debounce as well: the answer cache only serves a
+// repeated identical search, and every new prefix is a new search.
+const MinTypeaheadQueryLen = 2
+
 // maxTypeaheadEntities bounds what one answer keeps. LinkedIn's typeahead returns one short
 // ranked page; this only stops an unexpectedly large one from being passed on whole.
 const maxTypeaheadEntities = 100
@@ -80,8 +87,8 @@ type TargetingEntity struct {
 	Name string
 }
 
-// NormalizeTypeaheadQuery trims query and checks it: 1 to MaxTypeaheadQueryLen characters, not
-// blank, valid UTF-8, and no control characters. It is shared by the service layer and
+// NormalizeTypeaheadQuery trims query and checks it: MinTypeaheadQueryLen to
+// MaxTypeaheadQueryLen characters after trimming, valid UTF-8, and no control characters. It is shared by the service layer and
 // SearchTargetingEntities so the two cannot disagree on what reaches LinkedIn.
 func NormalizeTypeaheadQuery(query string) (string, error) {
 	q := strings.TrimSpace(query)
@@ -90,6 +97,9 @@ func NormalizeTypeaheadQuery(query string) (string, error) {
 	}
 	if !utf8.ValidString(q) {
 		return "", fmt.Errorf("%w: query is not valid UTF-8", ErrTypeaheadInvalid)
+	}
+	if utf8.RuneCountInString(q) < MinTypeaheadQueryLen {
+		return "", fmt.Errorf("%w: query is shorter than %d characters", ErrTypeaheadInvalid, MinTypeaheadQueryLen)
 	}
 	if utf8.RuneCountInString(q) > MaxTypeaheadQueryLen {
 		return "", fmt.Errorf("%w: query is longer than %d characters", ErrTypeaheadInvalid, MaxTypeaheadQueryLen)
@@ -105,6 +115,11 @@ func NormalizeTypeaheadQuery(query string) (string, error) {
 // does not have the facet's shape, or that carries no name, is dropped and counted in dropped,
 // so a taxonomy LinkedIn changes cannot put a value in the picker that the create then refuses.
 //
+// The request is sent ONCE (withSendOnce): a 429 is not retried in-call but comes back as the
+// error, which the service answers 503. A typeahead that waits out a backoff answers a keystroke
+// the operator has already typed past, and each retry spends the shared LF token's quota again;
+// the picker's next keystroke is the retry.
+//
 // The query is never in a returned error: a transport failure's *url.Error would quote the
 // request URL, query string and all, so its URL is cut back to the path (scrubQuery).
 func (c *Client) SearchTargetingEntities(ctx context.Context, facet, query string) (_ []TargetingEntity, dropped int, _ error) {
@@ -116,7 +131,7 @@ func (c *Client) SearchTargetingEntities(ctx context.Context, facet, query strin
 	if err != nil {
 		return nil, 0, err
 	}
-	resp, err := c.doRequest(ctx, http.MethodGet, "adTargetingEntities", nil, map[string]string{
+	resp, err := c.doRequest(withSendOnce(ctx), http.MethodGet, "adTargetingEntities", nil, map[string]string{
 		"q":            "typeahead",
 		"facet":        facetURN(facet),
 		"query":        restliEncode(q),

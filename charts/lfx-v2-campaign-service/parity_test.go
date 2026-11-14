@@ -106,10 +106,13 @@ const googleAudiencesPath = "/projects/:projectId/google-ads/audiences"
 
 // userListsPath is the Google user-list read. It lists every foundation's user lists on the
 // shared customer (it used to answer 409 there), so it is ruled by marketing-ops-api only, and
-// TestLinkedInTargetingTypeaheadIsACampaignManagerRead pins the opposite for the LinkedIn
-// targeting typeahead (#585): it answers LinkedIn's own taxonomy, identical for every token, so
-// it is a project-api (campaign_manager) read, and marketing-ops-api must not take it over from
-// the foundation campaign managers who build LinkedIn campaigns.
+// TestUserListsIsAMarketingOpsRead pins that.
+const userListsPath = "/projects/:projectId/google-ads/user-lists"
+
+// TestLinkedInTargetingTypeaheadIsACampaignManagerRead pins the LinkedIn targeting typeahead
+// (#585) to project-api (campaign_manager): it answers LinkedIn's own taxonomy, identical for
+// every token, so marketing-ops-api must not take it over from the foundation campaign managers
+// who build LinkedIn campaigns.
 func TestLinkedInTargetingTypeaheadIsACampaignManagerRead(t *testing.T) {
 	ruleset := helmTemplate(t, "templates/ruleset.yaml")
 	const path = "/projects/p1/linkedin-ads/targeting-entities"
@@ -131,9 +134,6 @@ func TestLinkedInTargetingTypeaheadIsACampaignManagerRead(t *testing.T) {
 		t.Errorf("the route regex does not forward %s", path)
 	}
 }
-
-// TestUserListsIsAMarketingOpsRead pins that.
-const userListsPath = "/projects/:projectId/google-ads/user-lists"
 
 // metaCustomAudiencesPath is the Meta custom-audience read (#550). It lists every foundation's
 // audiences on the shared Meta ad account, so it is ruled by marketing-ops-api only, and

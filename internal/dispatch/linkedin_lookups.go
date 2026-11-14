@@ -110,9 +110,13 @@ func (d *LinkedInDispatcher) ListConversionActions(ctx context.Context, projectI
 // ad account holds.
 //
 // Answers are cached by facet and folded query (targetingEntityCache) AFTER resolution, so a
-// project that can reach no credential still gets its refusal, and a picker that searches as
-// the operator types does not spend the shared LF token's adTargetingEntities quota on every
-// keystroke. called is false for a cache hit and for every local refusal.
+// project that can reach no credential still gets its refusal. The key is the whole query, so
+// the cache serves a repeated identical search (another operator, a re-opened picker), not the
+// next keystroke: every new prefix is a new key and a new adTargetingEntities call on the shared
+// LF token. What bounds that spend is the 2-character floor (linkedin.MinTypeaheadQueryLen,
+// enforced by the design and by NormalizeTypeaheadQuery), the caller's debounce, which the API
+// asks for, and the client sending the request once, so a 429 is not retried into more spend
+// but fails fast (503). called is false for a cache hit and for every local refusal.
 func (d *LinkedInDispatcher) SearchTargetingEntities(ctx context.Context, projectID string, platform model.Provider, q model.TargetingEntityQuery) (_ []model.TargetingEntity, called bool, _ error) {
 	query, err := linkedin.NormalizeTypeaheadQuery(q.Query)
 	if err != nil {

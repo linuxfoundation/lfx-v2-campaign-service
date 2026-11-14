@@ -1058,8 +1058,12 @@ until it expires. The offset parameters are LinkedIn's documented ones but not v
 `GET .../linkedin-ads/targeting-entities` picker. `typeaheadFacets` serves `skills`, `groups`,
 `titles`, `interests`, `industries` and `employers`, each with its pattern taken from
 `targetingFacets` (so a URN offered is one `ValidateTargeting` accepts), plus `locations` with
-`geoURNRE` for `geoTargets`. `NormalizeTypeaheadQuery` (trim, 1-`MaxTypeaheadQueryLen` = 100
-runes, valid UTF-8, no control characters) is the one query check, shared with the service. The
+`geoURNRE` for `geoTargets`. `NormalizeTypeaheadQuery` (trim, then `MinTypeaheadQueryLen` = 2
+to `MaxTypeaheadQueryLen` = 100 runes, valid UTF-8, no control characters) is the one query check,
+shared with the service; the Goa design mirrors the bounds and the control-character ban on the
+raw parameter, leaving only invalid UTF-8 and the post-trim floor to runtime. The request is sent
+with `withSendOnce`, so a 429 comes back at once rather than after `doRequest`'s backoff: a
+typeahead's caller has moved on by then, and each retry spends the shared quota again. The
 query goes through `restliEncode` (`%20`, not `+`; reserved characters escaped) and `query`
 joins `preEncodedParams`. Answers keep LinkedIn's relevance order, de-duplicated by URN, capped
 at 100; an element with a URN of the wrong shape or no name is dropped and counted. A transport

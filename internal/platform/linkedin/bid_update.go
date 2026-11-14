@@ -208,7 +208,8 @@ type sendOnceKey struct{}
 // throttle may be reported AFTER LinkedIn applied the write, and a definite refusal returned by a
 // retry answers the last attempt, not the first — so without a retry, every throttle comes back
 // as the 429 itself, which createOutcomeAmbiguous classifies UNCONFIRMED. The Meta and X bid
-// writers take the same route.
+// writers take the same route. The targeting typeahead (#585) uses it too, so a throttled
+// keystroke fails fast instead of waiting out a backoff.
 func withSendOnce(ctx context.Context) context.Context {
 	return context.WithValue(ctx, sendOnceKey{}, true)
 }

@@ -36,10 +36,10 @@ func decodeLinkedInTypeahead(t *testing.T, query url.Values) (facet, q string, e
 }
 
 // The design's facet enum is exactly the facets the linkedin package serves, and its query
-// bound is MaxTypeaheadQueryLen characters.
+// bounds are MinTypeaheadQueryLen to MaxTypeaheadQueryLen characters.
 func TestLinkedInTypeaheadDecoder_MirrorsThePlatform(t *testing.T) {
 	for _, f := range linkedin.TypeaheadFacetKeys() {
-		if _, _, err := decodeLinkedInTypeahead(t, url.Values{"facet": {f}, "query": {"a"}}); err != nil {
+		if _, _, err := decodeLinkedInTypeahead(t, url.Values{"facet": {f}, "query": {"go"}}); err != nil {
 			t.Errorf("decoder refuses facet %s, which the platform serves: %v", f, err)
 		}
 	}
@@ -47,16 +47,35 @@ func TestLinkedInTypeaheadDecoder_MirrorsThePlatform(t *testing.T) {
 	if err != nil || facet != "locations" || len([]rune(q)) != linkedin.MaxTypeaheadQueryLen {
 		t.Errorf("a %d-character query: facet=%q len=%d err=%v", linkedin.MaxTypeaheadQueryLen, facet, len([]rune(q)), err)
 	}
+	if _, q, err := decodeLinkedInTypeahead(t, url.Values{"facet": {"skills"}, "query": {strings.Repeat("é", linkedin.MinTypeaheadQueryLen)}}); err != nil {
+		t.Errorf("a %d-character query %q was refused: %v", linkedin.MinTypeaheadQueryLen, q, err)
+	}
+	if _, _, err := decodeLinkedInTypeahead(t, url.Values{"facet": {"skills"}, "query": {strings.Repeat("é", linkedin.MinTypeaheadQueryLen-1)}}); err == nil {
+		t.Errorf("a %d-character query was accepted", linkedin.MinTypeaheadQueryLen-1)
+	}
+	// Ordinary text with inner spaces and punctuation stays accepted by the tightened pattern.
+	if _, _, err := decodeLinkedInTypeahead(t, url.Values{"facet": {"titles"}, "query": {"  C++ (dev) & R&D  "}}); err != nil {
+		t.Errorf("an ordinary query was refused: %v", err)
+	}
 }
 
 func TestLinkedInTypeaheadDecoder_RefusesWhatTheServiceWouldRefuse(t *testing.T) {
 	cases := map[string]url.Values{
-		"no facet":            {"query": {"a"}},
+		"no facet":            {"query": {"go"}},
 		"no query":            {"facet": {"skills"}},
-		"segment facet":       {"facet": {"dynamicSegments"}, "query": {"a"}},
-		"non-typeahead facet": {"facet": {"seniorities"}, "query": {"a"}},
+		"segment facet":       {"facet": {"dynamicSegments"}, "query": {"go"}},
+		"non-typeahead facet": {"facet": {"seniorities"}, "query": {"go"}},
 		"blank query":         {"facet": {"skills"}, "query": {"   "}},
+		"1-character query":   {"facet": {"skills"}, "query": {"g"}},
 		"101-character query": {"facet": {"skills"}, "query": {strings.Repeat("é", linkedin.MaxTypeaheadQueryLen+1)}},
+		// Control characters, which NormalizeTypeaheadQuery refuses (invalid UTF-8 is refused
+		// only at runtime).
+		"newline":      {"facet": {"skills"}, "query": {"go\nlang"}},
+		"tab":          {"facet": {"skills"}, "query": {"go\tlang"}},
+		"NUL":          {"facet": {"skills"}, "query": {"go\x00lang"}},
+		"DEL":          {"facet": {"skills"}, "query": {"go\x7flang"}},
+		"C1 control":   {"facet": {"skills"}, "query": {"go\u0085lang"}},
+		"only control": {"facet": {"skills"}, "query": {"\x00\x01"}},
 	}
 	for name, v := range cases {
 		t.Run(name, func(t *testing.T) {
