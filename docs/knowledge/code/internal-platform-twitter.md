@@ -1698,3 +1698,20 @@ snapshot.
 `followerLookalikeUserIds` from the gap 4 shape is deferred: X has no user lookup to check an id
 before create. Everything here is behind `TWITTER_CREATE_TARGETING_ENABLED` (default off) and is
 not verified live.
+
+**Naming v2 (#587, `naming.go`).** A non-nil `CampaignInput.Naming` (set by the dispatcher only
+while `TWITTER_NAMING_V2_ENABLED` is on) makes `CreateCampaign` name the campaign by LF's convention
+through the shared `internal/domain/campaignname`. `resolveCampaignName` picks, in order,
+`FrozenCampaignName` (the name the claimed row records, verbatim), `buildTwitterCampaignNameV2`,
+else the legacy `buildTwitterCampaignName` byte for byte; a `Naming` off its closed lists or without
+a business unit is a PreflightRefusal before any request, and `validateEntityName` covers whichever
+name it is. Defaults: region `campaignname.CountriesRegion` over the normalized `GeoTargets`
+(`Global` when none, as the legacy name); objective `Awareness` (unchanged); intent `Retargeting`
+for the `retargeting` tactic, else `Prospecting`; format `campaignNameFormat` — `Social` for a
+`TweetID` (an existing post), `Static` for an authored post with an `Image`, `Text` without — the
+hook for video and carousel posts. The line item name is unchanged. Retry safety: X reuses a
+campaign by name account-wide (`findCampaignByName`), so when nothing is frozen and the v2 name
+finds nothing, the LEGACY name is looked up too and a campaign found under it is reused under that
+name; a failed lookup returns `(nil, err)` before anything billable. Pinned by
+`TestBuildTwitterCampaignNameV2`, `TestCreateCampaign_TwitterNamingV2*` and
+`TestCreateCampaign_TwitterFrozenNameWinsOverNamingV2`.

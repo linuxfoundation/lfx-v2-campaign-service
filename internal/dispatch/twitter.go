@@ -10,12 +10,15 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/campaignname"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // twitterCreds is the credential shape stored (encrypted) for an X/Twitter
@@ -81,6 +84,25 @@ type twitterConfig struct {
 	// (service.TwitterMarketingOpsInputs): the audiences belong to the shared LF ad account.
 	CustomAudienceIDs         []string `json:"customAudienceIds,omitempty"`
 	ExcludedCustomAudienceIDs []string `json:"excludedCustomAudienceIds,omitempty"`
+	// Naming is the caller's choice of the v2 campaign name's region, audience intent and business
+	// unit (#587), each from a closed list (campaignname.Validate). Validated whatever the
+	// deployment gate says; it shapes the name only while TWITTER_NAMING_V2_ENABLED is on.
+	Naming *campaignname.Naming `json:"naming,omitempty"`
+}
+
+// twitterNamingV2Enabled reports whether this deployment opted in to X campaign naming v2 (#587).
+// Read per call so it flips without a rebuild. Off by default: the data pipeline must parse the
+// new names before any campaign carries one.
+func twitterNamingV2Enabled() bool {
+	return os.Getenv(constants.EnvTwitterNamingV2Enabled) == "true"
+}
+
+// twitterNaming checks twitterConfig.naming before any job or request and returns what the client
+// composes the name from: nil while the gate is off (the legacy name), else the canonical copy.
+// A value off its list is refused whatever the gate says; with the gate on a business unit is
+// required. See campaignname.ResolveRequest.
+func twitterNaming(cfg twitterConfig) (*campaignname.Naming, error) {
+	return campaignname.ResolveRequest("twitterConfig", cfg.Naming, twitter.ErrNamingInvalid, twitterNamingV2Enabled(), constants.EnvTwitterNamingV2Enabled)
 }
 
 // twitterBidPlan resolves twitterConfig's bidding choice. Every X campaign here is WEBSITE_CLICKS,
@@ -121,6 +143,10 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 	if err := checkTwitterCustomAudienceShape(config); err != nil {
 		return err
 	}
+	// And a wrong-shaped twitterConfig.naming (#587).
+	if err := campaignname.CheckShape(config, "twitterConfig"); err != nil {
+		return err
+	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
 	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
 	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
@@ -139,6 +165,11 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 		return err
 	}
 	if err := checkTwitterCreateCriteriaCount(tgt, cfg); err != nil {
+		return err
+	}
+	// twitterConfig.naming (#587): a value outside its closed list, and a missing business unit
+	// while naming v2 is on.
+	if _, err := twitterNaming(cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -287,6 +318,9 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if err := checkTwitterCustomAudienceShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	if err := campaignname.CheckShape(config, "twitterConfig"); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg twitterConfig
 	if err := unmarshalPlatformConfig(config, "twitterConfig", &cfg); err != nil {
 		return nil, notCreated(err)
@@ -313,6 +347,15 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	}
 	if err := checkTwitterCreateCriteriaCount(tgt, cfg); err != nil {
 		return nil, notCreated(err)
+	}
+	// Campaign naming v2 (#587), validated before any upstream call. nil while the gate is off:
+	// the client then composes the legacy name. The snapshot records the canonical values.
+	naming, err := twitterNaming(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	if naming != nil {
+		cfg.Naming = naming
 	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
 	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
@@ -432,6 +475,12 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 
 		CustomAudienceIDs:         cfg.CustomAudienceIDs,
 		ExcludedCustomAudienceIDs: cfg.ExcludedCustomAudienceIDs,
+
+		// The name the claimed row already records, if any (#587): sent verbatim so a retry
+		// reuses the campaign an earlier attempt created under that name, whatever the current
+		// naming rules would compose. See model.WithDispatchCampaignName.
+		FrozenCampaignName: model.DispatchCampaignName(ctx),
+		Naming:             naming,
 	}
 
 	// Built through the client cache, so concurrent dispatches for this account share ONE

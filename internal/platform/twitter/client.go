@@ -37,6 +37,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/campaignname"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
 )
@@ -3337,6 +3338,20 @@ type CampaignInput struct {
 	// that type, as before.
 	Keywords    []string
 	InterestIDs []string
+	// FrozenCampaignName is the campaign name the claimed row already records (#587), set by the
+	// dispatcher from model.DispatchCampaignName. Non-empty, it is used VERBATIM as the name
+	// findCampaignByName reuses a campaign by, and neither the legacy nor the v2 name is composed,
+	// so a change to the naming rules (the TWITTER_NAMING_V2_ENABLED flip) between two attempts at
+	// one slot can never make the lookup miss the campaign an earlier attempt created and create a
+	// second, paid one. Empty (every first attempt) composes the name as usual.
+	FrozenCampaignName string
+	// Naming selects campaign naming v2 (#587, naming.go): nil composes the legacy name byte for
+	// byte; non-nil composes LF's convention from its region, audience intent and business unit
+	// (an empty region and intent take their defaults from GeoTargets and the tactic). The
+	// dispatcher sets it only while TWITTER_NAMING_V2_ENABLED is on. FrozenCampaignName wins over
+	// it, and so does an existing campaign under the legacy name (see CreateCampaign), so turning
+	// v2 on never renames or duplicates a campaign that already exists.
+	Naming *campaignname.Naming
 }
 
 // manualMaxBidMicros encodes a create-time manual bid in micro-units, refusing (never rounding)
@@ -3671,7 +3686,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// EventName and Project individually bounded, the composed campaign / line-item
 	// names can exceed X's 255-rune entity-name limit, so reject an oversized name
 	// up front rather than after a wasted account-verify / lookup round trip.
-	campaignName := buildTwitterCampaignName(in)
+	// The row's recorded name, else the v2 name while Naming is set, else the legacy one (#587); a
+	// Naming off its closed lists is refused here, before any request.
+	campaignName, legacyName, nameStep, err := resolveCampaignName(in, geoTargets)
+	if err != nil {
+		return nil, err
+	}
+	if nameStep != "" {
+		steps = append(steps, nameStep)
+	}
 	// Fixed labels and counts only, raised before verifyAccount (the first request), so
 	// operator-safe (issue #208): a 200-rune event name passes its own bound and can still
 	// overflow the composed name.
@@ -3726,6 +3749,22 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	campaignID, err := c.findCampaignByName(ctx, campaignName)
 	if err != nil {
 		return nil, err
+	}
+	// Naming v2 (#587) must never duplicate a campaign an earlier attempt created under the LEGACY
+	// name. The frozen name covers a row that still records it; this covers a slot whose row is
+	// gone (an operator hard-deleting a stuck claim) while its legacy-named campaign lives on. X
+	// reuses by name account-wide, so the lookup always runs when the v2 name found nothing. A
+	// legacy-named campaign found here is reused under its legacy name — never renamed. A failed
+	// lookup returns before anything billable is created, like the one above.
+	if campaignID == "" && in.Naming != nil && strings.TrimSpace(in.FrozenCampaignName) == "" && legacyName != campaignName {
+		legacyID, lerr := c.findCampaignByName(ctx, legacyName)
+		if lerr != nil {
+			return nil, lerr
+		}
+		if legacyID != "" {
+			steps = append(steps, fmt.Sprintf("Campaign %s already exists under the legacy name %q; reused under that name (naming v2 never renames an existing campaign)", legacyID, legacyName))
+			campaignID, campaignName = legacyID, legacyName
+		}
 	}
 	// Track whether the campaign was created by THIS call or reused from a prior
 	// one, so downstream partial-failure messages don't claim "created" for a

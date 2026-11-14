@@ -5514,7 +5514,22 @@ type CampaignCreateInputRequestBody struct {
 	// objective, else Social when postUrl promotes an existing post, else Static
 	// (the image post the service authors). The ad group name is unchanged, an
 	// existing campaign is never renamed, and a retry sends the name the campaign
-	// row recorded. BUSINESS UNIT OF AN EVENT CAMPAIGN (#587, every platform's
+	// row recorded. X NAMING (#587) — twitterConfig takes the same optional
+	// `naming` object, with the same lists and refusals, behind
+	// TWITTER_NAMING_V2_ENABLED (businessUnit required while it is on). With it on
+	// a new X campaign is named `Events | <event> | <region> | Awareness |
+	// <audienceIntent> | <format> | <businessUnit> | <funnel>` instead of the
+	// legacy `Events | <event> | Global | Awareness | Prospecting | Promoted Post
+	// | <project> | <funnel>`: region omitted means the one region every
+	// twitterConfig.geoTargets country falls in, else Global (Global with no
+	// geoTargets, as before); audienceIntent omitted means Retargeting for a
+	// retargeting tactic, else Prospecting; the format is derived: Social when
+	// tweetId promotes an existing post, else Static for an authored post with an
+	// image and Text without one. The line item name is unchanged and an existing
+	// campaign is never renamed: a retry sends the name the campaign row recorded,
+	// and a create that finds no campaign under the new name reuses one found
+	// under the legacy name, under that name, rather than creating a second.
+	// BUSINESS UNIT OF AN EVENT CAMPAIGN (#587, every platform's
 	// naming.businessUnit): the foundation that owns the event (KubeCon is Cloud
 	// Native Computing Foundation (CNCF), PyTorch Conference is PyTorch Project);
 	// LF Events only for an event the Linux Foundation runs with no foundation

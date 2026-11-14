@@ -5636,3 +5636,10 @@ in `PreflightCreate` (with the other raw-shape checks) and before the decode in 
 decode in `PreflightCreate` and before any request in `Dispatch`, gated by
 `REDDIT_NAMING_V2_ENABLED`; `Dispatch` passes the canonical copy as `CampaignInput.Naming` and the
 recorded name as `FrozenCampaignName`.
+
+**X naming (#587).** `twitterConfig.Naming` follows the same pattern: `campaignname.CheckShape` in
+`PreflightCreate` (with the other raw-shape checks) and before the decode in `Dispatch`, and
+`twitterNaming` (`campaignname.ResolveRequest` with `twitter.ErrNamingInvalid`, gated by
+`TWITTER_NAMING_V2_ENABLED`) after the targeting checks in both. `Dispatch` passes the canonical
+copy as `CampaignInput.Naming` and the recorded name as `FrozenCampaignName`. `naming` is classified
+ungated for the global_marketing_ops check (it names no ad-account resource), for Reddit and X alike.

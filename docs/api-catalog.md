@@ -3503,6 +3503,34 @@ are kept verbatim because they are what routes the visitor. It is then publicly 
 tweet and in X Ads Manager — so the registration URL must not carry a `?token=…`-style credential.
 Redaction protects what is *persisted*; nothing can un-publish what was sent to X.
 
+#### TwitterConfig naming (`twitterConfig.naming`, #587)
+
+The same `naming` object as [`linkedInConfig.naming`](#linkedinconfig-naming-linkedinconfignaming-587)
+— `{region, audienceIntent, businessUnit}`, the same closed lists, matching and refusals
+(`400 invalid campaign config: twitterConfig.naming…`, from the pre-flight and again at dispatch) —
+behind `TWITTER_NAMING_V2_ENABLED` (off by default; while off, `naming` is validated but every
+campaign keeps the legacy name). While the flag is on, `businessUnit` is required; for an event it
+is the owning foundation (see [Business unit of an event campaign](#business-unit-of-an-event-campaign-587)).
+
+```
+legacy  Events | <event> | Global | Awareness | Prospecting[ <tactic>][ #<n>] | Promoted Post | <project> | <funnel>
+v2      Events | <event> | <region> | Awareness | <audienceIntent>[ <tactic>][ #<n>] | <format> | <businessUnit> | <funnel>
+        Events | KubeCon NA 2026 | NA | Awareness | Prospecting | Static | Cloud Native Computing Foundation (CNCF) | MoFU
+```
+
+| Segment | Source |
+|---|---|
+| region | `naming.region`; omitted, the one region every `twitterConfig.geoTargets` country falls in (the Meta/Reddit buckets), else `Global` — and `Global` with no `geoTargets` (worldwide), as in the legacy name |
+| objective | `Awareness`, unchanged from the legacy name |
+| audienceIntent | `naming.audienceIntent`; omitted, `Retargeting` for a campaign labelled with the `retargeting` tactic, else `Prospecting` (the legacy value). The tactic and a later slot's `#<n>` are still appended, because the name is the key X reuses a campaign by |
+| format | derived, never sent: `Social` when `tweetId` promotes an existing post (its content is not read); for an authored post, `Static` with `imageAssetId` and `Text` without |
+| businessUnit | `naming.businessUnit`, the closed list of `linkedInConfig.naming` |
+| funnel | the claimed row's `funnel_stage`, as before (`MoFU` when unlabelled) |
+
+The line item name is unchanged. An existing campaign is never renamed: a retry sends the name the
+campaign row recorded, and a create that finds no campaign under the v2 name looks the legacy name
+up too and reuses a campaign found there under that name rather than creating a second one.
+
 ### JobCreateResponse (returned immediately from `POST .../campaigns`)
 
 Campaign creation is asynchronous (see [Campaign Creation](#campaign-creation-implementation-phase)). The `POST` does not return campaign results; it returns a job handle to poll.

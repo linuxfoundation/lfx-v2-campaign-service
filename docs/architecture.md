@@ -594,6 +594,11 @@ Reddit (#587): `REDDIT_NAMING_V2_ENABLED` does the same for new Reddit campaigns
 existing post, else `Static`). See
 `docs/api-catalog.md` § RedditConfig naming.
 
+X (#587): `TWITTER_NAMING_V2_ENABLED` does the same for new X campaigns (`twitterConfig.naming`;
+region from `geoTargets`, else `Global`; format `Social` for a promoted existing post, else
+`Static` or `Text`), replacing the fixed `Global` region and `Promoted Post` format. See
+`docs/api-catalog.md` § TwitterConfig naming.
+
 This service's own reads do not parse names. The project-scoped reads — the keyword and audience
 insights and the Google Ads, Meta, Reddit and X account monitors — attribute an upstream campaign to
 a project by `campaigns.project_id`, the row this service wrote when it created or adopted the
