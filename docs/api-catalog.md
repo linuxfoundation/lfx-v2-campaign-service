@@ -2946,6 +2946,15 @@ optimizationGoal?: string       — OPTIONAL ad set `optimization_goal` for the 
                                   `bidding` (a link-click bid cap) LANDING_PAGE_VIEWS is a
                                   synchronous 400 too. Refused with a 400 unless
                                   META_OPTIMIZATION_GOAL_ENABLED is exactly "true".
+frequencyCap?:                  — OPTIONAL impressions-per-person cap on the ad set (#550), for
+  {maxImpressions: integer,       the `awareness` objective only (Meta takes a frequency cap only
+   intervalDays: integer}         on a REACH ad set): at most `maxImpressions` impressions per
+                                  person every `intervalDays` days, each 1–90 →
+                                  `frequency_control_specs: [{"event": "IMPRESSIONS",
+                                  "interval_days", "max_frequency"}]`. Another objective, a
+                                  missing or out-of-range field, or a non-object is a synchronous
+                                  400. Refused with a 400 unless META_FREQUENCY_CAP_ENABLED is
+                                  exactly "true". null/absent → no cap.
 targeting?: object              — OPTIONAL audience targeting on the ad set (#550). Refused
                                   with a 400 before any job exists unless the deployment sets
                                   META_AUDIENCE_TARGETING_ENABLED to exactly "true" (not yet
