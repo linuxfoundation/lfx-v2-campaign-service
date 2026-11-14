@@ -3514,14 +3514,14 @@ is the owning foundation (see [Business unit of an event campaign](#business-uni
 
 ```
 legacy  Events | <event> | Global | Awareness | Prospecting[ <tactic>][ #<n>] | Promoted Post | <project> | <funnel>
-v2      Events | <event> | <region> | Awareness | <audienceIntent>[ <tactic>][ #<n>] | <format> | <businessUnit> | <funnel>
-        Events | KubeCon NA 2026 | NA | Awareness | Prospecting | Static | Cloud Native Computing Foundation (CNCF) | MoFU
+v2      Events | <event> | <region> | Traffic | <audienceIntent>[ <tactic>][ #<n>] | <format> | <businessUnit> | <funnel>
+        Events | KubeCon NA 2026 | NA | Traffic | Prospecting | Static | Cloud Native Computing Foundation (CNCF) | MoFU
 ```
 
 | Segment | Source |
 |---|---|
 | region | `naming.region`; omitted, the one region every `twitterConfig.geoTargets` country falls in (the Meta/Reddit buckets), else `Global` — and `Global` with no `geoTargets` (worldwide), as in the legacy name |
-| objective | `Awareness`, unchanged from the legacy name |
+| objective | `Traffic` — every X line item this service creates has objective `WEBSITE_CLICKS`, and `Traffic` is the word LinkedIn and Meta names use for a click campaign (owner decision, 2026-11-14). The legacy name keeps `Awareness` |
 | audienceIntent | `naming.audienceIntent`; omitted, `Retargeting` for a campaign labelled with the `retargeting` tactic, else `Prospecting` (the legacy value). The tactic and a later slot's `#<n>` are still appended, because the name is the key X reuses a campaign by |
 | format | derived, never sent: `Social` when `tweetId` promotes an existing post (its content is not read); for an authored post, `Static` with `imageAssetId` and `Text` without |
 | businessUnit | `naming.businessUnit`, the closed list of `linkedInConfig.naming` |

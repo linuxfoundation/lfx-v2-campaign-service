@@ -1706,7 +1706,8 @@ through the shared `internal/domain/campaignname`. `resolveCampaignName` picks, 
 else the legacy `buildTwitterCampaignName` byte for byte; a `Naming` off its closed lists or without
 a business unit is a PreflightRefusal before any request, and `validateEntityName` covers whichever
 name it is. Defaults: region `campaignname.CountriesRegion` over the normalized `GeoTargets`
-(`Global` when none, as the legacy name); objective `Awareness` (unchanged); intent `Retargeting`
+(`Global` when none, as the legacy name); objective `Traffic` (`nameObjective`, the line item's WEBSITE_CLICKS; the legacy name keeps
+`Awareness`); intent `Retargeting`
 for the `retargeting` tactic, else `Prospecting`; format `campaignNameFormat` — `Social` for a
 `TweetID` (an existing post), `Static` for an authored post with an `Image`, `Text` without — the
 hook for video and carousel posts. The line item name is unchanged. Retry safety: X reuses a

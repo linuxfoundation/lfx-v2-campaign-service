@@ -14,7 +14,8 @@ import (
 //
 //	Events | <event> | <Region> | <Objective> | <AudienceIntent>[ <tactic>][ #<n>] | <Format> | <BusinessUnit> | <Funnel>
 //
-// in place of the legacy name's fixed "Global" region, "Promoted Post" format and LFX project slug.
+// in place of the legacy name's fixed "Global" region, "Awareness" objective, "Promoted Post"
+// format and LFX project slug.
 // Behind TWITTER_NAMING_V2_ENABLED; the dispatcher sets CampaignInput.Naming only while it is on,
 // so with the flag off every name is the legacy one byte for byte. The lists, the validator and
 // the composer are shared (internal/domain/campaignname); this file holds what is X's own.
@@ -23,11 +24,10 @@ import (
 // campaignname.ErrInvalid.
 var ErrNamingInvalid = fmt.Errorf("twitter-ads: %w", campaignname.ErrInvalid)
 
-// nameObjective is the v2 name's Objective segment: "Awareness", exactly the legacy name's, so the
-// objective dimension a campaign reports under does not move with the naming change. (The line
-// item is created with objective WEBSITE_CLICKS; whether X should report as Traffic is a separate
-// data-owner question, #587 log.)
-const nameObjective = "Awareness"
+// nameObjective is the v2 name's Objective segment: "Traffic" (owner decision, 2026-11-14). Every
+// line item this client creates has objective WEBSITE_CLICKS, and Traffic is the word the LinkedIn
+// and Meta names use for a click campaign. The legacy name keeps its "Awareness" byte for byte.
+const nameObjective = "Traffic"
 
 // defaultAudienceIntent is the intent a v2 name leads segment 5 with when the caller sends none:
 // Retargeting for a row labelled with the retargeting tactic, else Prospecting — the value the

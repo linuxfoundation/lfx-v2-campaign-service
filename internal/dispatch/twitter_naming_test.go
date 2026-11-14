@@ -26,7 +26,7 @@ func twitterNamingConfig(naming string) json.RawMessage {
 
 const (
 	xLegacyDispatchName = "Events | KubeCon NA 2026 | Global | Awareness | Prospecting | Promoted Post | cncf | MoFU"
-	xV2DispatchName     = "Events | KubeCon NA 2026 | Global | Awareness | Prospecting | Social | Cloud Native Computing Foundation (CNCF) | MoFU"
+	xV2DispatchName     = "Events | KubeCon NA 2026 | Global | Traffic | Prospecting | Social | Cloud Native Computing Foundation (CNCF) | MoFU"
 )
 
 // twitterConfig.naming (#587) is a synchronous 400 for a wrong shape or a value outside its closed

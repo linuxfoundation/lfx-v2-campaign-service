@@ -27,18 +27,18 @@ func TestBuildTwitterCampaignNameV2(t *testing.T) {
 		want   string
 	}{
 		{"no geo targets: Global, Prospecting, a text post", cncf, nil, nil,
-			"Events | KubeCon - NA | Global | Awareness | Prospecting | Text | Cloud Native Computing Foundation (CNCF) | MoFU"},
+			"Events | KubeCon - NA | Global | Traffic | Prospecting | Text | Cloud Native Computing Foundation (CNCF) | MoFU"},
 		{"one bucket and an image", cncf, []string{"DE", "FR"}, func(in *CampaignInput) { in.Image = &ImageInput{} },
-			"Events | KubeCon - NA | EMEA | Awareness | Prospecting | Static | Cloud Native Computing Foundation (CNCF) | MoFU"},
+			"Events | KubeCon - NA | EMEA | Traffic | Prospecting | Static | Cloud Native Computing Foundation (CNCF) | MoFU"},
 		{"two buckets are Global", cncf, []string{"US", "JP"}, nil,
-			"Events | KubeCon - NA | Global | Awareness | Prospecting | Text | Cloud Native Computing Foundation (CNCF) | MoFU"},
+			"Events | KubeCon - NA | Global | Traffic | Prospecting | Text | Cloud Native Computing Foundation (CNCF) | MoFU"},
 		{"caller region and intent win", campaignname.Naming{Region: "India", AudienceIntent: "Intent", BusinessUnit: "LF Events"}, []string{"US"}, nil,
-			"Events | KubeCon - NA | India | Awareness | Intent | Text | LF Events | MoFU"},
+			"Events | KubeCon - NA | India | Traffic | Intent | Text | LF Events | MoFU"},
 		{"an existing post is Social, even with an image", cncf, nil, func(in *CampaignInput) { in.TweetID, in.Image = "1234567890", &ImageInput{} },
-			"Events | KubeCon - NA | Global | Awareness | Prospecting | Social | Cloud Native Computing Foundation (CNCF) | MoFU"},
+			"Events | KubeCon - NA | Global | Traffic | Prospecting | Social | Cloud Native Computing Foundation (CNCF) | MoFU"},
 		{"retargeting tactic, slot token and stage", cncf, []string{"US"}, func(in *CampaignInput) {
 			in.Tactic, in.SlotToken, in.StageToken = "retargeting", "#2", "BoFU"
-		}, "Events | KubeCon - NA | NA | Awareness | Retargeting retargeting #2 | Text | Cloud Native Computing Foundation (CNCF) | BoFU"},
+		}, "Events | KubeCon - NA | NA | Traffic | Retargeting retargeting #2 | Text | Cloud Native Computing Foundation (CNCF) | BoFU"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			in := base
@@ -58,7 +58,7 @@ func TestBuildTwitterCampaignNameV2(t *testing.T) {
 
 const (
 	xLegacyName = "Events | LFX Retest | Global | Awareness | Prospecting | Promoted Post | CNCF | MoFU"
-	xV2Name     = "Events | LFX Retest | Global | Awareness | Prospecting | Text | Cloud Native Computing Foundation (CNCF) | MoFU"
+	xV2Name     = "Events | LFX Retest | Global | Traffic | Prospecting | Text | Cloud Native Computing Foundation (CNCF) | MoFU"
 )
 
 func (f *fakeX) campaignNames() []string {
