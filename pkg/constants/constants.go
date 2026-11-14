@@ -239,6 +239,18 @@ const (
 	// lfx-v2-argocd.
 	EnvTwitterAudienceExpansionEnabled = "TWITTER_AUDIENCE_EXPANSION_ENABLED"
 
+	// EnvTwitterKeywordAddEnabled opts a deployment IN to the positive keyword add lever on an
+	// existing X campaign (#564 gap 12): POST .../keyword-targeting/additions, one BROAD_KEYWORD
+	// targeting criterion (operator_type EQ) per keyword on the line item this service created.
+	// Only the exact value "true" enables it; unset or any other value fails closed, and the
+	// endpoint answers 400 "not supported or not enabled" before X is contacted.
+	//
+	// It names no account resource: it keeps an UNVERIFIED write (a positive keyword criterion
+	// POST on a live line item, built from X's published v12 reference; no live call has added
+	// one) off the shared ad account until a live add confirms the criterion shape. Turn it on per
+	// environment, in lfx-v2-argocd.
+	EnvTwitterKeywordAddEnabled = "TWITTER_KEYWORD_ADD_ENABLED"
+
 	// EnvMetaConversionsMetricsEnabled opts a deployment IN to conversions in the Meta metrics read
 	// (#550 gap 6): for a campaign whose create result records a conversion event (the
 	// conversions objective, #559), the Insights read also requests `actions` and reports the

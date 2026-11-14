@@ -646,6 +646,13 @@ var (
 	// other targeting, which this reduce-only surface never does. Mapped to 409, nothing changed.
 	ErrKeywordTargetingWouldEmpty = errors.New("the removal would leave no keyword targeted")
 
+	// ErrKeywordTargetingLimit indicates a positive keyword add (#564 gap 12, X) that would leave
+	// the line item holding more targeting criteria than this service puts on one line item
+	// (twitter.MaxCreateTargetingCriteria, the create-time cap), counting the criteria it already
+	// holds. Decided from a READ before any write, so nothing was changed; a state fault, not a
+	// malformed request, so mapped to 409.
+	ErrKeywordTargetingLimit = errors.New("the keyword additions would exceed the line item's targeting criteria cap")
+
 	// ErrMetaAdSetsUnsupported indicates the campaign's platform has no ad-set read or ad-set
 	// status toggle wired (LFXV2-2665: Meta only — the ad set is Meta's unit). The platform is
 	// never contacted; mapped to 400.

@@ -1346,6 +1346,27 @@ against a live ad account.
 item, `EQ`, another type, another keyword; 429 and 502 UNCONFIRMED after exactly one request; a
 400 definite).
 
+## Line-item positive keywords (`negative_keywords.go`, #564 gap 12)
+
+`CreateKeywordCriterion(ctx, lineItemID, keyword)` is the client half of
+`TwitterDispatcher.AddKeywordTargeting` (`add-keyword-targeting`; see
+[Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md)). It sends the
+negative add's POST with `operator_type=EQ` and `targeting_type=BROAD_KEYWORD`: both now go through
+one private `createKeywordCriterion`, so pacing, NOT_SENT, sent-once, UNCONFIRMED classification
+and the `identityjson` echo check are shared. Its echo must report a live `BROAD_KEYWORD` criterion
+of this line item for this keyword (`textfold.Equal`) with `operator_type` `EQ` or none
+(`echoedOperator`, as on the create path); an `NE` echo is UNCONFIRMED. The negative add's echo rule
+is unchanged (`NE` exactly).
+
+`NormalizeKeywordAdditions` (`create_targeting.go`) applies `NormalizeKeywordInterestTargeting`'s
+keyword rules and allows 1..`MaxKeywordAdditions` (20) distinct keywords, wrapping
+`domain.ErrKeywordTargetingInvalid`. The line item's 60-criterion cap
+(`MaxCreateTargetingCriteria`) is applied by the dispatcher against the live criteria list. Not
+exercised live; the add is behind `TWITTER_KEYWORD_ADD_ENABLED`.
+
+**Tests** (`keyword_add_test.go`): `TestCreateKeywordCriterion_PostsABroadPositiveKeyword`,
+`TestCreateKeywordCriterion_UnprovenEchoIsUnconfirmed`, `TestNormalizeKeywordAdditions`.
+
 ## Campaign-ref id rule (`campaign_ref.go`, LFXV2-2665)
 
 `ValidateCampaignID` is the id rule `resolve-twitter-ads-campaign` applies before any lookup:

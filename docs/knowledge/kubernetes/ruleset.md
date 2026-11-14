@@ -155,3 +155,9 @@ safely absent vs. an error is not documented Heimdall behavior — the
 mutually-exclusive `if:` guards avoid relying on it.
 
 The Meta ad-set read and pause/resume (`campaigns/{id}/meta-ad-sets`, `campaigns/{id}/meta-ad-sets/{adSetId}/status`, LFXV2-2665) and the read-only ad listing under one ad set (`campaigns/{id}/meta-ad-sets/{adSetId}/ads`) are routed and ruled by the `briefs` family with no entry of their own; `parity_test.go` pins all three paths.
+
+**#564 gap 12.** `POST /projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-targeting/additions`
+(`add-keyword-targeting`, the X positive keyword add) adds no route or rule of its own: like the
+removal it nests under the `(briefs|jobs|hubspot)(/.*)?` HTTPRoute branch and the
+`/projects/:projectId/briefs/**` `campaign_manager` rule. `parity_test.go` pins it with its own
+`TestRouteRuleSetParity` row, so narrowing either matcher fails loudly.

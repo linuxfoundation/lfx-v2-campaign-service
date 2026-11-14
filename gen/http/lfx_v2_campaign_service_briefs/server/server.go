@@ -48,6 +48,7 @@ type Server struct {
 	AddNegativeKeywords    http.Handler
 	GetKeywordTargeting    http.Handler
 	RemoveKeywordTargeting http.Handler
+	AddKeywordTargeting    http.Handler
 	ListMetaAdSets         http.Handler
 	ListMetaAds            http.Handler
 	ToggleMetaAdSetStatus  http.Handler
@@ -118,6 +119,7 @@ func New(
 			{"AddNegativeKeywords", "POST", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/negative-keywords"},
 			{"GetKeywordTargeting", "GET", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-targeting"},
 			{"RemoveKeywordTargeting", "POST", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-targeting/removals"},
+			{"AddKeywordTargeting", "POST", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-targeting/additions"},
 			{"ListMetaAdSets", "GET", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets"},
 			{"ListMetaAds", "GET", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets/{ad_set_id}/ads"},
 			{"ToggleMetaAdSetStatus", "POST", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets/{ad_set_id}/status"},
@@ -160,6 +162,7 @@ func New(
 		AddNegativeKeywords:    NewAddNegativeKeywordsHandler(e.AddNegativeKeywords, mux, decoder, encoder, errhandler, formatter),
 		GetKeywordTargeting:    NewGetKeywordTargetingHandler(e.GetKeywordTargeting, mux, decoder, encoder, errhandler, formatter),
 		RemoveKeywordTargeting: NewRemoveKeywordTargetingHandler(e.RemoveKeywordTargeting, mux, decoder, encoder, errhandler, formatter),
+		AddKeywordTargeting:    NewAddKeywordTargetingHandler(e.AddKeywordTargeting, mux, decoder, encoder, errhandler, formatter),
 		ListMetaAdSets:         NewListMetaAdSetsHandler(e.ListMetaAdSets, mux, decoder, encoder, errhandler, formatter),
 		ListMetaAds:            NewListMetaAdsHandler(e.ListMetaAds, mux, decoder, encoder, errhandler, formatter),
 		ToggleMetaAdSetStatus:  NewToggleMetaAdSetStatusHandler(e.ToggleMetaAdSetStatus, mux, decoder, encoder, errhandler, formatter),
@@ -209,6 +212,7 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.AddNegativeKeywords = m(s.AddNegativeKeywords)
 	s.GetKeywordTargeting = m(s.GetKeywordTargeting)
 	s.RemoveKeywordTargeting = m(s.RemoveKeywordTargeting)
+	s.AddKeywordTargeting = m(s.AddKeywordTargeting)
 	s.ListMetaAdSets = m(s.ListMetaAdSets)
 	s.ListMetaAds = m(s.ListMetaAds)
 	s.ToggleMetaAdSetStatus = m(s.ToggleMetaAdSetStatus)
@@ -258,6 +262,7 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountAddNegativeKeywordsHandler(mux, h.AddNegativeKeywords)
 	MountGetKeywordTargetingHandler(mux, h.GetKeywordTargeting)
 	MountRemoveKeywordTargetingHandler(mux, h.RemoveKeywordTargeting)
+	MountAddKeywordTargetingHandler(mux, h.AddKeywordTargeting)
 	MountListMetaAdSetsHandler(mux, h.ListMetaAdSets)
 	MountListMetaAdsHandler(mux, h.ListMetaAds)
 	MountToggleMetaAdSetStatusHandler(mux, h.ToggleMetaAdSetStatus)
@@ -1766,6 +1771,60 @@ func NewRemoveKeywordTargetingHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "remove-keyword-targeting")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountAddKeywordTargetingHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint.
+func MountAddKeywordTargetingHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-targeting/additions", f)
+}
+
+// NewAddKeywordTargetingHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-briefs" service
+// "add-keyword-targeting" endpoint.
+func NewAddKeywordTargetingHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeAddKeywordTargetingRequest(mux, decoder)
+		encodeResponse = EncodeAddKeywordTargetingResponse(encoder)
+		encodeError    = EncodeAddKeywordTargetingError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "add-keyword-targeting")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
 		payload, err := decodeRequest(r)
 		if err != nil {

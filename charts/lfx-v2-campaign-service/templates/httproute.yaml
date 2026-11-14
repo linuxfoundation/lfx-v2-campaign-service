@@ -47,7 +47,9 @@ spec:
     # Heimdall has no rule for (a route/rule parity violation — an unruled path is
     # denied, or worse). Only briefs/jobs/hubspot carry `**` in the RuleSet, so
     # only they get the free `(/.*)?` tail here — which is also what routes every
-    # per-campaign path below a brief, including the Meta ad-set read and pause/resume
+    # per-campaign path below a brief, including the keyword-targeting read, removals and
+    # additions (campaigns/{id}/keyword-targeting[/removals|/additions], LFXV2-2665 and #564
+    # gap 12), the Meta ad-set read and pause/resume
     # (campaigns/{id}/meta-ad-sets[/{adSetId}/status|/{adSetId}/ads], LFXV2-2665), with no branch of its own. The connection-* family is ruled
     # for exactly the base, /test, and /set-credential sub-paths;
     # google-ads/keywords|audience|audiences|campaign-ref|geo-targets|user-lists|conversion-actions,

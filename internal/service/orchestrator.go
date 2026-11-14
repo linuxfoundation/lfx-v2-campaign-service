@@ -920,6 +920,7 @@ const (
 	opNegativeKeywords           = "negative_keywords"
 	opReadKeywordTargeting       = "read_keyword_targeting"
 	opRemoveKeywordTargeting     = "remove_keyword_targeting"
+	opAddKeywordTargeting        = "add_keyword_targeting"
 	opReadMetaAdSets             = "read_meta_ad_sets"
 	opToggleMetaAdSetStatus      = "toggle_meta_ad_set_status"
 	opReadMetaAds                = "read_meta_ads"
@@ -3779,6 +3780,16 @@ type KeywordTargetingRemover interface {
 	RemoveKeywordTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, removals []model.KeywordTargetingRemoval, revision string) ([]model.KeywordTargetingOutcome, error)
 }
 
+// KeywordTargetingAdder is an OPTIONAL dispatcher capability (#564 gap 12, X only): add POSITIVE
+// keywords to the targeting of the one line item this service created for a campaign — the
+// counterpart of KeywordTargetingRemover. keywords is already normalized
+// (twitter.NormalizeKeywordAdditions); it returns exactly one outcome per keyword, in
+// order, or an error when no keyword got a definite answer. Type-asserted, so a dispatcher without
+// it yields ErrKeywordTargetingUnsupported → 400.
+type KeywordTargetingAdder interface {
+	AddKeywordTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []string) ([]model.KeywordTargetingOutcome, error)
+}
+
 // keywordInsightsFor resolves the dispatcher's keyword-insight capability, or returns the
 // "not supported" sentinel. Shared by the two read paths so both answer identically for an
 // unregistered or non-capable platform.
@@ -4168,6 +4179,37 @@ func (o *Orchestrator) AddNegativeKeywords(ctx context.Context, projectID string
 	start := time.Now()
 	outcomes, aerr := adder.AddNegativeKeywords(callCtx, projectID, platform, campaign, keywords, revision)
 	o.recordLockedUpstream(ctx, platform, opNegativeKeywords, start, lockWaited(), aerr)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if len(outcomes) != len(keywords) {
+		return nil, &unconfirmedOutcomeCountError{platform: string(platform), got: len(outcomes), want: len(keywords)}
+	}
+	return outcomes, nil
+}
+
+// AddKeywordTargeting adds positive keywords to a campaign's keyword targeting (#564 gap 12).
+// Shaped like RemoveKeywordTargeting: a nil campaign is refused here, every other guard is the
+// adapter's, the call gets the mutation timeout and the lock-aware upstream metric, and a short
+// outcome slice is UNCONFIRMED because the POSTs were already issued when it is detected.
+func (o *Orchestrator) AddKeywordTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []string) ([]model.KeywordTargetingOutcome, error) {
+	if campaign == nil {
+		return nil, ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrKeywordTargetingUnsupported, platform)
+	}
+	adder, ok := d.(KeywordTargetingAdder)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordTargetingUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
+	defer cancel()
+	callCtx, lockWaited := domain.WithLockWaitRecorder(callCtx)
+	start := time.Now()
+	outcomes, aerr := adder.AddKeywordTargeting(callCtx, projectID, platform, campaign, keywords)
+	o.recordLockedUpstream(ctx, platform, opAddKeywordTargeting, start, lockWaited(), aerr)
 	if aerr != nil {
 		return nil, aerr
 	}

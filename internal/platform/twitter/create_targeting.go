@@ -167,6 +167,34 @@ func NormalizeKeywordInterestTargeting(keywords, interestIDs []string) (kws, int
 	return kws, interests, nil
 }
 
+// MaxKeywordAdditions bounds one positive keyword add on an existing line item (#564 gap 12). Each
+// keyword is its own POST paced at one write per second per ad account, and the add runs inside
+// the orchestrator's 45-second mutation timeout with the line item read and the criteria list
+// around it. Twenty fit, as for the negative add; the create-time per-list cap (60) would not, and
+// the tail would be cut off as NOT_SENT every time. The line item as a whole stays capped at
+// MaxCreateTargetingCriteria, counting the criteria it already holds.
+const MaxKeywordAdditions = 20
+
+// NormalizeKeywordAdditions applies the create-time keyword rules (NormalizeKeywordInterestTargeting:
+// trimmed, 1-80 characters, no control character, case-folded duplicates dropped with the first
+// spelling kept) to a positive keyword add, then requires 1..MaxKeywordAdditions distinct
+// keywords. Pure: the service calls it to answer a 400 naming the problem before anything is
+// contacted and passes the normalized list on, and the dispatcher applies it again, which changes
+// nothing on a normalized list. A refusal wraps domain.ErrKeywordTargetingInvalid.
+func NormalizeKeywordAdditions(keywords []string) ([]string, error) {
+	if len(keywords) == 0 {
+		return nil, fmt.Errorf("%w: send 1 to %d keywords, got 0", domain.ErrKeywordTargetingInvalid, MaxKeywordAdditions)
+	}
+	kws, _, err := NormalizeKeywordInterestTargeting(keywords, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", domain.ErrKeywordTargetingInvalid, err)
+	}
+	if len(kws) > MaxKeywordAdditions {
+		return nil, fmt.Errorf("%w: send 1 to %d distinct keywords, got %d", domain.ErrKeywordTargetingInvalid, MaxKeywordAdditions, len(kws))
+	}
+	return kws, nil
+}
+
 // NormalizeConversationTopics applies the gap 8 rules (#564): each conversation topic is the
 // targeting_value of an entry of GET targeting_criteria/conversations, trimmed and lower-cased
 // (X ids are base-36), 1-32 letters or digits; duplicates are dropped and a blank entry refused.

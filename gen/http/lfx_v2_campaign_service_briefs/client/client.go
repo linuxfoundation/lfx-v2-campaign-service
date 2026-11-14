@@ -130,6 +130,10 @@ type Client struct {
 	// remove-keyword-targeting endpoint.
 	RemoveKeywordTargetingDoer goahttp.Doer
 
+	// AddKeywordTargeting Doer is the HTTP client used to make requests to the
+	// add-keyword-targeting endpoint.
+	AddKeywordTargetingDoer goahttp.Doer
+
 	// ListMetaAdSets Doer is the HTTP client used to make requests to the
 	// list-meta-ad-sets endpoint.
 	ListMetaAdSetsDoer goahttp.Doer
@@ -230,6 +234,7 @@ func NewClient(
 		AddNegativeKeywordsDoer:    doer,
 		GetKeywordTargetingDoer:    doer,
 		RemoveKeywordTargetingDoer: doer,
+		AddKeywordTargetingDoer:    doer,
 		ListMetaAdSetsDoer:         doer,
 		ListMetaAdsDoer:            doer,
 		ToggleMetaAdSetStatusDoer:  doer,
@@ -918,6 +923,30 @@ func (c *Client) RemoveKeywordTargeting() goa.Endpoint {
 		resp, err := c.RemoveKeywordTargetingDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// AddKeywordTargeting returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service add-keyword-targeting server.
+func (c *Client) AddKeywordTargeting() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeAddKeywordTargetingRequest(c.encoder)
+		decodeResponse = DecodeAddKeywordTargetingResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildAddKeywordTargetingRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.AddKeywordTargetingDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "add-keyword-targeting", err)
 		}
 		return decodeResponse(resp)
 	}

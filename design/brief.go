@@ -1416,6 +1416,33 @@ var KeywordTargetingRemovals = Type("keyword-targeting-removals", func() {
 	})
 })
 
+// KeywordTargetingAdditionResult is one positive keyword add's outcome (#564 gap 12, X).
+var KeywordTargetingAdditionResult = Type("keyword-targeting-addition-result", func() {
+	Attribute("keyword", String, "The keyword this result answers, as normalized: trimmed, first spelling of a case-insensitive duplicate kept.", func() { Example("kubernetes") })
+	Attribute("criterion_id", String, "The X targeting criterion that holds the keyword: the one this request created (APPLIED), or the one the line item already had (ALREADY_PRESENT). Absent for FAILED and UNCONFIRMED.", func() { Example("2kzxf") })
+	Attribute("outcome", String, "APPLIED — added by this request; ALREADY_PRESENT — the line item already targets it as a broad keyword, so nothing was sent; FAILED — definitely not added (see error_code); UNCONFIRMED — may have been added, read the keyword targeting again before retrying.", negativeKeywordOutcomeEnum)
+	Attribute("error_code", String, "Why a keyword is FAILED: NOT_SENT (the request carrying it was never sent) or REJECTED (X refused it). X's own text is never returned.", func() { Example("NOT_SENT") })
+	Required("keyword", "outcome")
+})
+
+// KeywordTargetingAdditions is the outcome of an add-keyword-targeting request.
+var KeywordTargetingAdditions = Type("keyword-targeting-additions", func() {
+	Attribute("campaign_id", String, "The campaign whose targeting was changed", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("results", ArrayOf(KeywordTargetingAdditionResult), "Exactly one entry per DISTINCT requested keyword after normalization (trimmed; a case-insensitive repeat is dropped, first spelling kept), in request order. One POST per keyword sent, each with its own outcome.")
+	Attribute("applied_count", Int, "How many requested keywords the line item now targets: results whose outcome is APPLIED or ALREADY_PRESENT.", func() { Example(2) })
+	Required("campaign_id", "results", "applied_count")
+	// A type-level example, for the reason NegativeKeywords has one: two results, both now
+	// targeted, so applied_count is 2.
+	Example(map[string]any{
+		"campaign_id": "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+		"results": []map[string]any{
+			{"keyword": "kubernetes", "criterion_id": "2kzxf", "outcome": "APPLIED"},
+			{"keyword": "cloud native", "criterion_id": "2kzxg", "outcome": "ALREADY_PRESENT"},
+		},
+		"applied_count": 2,
+	})
+})
+
 // MetaAdSet is one ad set under a Meta campaign, read live (LFXV2-2665). Never persisted.
 var MetaAdSet = Type("meta-ad-set", func() {
 	Attribute("id", String, "The Meta ad set id", func() { Example("120210000000000888") })
@@ -2930,6 +2957,60 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		commonBriefErrors()
 		HTTP(func() {
 			POST("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-targeting/removals")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("add-keyword-targeting", func() {
+		Description("Add POSITIVE keywords to the keyword TARGETING of an X campaign (#564 gap 12) — the counterpart of " +
+			"remove-keyword-targeting. Each keyword becomes one BROAD_KEYWORD targeting criterion (operator_type EQ) on the ONE " +
+			"line item this service created for the campaign, the criterion an X create sends for twitterConfig.keywords. " +
+			"Any platform but X is **400** (Reddit's positive add is not built). " +
+			"A MUTATION on a live paid campaign that can WIDEN delivery, guarded like the removal, all before X is mutated: the " +
+			"batch, the campaign's provisioning, its recorded ad account (a row that records none is refused, never assumed) " +
+			"and the account's match with the project's connection; then the line item is read and must report THIS campaign, " +
+			"and its targeting criteria are listed completely. It persists nothing, so it takes no If-Match. " +
+			"KEYWORDS follow the create-time rules: each is trimmed, must be 1-80 characters with no control character, and a " +
+			"case-insensitive repeat is dropped (first spelling kept); 1 to 20 distinct keywords per request (each is its own " +
+			"paced POST). THE LINE ITEM IS CAPPED AT 60 TARGETING CRITERIA, the per-create cap, counting every live criterion " +
+			"it already holds (locations, languages, keywords, negatives, audiences …) plus the keywords this request would " +
+			"send: over it is **409** with nothing sent. " +
+			"IDEMPOTENT: a keyword the line item already targets as a live broad keyword (compared ignoring case and repeated " +
+			"whitespace) is ALREADY_PRESENT, reports that criterion's id, and is not sent again. " +
+			"One POST per remaining keyword, in order, paced and sent ONCE (never retried on a 429), each APPLIED (+ criterion " +
+			"id), FAILED (NOT_SENT, REJECTED) or UNCONFIRMED. A per-line-item lock shared by every replica is held from the " +
+			"criteria read through the last POST, so two LFX adds to one line item never both pass the cap or both send the " +
+			"same keyword; after an UNCONFIRMED POST it is kept a further 15 seconds. " +
+			"OFF until TWITTER_KEYWORD_ADD_ENABLED is \"true\" (answered 400 like an unsupported platform), because no " +
+			"positive criterion has yet been added to a live line item. " +
+			"**400** for a malformed batch, an unsupported platform or the gate off. **409** as for the removal (unprovisioned, " +
+			"a different or unrecorded ad account, an unusable connection, a line item this service did not record or X no " +
+			"longer reports under this campaign, unreadable targeting), the 60-criterion cap, or another LFX add to the same " +
+			"line item still in progress after a short wait. **503** only when no keyword got a definite answer; its MESSAGE " +
+			"separates a DEFINITE failure (nothing was added — retry) from an UNCONFIRMED one (read the targeting again).")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			// Sent upstream as targeting_value after trimming. The element MaxLength is a sanity
+			// bound on the raw string; the 80-character rule applies after trimming, in the service.
+			Attribute("keywords", ArrayOf(String, func() {
+				MinLength(1)
+				MaxLength(200)
+			}), "The keywords to add, as broad keywords: 1-80 characters each after trimming, no control character.", func() {
+				MinLength(1)
+				MaxLength(20)
+				Example([]string{"kubernetes", "cloud native"})
+			})
+			Required("project_id", "brief_id", "campaign_id", "keywords")
+		})
+		Result(KeywordTargetingAdditions)
+		commonBriefErrors()
+		HTTP(func() {
+			POST("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-targeting/additions")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			briefErrorResponses()

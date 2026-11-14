@@ -411,6 +411,16 @@ app:
     TWITTER_AUDIENCE_EXPANSION_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to the positive keyword add lever on an existing X
+    # campaign (#564 gap 12): POST .../keyword-targeting/additions, one
+    # BROAD_KEYWORD criterion (operator_type EQ) per keyword on the line item this
+    # service created. Default off: no positive criterion has been added to a live
+    # line item yet. It names no account resource. While off, the endpoint answers
+    # 400 "not supported or not enabled" before X is contacted. Any value other
+    # than "true" is treated as off.
+    TWITTER_KEYWORD_ADD_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to X custom audiences (#564): the create inputs
     # twitterConfig.customAudienceIds / excludedCustomAudienceIds (CUSTOM_AUDIENCE
     # targeting criteria, EQ and NE, on the new line item) and the picker read
