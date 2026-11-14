@@ -209,6 +209,13 @@ type CampaignInput struct {
 	ExcludedGeoTargets []string
 	ProximityTargets   []ProximityTarget
 	Languages          []string
+	// SearchPartners chooses the ad group's search network (#563 gap 11, AdGroup.Network): true
+	// is OwnedAndOperatedAndSyndicatedSearch (Microsoft's sites and its syndicated search
+	// partners), false is OwnedAndOperatedOnly (Microsoft's own sites). nil sends no Network,
+	// so Microsoft keeps its default (partners included), exactly as before the field existed.
+	// Applied only to an ad group this run creates; a reused one keeps its network and the
+	// steps say so, as they do for the flight dates.
+	SearchPartners *bool
 }
 
 // CampaignResult reports what CreateCampaign created (or found). The campaign NAME
@@ -1015,7 +1022,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// up-front check and the sent value drift apart, and the up-front check is the one that
 	// guarantees nothing is orphaned.
 	return c.createAdGroupAndAd(ctx, in, campaignID, alreadyExisted, &steps, campaignPartial,
-		targeting{keywords: keywords, cpcBid: cpcBid, cpcBidSet: cpcBidSet, flight: flightDates, campaignLanguages: len(extra.Languages) > 0})
+		targeting{keywords: keywords, cpcBid: cpcBid, cpcBidSet: cpcBidSet, flight: flightDates, campaignLanguages: len(extra.Languages) > 0,
+			network: adGroupNetwork(in.SearchPartners)})
 }
 
 // findCampaignByName returns the id of the campaign whose Name matches name, or "" if

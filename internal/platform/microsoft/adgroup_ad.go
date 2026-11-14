@@ -73,6 +73,12 @@ const (
 	// correct customer-facing targeting language (e.g. TraditionalChinese) before enabling.
 	adGroupLanguage = "English"
 
+	// AdGroup.Network values (#563 gap 11). v13: "The search networks where you want your ads
+	// to display"; Optional on Add, defaulting to OwnedAndOperatedAndSyndicatedSearch.
+	// SyndicatedSearchOnly (partners without Microsoft's own sites) is not offered.
+	adGroupNetworkWithPartners = "OwnedAndOperatedAndSyndicatedSearch"
+	adGroupNetworkOwnedOnly    = "OwnedAndOperatedOnly"
+
 	// maxAdGroupNameRunes bounds the composed ad-group name. Microsoft limits
 	// AdGroup.Name to 256 characters; validated in runes before the create.
 	maxAdGroupNameRunes = 256
@@ -154,6 +160,22 @@ type msAdGroup struct {
 	// requested so Microsoft keeps its defaults (serve from today; no end).
 	StartDate *msDate `json:"StartDate,omitempty"`
 	EndDate   *msDate `json:"EndDate,omitempty"`
+	// Network is the ad group's search network (#563 gap 11), OMITTED unless the caller sent
+	// microsoftConfig.searchPartners, so Microsoft keeps its default (partners included).
+	Network string `json:"Network,omitempty"`
+}
+
+// adGroupNetwork maps microsoftConfig.searchPartners to AdGroup.Network: nil is "" (omitted,
+// Microsoft's default), true includes the syndicated search partners, false excludes them.
+func adGroupNetwork(searchPartners *bool) string {
+	switch {
+	case searchPartners == nil:
+		return ""
+	case *searchPartners:
+		return adGroupNetworkWithPartners
+	default:
+		return adGroupNetworkOwnedOnly
+	}
 }
 
 // createAdGroupsRequest is the POST /AdGroups body. The v13 AddAdGroups operation
@@ -281,6 +303,8 @@ type targeting struct {
 	// campaignLanguages is true when the campaign was created with Languages (#563): the ad group
 	// is then created with no Language, since an ad group language overrides the campaign's.
 	campaignLanguages bool
+	// network is the validated AdGroup.Network (#563 gap 11); "" sends none.
+	network string
 }
 
 // NOTE: geo targeting has no field here. The CAMPAIGN-level location criterion ids reach every
@@ -333,11 +357,7 @@ func (c *Client) createAdGroupAndAd(
 	// (idempotent), the create is a mutation (not retried on 429). A cancellation
 	// during the lookup is a clean abort (nothing new created), but the CAMPAIGN
 	// already exists, so it is surfaced as a reconcilable partial rather than (nil,err).
-	language := adGroupLanguage
-	if tgt.campaignLanguages {
-		language = ""
-	}
-	adGroupID, existed, err := c.findOrCreateAdGroup(ctx, campaignID, adGroupName, tgt.cpcBid, tgt.cpcBidSet, tgt.flight, language)
+	adGroupID, existed, err := c.findOrCreateAdGroup(ctx, campaignID, adGroupName, tgt)
 	if err != nil {
 		// ORDER MATTERS. createOutcomeAmbiguous catches a transportError FIRST — a ctx-cancel
 		// mid-HTTP-Do is wrapped as a transportError (whose Unwrap exposes context.Canceled),
@@ -391,6 +411,15 @@ func (c *Client) createAdGroupAndAd(
 			*steps = append(*steps, fmt.Sprintf("Warning: flight dates NOT applied to reused ad group %s; its existing schedule is unchanged — verify the ad group dates in Microsoft Advertising", adGroupID))
 		} else {
 			*steps = append(*steps, fmt.Sprintf("Ad group flight dates set: %s", tgt.flight))
+		}
+	}
+	// The search network (#563 gap 11) follows the flight dates' rule: set only on an ad group
+	// this run created, and a reused one is reported unchanged rather than implied updated.
+	if tgt.network != "" {
+		if existed {
+			*steps = append(*steps, fmt.Sprintf("Warning: search network NOT applied to reused ad group %s; its existing network is unchanged — verify the ad group's search network in Microsoft Advertising", adGroupID))
+		} else {
+			*steps = append(*steps, fmt.Sprintf("Ad group search network set: %s", tgt.network))
 		}
 	}
 
@@ -636,7 +665,10 @@ func unconfirmedLookupErr(ctx context.Context, ferr error) error {
 	return fmt.Errorf("idempotency lookup failed (cannot confirm the entity is absent; verify before retrying): %w: %w", ferr, errNoID)
 }
 
-func (c *Client) findOrCreateAdGroup(ctx context.Context, campaignID, name string, cpcBid float64, cpcBidSet bool, fl flight, language string) (id string, existed bool, err error) {
+// findOrCreateAdGroup finds the ad group by name or creates it from the validated targeting:
+// CpcBid (when set), the flight dates, the Language (English, or none under a campaign created
+// with Languages) and the search network (when requested).
+func (c *Client) findOrCreateAdGroup(ctx context.Context, campaignID, name string, tgt targeting) (id string, existed bool, err error) {
 	if existingID, ferr := c.findAdGroupByName(ctx, campaignID, name); ferr != nil {
 		return "", false, unconfirmedLookupErr(ctx, ferr)
 	} else if existingID != "" {
@@ -647,17 +679,22 @@ func (c *Client) findOrCreateAdGroup(ctx context.Context, campaignID, name strin
 		// reason; createAdGroupAndAd records that in a warning step.
 		return existingID, true, nil
 	}
+	language := adGroupLanguage
+	if tgt.campaignLanguages {
+		language = ""
+	}
 	adGroup := msAdGroup{
 		Name:        name,
 		Status:      adGroupStatusPaused,
 		AdGroupType: adGroupTypeSearchStandard,
 		Language:    language,
+		Network:     tgt.network,
 	}
-	if cpcBidSet {
-		adGroup.CpcBid = &msBid{Amount: cpcBid}
+	if tgt.cpcBidSet {
+		adGroup.CpcBid = &msBid{Amount: tgt.cpcBid}
 	}
-	adGroup.StartDate = fl.start
-	adGroup.EndDate = fl.end
+	adGroup.StartDate = tgt.flight.start
+	adGroup.EndDate = tgt.flight.end
 	req := createAdGroupsRequest{
 		CampaignId: json.Number(campaignID),
 		AdGroups:   []msAdGroup{adGroup},
