@@ -2863,6 +2863,10 @@ type CampaignInput struct {
 	// request on any other objective, outside the list, or with a manual bid cap (a link-click cap
 	// needs the LINK_CLICKS goal).
 	OptimizationGoal string
+	// FrequencyCap is the awareness ad set's impressions-per-person cap (metaConfig.frequencyCap,
+	// #550), sent as frequency_control_specs. Nil sends nothing. Refused before any request on any
+	// other objective or with a value outside 1..90 (NormalizeFrequencyCap).
+	FrequencyCap *FrequencyCap
 	// ReconcileByName opts THIS call in to looking the campaign (and its ad set) up by
 	// name before creating, and reusing a PAUSED match instead of creating a second one.
 	//
@@ -3203,6 +3207,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, err
 	}
 	if err := CheckDevicePlacements(audience, in.Placements); err != nil {
+		return nil, err
+	}
+	if err := NormalizeFrequencyCap(objective, in.FrequencyCap); err != nil {
 		return nil, err
 	}
 	// The ad set's optimization goal: the objective's own unless metaConfig.optimizationGoal picks
@@ -3645,6 +3652,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	if promotedObject != nil {
 		adSetBody["promoted_object"] = promotedObject
+	}
+	// The awareness frequency cap (#550, gap 18), checked with the deterministic inputs above.
+	if in.FrequencyCap != nil {
+		adSetBody["frequency_control_specs"] = frequencyControlSpecs(in.FrequencyCap)
 	}
 
 	// EU DSA advertiser/payer disclosure. Attached only when supplied: Meta rejects an

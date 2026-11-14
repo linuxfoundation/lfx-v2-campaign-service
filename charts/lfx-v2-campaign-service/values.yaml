@@ -515,6 +515,15 @@ app:
     META_OPTIMIZATION_GOAL_ENABLED:
       value: "false"
 
+    # Opt this deployment IN to metaConfig.frequencyCap (#550): an
+    # impressions-per-person cap on the awareness objective's ad set
+    # (frequency_control_specs). Off by default until the payload is verified
+    # against a live ad account; set exactly "true" in lfx-v2-argocd. While off,
+    # a create carrying the field is refused with a 400 before any job exists. It
+    # names no account resource. Any value other than "true" is treated as off.
+    META_FREQUENCY_CAP_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to metaConfig.targeting (#550): age, gender,
     # custom audiences to include and exclude, and the Advantage+ audience
     # flag on the Meta ad set. A per-deployment opt-in, off by default, because

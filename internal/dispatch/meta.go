@@ -89,6 +89,10 @@ type metaConfig struct {
 	// objective's own goal. Refused on any other objective, with manual bidding (metaBidPlan), and
 	// while META_OPTIMIZATION_GOAL_ENABLED is not "true".
 	OptimizationGoal string `json:"optimizationGoal"`
+	// FrequencyCap is the awareness ad set's impressions-per-person cap (#550, gap 18),
+	// meta.NormalizeFrequencyCap's rules. Refused on any other objective and while
+	// META_FREQUENCY_CAP_ENABLED is not "true". Null or absent sends nothing.
+	FrequencyCap *meta.FrequencyCap `json:"frequencyCap,omitempty"`
 }
 
 // metaCreativeOptionDisabled refuses a creative option this deployment has not opted in to. It
@@ -129,6 +133,20 @@ func checkMetaCreativeOptions(cfg metaConfig) error {
 		}
 	}
 	return nil
+}
+
+// checkMetaFrequencyCap refuses a metaConfig.frequencyCap while META_FREQUENCY_CAP_ENABLED is not
+// exactly "true", and otherwise one meta.NormalizeFrequencyCap refuses. Nil is no cap. It is not
+// part of checkMetaCreativeOptions: PreflightCreate's best-effort decode can leave a partly filled
+// cap behind a type error, so PreflightCreate passes the cap decodeMetaFrequencyCap read instead.
+func checkMetaFrequencyCap(objective string, f *meta.FrequencyCap) error {
+	if f == nil {
+		return nil
+	}
+	if os.Getenv(constants.EnvMetaFrequencyCapEnabled) != "true" {
+		return metaCreativeOptionDisabled("frequencyCap", constants.EnvMetaFrequencyCapEnabled)
+	}
+	return meta.NormalizeFrequencyCap(objective, f)
 }
 
 // metaTargetingEnabled reports whether this deployment opted in to metaConfig.targeting (#550).
@@ -787,6 +805,10 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	if err := checkMetaTargeting(cfg.Targeting, cfg.Placements); err != nil {
 		return nil, notCreated(err)
 	}
+	// The awareness frequency cap gate and its rules (#550), before any Meta request.
+	if err := checkMetaFrequencyCap(cfg.Objective, cfg.FrequencyCap); err != nil {
+		return nil, notCreated(err)
+	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
 	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
 	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
@@ -876,6 +898,8 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		ConversionEvent: cfg.ConversionEvent,
 		// The traffic optimization goal as the caller sent it; the client normalizes it (#550). Gated above.
 		OptimizationGoal: cfg.OptimizationGoal,
+		// The awareness frequency cap; the client checks it again (#550). Gated above.
+		FrequencyCap: cfg.FrequencyCap,
 		// The audience targeting as the caller sent it; the client normalizes it (#550).
 		Targeting: cfg.Targeting,
 
@@ -1729,6 +1753,15 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 	if err := checkMetaTargeting(t, cfg.Placements); err != nil {
 		return err
 	}
+	// The frequency cap (#550): decoded on its own for the same reason, then checked against the
+	// best-effort objective.
+	fc, err := decodeMetaFrequencyCap(config)
+	if err != nil {
+		return err
+	}
+	if err := checkMetaFrequencyCap(cfg.Objective, fc); err != nil {
+		return err
+	}
 	return domain.ErrPreflightNotApplicable
 }
 
@@ -1739,10 +1772,23 @@ var metaStringConfigKeys = []string{"instagramUserId", "callToAction", "conversi
 
 // decodeMetaTargeting decodes metaConfig.targeting on its own, so a wrong-typed block (or a
 // wrong-typed field in it) is a synchronous refusal rather than an absent block — PreflightCreate's
-// best-effort decode skips a field it cannot decode. A config that is not an object envelope, or
-// has no metaConfig object, is left to Dispatch. The key is matched case-insensitively, as
-// encoding/json matches it; null is absent.
+// best-effort decode skips a field it cannot decode. See decodeMetaConfigObject.
 func decodeMetaTargeting(config json.RawMessage) (*meta.AudienceTargeting, error) {
+	return decodeMetaConfigObject[meta.AudienceTargeting](config, "targeting",
+		"ageMin, ageMax (integers), genders, customAudiences, excludedCustomAudiences (string lists), advantageAudience (boolean), locales (an integer list) and devicePlatforms (a string list)")
+}
+
+// decodeMetaFrequencyCap decodes metaConfig.frequencyCap on its own, for the same reason as
+// decodeMetaTargeting.
+func decodeMetaFrequencyCap(config json.RawMessage) (*meta.FrequencyCap, error) {
+	return decodeMetaConfigObject[meta.FrequencyCap](config, "frequencyCap", "maxImpressions and intervalDays (integers)")
+}
+
+// decodeMetaConfigObject decodes the object at metaConfig.<key> on its own, so a wrong-typed object
+// (or a wrong-typed field in it) is a synchronous refusal naming shape rather than an absent object.
+// A config that is not an object envelope, or has no metaConfig object, is left to Dispatch. The key
+// is matched case-insensitively, as encoding/json matches it; null is absent.
+func decodeMetaConfigObject[T any](config json.RawMessage, key, shape string) (*T, error) {
 	if len(config) == 0 {
 		return nil, nil
 	}
@@ -1759,27 +1805,27 @@ func decodeMetaTargeting(config json.RawMessage) (*meta.AudienceTargeting, error
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	var t *meta.AudienceTargeting
+	var out *T
 	var seen []string
 	for _, k := range keys {
-		if !strings.EqualFold(k, "targeting") {
+		if !strings.EqualFold(k, key) {
 			continue
 		}
 		// Two case-variant keys would be read by Dispatch's encoding/json in DOCUMENT order, which
-		// this map cannot see, so the pre-check could judge a different block than the job sends.
+		// this map cannot see, so the pre-check could judge a different object than the job sends.
 		if seen = append(seen, quoteKey(k)); len(seen) > 1 {
-			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig: more than one targeting key (%s); send exactly one", domain.ErrCreateConfigInvalid, strings.Join(seen, ", ")))
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig: more than one %s key (%s); send exactly one", domain.ErrCreateConfigInvalid, key, strings.Join(seen, ", ")))
 		}
 		if isJSONNull(platformCfg[k]) {
 			continue
 		}
-		var got meta.AudienceTargeting
+		var got T
 		if err := json.Unmarshal(platformCfg[k], &got); err != nil {
-			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig: %s must be an object of ageMin, ageMax (integers), genders, customAudiences, excludedCustomAudiences (string lists), advantageAudience (boolean), locales (an integer list) and devicePlatforms (a string list)", domain.ErrCreateConfigInvalid, quoteKey(k)))
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig: %s must be an object of %s", domain.ErrCreateConfigInvalid, quoteKey(k), shape))
 		}
-		t = &got
+		out = &got
 	}
-	return t, nil
+	return out, nil
 }
 
 // checkMetaStringFieldShape refuses a metaConfig whose instagramUserId, dsaBeneficiary, dsaPayor,

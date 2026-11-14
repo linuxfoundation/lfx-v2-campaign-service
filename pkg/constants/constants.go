@@ -339,6 +339,13 @@ const (
 	// no account resource, so it needs no global_marketing_ops.
 	EnvMetaOptimizationGoalEnabled = "META_OPTIMIZATION_GOAL_ENABLED"
 
+	// EnvMetaFrequencyCapEnabled opts a deployment IN to metaConfig.frequencyCap (#550, gap 18):
+	// an impressions-per-person cap on the awareness objective's ad set (frequency_control_specs).
+	// Same rules as EnvMetaCallToActionEnabled: only the exact value "true" enables it, a create
+	// carrying the field while it is off is a 400 before any job exists, and it is off by default
+	// until the payload is verified against a live ad account. It names no account resource.
+	EnvMetaFrequencyCapEnabled = "META_FREQUENCY_CAP_ENABLED"
+
 	// EnvMetaAudienceTargetingEnabled opts a deployment IN to metaConfig.targeting (#550): age,
 	// gender, custom audiences to include and exclude, and the Advantage+ audience flag on the ad
 	// set. Only the exact value "true" enables it; unset or any other value fails closed, and a

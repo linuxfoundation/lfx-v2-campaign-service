@@ -90,6 +90,10 @@ traffic ad set). Only exactly `"true"` enables it; off, a create carrying the fi
 a 400 before any job exists. It names no account resource, so it is not behind
 `global_marketing_ops`.
 
+`META_FREQUENCY_CAP_ENABLED` is the same kind of gate, defaulting to `"false"` (#550), for
+`metaConfig.frequencyCap` (an impressions-per-person cap on the awareness ad set). Only exactly
+`"true"` enables it; off, a create carrying the field is refused with a 400 before any job exists.
+
 `META_AUDIENCE_TARGETING_ENABLED` is the same kind of gate for Meta, defaulting to `"false"`
 (#550): it opts a cluster in to `metaConfig.targeting` (age, gender, custom audiences to include
 and exclude, and the Advantage+ audience flag on the ad set). Each custom audience is read and must

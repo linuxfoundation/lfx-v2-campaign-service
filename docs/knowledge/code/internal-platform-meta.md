@@ -1082,6 +1082,17 @@ and are `domain.PreflightRefusal`s; the dispatcher gates the field behind
 it with the other `metaStringConfigKeys`. Not live-verified: the OUTCOME_TRAFFIC +
 LANDING_PAGE_VIEWS + billing_event IMPRESSIONS ad set.
 
+`CampaignInput.FrequencyCap` (`metaConfig.frequencyCap`, gap 18: `maxImpressions` per person every
+`intervalDays`) is sent as the ad set's `frequency_control_specs`
+(`[{"event":"IMPRESSIONS","interval_days":…,"max_frequency":…}]`). Meta takes it only on a REACH (or
+THRUPLAY) ad set, so `NormalizeFrequencyCap` refuses it on every objective but awareness, and each
+field outside 1–90 (Meta's documented range; a missing field reads as 0 and is refused). The
+dispatcher gates it behind `META_FREQUENCY_CAP_ENABLED` (default off). `PreflightCreate` decodes the
+object on its own (`decodeMetaFrequencyCap`, sharing `decodeMetaConfigObject` with
+`decodeMetaTargeting`) so a wrong-typed cap is a 400, and checks that decode rather than the
+best-effort one, which can leave a partly filled cap behind a type error. Not live-verified: the
+payload and the 1–90 bounds.
+
 ## Audience targeting (`targeting.go`, #550)
 
 `CampaignInput.Targeting` (`metaConfig.targeting`) adds an age range, a gender, custom audiences to
