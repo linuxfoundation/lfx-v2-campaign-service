@@ -124,6 +124,12 @@ LinkedIn: `linkedInConfig.conversions` sends a Campaign Conversions PUT that has
 against a live LinkedIn account. Only exactly `"true"` enables it; off, a create naming it is
 refused with a 400 before a job exists. The ids additionally require `global_marketing_ops`.
 
+`LINKEDIN_ADS_NAMING_V2_ENABLED` defaults to `"false"` (#587) and switches new LinkedIn campaign
+names from the legacy shape to LF's convention (region, audience intent, format and business unit
+segments). Only exactly `"true"` enables it; off, every name is the legacy one byte for byte. On,
+`linkedInConfig.naming.businessUnit` is required. Turn it on only after lf-dbt parses the new
+names and self-serve sends `naming`; existing campaigns are never renamed.
+
 `SURVEY_SEQUENCE_WORKFLOW_ID` is a plain value defaulting to `""`, which selects the in-code
 default `1841232183`: the LF Research survey-promo workflow a survey send series
 (`send-workflows`) is copied from when a request names none. That id exists only in the LF

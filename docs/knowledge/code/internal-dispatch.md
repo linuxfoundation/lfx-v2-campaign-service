@@ -5610,3 +5610,14 @@ and `Dispatch` (not-created refusal) both run, after `checkConversionsShape` ref
 are not JSON strings (encoding/json would decode a number to `""`); `Dispatch` keeps the de-duplicated copy for the
 client and the snapshot. `campaignFromLinkedIn` reports a result with `ConversionsFailed` as
 `created_degraded`.
+
+**LinkedIn naming (#587).** `linkedinConfig.Naming` (`linkedInConfig.naming`: region, audienceIntent,
+businessUnit) is shape-checked by `checkNamingShape` (unknown keys, null, non-string values) and
+validated by `linkedinNaming` through `linkedin.ValidateNaming` (closed lists, canonical spelling)
+whatever the gate says, so a value outside its list is a synchronous 400 from `PreflightCreate` and
+a not-created refusal from `Dispatch`. `linkedinNaming` returns nil while
+`LINKEDIN_ADS_NAMING_V2_ENABLED` is not exactly `"true"` (the client then composes the legacy name
+byte for byte); while it is on, a missing `businessUnit` is refused, and the canonical copy becomes
+`CampaignInput.Naming` and replaces the snapshot's. `Dispatch` also passes
+`model.DispatchCampaignName(ctx)` as `CampaignInput.FrozenCampaignName`, the name the claimed row
+already records, so a retry never recomposes it.

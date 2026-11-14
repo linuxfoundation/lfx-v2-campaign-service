@@ -404,6 +404,17 @@ const (
 	// The ids also require global_marketing_ops on the project (service.LinkedInMarketingOpsInputs).
 	EnvLinkedInAdsConversionsEnabled = "LINKEDIN_ADS_CONVERSIONS_ENABLED"
 
+	// EnvLinkedInAdsNamingV2Enabled opts a deployment IN to LinkedIn campaign naming v2 (#587):
+	// new campaigns are named by LF's convention, "Events | <event> | <region> | <objective> |
+	// <intent> | <format> | <business unit> | <funnel>", instead of the legacy name carrying
+	// "LinkedIn" as its region and the LFX project slug as its business unit. Only the exact value
+	// "true" enables it; unset or any other value keeps the legacy name byte for byte. While on,
+	// linkedInConfig.naming.businessUnit is required (a 400 before a job exists without it).
+	// Existing campaigns are never renamed, and a retry reuses a campaign under the name it was
+	// created with. Turn it on per environment, in lfx-v2-argocd, only after the data pipeline
+	// (lf-dbt) parses the new names and self-serve sends naming.
+	EnvLinkedInAdsNamingV2Enabled = "LINKEDIN_ADS_NAMING_V2_ENABLED"
+
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,
 	// so every campaign authenticates as the marketing-ops account regardless of any

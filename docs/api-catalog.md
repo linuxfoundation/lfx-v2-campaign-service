@@ -1116,6 +1116,45 @@ list (omit the field), more than 20 ids. Conversion rules belong to the ad accou
 create-campaigns also requires `global_marketing_ops` on the project for `conversions` (`403`;
 `503` when the check cannot be made), as for `googleAdsConfig.conversionActions`.
 
+#### LinkedInConfig naming (`linkedInConfig.naming`, #587)
+
+The caller's choice of the segments of LF's LinkedIn campaign naming convention,
+
+```
+Events | <event> | <region> | <objective> | <audienceIntent> | <format> | <businessUnit> | <funnel>
+Events | Open Source Summit Japan 2026 | APAC | Conversions | Intent | Static | LF Events | MoFU
+```
+
+in place of the legacy name `Events | <event> | LinkedIn | <objective> | Prospecting | Static |
+<project slug> | <funnel>`, behind `LINKEDIN_ADS_NAMING_V2_ENABLED` (off by default; while off, every
+campaign keeps the legacy name, and `naming` is validated but has no effect).
+
+```jsonc
+"naming": {
+  "region": "APAC",                // optional; NA | EMEA | APAC | LATAM | India | Global
+  "audienceIntent": "Intent",      // optional; Intent | Prospecting | Retargeting
+  "businessUnit": "LF Events"      // required while the flag is on; closed list below
+}
+```
+
+| Segment | Source |
+|---|---|
+| region | `naming.region`; omitted, the one region every geo target falls in (US → NA; Germany, UK → EMEA; India → India; Japan, Singapore, South Korea, Australia, Taiwan, Hong Kong → APAC, Meta's buckets), else `Global` — two regions, or a geo the service cannot bucket |
+| objective | the bidding strategy, as before (`Traffic` automatic, `Conversions` manual) |
+| audienceIntent | `naming.audienceIntent`; omitted, `Retargeting` for a campaign labelled with the `retargeting` tactic or whose `targeting` includes `dynamicSegments`, else `Prospecting`. The tactic and a later slot's `#<n>` are still appended (`Retargeting retargeting #2`), because the name is the key LinkedIn reuses a campaign by |
+| format | derived from the creative, never sent: `Static` (single-image) for every campaign today; text ads will be `Text` and video `Motion` |
+| businessUnit | `naming.businessUnit`, one of the data pipeline's canonical project names (lf-dbt `normalize_project_name` / `map_paid_ads_project_id`): `Cloud Native Computing Foundation (CNCF)`, `LF Education`, `LF Events`, `PyTorch Project`, `OpenSearch Project`, `Open Source Security Foundation (OpenSSF)`, `RISC-V International`, `Agentic AI Foundation (AAIF)`, `Valkey`, `FinOps Project`, `LF Core`, `LF Corporate`, `LF Training`, `LFX Platform`, `The Linux Foundation` |
+| funnel | the claimed row's `funnel_stage`, as before (`MoFU` when unlabelled) |
+
+Values match case-insensitively and are stored in the spelling above. The campaign GROUP name is
+unchanged (`Events | <event> | <project slug>`). An existing campaign is never renamed: a retry
+sends the name the campaign row recorded, and a create that finds a campaign under the legacy name
+in the event's group reuses it under that name rather than creating a second one.
+
+Refused with a synchronous `400 invalid campaign config: linkedInConfig.naming…`, whatever the
+flag: an unknown key, an explicit `null`, a non-object or a non-string value, and a value outside
+its list; while the flag is on, a missing `businessUnit`.
+
 #### GoogleAdsConfig (the `googleAdsConfig` object)
 
 Google Ads per-platform config. Which campaign is created depends on `channel`. The default

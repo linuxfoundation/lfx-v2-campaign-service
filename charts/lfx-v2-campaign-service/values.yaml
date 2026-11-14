@@ -583,6 +583,18 @@ app:
     LINKEDIN_ADS_CONVERSIONS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to LinkedIn campaign naming v2 (#587): new
+    # campaigns are named by LF's convention ("Events | <event> | <region> |
+    # <objective> | <intent> | <format> | <business unit> | <funnel>") instead of
+    # the legacy name with "LinkedIn" as its region and the LFX project slug as
+    # its business unit. While on, linkedInConfig.naming.businessUnit is required.
+    # Existing campaigns are never renamed. Set it to exactly "true" in
+    # lfx-v2-argocd only after lf-dbt parses the new names and self-serve sends
+    # naming. Any value other than "true" is treated as off, so a typo fails
+    # closed (legacy names).
+    LINKEDIN_ADS_NAMING_V2_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to the X (Twitter) Ads ACCOUNT MONITOR
     # (/projects/{project_id}/connection-twitter-ads/account-monitor). Default
     # off for the same reason as MICROSOFT_METRICS_ENABLED above: the X account

@@ -989,6 +989,27 @@ the same group. Pinned by `TestCreateCampaign_FrozenNameReusesTheCampaignAnEarli
 (and its control), `TestLinkedInDispatch_FrozenNameReusesTheEarlierCampaign` and the
 `TestOrchestrator_DispatchCarries*` tests.
 
+**Naming v2 (#587, `naming.go`).** A non-nil `CampaignInput.Naming` makes `CreateCampaign` compose
+LF's convention with `buildCampaignNameV2`: `Events | <event> | <Region> | <Objective> |
+<AudienceIntent>[ <tactic>][ #<n>] | <Format> | <BusinessUnit> | <Funnel>`. Region, audience intent
+and business unit come from closed lists (`NameRegions`, `NameAudienceIntents`,
+`NameBusinessUnits`); `ValidateNaming` canonicalises them and `resolveNaming` refuses a value off
+its list or a missing business unit before any request. Empty region defaults to the one bucket
+every geo target's URN falls in (`geoRegion`, the verified `geoResolveMap` URNs bucketed like Meta's
+`geoToRegion`), else `Global`; empty intent defaults to `Retargeting` for the `retargeting` tactic
+or an included `dynamicSegments` facet, else `Prospecting`. The format is `campaignNameFormat`, the
+mapping hook (always `Static` today; the text-ad and video branches map to `Text` and `Motion`
+there). `NameBusinessUnits` is a copy of lf-dbt's canonical project names
+(`normalize_project_name` outputs plus the umbrella names `map_paid_ads_project_id` maps), pinned
+by `TestNameBusinessUnits_AreFixedPointsOfTheDbtNormalizer` against a copy of the macro. The tactic
+and slot tokens stay in segment 5 so name uniqueness (the reuse key) is exactly the legacy one. The
+group name is unchanged. Retry safety: `FrozenCampaignName` still wins, and when nothing is frozen,
+the group was reused and the v2 name differs from the legacy one, `CreateCampaign` first looks the
+LEGACY name up in the group and, if a campaign has it, reuses it under that name (a failed lookup
+returns `(nil, err)`: the group pre-existed and nothing was created). Pinned by
+`TestBuildCampaignNameV2`, `TestValidateNaming`, `TestCreateCampaign_NamingV2*` and
+`TestCreateCampaign_FrozenNameWinsOverNamingV2`.
+
 A reused group's schedule is widened before the campaign POST. `findOrCreateCampaignGroup`
 reports whether the group already existed, and for a reused one `CreateCampaign` calls
 `ensureCampaignGroupCoversEnd`: an identity-checked single-entity GET of the group

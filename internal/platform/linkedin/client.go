@@ -288,6 +288,13 @@ type CampaignInput struct {
 	// slot can never make the lookup miss the campaign the first attempt created and create a
 	// second, paid one beside it. The group name is unaffected: it is always composed.
 	FrozenCampaignName string
+	// Naming selects campaign naming v2 (#587, naming.go): nil composes the legacy name byte for
+	// byte; non-nil composes LF's convention from its region, audience intent and business unit
+	// (empty region and intent take their defaults from GeoTargets, Tactic and Targeting). The
+	// dispatcher sets it only while LINKEDIN_ADS_NAMING_V2_ENABLED is on. FrozenCampaignName still
+	// wins over it, and so does an existing campaign under the legacy name (see CreateCampaign), so
+	// turning v2 on never renames or duplicates a campaign that already exists.
+	Naming *CampaignNaming
 	// Targeting is the caller's own targetingCriteria (#552). When set it REPLACES the profile
 	// clause (TargetingProfile is not read) and the hard-coded jobFunctions and
 	// seniorityExclusions; the runtime config's EmployerExclusions still join exclude.employers.
@@ -2872,7 +2879,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// The stage, tactic and slot tokens (multi-campaign cs-4) come from the claimed row; see
 	// buildCampaignName. The 255-character check below covers the labelled name too, before any
 	// request.
-	campaignName := buildCampaignName(eventName, bidding.nameObjective, project, in)
+	legacyName := buildCampaignName(eventName, bidding.nameObjective, project, in)
+	campaignName := legacyName
+	if in.Naming != nil {
+		naming, nerr := resolveNaming(*in.Naming)
+		if nerr != nil {
+			return nil, nerr
+		}
+		campaignName = buildCampaignNameV2(eventName, bidding.nameObjective, naming, in)
+	}
 	// A name the row already records wins over the composed one (#587): see FrozenCampaignName.
 	// It is still held to the 255-character limit below, before any request.
 	if frozen := strings.TrimSpace(in.FrozenCampaignName); frozen != "" {
@@ -2937,6 +2952,22 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		if extended {
 			steps = append(steps, fmt.Sprintf("Campaign group %s end date extended to %s to cover this campaign", groupID, time.UnixMilli(endMs).UTC().Format(time.RFC3339)))
+		}
+	}
+
+	// Naming v2 (#587) must never duplicate a campaign created under the legacy name. The frozen
+	// name covers a row that still records it; this covers a slot whose row is gone (an operator
+	// hard-deleting a stuck claim) while its legacy-named campaign lives on in the reused group.
+	// A legacy-named campaign found here is reused under its legacy name — never renamed. Only a
+	// reused group can hold one, so a group this run created costs no extra lookup.
+	if in.Naming != nil && strings.TrimSpace(in.FrozenCampaignName) == "" && groupReused && legacyName != campaignName {
+		legacyID, lerr := c.findCampaignByNameInGroup(ctx, fmt.Sprintf("adAccounts/%s/adCampaigns", accountID), legacyName, groupID, bidding.objectiveType)
+		if lerr != nil {
+			return nil, fmt.Errorf("campaign group %q (%q): looking up a campaign under the legacy name %q failed; nothing was created, and a retry repeats the lookup: %w", groupID, groupName, legacyName, lerr)
+		}
+		if legacyID != "" {
+			steps = append(steps, fmt.Sprintf("Campaign %s already exists under the legacy name %q; reused under that name (naming v2 never renames an existing campaign)", legacyID, legacyName))
+			campaignName = legacyName
 		}
 	}
 

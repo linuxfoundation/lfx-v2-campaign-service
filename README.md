@@ -462,6 +462,16 @@ openssl rand -base64 32
   require `global_marketing_ops`. The chart sets it to `"false"`
   (`app.environment.LINKEDIN_ADS_CONVERSIONS_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once the probe passes.
+- `LINKEDIN_ADS_NAMING_V2_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to LinkedIn campaign naming v2 (#587): LF's convention
+  `Events | <event> | <region> | <objective> | <intent> | <format> |
+  <business unit> | <funnel>` in place of the legacy name. Only the exact
+  value `true` enables it; anything else keeps the legacy name. While on,
+  `linkedInConfig.naming.businessUnit` is required (400 before a job exists).
+  Existing campaigns are never renamed. The chart sets it to `"false"`
+  (`app.environment.LINKEDIN_ADS_NAMING_V2_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once lf-dbt parses the new names and
+  self-serve sends `naming`.
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request
   names no `source_workflow_url`. Unset or empty selects the in-code
