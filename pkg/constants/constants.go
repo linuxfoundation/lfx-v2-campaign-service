@@ -239,6 +239,15 @@ const (
 	// (list_pixels_by_ad_account) and has not been exercised against a live ad account.
 	EnvRedditPixelListEnabled = "REDDIT_PIXEL_LIST_ENABLED"
 
+	// EnvRedditGenderLanguageDaypartingEnabled opts a deployment IN to redditConfig.gender,
+	// languages and schedule (#549 gap 13): the ad group's targeting.gender and
+	// targeting.languages, and the campaign's schedule (recurring weekly delivery windows). Only
+	// the exact value "true" enables them; unset or any other value fails closed, and a create
+	// naming any of them is refused with a 400 before any job exists. They name no account
+	// resource, so they are not role-gated. Default off because no live create has sent any of
+	// them; the shapes are from Reddit's public v3 OpenAPI document.
+	EnvRedditGenderLanguageDaypartingEnabled = "REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED"
+
 	// EnvTwitterCreateTargetingEnabled opts a deployment IN to twitterConfig.geoTargets and
 	// twitterConfig.languages (#564): country and language targeting criteria added to the line
 	// item an X create makes. Only the exact value "true" enables them; unset or any other value

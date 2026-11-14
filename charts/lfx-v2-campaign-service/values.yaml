@@ -428,6 +428,15 @@ app:
     REDDIT_PIXEL_LIST_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to redditConfig.gender, languages and schedule
+    # (#549 gap 13): the ad group's targeting.gender / targeting.languages and
+    # the campaign's weekly delivery schedule (dayparting). Default off: no
+    # live create has sent any of them. Not role-gated. While off, a create
+    # naming any of them is refused with a 400 before any job exists. Any
+    # value other than "true" is treated as off.
+    REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to twitterConfig.geoTargets, languages, keywords
     # and interestIds (#564), sent at create time as LOCATION, LANGUAGE,
     # BROAD_KEYWORD and INTEREST targeting criteria on the new X line item.

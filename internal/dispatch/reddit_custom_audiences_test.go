@@ -49,6 +49,9 @@ var redditUngatedFields = map[string]bool{
 	"placements": true, "platforms": true, "expandTargeting": true,
 	// budgetType (#549 gap 9) is the pacing of the caller's own budget.
 	"budgetType": true,
+	// Gender, languages and dayparting (#549 gap 13) are Reddit's fixed targeting enums and a
+	// weekly schedule.
+	"gender": true, "languages": true, "schedule": true,
 }
 
 // TestEveryRedditConfigFieldIsClassifiedForTheMarketingOpsGate fails when a redditConfig field is

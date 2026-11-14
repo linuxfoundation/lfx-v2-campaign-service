@@ -96,6 +96,13 @@ type redditConfig struct {
 	Placements      []string `json:"placements,omitempty"`
 	Platforms       []string `json:"platforms,omitempty"`
 	ExpandTargeting *bool    `json:"expandTargeting,omitempty"`
+	// Gender, Languages and Schedule are gender, language and dayparting targeting (#549 gap 13),
+	// gated by REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED and validated by
+	// checkRedditDemographicTargeting (reddit_demographic_targeting.go). omitempty keeps an
+	// omitted choice ABSENT in the persisted ConfigSnapshot, so a snapshot replays through the gate.
+	Gender    *string                 `json:"gender,omitempty"`
+	Languages []string                `json:"languages,omitempty"`
+	Schedule  []reddit.ScheduleWindow `json:"schedule,omitempty"`
 }
 
 // redditBidPlan resolves redditConfig's bidding choice. Manual bidding creates campaign and ad
@@ -261,6 +268,10 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	if err := checkRedditPlacementShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	// And a mistyped gender, languages or schedule (#549 gap 13).
+	if err := checkRedditDemographicShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg redditConfig
 	if err := unmarshalPlatformConfig(config, "redditConfig", &cfg); err != nil {
 		// A wrong-typed conversionEvent also fails this decode; report it by its own field-specific
@@ -308,6 +319,11 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	// PreflightCreate. The flag is read once here and handed to the client, so the check and the
 	// create agree on the path.
 	adPerVariant := redditAdPerVariantEnabled()
+	// Gender, languages and dayparting (#549 gap 13): the gate and rules, for any path that
+	// skipped PreflightCreate.
+	if err := checkRedditDemographicTargeting(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	if err := checkRedditAdPerVariant(cfg); err != nil {
 		return nil, notCreated(err)
 	}
@@ -419,6 +435,10 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		ExpandTargeting: cfg.ExpandTargeting,
 
 		AdPerVariant: adPerVariant,
+
+		Gender:    cfg.Gender,
+		Languages: cfg.Languages,
+		Schedule:  cfg.Schedule,
 
 		// The name labels of the CLAIMED row (multi-campaign cs-3): its stored funnel stage and
 		// tactic (model.DispatchLabels) and its slot version, never the request's. A retry of
