@@ -372,8 +372,8 @@ type linkedInResponse struct {
 // linkedInMetadata carries the cursor-pagination block used by the LinkedIn
 // search APIs (cursor paging since LinkedIn-Version 202401, unchanged through
 // 202610): the response advertises the next page via metadata.nextPageToken,
-// which the client echoes back as the `pageToken` request param. An empty nextPageToken means the result set is
-// exhausted.
+// which the client echoes back as the `pageToken` request param. An empty
+// nextPageToken means the result set is exhausted.
 type linkedInMetadata struct {
 	NextPageToken string `json:"nextPageToken"`
 }
@@ -1453,8 +1453,9 @@ const maxListPages = 1000
 //
 // Since LinkedIn-Version 202401 (and still at 202610) the search APIs use
 // CURSOR pagination, not offset pagination: each response carries
-// metadata.nextPageToken, and the client echoes that token back as the `pageToken` request param to fetch the next
-// page. Pagination stops when nextPageToken comes back empty. An offset-based
+// metadata.nextPageToken, and the client echoes that token back as the
+// `pageToken` request param to fetch the next page. Pagination stops when
+// nextPageToken comes back empty. An offset-based
 // walk (start/count) or a "full page" heuristic is the wrong model for this API
 // version and can miss results or loop, so it is not used.
 //
