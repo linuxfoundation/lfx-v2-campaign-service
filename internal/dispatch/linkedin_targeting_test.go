@@ -203,3 +203,49 @@ func TestEveryLinkedInFacetIsClassifiedForTheMarketingOpsGate(t *testing.T) {
 		}
 	}
 }
+
+// TestLinkedIn_ReusedCampaignTargetingStopIsNotReusable pins the #557 review fix end to end
+// through Dispatch: when linkedInConfig.targeting is set and the client finds the campaign by
+// name, it stops before any creative, and the row it returns is the retained partial orphan —
+// 'pending' with the campaign id kept for repair — not created_degraded, which the orchestrator
+// preserves and reuses as complete (TestOrchestrator_TargetingStopIsNotReusedOnRetry in the
+// service package drives that half). The first run creates the campaign, so its targeting is
+// written and it is a clean 'created'; the second finds that campaign by name.
+func TestLinkedIn_ReusedCampaignTargetingStopIsNotReusable(t *testing.T) {
+	t.Setenv(constants.EnvLinkedInAdsTargetingEnabled, "true")
+	li := &liWire{}
+	cfg := linkedInTargetingConfig(validLinkedInTargeting)
+
+	first, err := li.dispatcher(t).Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+	if err != nil {
+		t.Fatalf("first Dispatch: %v", err)
+	}
+	if first.Status != campaignStatusCreated || first.PlatformCampaignID == "" {
+		t.Fatalf("first run: status %q id %q, want a created campaign", first.Status, first.PlatformCampaignID)
+	}
+
+	second, err := li.dispatcher(t).Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+	if err == nil || !strings.Contains(err.Error(), "targeting NOT applied to reused campaign") {
+		t.Fatalf("second Dispatch err = %v, want the reused-campaign stop", err)
+	}
+	var nuc interface{ NoUpstreamCreate() bool }
+	if errors.As(err, &nuc) && nuc.NoUpstreamCreate() {
+		t.Fatal("the stop must retain the claim (a campaign exists), not release it")
+	}
+	if second == nil {
+		t.Fatal("the stop must return the row so the campaign id is recorded")
+	}
+	if second.Status != model.CampaignStatusPending {
+		t.Errorf("stop status = %q, want %q (created_degraded would be reused as complete)", second.Status, model.CampaignStatusPending)
+	}
+	if second.PlatformCampaignID != first.PlatformCampaignID {
+		t.Errorf("stop row campaign id = %q, want the reused %q kept for repair", second.PlatformCampaignID, first.PlatformCampaignID)
+	}
+	if !strings.Contains(string(second.Result), `"targetingNotApplied":true`) {
+		t.Errorf("Result does not record the stop: %s", second.Result)
+	}
+	creates, creatives, _ := li.snapshot()
+	if len(creates) != 1 || len(creatives) != 1 {
+		t.Errorf("campaign creates %d, creatives %d; want 1 and 1 (the stop adds nothing)", len(creates), len(creatives))
+	}
+}

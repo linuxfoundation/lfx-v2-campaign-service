@@ -1186,6 +1186,85 @@ func TestOrchestrator_IDlessOrphanWithResultIsNotASkipSuccess(t *testing.T) {
 	}
 }
 
+// targetingStopDispatcher returns the row the LinkedIn dispatcher builds for its stop on a
+// campaign found by name while linkedInConfig.targeting is set (#557 review): the reused campaign's
+// id, no creative, the given status, and an error. calls counts the platform calls.
+type targetingStopDispatcher struct {
+	status string
+	mu     sync.Mutex
+	calls  int
+}
+
+func (d *targetingStopDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	d.mu.Lock()
+	d.calls++
+	d.mu.Unlock()
+	return &model.Campaign{
+			PlatformCampaignID: "777",
+			Status:             d.status,
+			CampaignName:       "n",
+			Result:             json.RawMessage(`{"campaignId":"777","creativeCount":0,"targetingNotApplied":true}`),
+		},
+		errors.New("linkedin targeting NOT applied to reused campaign 777")
+}
+
+// TestOrchestrator_TargetingStopIsNotReusedOnRetry drives the orchestrator half of the #557
+// review fix with two Starts. The LinkedIn dispatcher now stamps the targeting stop 'pending'
+// (TestLinkedIn_ReusedCampaignTargetingStopIsNotReusable pins that): the row keeps campaign 777
+// for repair, and a repeated request reports reconciliation required without calling the
+// platform again. The created_degraded case is the shape before the fix, kept as the contrast:
+// the orchestrator preserves it and the repeat reports a reused success for targeting that was
+// never applied.
+func TestOrchestrator_TargetingStopIsNotReusedOnRetry(t *testing.T) {
+	for _, tc := range []struct {
+		status           string
+		wantRetrySucceed bool
+	}{
+		{model.CampaignStatusPending, false},
+		{model.CampaignStatusCreatedDegraded, true},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			jobs := newFakeJobRepo()
+			camps := &fakeCampaignRepo{}
+			disp := &targetingStopDispatcher{status: tc.status}
+			orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: disp})
+			brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+
+			id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderLinkedInAds}, nil)
+			if err != nil {
+				t.Fatalf("first Start: %v", err)
+			}
+			if j := waitForTerminal(t, jobs, id); j.Status == model.JobSucceeded {
+				t.Fatalf("the stop itself reported success: %s", j.Result)
+			}
+			camps.mu.Lock()
+			row := camps.existing["b1|"+string(model.ProviderLinkedInAds)]
+			camps.mu.Unlock()
+			if row == nil || row.PlatformCampaignID != "777" || row.Status != tc.status {
+				t.Fatalf("persisted row = %+v, want campaign 777 kept with status %q", row, tc.status)
+			}
+
+			id, err = orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderLinkedInAds}, nil)
+			if err != nil {
+				t.Fatalf("second Start: %v", err)
+			}
+			j := waitForTerminal(t, jobs, id)
+			if got := j.Status == model.JobSucceeded; got != tc.wantRetrySucceed {
+				t.Fatalf("retry succeeded = %v, want %v; job=%s result=%s", got, tc.wantRetrySucceed, j.Status, j.Result)
+			}
+			if !tc.wantRetrySucceed && !strings.Contains(string(j.Result), "reconciliation required") {
+				t.Errorf("the retry should name reconciliation, got: %s", j.Result)
+			}
+			disp.mu.Lock()
+			calls := disp.calls
+			disp.mu.Unlock()
+			if calls != 1 {
+				t.Errorf("platform called %d times, want 1 (the retry must not re-dispatch)", calls)
+			}
+		})
+	}
+}
+
 // TestOrchestrator_FastPathReuseCarriesHubspotURL drives dispatchPlatform's fast-path
 // reuse (orchestrator.go:1425, `case lerr == nil && isReusableCampaign(existing):`)
 // through the public Start API, not the hubspotURLFromResult helper directly. A HubSpot
