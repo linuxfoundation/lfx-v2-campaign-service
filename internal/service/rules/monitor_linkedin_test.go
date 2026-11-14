@@ -31,6 +31,31 @@ func TestLinkedinPacingPct_IsUnrounded(t *testing.T) {
 	}
 }
 
+// TestLinkedinPacingPct_DaylightSavingDoesNotShiftTheWindow pins the daily branch's day count
+// to the calendar, whatever zone the caller's clock carries. With `now` in a zone with daylight
+// saving, AddDate(0, 0, -29) used to land 29 days and one hour back for the 29 days after a
+// fall-back transition (Los Angeles from 2026-11-01, Berlin from 2026-10-25, Sydney from
+// 2026-04-05), and math.Ceil turned that hour into a 30th day: 600 against 100/day read 20%
+// rather than 600/2900 ≈ 20.69%. Every day of 2026, at several local hours, in each zone.
+func TestLinkedinPacingPct_DaylightSavingDoesNotShiftTheWindow(t *testing.T) {
+	m := model.AccountCampaignMetrics{BudgetDay: 100, Spend: 600}
+	want := 600.0 / 2900 * 100
+	for _, name := range []string{"UTC", "America/Los_Angeles", "Europe/Berlin", "Australia/Sydney"} {
+		loc, err := time.LoadLocation(name)
+		if err != nil {
+			t.Fatalf("LoadLocation(%q): %v", name, err)
+		}
+		for d := time.Date(2026, 1, 1, 0, 0, 0, 0, loc); d.Year() == 2026; d = d.AddDate(0, 0, 1) {
+			for _, hour := range []int{0, 9, 16, 23} {
+				now := d.Add(time.Duration(hour) * time.Hour)
+				if got := linkedinPacingPct(m, 30, now); got < want-1e-9 || got > want+1e-9 {
+					t.Errorf("%s: pacing = %v%%, want %v%%", now.Format(time.RFC3339), got, want)
+				}
+			}
+		}
+	}
+}
+
 // TestLinkedinActionItems_UnderspendingAndConstrained exercise the two label-driven rules and
 // the CTR/conversions/paused rules in isolation.
 func TestLinkedinActionItems_UnderspendingAndConstrained(t *testing.T) {
