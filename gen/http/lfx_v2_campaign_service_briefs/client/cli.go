@@ -728,13 +728,19 @@ func BuildAdoptCampaignPayload(lfxV2CampaignServiceBriefsAdoptCampaignBody *stri
 		}
 		err = json.Unmarshal([]byte(*lfxV2CampaignServiceBriefsAdoptCampaignBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"platform\": \"google-ads\",\n      \"platform_campaign_id\": \"1234567890\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"account_id\": \"500928401\",\n      \"platform\": \"google-ads\",\n      \"platform_campaign_id\": \"1234567890\"\n   }'")
 		}
 		if utf8.RuneCountInString(body.PlatformCampaignID) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.platform_campaign_id", body.PlatformCampaignID, utf8.RuneCountInString(body.PlatformCampaignID), 1, true))
 		}
 		if utf8.RuneCountInString(body.PlatformCampaignID) > 64 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.platform_campaign_id", body.PlatformCampaignID, utf8.RuneCountInString(body.PlatformCampaignID), 64, false))
+		}
+		if body.AccountID != nil {
+			err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", *body.AccountID, "^[0-9]+$"))
+			if utf8.RuneCountInString(*body.AccountID) > 64 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", *body.AccountID, utf8.RuneCountInString(*body.AccountID), 64, false))
+			}
 		}
 		if err != nil {
 			return nil, err
@@ -774,6 +780,7 @@ func BuildAdoptCampaignPayload(lfxV2CampaignServiceBriefsAdoptCampaignBody *stri
 	v := &lfxv2campaignservicebriefs.AdoptCampaignPayload{
 		Platform:           body.Platform,
 		PlatformCampaignID: body.PlatformCampaignID,
+		AccountID:          body.AccountID,
 	}
 	v.ProjectID = projectID
 	v.BriefID = briefID

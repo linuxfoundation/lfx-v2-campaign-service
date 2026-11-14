@@ -906,8 +906,8 @@ project has no connection of its own and adoption alone cannot accept the shared
 (`internal-dispatch.md` has the isolation argument). Placing it first keeps the connection arms
 from sending an operator to repair something that is working as designed.
 
-This switch has NO `ErrSystemConnectionNotUsable` arm, and that is the one place it departs from
-the metrics and toggle switches. Those resolve with the LF system fallback, so a defect in the LF
+Without `account_id`, this switch's `ErrSystemConnectionNotUsable` arm is unreachable, and that is
+the one place it departs from the metrics and toggle switches. Those resolve with the LF system fallback, so a defect in the LF
 row genuinely reaches their callers and earns a 500 aimed at an operator. Adoption resolves the
 project scope only (`credsSource.resolveOwned`), so the LF row is never loaded on this path and
 cannot fail on it. An arm would be unreachable — and wrong even so, since it would answer a
@@ -917,6 +917,16 @@ The arm existed until review caught it; it survived because
 fake, which asserts a switch's behaviour without establishing that anything can produce the
 input. The mechanism is now pinned where it is real, in
 `dispatch.TestAdoptionRefusesTheSystemFallback`, which asserts the system scope is never read.
+
+The `account_id` path (#581, LinkedIn only) is the exception. `AdoptCampaign` refuses `account_id`
+with 400 unless `LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED` is exactly `"true"` and the platform is
+`linkedin-ads`, then requires `global_marketing_ops` (403, 503 when the check fails) before the
+brief is loaded, and carries the account to the dispatcher as `model.WithAdoptionAccount`. The
+lookup then reads that account through the LF system row (its default account or a grant), so a
+missing or broken LF row is a 500 (`ErrSystemConnectionMissing` / `ErrSystemConnectionNotUsable`,
+reachable only here), an account the row cannot address is a 400, and an exact repeat of an
+adoption that already succeeded (same brief, campaign and account) returns the bound campaign
+(201) without contacting LinkedIn.
 `ErrInvalidPlatformCampaignID`
 is a 400: the adapter rejected the id locally and issued no query, so the 503 would invite a
 retry of input that can never succeed. Two more 409s come back from the repository, which is
