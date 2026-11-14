@@ -828,6 +828,14 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 	if strings.TrimSpace(platformCampaignID) == "" {
 		return nil, &briefs.BadRequestError{Code: "400", Message: "platform_campaign_id is required"}
 	}
+	// account_id (#581): adopt a LinkedIn campaign from an account the LF system row addresses.
+	// Refused before the brief is read and before anything is sent unless the platform is
+	// LinkedIn, the flag is on and the caller holds global_marketing_ops: the gateway admits every
+	// campaign_manager (executive directors included) to this route and cannot see a body field.
+	accountID, aerr := s.adoptionAccount(ctx, p, platform)
+	if aerr != nil {
+		return nil, aerr
+	}
 	// Load the brief first: one that does not exist, or belongs to another project, must 404
 	// before the platform is contacted, so adoption cannot be an oracle for which campaign ids
 	// exist on an account the caller cannot otherwise see.
@@ -875,13 +883,29 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 	// platform can adopt into is occupied, the answer is 409 whatever the lookup returns.
 	// Anything less is left to the variant-aware check after the lookup, which knows the
 	// real slot.
+	// An exact repeat of an adoption from the LF system row that already succeeded answers the
+	// bound campaign, without contacting LinkedIn (#581). Only on this path: the project-connection
+	// path keeps its published 409 for a second adopt.
+	if accountID != "" {
+		if existing, gerr := campaignRepo.GetCampaignByPlatform(ctx, p.ProjectID, p.BriefID, platform, model.VariantDefault); gerr == nil {
+			if sameSystemAdoption(existing, platformCampaignID, accountID) {
+				return campaignResult(existing), nil
+			}
+		} else if !errors.Is(gerr, domain.ErrNotFound) {
+			return nil, mapBriefErr(gerr)
+		}
+	}
 	if occupied, cerr := allAdoptableSlotsOccupied(ctx, campaignRepo, p.ProjectID, p.BriefID, platform); cerr != nil {
 		return nil, mapBriefErr(cerr)
 	} else if occupied {
 		return nil, &briefs.ConflictError{Code: "409", Message: "this brief already has a live campaign on that platform"}
 	}
 
-	ref, lerr := orch.LookupPlatformCampaign(ctx, p.ProjectID, platform, platformCampaignID)
+	lookupCtx := ctx
+	if accountID != "" {
+		lookupCtx = model.WithAdoptionAccount(ctx, accountID)
+	}
+	ref, lerr := orch.LookupPlatformCampaign(lookupCtx, p.ProjectID, platform, platformCampaignID)
 	if lerr != nil {
 		switch {
 		case errors.Is(lerr, ErrAdoptionUnsupported):
@@ -905,6 +929,9 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 			slog.WarnContext(ctx, "campaign adoption refused: the campaign belongs to a different ad account than the project's connection",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "platform", platform,
 				"platform_campaign_id", platformCampaignID)
+			if accountID != "" {
+				return nil, &briefs.ConflictError{Code: "409", Message: "that campaign belongs to a different ad account than account_id"}
+			}
 			return nil, &briefs.ConflictError{Code: "409", Message: "that campaign belongs to a different ad account than this project's connection; adoption can only bind a campaign in the project's own connected ad account"}
 		case errors.Is(lerr, domain.ErrAdoptionCampaignTypeUnsupported):
 			// Definite and permanent: the campaign exists, live, in the project's own account,
@@ -928,6 +955,18 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "platform", platform,
 				"reason", unusableConnectionReason(lerr))
 			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign could not be verified with the ad platform"}
+		case errors.Is(lerr, domain.ErrAccountNotManagedByConnection):
+			// #581: account_id named an account the LF system row cannot address (neither its
+			// default nor a grant), refused before anything was sent. A caller fault.
+			return nil, &briefs.BadRequestError{Code: "400", Message: "account_id is neither the LF system LinkedIn account's default account nor one of its granted accounts"}
+		case errors.Is(lerr, domain.ErrSystemConnectionMissing), errors.Is(lerr, domain.ErrSystemConnectionNotUsable):
+			// Reachable ONLY through account_id (#581), the one adoption that resolves the LF
+			// system row: a missing or broken LF row is an operator's fault, never the caller's,
+			// so it is a 500 rather than "connect your own account" or a retryable 503.
+			slog.ErrorContext(ctx, "campaign adoption from the LF system account blocked: the LF system connection is missing or unusable",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "platform", platform,
+				"reason", unusableConnectionReason(lerr))
+			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign could not be verified with the ad platform"}
 		case errors.Is(lerr, domain.ErrAdoptionRequiresOwnConnection):
 			// ABOVE every connection arm below, which would otherwise send an operator to
 			// repair a connection that is working exactly as designed. Nothing is broken
@@ -936,8 +975,8 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 			// caller names an arbitrary campaign inside it rather than one this service
 			// already has a project-scoped row for.
 			//
-			// There is deliberately NO domain.ErrSystemConnectionNotUsable arm on this switch,
-			// unlike the
+			// The ErrSystemConnectionNotUsable arm above serves ONLY the account_id path (#581);
+			// for an ordinary adoption it remains unreachable, unlike the
 			// metrics and toggle paths above. Those resolve credentials with the LF system
 			// fallback, so a defect in the LF row reaches their callers and needs a 500 aimed at
 			// an operator. Adoption resolves the project scope ONLY (credsSource.resolveOwned),
@@ -1067,6 +1106,49 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 		"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", adopted.ID,
 		"platform", platform, "platform_campaign_id", adopted.PlatformCampaignID)
 	return campaignResult(adopted), nil
+}
+
+// adoptionAccount validates adopt-campaign's optional account_id (#581) and returns it trimmed,
+// "" when absent. A present value must be non-blank, the platform LinkedIn, the deployment's
+// LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED on, and the caller global_marketing_ops on the project.
+func (s *BriefService) adoptionAccount(ctx context.Context, p *briefs.AdoptCampaignPayload, platform model.Provider) (string, error) {
+	if p.AccountID == nil {
+		return "", nil
+	}
+	accountID := strings.TrimSpace(*p.AccountID)
+	switch {
+	case accountID == "":
+		return "", &briefs.BadRequestError{Code: "400", Message: "account_id must not be blank"}
+	case platform != model.ProviderLinkedInAds:
+		return "", &briefs.BadRequestError{Code: "400", Message: "account_id is accepted for linkedin-ads only"}
+	case !linkedinAdoptionFromSystemEnabled():
+		return "", &briefs.BadRequestError{Code: "400", Message: errLinkedInAdoptionFromSystemDisabled}
+	}
+	const named = "account_id"
+	unavailable := &briefs.ConnServiceUnavailableError{Code: "503",
+		Message: "could not verify the global_marketing_ops role that adopting with account_id requires; retry, or omit it"}
+	forbidden := &briefs.ForbiddenError{Code: "403",
+		Message: "adopting from the LF system LinkedIn account's ad accounts (account_id) requires the global_marketing_ops role on this project"}
+	if err := s.requireGlobalMarketingOps(ctx, p.ProjectID, named, unavailable, forbidden); err != nil {
+		return "", err
+	}
+	return accountID, nil
+}
+
+// sameSystemAdoption reports whether existing is the row an earlier adopt-campaign with the same
+// campaign id and account_id bound (#581): adopted, the same upstream id, and the same recorded
+// account. Anything else on the slot is the ordinary 409.
+func sameSystemAdoption(existing *model.Campaign, platformCampaignID, accountID string) bool {
+	if existing == nil || existing.PlatformCampaignID != platformCampaignID || !model.CampaignAdopted(existing) {
+		return false
+	}
+	var blob struct {
+		AccountID string `json:"accountId"`
+	}
+	if err := json.Unmarshal(existing.Result, &blob); err != nil {
+		return false
+	}
+	return strings.TrimSpace(blob.AccountID) == accountID
 }
 
 // allAdoptableSlotsOccupied reports whether EVERY slot this platform can adopt into is

@@ -129,7 +129,9 @@ refused with a 400 before a job exists. The ids additionally require `global_mar
 (`bootstrap-system-account -linkedin-grant`). Only exactly `"true"` enables it; off, a create naming
 any account but the connection's own is refused with a 400 before a job exists. While on, any
 `adAccountId` requires `global_marketing_ops`, and the system scope's LinkedIn accounts list returns
-the default account and the grants. Flip it only after the release that pauses, reads and budgets
+the default account and the grants. The same flag gates adopting LinkedIn campaigns from those accounts
+(adopt-campaign `account_id`, also `global_marketing_ops` only) and the
+`linkedin-ads/adoptable-campaigns` candidate list; off, both answer 400. Flip it only after the release that pauses, reads and budgets
 granted-account campaigns is in prod and the grants are installed.
 
 `SURVEY_SEQUENCE_WORKFLOW_ID` is a plain value defaulting to `""`, which selects the in-code

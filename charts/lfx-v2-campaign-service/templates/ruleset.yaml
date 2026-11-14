@@ -371,6 +371,9 @@ spec:
           # own connection, so they can list other foundations' segments and rules.
           - path: /projects/:projectId/linkedin-ads/audiences
           - path: /projects/:projectId/linkedin-ads/conversions
+          # The LinkedIn adoption candidate list (#581): every foundation's campaigns in an
+          # account the LF system LinkedIn row addresses (its default account or a grant).
+          - path: /projects/:projectId/linkedin-ads/adoptable-campaigns
           # The Meta custom-audience list (#550), for the metaConfig.targeting customAudiences
           # picker. The LF Meta ad account is shared the same way, so it lists every
           # foundation's audiences.

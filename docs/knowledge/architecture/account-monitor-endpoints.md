@@ -729,7 +729,10 @@ campaigns. `LinkedInDispatcher` implements `service.AccountMonitorScoper` and
 - The method declares `AccountMonitorScopeConflictError` (409) and `classifyMonitorError` answers it.
 - Behaviour change for a project with its OWN LinkedIn connection: its monitor now shows only the
   campaigns this service recorded for it, not every campaign on its account. Hand-built campaigns
-  reach the monitor by adoption (#581 decision memo, Q3).
+  reach the monitor by adoption (#581 decision memo, Q3): `global_marketing_ops` lists them with
+  `GET .../linkedin-ads/adoptable-campaigns?account_id=` and binds one with adopt-campaign's
+  `account_id`, which reads through the system row's default account or a grant and records that
+  account, so the scope then includes it (behind `LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED`).
 - LinkedIn audience insights follow the same resolution, keyed on the account the scope records
   (`linkedInScopeAccount`); served from the system row, every campaign must record that account.
 

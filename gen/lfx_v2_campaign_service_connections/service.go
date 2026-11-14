@@ -378,6 +378,21 @@ type Service interface {
 	// accounts linkedInConfig.adAccountId may name); any other account is a 400. A
 	// pure read: nothing is persisted.
 	ListLinkedinAdsConversions(context.Context, *ListLinkedinAdsConversionsPayload) (res *LinkedinAdsConversionRules, err error)
+	// List the ACTIVE and PAUSED campaigns in one of the LF system LinkedIn
+	// account's addressable ad accounts (its default account or an
+	// operator-installed grant), as candidates for adopt-campaign with account_id
+	// (#581), so a campaign built by hand in Campaign Manager can be bound to a
+	// brief and shown in this project's monitor. Read through the LF system
+	// LinkedIn connection, whatever connection the project has. Gated on
+	// global_marketing_ops of {project_id} by the marketing-ops-api gateway rule,
+	// because it lists campaigns of every foundation in the account. Answers 400
+	// unless LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is on, and 400 for an account
+	// the system row cannot address (nothing is sent). A missing or unusable LF
+	// system LinkedIn connection is 500, an operator's fault, and an expired
+	// system credential is 503. The campaign list pages LinkedIn's search finder
+	// 100 at a time, up to 50 pages, and fails with 503 beyond that or on a page
+	// it cannot trust. A pure read: nothing is persisted.
+	ListLinkedinAdsAdoptableCampaigns(context.Context, *ListLinkedinAdsAdoptableCampaignsPayload) (res *LinkedinAdsAdoptableCampaigns, err error)
 	// Read Microsoft Advertising keyword performance for this project's own
 	// campaigns, in the same row shape as get-google-ads-keywords. Scoped to the
 	// campaigns this service holds for the project, NOT to the connected ad
@@ -868,7 +883,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [82]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "list-google-ads-audiences", "list-meta-custom-audiences", "list-reddit-ads-custom-audiences", "list-twitter-ads-custom-audiences", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "list-linkedin-ads-audiences", "list-linkedin-ads-conversions", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
+var MethodNames = [83]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "list-google-ads-audiences", "list-meta-custom-audiences", "list-reddit-ads-custom-audiences", "list-twitter-ads-custom-audiences", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "list-linkedin-ads-audiences", "list-linkedin-ads-conversions", "list-linkedin-ads-adoptable-campaigns", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -1983,6 +1998,35 @@ type InternalServerError struct {
 	Message string
 }
 
+type LinkedinAdsAdoptableCampaign struct {
+	// The LinkedIn campaign id, in exactly the form adopt-campaign's
+	// platform_campaign_id takes
+	ID string
+	// The campaign's name in Campaign Manager. Not an identifier.
+	Name string
+	// LinkedIn's campaign status, verbatim: ACTIVE or PAUSED (only those are
+	// listed)
+	Status string
+	// true when this project already has a live campaign row for this campaign id
+	// (adopted or created here), so its monitor already shows it. false does not
+	// mean adoptable: a campaign bound in ANOTHER project is still refused by
+	// adopt-campaign (409).
+	RecordedInProject bool
+}
+
+// LinkedinAdsAdoptableCampaigns is the result type of the
+// lfx-v2-campaign-service-connections service
+// list-linkedin-ads-adoptable-campaigns method.
+type LinkedinAdsAdoptableCampaigns struct {
+	// The LinkedIn ad account the campaigns were read from
+	AccountID string
+	// The account's ACTIVE and PAUSED campaigns, in the order LinkedIn returned
+	// them
+	Campaigns []*LinkedinAdsAdoptableCampaign
+	// How many campaigns are in `campaigns`
+	AdoptableCount int
+}
+
 // LinkedinAdsAudience is the result type of the
 // lfx-v2-campaign-service-connections service get-linkedin-ads-audience method.
 type LinkedinAdsAudience struct {
@@ -2244,6 +2288,19 @@ type ListLinkedinAdsAccountsPayload struct {
 // method.
 type ListLinkedinAdsAccountsResult struct {
 	Accounts []*AccessibleAccount
+}
+
+// ListLinkedinAdsAdoptableCampaignsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service
+// list-linkedin-ads-adoptable-campaigns method.
+type ListLinkedinAdsAdoptableCampaignsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// The LinkedIn ad account to list: the LF system account's default account or
+	// one of its grants
+	AccountID string
 }
 
 // ListLinkedinAdsAudiencesPayload is the payload type of the

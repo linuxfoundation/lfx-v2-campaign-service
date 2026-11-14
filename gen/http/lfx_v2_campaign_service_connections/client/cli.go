@@ -2230,6 +2230,46 @@ func BuildListLinkedinAdsConversionsPayload(lfxV2CampaignServiceConnectionsListL
 	return v, nil
 }
 
+// BuildListLinkedinAdsAdoptableCampaignsPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-linkedin-ads-adoptable-campaigns
+// endpoint from CLI flags.
+func BuildListLinkedinAdsAdoptableCampaignsPayload(lfxV2CampaignServiceConnectionsListLinkedinAdsAdoptableCampaignsProjectID *string, lfxV2CampaignServiceConnectionsListLinkedinAdsAdoptableCampaignsAccountID *string, lfxV2CampaignServiceConnectionsListLinkedinAdsAdoptableCampaignsBearerToken *string) (*lfxv2campaignserviceconnections.ListLinkedinAdsAdoptableCampaignsPayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsListLinkedinAdsAdoptableCampaignsProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsListLinkedinAdsAdoptableCampaignsProjectID
+	}
+	var accountID string
+	{
+		if lfxV2CampaignServiceConnectionsListLinkedinAdsAdoptableCampaignsAccountID == nil {
+			return nil, fmt.Errorf("missing required flag --account-id")
+		}
+		accountID = *lfxV2CampaignServiceConnectionsListLinkedinAdsAdoptableCampaignsAccountID
+		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^[0-9]+$"))
+		if utf8.RuneCountInString(accountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListLinkedinAdsAdoptableCampaignsBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsListLinkedinAdsAdoptableCampaignsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListLinkedinAdsAdoptableCampaignsPayload{}
+	v.ProjectID = projectID
+	v.AccountID = accountID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildGetMicrosoftAdsKeywordsPayload builds the payload for the
 // lfx-v2-campaign-service-connections get-microsoft-ads-keywords endpoint from
 // CLI flags.

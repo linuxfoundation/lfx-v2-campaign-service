@@ -11,11 +11,21 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // LookupCampaign implements service.CampaignAdopter for LinkedIn: it confirms that
 // platformCampaignID names a live campaign in the PROJECT'S OWN connected ad account. See
 // adopt.go for the order every adopter follows and why.
+//
+// ONE EXCEPTION (#581): when ctx carries model.AdoptionAccount, the read goes through the LF
+// system row scoped to that account — its default account or one of its grants
+// (systemAccountResolverForAdoption) — instead of the project's own connection. That is the
+// fallback the CampaignAdopter contract forbids for an ordinary caller, admitted here only because
+// the service has already required global_marketing_ops and LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED,
+// and because the binding index still refuses a campaign any other brief already records. The
+// recorded account is the named one, so resolveExisting, the scoped monitor and the levers reach
+// the campaign through the same grant afterwards.
 //
 // The read is GET adAccounts/{acct}/adCampaigns/{id} (linkedin.Client.GetCampaignSettings),
 // scoped by its path to the connection's account; the `account` URN it echoes must be present and
@@ -40,7 +50,17 @@ func (d *LinkedInDispatcher) LookupCampaign(ctx context.Context, projectID strin
 	if err := linkedin.ValidateCampaignID(platformCampaignID); err != nil {
 		return nil, fmt.Errorf("%w: %w", domain.ErrInvalidPlatformCampaignID, err)
 	}
-	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform, d.creds.resolveOwnedForAdoption)
+	resolver := d.creds.resolveOwnedForAdoption
+	if want := model.AdoptionAccount(ctx); want != "" {
+		// #581: the caller named an account the LF system row addresses. The service has already
+		// required global_marketing_ops and the flag; both refusals here are defense in depth.
+		r, rerr := d.creds.systemAccountResolverForAdoption(want)
+		if rerr != nil {
+			return nil, rerr
+		}
+		resolver = r
+	}
+	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform, resolver)
 	if err != nil {
 		return nil, err
 	}
@@ -99,4 +119,59 @@ func linkedInAdopted(campaign *model.Campaign) bool {
 func errLinkedInAdoptedActivate(campaign *model.Campaign) error {
 	return fmt.Errorf("%w: linkedin campaign %s cannot be activated here because it was ADOPTED, which records no serving resources and leaves un-pausing to LinkedIn Campaign Manager",
 		domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+}
+
+// systemAccountResolverForAdoption returns the resolver an adoption naming accountID uses (#581):
+// the LF system row, read directly (resolveForcedSystem: whatever connection the project has, and
+// whether or not it disconnected one, because the caller asked for the system row's account by
+// name), scoped to accountID when that is the row's default account or one of its grants
+// (existingOnSystem, the same test the levers apply, so whatever can be adopted can be paused).
+// Every other account is ErrAccountNotManagedByConnection with nothing sent. So is any account at
+// all while LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is off.
+func (s *credsSource) systemAccountResolverForAdoption(accountID string) (credsResolver, error) {
+	if !linkedinAccountSelectionEnabled() {
+		return nil, fmt.Errorf("%w: adopting from linkedin account %s through the LF system account is not enabled on this deployment (%s is not \"true\")",
+			domain.ErrAccountNotManagedByConnection, domain.CallerValue(accountID), constants.EnvLinkedInAdsAccountSelectionEnabled)
+	}
+	if !linkedin.ValidAccountID(accountID) {
+		return nil, fmt.Errorf("%w: %s is not a linkedin ad account id", domain.ErrAccountNotManagedByConnection, domain.CallerValue(accountID))
+	}
+	return func(ctx context.Context, _ string, provider model.Provider) (*resolved, error) {
+		sys, err := s.resolveForcedSystem(ctx, provider)
+		if err != nil {
+			return nil, err
+		}
+		if onSys, ok := existingOnSystem(sys, accountID); ok {
+			return onSys, nil
+		}
+		return nil, fmt.Errorf("%w: linkedin account %s is neither the LF system account's default account nor one of its grants",
+			domain.ErrAccountNotManagedByConnection, domain.CallerValue(accountID))
+	}, nil
+}
+
+// ListAdoptableCampaigns implements service.AdoptableCampaignLister for LinkedIn (#581): the ACTIVE
+// and PAUSED campaigns in accountID, read through the LF system row scoped to that account, as
+// adopt-campaign with account_id would read them. One paged campaign-list walk, no analytics.
+func (d *LinkedInDispatcher) ListAdoptableCampaigns(ctx context.Context, projectID string, platform model.Provider, accountID string) ([]model.AdoptableCampaign, error) {
+	resolver, err := d.creds.systemAccountResolverForAdoption(accountID)
+	if err != nil {
+		return nil, err
+	}
+	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform, resolver)
+	if err != nil {
+		return nil, err
+	}
+	scoped := strings.TrimSpace(res.accountID)
+	if !linkedin.ValidAccountID(scoped) {
+		return nil, linkedinAccountIDUnusable(res, projectID, "linkedin adoptable campaign list")
+	}
+	rows, err := d.cachedLinkedInClient(projectID, platform, res, creds, scoped).ListAccountCampaignRefs(ctx, scoped)
+	if err != nil {
+		return nil, linkedInLookupError("list linkedin adoptable campaigns", res, err)
+	}
+	out := make([]model.AdoptableCampaign, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, model.AdoptableCampaign{ID: r.CampaignID, Name: r.Name, Status: r.Status})
+	}
+	return out, nil
 }

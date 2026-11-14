@@ -469,7 +469,10 @@ openssl rand -base64 32
   under the grant's org. Only the exact value `true` enables it; anything else
   fails closed, and a create naming any account but the connection's own is
   refused with a 400 before a job exists. While on, any `adAccountId` requires
-  `global_marketing_ops`. The chart sets it to `"false"`
+  `global_marketing_ops`. The same flag gates adopting LinkedIn campaigns
+  from those accounts (adopt-campaign `account_id`, `global_marketing_ops`
+  only) and `GET /projects/{project_id}/linkedin-ads/adoptable-campaigns`.
+  The chart sets it to `"false"`
   (`app.environment.LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED.value`).
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request

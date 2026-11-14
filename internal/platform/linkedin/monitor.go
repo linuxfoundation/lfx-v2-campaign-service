@@ -153,6 +153,18 @@ func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID
 	return out, budgetCurrency.code(), nil
 }
 
+// ListAccountCampaignRefs is the campaign list ListAccountCampaigns walks, without the analytics
+// read: every ACTIVE/PAUSED campaign on accountID with its id, name and status (the other fields
+// of each row are whatever the list carried). It backs the adoption candidate list (#581), which
+// needs to name campaigns, not report on them, so it costs no Ad Analytics call.
+func (c *Client) ListAccountCampaignRefs(ctx context.Context, accountID string) ([]AccountCampaignRow, error) {
+	if err := ValidateAccountID(accountID); err != nil {
+		return nil, err
+	}
+	rows, _, err := c.fetchAccountCampaignList(ctx, accountID)
+	return rows, err
+}
+
 // fetchAccountCampaignList walks GET /adAccounts/{id}/adCampaigns?q=search over
 // ACTIVE/PAUSED campaigns, decoding the budget/schedule fields the shared responseElement
 // type does not carry — this uses its own response shape rather than doRequest's

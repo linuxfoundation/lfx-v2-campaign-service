@@ -130,10 +130,13 @@ const twitterCustomAudiencesPath = "/projects/:projectId/twitter-ads/custom-audi
 const (
 	linkedInAudiencesPath   = "/projects/:projectId/linkedin-ads/audiences"
 	linkedInConversionsPath = "/projects/:projectId/linkedin-ads/conversions"
+	// linkedInAdoptablePath lists every foundation's campaigns in an account the LF system
+	// LinkedIn row addresses (#581), so it is ruled by marketing-ops-api only.
+	linkedInAdoptablePath = "/projects/:projectId/linkedin-ads/adoptable-campaigns"
 )
 
 // marketingOpsPaths is every path the marketing-ops-api rule must hold, in order, and nothing else.
-var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, redditCustomAudiencesPath, twitterCustomAudiencesPath, linkedInAudiencesPath, linkedInConversionsPath, metaCustomAudiencesPath}
+var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, redditCustomAudiencesPath, twitterCustomAudiencesPath, linkedInAudiencesPath, linkedInConversionsPath, linkedInAdoptablePath, metaCustomAudiencesPath}
 
 // ruleBlock isolates one rendered Heimdall rule (from its `- id: "<id>"` line up to
 // the next `- id:` or EOF) so path/authorizer extraction is scoped to a SINGLE rule.
@@ -249,6 +252,13 @@ func TestGoogleAudiencesIsAMarketingOpsRead(t *testing.T) {
 func TestLinkedInPickersAreMarketingOpsReads(t *testing.T) {
 	assertMarketingOpsRead(t, linkedInAudiencesPath, "/projects/p1/linkedin-ads/audiences")
 	assertMarketingOpsRead(t, linkedInConversionsPath, "/projects/p1/linkedin-ads/conversions")
+}
+
+// TestLinkedInAdoptableCampaignsIsAMarketingOpsRead pins the #581 adoption candidate list: it
+// reads an account the LF system row addresses and lists every foundation's campaigns there, so a
+// campaign_manager (executive_director included) must not reach it.
+func TestLinkedInAdoptableCampaignsIsAMarketingOpsRead(t *testing.T) {
+	assertMarketingOpsRead(t, linkedInAdoptablePath, "/projects/p1/linkedin-ads/adoptable-campaigns")
 }
 
 // TestUserListsIsAMarketingOpsRead pins the same for the Google user-list read: on the shared
@@ -735,6 +745,8 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/linkedin-ads/audience/x", false},
 		{"/projects/p1/linkedin-ads/audiences", true},
 		{"/projects/p1/linkedin-ads/conversions", true},
+		{"/projects/p1/linkedin-ads/adoptable-campaigns", true},
+		{"/projects/p1/linkedin-ads/adoptable-campaigns/x", false},
 		{"/projects/p1/linkedin-ads/audiences/x", false},
 		{"/projects/p1/linkedin-ads/conversions/x", false},
 		{"/projects/p1/meta-ads/conversions", false},

@@ -282,6 +282,34 @@ func PickerAccount(ctx context.Context) string {
 	return ""
 }
 
+type adoptionAccountKey struct{}
+
+// WithAdoptionAccount returns ctx carrying the ad account an adoption names (#581: adopt-campaign's
+// account_id, a LinkedIn account the LF system row addresses), for the CampaignAdopter interface,
+// which has no account argument. Empty means the project's own connection, as before.
+func WithAdoptionAccount(ctx context.Context, accountID string) context.Context {
+	return context.WithValue(ctx, adoptionAccountKey{}, strings.TrimSpace(accountID))
+}
+
+// AdoptionAccount returns the account set by WithAdoptionAccount, or "".
+func AdoptionAccount(ctx context.Context) string {
+	if a, ok := ctx.Value(adoptionAccountKey{}).(string); ok {
+		return a
+	}
+	return ""
+}
+
+// AdoptableCampaign is one campaign an adoption candidate list reports (#581): what the platform
+// said about it, plus whether the asking project already records it.
+type AdoptableCampaign struct {
+	ID     string
+	Name   string
+	Status string
+	// RecordedInProject is set by the orchestrator, never by a dispatcher: the project already has
+	// a live campaign row for this id.
+	RecordedInProject bool
+}
+
 // FindLinkedInGrant returns the grant in grants whose account id equals accountID once both are
 // trimmed. An empty accountID matches nothing.
 func FindLinkedInGrant(grants []LinkedInAccountGrant, accountID string) (LinkedInAccountGrant, bool) {

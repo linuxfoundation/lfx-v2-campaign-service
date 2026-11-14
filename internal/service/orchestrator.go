@@ -590,6 +590,14 @@ type CampaignAdopter interface {
 	LookupCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) (*model.PlatformCampaignRef, error)
 }
 
+// AdoptableCampaignLister is an OPTIONAL dispatcher capability (#581, LinkedIn only): list the
+// campaigns in one of the LF system account's addressable ad accounts that adopt-campaign with
+// account_id could bind. A pure read; an account the system row cannot address must be refused
+// with domain.ErrAccountNotManagedByConnection before anything is sent.
+type AdoptableCampaignLister interface {
+	ListAdoptableCampaigns(ctx context.Context, projectID string, platform model.Provider, accountID string) ([]model.AdoptableCampaign, error)
+}
+
 // ConnectionProber is a REQUIRED dispatcher capability for every platform whose connection can
 // be tested: reach the platform with the project's OWN stored credential and report what it
 // said. It is the capability the connection-test endpoints were missing — six of the seven
@@ -3805,6 +3813,40 @@ func (o *Orchestrator) projectCampaignScope(ctx context.Context, projectID strin
 		return nil, fmt.Errorf("resolve campaign scope for project %s on %s: %w", projectID, platform, err)
 	}
 	return ids, nil
+}
+
+// ListAdoptableCampaigns lists the adoption candidates in accountID (#581) and marks each one the
+// project already records live (ListProjectPlatformCampaignIDs, scoped by project in SQL). The
+// mark is advisory: the binding index, not this list, refuses a campaign another project holds.
+func (o *Orchestrator) ListAdoptableCampaigns(ctx context.Context, projectID string, platform model.Provider, accountID string) ([]model.AdoptableCampaign, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrAdoptionUnsupported, platform)
+	}
+	lister, ok := d.(AdoptableCampaignLister)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrAdoptionUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, adoptLookupTimeout)
+	defer cancel()
+	start := time.Now()
+	rows, err := lister.ListAdoptableCampaigns(callCtx, projectID, platform, accountID)
+	o.recordUpstream(ctx, platform, opLookupCampaign, start, err)
+	if err != nil {
+		return nil, err
+	}
+	recorded, err := o.projectCampaignScope(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	have := make(map[string]struct{}, len(recorded))
+	for _, r := range recorded {
+		have[r.PlatformCampaignID] = struct{}{}
+	}
+	for i := range rows {
+		_, rows[i].RecordedInProject = have[rows[i].ID]
+	}
+	return rows, nil
 }
 
 // ResolvePlatformCampaign maps one upstream campaign id back to this service's own campaigns.

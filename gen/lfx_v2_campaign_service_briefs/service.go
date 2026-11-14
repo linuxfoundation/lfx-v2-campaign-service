@@ -283,7 +283,15 @@ type Service interface {
 	// bidding setup); the budget lever is refused on Meta (its budget lives on the
 	// ad set) and works on Microsoft, Reddit, X and LinkedIn, where the budget is
 	// the campaign's own. A LinkedIn PAUSE on an adopted campaign addresses the
-	// campaign alone, never its creatives.
+	// campaign alone, never its creatives. LINKEDIN FROM THE LF SYSTEM ACCOUNT
+	// (#581): with account_id, a linkedin-ads adoption reads that account through
+	// the LF system LinkedIn connection (its default account or a grant) instead
+	// of the project's own connection; it is restricted to global_marketing_ops
+	// and to deployments with LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED, the campaign
+	// must report that account, a campaign already bound anywhere is still the
+	// 409, and an exact repeat of an adoption that already succeeded returns the
+	// bound campaign (201) without contacting LinkedIn.
+	// list-linkedin-ads-adoptable-campaigns lists the candidates.
 	AdoptCampaign(context.Context, *AdoptCampaignPayload) (res *Campaign, err error)
 	// Get one campaign under a brief; returns ETag.
 	GetCampaign(context.Context, *GetCampaignPayload) (res *Campaign, err error)
@@ -902,6 +910,16 @@ type AdoptCampaignPayload struct {
 	Platform string
 	// The ad platform's own id for the existing campaign
 	PlatformCampaignID string
+	// linkedin-ads only (#581). Adopt from one of the LF system LinkedIn account's
+	// addressable ad accounts (its default account or an operator-installed grant)
+	// instead of the project's own connection. Requires global_marketing_ops on
+	// the project (403 otherwise, 503 when the role cannot be checked) and
+	// LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED on the deployment (400 otherwise).
+	// Any other platform, or an account the system row cannot address, is 400. The
+	// campaign must report this account. Repeating the same adoption (same brief,
+	// campaign and account) returns the existing campaign without contacting
+	// LinkedIn.
+	AccountID *string
 }
 
 // ApplyKeywordActionsPayload is the payload type of the

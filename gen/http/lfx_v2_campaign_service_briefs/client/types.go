@@ -66,6 +66,16 @@ type AdoptCampaignRequestBody struct {
 	Platform string `form:"platform" json:"platform" xml:"platform"`
 	// The ad platform's own id for the existing campaign
 	PlatformCampaignID string `form:"platform_campaign_id" json:"platform_campaign_id" xml:"platform_campaign_id"`
+	// linkedin-ads only (#581). Adopt from one of the LF system LinkedIn account's
+	// addressable ad accounts (its default account or an operator-installed grant)
+	// instead of the project's own connection. Requires global_marketing_ops on
+	// the project (403 otherwise, 503 when the role cannot be checked) and
+	// LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED on the deployment (400 otherwise).
+	// Any other platform, or an account the system row cannot address, is 400. The
+	// campaign must report this account. Repeating the same adoption (same brief,
+	// campaign and account) returns the existing campaign without contacting
+	// LinkedIn.
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
 }
 
 // UpdateCampaignRequestBody is the type of the
@@ -5849,6 +5859,7 @@ func NewAdoptCampaignRequestBody(p *lfxv2campaignservicebriefs.AdoptCampaignPayl
 	body := &AdoptCampaignRequestBody{
 		Platform:           p.Platform,
 		PlatformCampaignID: p.PlatformCampaignID,
+		AccountID:          p.AccountID,
 	}
 	return body
 }

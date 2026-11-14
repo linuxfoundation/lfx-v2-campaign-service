@@ -542,6 +542,14 @@ func (s *BriefService) requireMarketingOpsForSharedAccountInputs(ctx context.Con
 	unavailable := &briefs.ConnServiceUnavailableError{Code: "503",
 		Message: "could not verify the global_marketing_ops role that these " + strings.Join(configKeys, " and ") +
 			" inputs require (" + named + "); retry, or omit them"}
+	return s.requireGlobalMarketingOps(ctx, projectSlug, named, unavailable, &briefs.ForbiddenError{Code: "403", Message: strings.Join(sentences, "; ")})
+}
+
+// requireGlobalMarketingOps is the one fail-closed global_marketing_ops check behind every
+// service-side ops gate: nil only on a definite grant; unavailable when there is no checker, no
+// authenticated username, or the check failed; forbidden on a definite denial. named is what the
+// log lines say is being gated.
+func (s *BriefService) requireGlobalMarketingOps(ctx context.Context, projectSlug, named string, unavailable, forbidden error) error {
 	checker := s.marketingOpsChecker()
 	if checker == nil {
 		slog.ErrorContext(ctx, "refusing shared-account inputs: no marketing-ops checker is configured (NATS_URL empty?)",
@@ -563,7 +571,7 @@ func (s *BriefService) requireMarketingOpsForSharedAccountInputs(ctx context.Con
 	if !ok {
 		slog.WarnContext(ctx, "refused shared-account inputs from a caller without global_marketing_ops",
 			"project_id", projectSlug, "fields", named)
-		return &briefs.ForbiddenError{Code: "403", Message: strings.Join(sentences, "; ")}
+		return forbidden
 	}
 	return nil
 }

@@ -4011,7 +4011,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: adopt-campaign lfx-v2-campaign-service-briefs
-            description: 'Bind a campaign that ALREADY exists on the ad platform to this brief. The platform is read, never written: the campaign must already exist under the project''s connection, and nothing is created upstream. Supported platforms: google-ads, microsoft-ads, meta-ads, reddit-ads, twitter-ads and linkedin-ads; every other platform answers 400. The read is one get-campaign-by-id under the project''s OWN connection (never the shared LF system account), plus, on Reddit, X and LinkedIn only, one read of that connection''s ad account after a campaign 404, and the campaign must belong to that connection''s ad account. Returns 404 only when the platform PROVES it holds no such campaign (a deleted, removed or archived campaign counts as absent; on LinkedIn a CANCELED, PENDING_DELETION or REMOVED one), 503 when the campaign could not be verified (the platform was unreachable or throttled, answered with something untrustworthy, or gave a not-found that could equally be an access, auth or account problem - its existence is unknown), 409 when this brief already has a live campaign on that platform / that campaign is already bound to another brief (in any project, since several foundations share one upstream ad account) / the platform reports the campaign under a different ad account than the project''s connection / the campaign is of a type that platform''s slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost approval during the read / the project has no ad-platform connection of its own, and 400 when the platform has no adoption capability wired or platform_campaign_id is malformed for that platform (checked before any connection work). An adopted campaign records only the campaign itself (id, name, account), never its children, and is returned, read back by get-campaign and indexed with `adopted: true`. The metrics read and the settings readback (on the platforms that support them), delete and pause work on it; activation is refused on every platform because adoption does not verify the targeting the activate guard requires (toggle-campaign-status answers 409 with reason=campaign_adopted); the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line item the row does not record) and on LinkedIn (its bid is the campaign''s own unitCost, but adoption verifies identity, not the bidding setup); the budget lever is refused on Meta (its budget lives on the ad set) and works on Microsoft, Reddit, X and LinkedIn, where the budget is the campaign''s own. A LinkedIn PAUSE on an adopted campaign addresses the campaign alone, never its creatives.'
+            description: 'Bind a campaign that ALREADY exists on the ad platform to this brief. The platform is read, never written: the campaign must already exist under the project''s connection, and nothing is created upstream. Supported platforms: google-ads, microsoft-ads, meta-ads, reddit-ads, twitter-ads and linkedin-ads; every other platform answers 400. The read is one get-campaign-by-id under the project''s OWN connection (never the shared LF system account), plus, on Reddit, X and LinkedIn only, one read of that connection''s ad account after a campaign 404, and the campaign must belong to that connection''s ad account. Returns 404 only when the platform PROVES it holds no such campaign (a deleted, removed or archived campaign counts as absent; on LinkedIn a CANCELED, PENDING_DELETION or REMOVED one), 503 when the campaign could not be verified (the platform was unreachable or throttled, answered with something untrustworthy, or gave a not-found that could equally be an access, auth or account problem - its existence is unknown), 409 when this brief already has a live campaign on that platform / that campaign is already bound to another brief (in any project, since several foundations share one upstream ad account) / the platform reports the campaign under a different ad account than the project''s connection / the campaign is of a type that platform''s slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost approval during the read / the project has no ad-platform connection of its own, and 400 when the platform has no adoption capability wired or platform_campaign_id is malformed for that platform (checked before any connection work). An adopted campaign records only the campaign itself (id, name, account), never its children, and is returned, read back by get-campaign and indexed with `adopted: true`. The metrics read and the settings readback (on the platforms that support them), delete and pause work on it; activation is refused on every platform because adoption does not verify the targeting the activate guard requires (toggle-campaign-status answers 409 with reason=campaign_adopted); the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line item the row does not record) and on LinkedIn (its bid is the campaign''s own unitCost, but adoption verifies identity, not the bidding setup); the budget lever is refused on Meta (its budget lives on the ad set) and works on Microsoft, Reddit, X and LinkedIn, where the budget is the campaign''s own. A LinkedIn PAUSE on an adopted campaign addresses the campaign alone, never its creatives. LINKEDIN FROM THE LF SYSTEM ACCOUNT (#581): with account_id, a linkedin-ads adoption reads that account through the LF system LinkedIn connection (its default account or a grant) instead of the project''s own connection; it is restricted to global_marketing_ops and to deployments with LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED, the campaign must report that account, a campaign already bound anywhere is still the 409, and an exact repeat of an adoption that already succeeded returns the bound campaign (201) without contacting LinkedIn. list-linkedin-ads-adoptable-campaigns lists the candidates.'
             operationId: lfx-v2-campaign-service-briefs#adopt-campaign
             parameters:
                 - name: project_id
@@ -10932,6 +10932,85 @@ paths:
                     description: 'Conflict: Conflict'
                     schema:
                         $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/linkedin-ads/adoptable-campaigns:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-linkedin-ads-adoptable-campaigns lfx-v2-campaign-service-connections
+            description: 'List the ACTIVE and PAUSED campaigns in one of the LF system LinkedIn account''s addressable ad accounts (its default account or an operator-installed grant), as candidates for adopt-campaign with account_id (#581), so a campaign built by hand in Campaign Manager can be bound to a brief and shown in this project''s monitor. Read through the LF system LinkedIn connection, whatever connection the project has. Gated on global_marketing_ops of {project_id} by the marketing-ops-api gateway rule, because it lists campaigns of every foundation in the account. Answers 400 unless LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is on, and 400 for an account the system row cannot address (nothing is sent). A missing or unusable LF system LinkedIn connection is 500, an operator''s fault, and an expired system credential is 503. The campaign list pages LinkedIn''s search finder 100 at a time, up to 50 pages, and fails with 503 beyond that or on a page it cannot trust. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#list-linkedin-ads-adoptable-campaigns
+            parameters:
+                - name: account_id
+                  in: query
+                  description: 'The LinkedIn ad account to list: the LF system account''s default account or one of its grants'
+                  required: true
+                  type: string
+                  maxLength: 64
+                  pattern: ^[0-9]+$
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/LinkedinAdsAdoptableCampaigns'
+                        required:
+                            - account_id
+                            - campaigns
+                            - adoptable_count
+                "400":
+                    description: 'BadRequest: Bad request'
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: 'NotFound: Resource not found'
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
                         required:
                             - code
                             - message
@@ -19641,6 +19720,12 @@ definitions:
         title: LfxV2CampaignServiceBriefsAdoptCampaignRequestBody
         type: object
         properties:
+            account_id:
+                type: string
+                description: linkedin-ads only (#581). Adopt from one of the LF system LinkedIn account's addressable ad accounts (its default account or an operator-installed grant) instead of the project's own connection. Requires global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked) and LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED on the deployment (400 otherwise). Any other platform, or an account the system row cannot address, is 400. The campaign must report this account. Repeating the same adoption (same brief, campaign and account) returns the existing campaign without contacting LinkedIn.
+                example: "500928401"
+                pattern: ^[0-9]+$
+                maxLength: 64
             platform:
                 type: string
                 description: Ad platform the campaign lives on
@@ -19652,6 +19737,7 @@ definitions:
                 minLength: 1
                 maxLength: 64
         example:
+            account_id: "500928401"
             platform: google-ads
             platform_campaign_id: "1234567890"
         required:
@@ -20719,6 +20805,79 @@ definitions:
     LinkedinAdsAccountMonitorResponseBody:
         title: LinkedinAdsAccountMonitorResponseBody
         $ref: '#/definitions/LinkedinAdsAccountMonitor'
+    LinkedinAdsAdoptableCampaign:
+        title: LinkedinAdsAdoptableCampaign
+        type: object
+        properties:
+            id:
+                type: string
+                description: The LinkedIn campaign id, in exactly the form adopt-campaign's platform_campaign_id takes
+                example: "312345678"
+            name:
+                type: string
+                description: The campaign's name in Campaign Manager. Not an identifier.
+                example: KubeCon NA 2026 — Registrations
+            recorded_in_project:
+                type: boolean
+                description: 'true when this project already has a live campaign row for this campaign id (adopted or created here), so its monitor already shows it. false does not mean adoptable: a campaign bound in ANOTHER project is still refused by adopt-campaign (409).'
+                example: false
+            status:
+                type: string
+                description: 'LinkedIn''s campaign status, verbatim: ACTIVE or PAUSED (only those are listed)'
+                example: ACTIVE
+        example:
+            id: "312345678"
+            name: KubeCon NA 2026 — Registrations
+            recorded_in_project: false
+            status: ACTIVE
+        required:
+            - id
+            - name
+            - status
+            - recorded_in_project
+    LinkedinAdsAdoptableCampaigns:
+        title: LinkedinAdsAdoptableCampaigns
+        type: object
+        properties:
+            account_id:
+                type: string
+                description: The LinkedIn ad account the campaigns were read from
+                example: "500928401"
+            adoptable_count:
+                type: integer
+                description: How many campaigns are in `campaigns`
+                example: 1
+                format: int64
+            campaigns:
+                type: array
+                items:
+                    $ref: '#/definitions/LinkedinAdsAdoptableCampaign'
+                description: The account's ACTIVE and PAUSED campaigns, in the order LinkedIn returned them
+                example:
+                    - id: "312345678"
+                      name: KubeCon NA 2026 — Registrations
+                      recorded_in_project: false
+                      status: ACTIVE
+                    - id: "312345678"
+                      name: KubeCon NA 2026 — Registrations
+                      recorded_in_project: false
+                      status: ACTIVE
+        example:
+            account_id: "500928401"
+            adoptable_count: 1
+            campaigns:
+                - id: "312345678"
+                  name: KubeCon NA 2026 — Registrations
+                  recorded_in_project: false
+                  status: ACTIVE
+                - id: "312345678"
+                  name: KubeCon NA 2026 — Registrations
+                  recorded_in_project: false
+                  status: ACTIVE
+        required:
+            - account_id
+            - campaigns
+            - adoptable_count
     LinkedinAdsAudience:
         title: LinkedinAdsAudience
         type: object
