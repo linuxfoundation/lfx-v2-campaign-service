@@ -28,6 +28,8 @@ type targetingFakeX struct {
 	interestsPages []string
 	// conversationsPages are the conversation topic lookup's pages (#564 gap 8), served the same way.
 	conversationsPages []string
+	// platformsPages are the platform lookup's pages (#564 gap 9), served the same way.
+	platformsPages []string
 	// failCriterion makes the n-th criterion POST (1-based) answer failStatus.
 	failCriterion int
 	failStatus    int
@@ -99,6 +101,17 @@ func (f *targetingFakeX) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, _ = w.Write([]byte(f.conversationsPages[i]))
+	case r.Method == http.MethodGet && p == "/12/targeting_criteria/platforms":
+		f.lookups = append(f.lookups, "platforms?"+r.URL.RawQuery)
+		i := 0
+		if c := q.Get("cursor"); c != "" {
+			_, _ = fmt.Sscanf(c, "p%d", &i)
+		}
+		if i >= len(f.platformsPages) {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(f.platformsPages[i]))
 	case r.Method == http.MethodGet && strings.HasSuffix(p, "/accounts/acc1/custom_audiences"):
 		f.lookups = append(f.lookups, "custom_audiences?"+r.URL.RawQuery)
 		if f.failAudiences {

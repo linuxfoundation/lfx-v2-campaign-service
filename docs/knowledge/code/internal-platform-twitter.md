@@ -1715,3 +1715,16 @@ each lower-cased value to the spelling X listed, and the criterion sends X's spe
 list does not hold is a refusal; a list that cannot be read to its end is an error. Either way
 nothing is created. Same default-off `TWITTER_CREATE_TARGETING_ENABLED` flag; not role-gated (a
 topic names no account resource). Not verified live.
+
+## Create-time device platforms (`create_targeting.go`, #564 gap 9)
+
+`twitterConfig.platforms` adds one `PLATFORM` criterion (EQ) per value after the conversation
+topics. These are X's device platforms (X's example: `targeting_value` `0`, `name` `iOS`), not the
+request's ad platforms. `NormalizePlatforms` trims and lower-cases each value, requires 1-32
+letters or digits, drops duplicates and caps the list at 10; it counts toward the 60-criterion
+per-create cap. Every value must be listed by `GET targeting_criteria/platforms` before anything is
+created; the check shares `resolveListedValues` with the conversation topics, and the criterion
+sends X's spelling. Same default-off `TWITTER_CREATE_TARGETING_ENABLED` flag; not role-gated. Not
+verified live. Devices (`DEVICE`), age (`AGE`) and gender (`GENDER`) from gap 9 are not built: X's
+reference names their targeting types but this bundle has no source for the age-bucket or gender
+values, so they wait for a live probe.

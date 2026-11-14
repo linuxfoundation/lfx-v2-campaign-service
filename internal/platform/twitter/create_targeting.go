@@ -92,6 +92,14 @@ const (
 	MaxCreateConversationTopics = MaxCreateTargetingCriteria
 	// TargetingConversation is X's targeting_type for a conversation topic criterion.
 	TargetingConversation = "CONVERSATION"
+
+	// FieldPlatforms is the gap 9 twitterConfig key (#564): device platforms (iOS, Android,
+	// desktop and so on), sent as PLATFORM criteria.
+	FieldPlatforms = "platforms"
+	// MaxCreatePlatforms caps the list: X lists a handful of platforms, so ten is room to spare.
+	MaxCreatePlatforms = 10
+	// TargetingPlatform is X's targeting_type for a platform criterion.
+	TargetingPlatform = "PLATFORM"
 )
 
 var (
@@ -169,6 +177,16 @@ func NormalizeConversationTopics(topics []string) ([]string, error) {
 		"must be an X conversation topic value (1-32 letters or digits, from GET targeting_criteria/conversations)")
 }
 
+// NormalizePlatforms applies the gap 9 rules (#564): each platform is the targeting_value of an
+// entry of GET targeting_criteria/platforms (X's example: "0" for iOS), trimmed and lower-cased,
+// 1-32 letters or digits; duplicates are dropped and a blank entry refused; at most
+// MaxCreatePlatforms. Pure, so the dispatcher's synchronous preflight and CreateCampaign apply the
+// same rules. A nil or empty list stays nil.
+func NormalizePlatforms(platforms []string) ([]string, error) {
+	return normalizeTargetList(FieldPlatforms, platforms, MaxCreatePlatforms, strings.ToLower, listedValueRe,
+		"must be an X platform value (1-32 letters or digits, from GET targeting_criteria/platforms)")
+}
+
 // TargetingError is a refusal of one create-time targeting list; Field is the twitterConfig key.
 type TargetingError struct {
 	Field string
@@ -229,8 +247,8 @@ func CheckCreateCriteriaCount(n int) error {
 	if n <= MaxCreateTargetingCriteria {
 		return nil
 	}
-	return fmt.Errorf("%s, %s, %s, %s, %s, %s and %s together name %d targeting criteria; at most %d are accepted per create, since each is a separate X write paced at one per second",
-		FieldGeoTargets, FieldLanguages, FieldKeywords, FieldInterestIDs, FieldConversationTopics, FieldCustomAudienceIDs, FieldExcludedCustomAudienceIDs, n, MaxCreateTargetingCriteria)
+	return fmt.Errorf("%s, %s, %s, %s, %s, %s, %s and %s together name %d targeting criteria; at most %d are accepted per create, since each is a separate X write paced at one per second",
+		FieldGeoTargets, FieldLanguages, FieldKeywords, FieldInterestIDs, FieldConversationTopics, FieldPlatforms, FieldCustomAudienceIDs, FieldExcludedCustomAudienceIDs, n, MaxCreateTargetingCriteria)
 }
 
 // createCriterion is one criterion the create path will POST.
@@ -422,31 +440,31 @@ func (c *Client) resolveInterests(ctx context.Context, ids []string) error {
 	return nil
 }
 
-// resolveConversationTopics checks every requested topic against X's
-// GET targeting_criteria/conversations list (#564 gap 8), walked to its end like the languages, and
-// returns each as X spells it. It refuses a topic X does not list.
-func (c *Client) resolveConversationTopics(ctx context.Context, topics []string) ([]string, error) {
-	if len(topics) == 0 {
+// resolveListedValues checks every requested value against one walked targeting_criteria list
+// (conversations for #564 gap 8, platforms for gap 9) and returns each as X spells it. It refuses a
+// value X does not list, naming the twitterConfig field and noun.
+func (c *Client) resolveListedValues(ctx context.Context, kind, targetingType, field, noun string, values []string) ([]string, error) {
+	if len(values) == 0 {
 		return nil, nil
 	}
-	known, err := c.listTargetingValues(ctx, "conversation", TargetingConversation)
+	known, err := c.listTargetingValues(ctx, kind, targetingType)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]string, 0, len(topics))
-	for _, t := range topics {
-		v := known[t]
-		if v == "" {
-			return nil, domain.PreflightRefusalf("invalid twitterConfig.%s: X offers no conversation topic %s", FieldConversationTopics, domain.CallerValue(t))
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		listed := known[v]
+		if listed == "" {
+			return nil, domain.PreflightRefusalf("invalid twitterConfig.%s: X offers no %s %s", field, noun, domain.CallerValue(v))
 		}
-		out = append(out, v)
+		out = append(out, listed)
 	}
 	return out, nil
 }
 
 // resolveCreateTargeting turns the normalized lists into the criteria to POST, reading X's
 // lookups. Called in the pre-create block, so every failure leaves nothing created.
-func (c *Client) resolveCreateTargeting(ctx context.Context, geo, langs, keywords, interests, topics []string) ([]createCriterion, error) {
+func (c *Client) resolveCreateTargeting(ctx context.Context, geo, langs, keywords, interests, topics, platforms []string) ([]createCriterion, error) {
 	var out []createCriterion
 	for _, code := range geo {
 		v, err := c.resolveCountry(ctx, code)
@@ -474,12 +492,20 @@ func (c *Client) resolveCreateTargeting(ctx context.Context, geo, langs, keyword
 		out = append(out, createCriterion{targetingType: TargetingInterest, value: id, label: "interest " + id})
 	}
 	// Conversation topics (#564 gap 8), each sent as X listed it.
-	listed, err := c.resolveConversationTopics(ctx, topics)
+	listed, err := c.resolveListedValues(ctx, "conversation", TargetingConversation, FieldConversationTopics, "conversation topic", topics)
 	if err != nil {
 		return nil, err
 	}
 	for i, v := range listed {
 		out = append(out, createCriterion{targetingType: TargetingConversation, value: v, label: "conversation topic " + topics[i]})
+	}
+	// Platforms (#564 gap 9), the same way.
+	listed, err = c.resolveListedValues(ctx, "platform", TargetingPlatform, FieldPlatforms, "platform", platforms)
+	if err != nil {
+		return nil, err
+	}
+	for i, v := range listed {
+		out = append(out, createCriterion{targetingType: TargetingPlatform, value: v, label: "platform " + platforms[i]})
 	}
 	return out, nil
 }

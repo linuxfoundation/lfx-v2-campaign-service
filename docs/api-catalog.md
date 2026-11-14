@@ -3273,6 +3273,17 @@ conversationTopics?: string[]    — Conversation topic targeting (#564 gap 8): 
                                   nothing created. The same TWITTER_CREATE_TARGETING_ENABLED flag,
                                   criterion POST path, failure handling, reuse rules and synchronous
                                   400s as `keywords` / `interestIds`. Not role-gated.
+platforms?: string[]             — Device platform targeting (#564 gap 9): X platform values (the
+                                  `targeting_value` of `GET targeting_criteria/platforms`, e.g. `0`
+                                  for iOS) — X's device platforms, not the request's ad platforms.
+                                  Trimmed, lowercased, 1-32 letters or digits, duplicates dropped,
+                                  at most 10. Each is sent as a `PLATFORM` / `EQ` criterion after the
+                                  conversation topics, spelled as X listed it; the platform list is
+                                  walked to its end first, and a value it does not list, or a list
+                                  that cannot be read, fails the job with nothing created. Omitted,
+                                  the line item serves on every platform, as before. The same flag,
+                                  criterion path, failure and reuse rules and synchronous 400s as
+                                  `conversationTopics`. Not role-gated.
 customAudienceIds?: string[]     — X custom audiences to TARGET (#564 gap 3), ids from
                                   GET .../twitter-ads/custom-audiences (e.g. `1nmth`). Sent as
                                   `CUSTOM_AUDIENCE` / `EQ` criteria on the new line item, after
@@ -3287,7 +3298,7 @@ excludedCustomAudienceIds?: string[]
                                   `invalid campaign config: twitterConfig.<field>: …`, as is a
                                   value that is not an array of strings (null reads as absent).
                                   ALL THE TARGETING LISTS TOGETHER (`geoTargets`, `languages`,
-                                  `keywords`, `interestIds`, `conversationTopics`, `customAudienceIds`,
+                                  `keywords`, `interestIds`, `conversationTopics`, `platforms`, `customAudienceIds`,
                                   `excludedCustomAudienceIds`, counted after de-duplication) may
                                   name at most 60 criteria per create: each is
                                   a separate X write paced at one per second inside the two-minute
