@@ -230,6 +230,15 @@ const (
 	// authored more than one post or put more than one ad in an ad group.
 	EnvRedditAdPerVariantEnabled = "REDDIT_AD_PER_VARIANT_ENABLED"
 
+	// EnvRedditPixelListEnabled opts a deployment IN to the Reddit pixel picker read (#549 gap
+	// 10), GET /projects/{project_id}/reddit-ads/pixels, which lists the pixels on the ad account
+	// a Reddit create for the project uses. Only the exact value "true" enables it; unset or any
+	// other value answers 400 "not supported" without contacting Reddit. The gateway admits only
+	// global_marketing_ops to the route because the shared LF account lists every foundation's
+	// pixels. Default off because the read is built from Reddit's public OpenAPI document
+	// (list_pixels_by_ad_account) and has not been exercised against a live ad account.
+	EnvRedditPixelListEnabled = "REDDIT_PIXEL_LIST_ENABLED"
+
 	// EnvTwitterCreateTargetingEnabled opts a deployment IN to twitterConfig.geoTargets and
 	// twitterConfig.languages (#564): country and language targeting criteria added to the line
 	// item an X create makes. Only the exact value "true" enables them; unset or any other value

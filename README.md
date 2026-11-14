@@ -291,6 +291,12 @@ openssl rand -base64 32
   it; anything else fails closed, and a create that sets the field is
   refused with a 400 before any job exists. Not role-gated. No live create
   has sent `DAILY_SPEND` yet. The chart sets it to `"false"`.
+- `REDDIT_PIXEL_LIST_ENABLED` (default unset, i.e. OFF) — opts a deployment
+  IN to the Reddit pixel picker read `GET /projects/{project_id}/reddit-ads/pixels`
+  (#549 gap 10; Reddit `GET /ad_accounts/{id}/pixels`), gated at the gateway
+  on `global_marketing_ops`. Only the exact value `true` enables it;
+  anything else answers 400 "not supported" without contacting Reddit. Not
+  yet exercised live. The chart sets it to `"false"`.
 - `REDDIT_AD_PER_VARIANT_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to one ad per variant (#549 gap 6): a Reddit create that
   authors its post (`imageUrl` or `imageAssetId`, no `postUrl`) and carries

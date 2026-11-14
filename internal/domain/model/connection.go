@@ -551,6 +551,22 @@ type RedditCustomAudiences struct {
 	Truncated bool
 }
 
+// RedditPixel is one conversion pixel on a Reddit ad account (#549 gap 10), for the
+// conversionPixelId picker. BusinessID is empty when Reddit sent none.
+type RedditPixel struct {
+	ID         string
+	Name       string
+	BusinessID string
+}
+
+// RedditPixels is the pixel read on the ad account a Reddit create for the project uses.
+// Truncated reports that the page walk stopped at its cap with more pages left.
+type RedditPixels struct {
+	AccountID string
+	Pixels    []RedditPixel
+	Truncated bool
+}
+
 // KeywordAction is one requested keyword mutation on a live campaign.
 type KeywordAction struct {
 	AdGroupID   string

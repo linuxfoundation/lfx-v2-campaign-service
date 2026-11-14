@@ -418,6 +418,16 @@ app:
     REDDIT_AD_PER_VARIANT_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to the Reddit pixel picker read (#549 gap 10),
+    # GET /projects/{project_id}/reddit-ads/pixels (Reddit GET
+    # /ad_accounts/{id}/pixels). Default off: built from Reddit's public
+    # OpenAPI document, not yet exercised against a live account. While off
+    # the read answers 400 "not supported". The route is gated on
+    # global_marketing_ops (marketing-ops-api). Any value other than "true" is
+    # treated as off.
+    REDDIT_PIXEL_LIST_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to twitterConfig.geoTargets, languages, keywords
     # and interestIds (#564), sent at create time as LOCATION, LANGUAGE,
     # BROAD_KEYWORD and INTEREST targeting criteria on the new X line item.

@@ -921,6 +921,22 @@ type ListRedditAdsCustomAudiencesResponseBody struct {
 	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
 }
 
+// ListRedditAdsPixelsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-pixels"
+// endpoint HTTP response body.
+type ListRedditAdsPixelsResponseBody struct {
+	// The Reddit ad account the pixels were read from: the account a Reddit create
+	// for this project uses
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The account's pixels, sorted by name (ignoring case), then id
+	Pixels []*RedditAdsPixelResponseBody `form:"pixels,omitempty" json:"pixels,omitempty" xml:"pixels,omitempty"`
+	// How many pixels are in `pixels`
+	PixelCount *int `form:"pixel_count,omitempty" json:"pixel_count,omitempty" xml:"pixel_count,omitempty"`
+	// True when Reddit still had more pages after the 10 this read follows; the
+	// list is then incomplete
+	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
+}
+
 // ListTwitterAdsCustomAudiencesResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-twitter-ads-custom-audiences" endpoint HTTP response body.
@@ -4673,6 +4689,66 @@ type ListRedditAdsCustomAudiencesUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListRedditAdsPixelsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-pixels"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListRedditAdsPixelsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListRedditAdsPixelsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-pixels"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListRedditAdsPixelsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListRedditAdsPixelsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-pixels"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListRedditAdsPixelsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListRedditAdsPixelsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-pixels"
+// endpoint HTTP response body for the "NotFound" error.
+type ListRedditAdsPixelsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListRedditAdsPixelsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-pixels"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListRedditAdsPixelsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListRedditAdsPixelsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-pixels"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListRedditAdsPixelsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ListTwitterAdsCustomAudiencesBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-twitter-ads-custom-audiences" endpoint HTTP response body for the
@@ -6963,6 +7039,18 @@ type RedditAdsCustomAudienceResponseBody struct {
 	SizeLower *int64 `form:"size_lower,omitempty" json:"size_lower,omitempty" xml:"size_lower,omitempty"`
 	// Reddit's upper bound on the matched users. Absent when Reddit sent none.
 	SizeUpper *int64 `form:"size_upper,omitempty" json:"size_upper,omitempty" xml:"size_upper,omitempty"`
+}
+
+// RedditAdsPixelResponseBody is used to define fields on response body types.
+type RedditAdsPixelResponseBody struct {
+	// The pixel id, in the form redditConfig.conversionPixelId and the
+	// connection's conversion_pixel_id take. Send it as-is.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// The pixel's display name. Not an identifier; may be empty.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// The Reddit business that owns the pixel, verbatim. Absent when Reddit sent
+	// none.
+	BusinessID *string `form:"business_id,omitempty" json:"business_id,omitempty" xml:"business_id,omitempty"`
 }
 
 // TwitterAdsCustomAudienceResponseBody is used to define fields on response
@@ -12768,6 +12856,99 @@ func NewListRedditAdsCustomAudiencesUnauthorized(body *ListRedditAdsCustomAudien
 	return v
 }
 
+// NewListRedditAdsPixelsRedditAdsPixelsOK builds a
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-pixels"
+// endpoint result from a HTTP "OK" response.
+func NewListRedditAdsPixelsRedditAdsPixelsOK(body *ListRedditAdsPixelsResponseBody) *lfxv2campaignserviceconnections.RedditAdsPixels {
+	v := &lfxv2campaignserviceconnections.RedditAdsPixels{
+		AccountID:  *body.AccountID,
+		PixelCount: *body.PixelCount,
+		Truncated:  *body.Truncated,
+	}
+	v.Pixels = make([]*lfxv2campaignserviceconnections.RedditAdsPixel, len(body.Pixels))
+	for i, val := range body.Pixels {
+		if val == nil {
+			v.Pixels[i] = nil
+			continue
+		}
+		v.Pixels[i] = unmarshalRedditAdsPixelResponseBodyToLfxv2campaignserviceconnectionsRedditAdsPixel(val)
+	}
+
+	return v
+}
+
+// NewListRedditAdsPixelsBadRequest builds a
+// lfx-v2-campaign-service-connections service list-reddit-ads-pixels endpoint
+// BadRequest error.
+func NewListRedditAdsPixelsBadRequest(body *ListRedditAdsPixelsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListRedditAdsPixelsServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service list-reddit-ads-pixels endpoint
+// ServiceUnavailable error.
+func NewListRedditAdsPixelsServiceUnavailable(body *ListRedditAdsPixelsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListRedditAdsPixelsInternalServerError builds a
+// lfx-v2-campaign-service-connections service list-reddit-ads-pixels endpoint
+// InternalServerError error.
+func NewListRedditAdsPixelsInternalServerError(body *ListRedditAdsPixelsInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListRedditAdsPixelsNotFound builds a lfx-v2-campaign-service-connections
+// service list-reddit-ads-pixels endpoint NotFound error.
+func NewListRedditAdsPixelsNotFound(body *ListRedditAdsPixelsNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListRedditAdsPixelsPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service list-reddit-ads-pixels endpoint
+// PayloadTooLarge error.
+func NewListRedditAdsPixelsPayloadTooLarge(body *ListRedditAdsPixelsPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListRedditAdsPixelsUnauthorized builds a
+// lfx-v2-campaign-service-connections service list-reddit-ads-pixels endpoint
+// Unauthorized error.
+func NewListRedditAdsPixelsUnauthorized(body *ListRedditAdsPixelsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewListTwitterAdsCustomAudiencesTwitterAdsCustomAudiencesOK builds a
 // "lfx-v2-campaign-service-connections" service
 // "list-twitter-ads-custom-audiences" endpoint result from a HTTP "OK"
@@ -16763,6 +16944,31 @@ func ValidateListRedditAdsCustomAudiencesResponseBody(body *ListRedditAdsCustomA
 	for _, e := range body.Audiences {
 		if e != nil {
 			if err2 := validateRedditAdsCustomAudienceResponseBody(e, "body.audiences[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateListRedditAdsPixelsResponseBody runs the validations defined on
+// ListRedditAdsPixelsResponseBody
+func ValidateListRedditAdsPixelsResponseBody(body *ListRedditAdsPixelsResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.Pixels == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("pixels", "body"))
+	}
+	if body.PixelCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("pixel_count", "body"))
+	}
+	if body.Truncated == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("truncated", "body"))
+	}
+	for _, e := range body.Pixels {
+		if e != nil {
+			if err2 := validateRedditAdsPixelResponseBody(e, "body.pixels[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -21619,6 +21825,78 @@ func ValidateListRedditAdsCustomAudiencesUnauthorizedResponseBody(body *ListRedd
 	return
 }
 
+// ValidateListRedditAdsPixelsBadRequestResponseBody runs the validations
+// defined on ListRedditAdsPixelsBadRequestResponseBody
+func ValidateListRedditAdsPixelsBadRequestResponseBody(body *ListRedditAdsPixelsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListRedditAdsPixelsServiceUnavailableResponseBody runs the
+// validations defined on ListRedditAdsPixelsServiceUnavailableResponseBody
+func ValidateListRedditAdsPixelsServiceUnavailableResponseBody(body *ListRedditAdsPixelsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListRedditAdsPixelsInternalServerErrorResponseBody runs the
+// validations defined on ListRedditAdsPixelsInternalServerErrorResponseBody
+func ValidateListRedditAdsPixelsInternalServerErrorResponseBody(body *ListRedditAdsPixelsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListRedditAdsPixelsNotFoundResponseBody runs the validations defined
+// on ListRedditAdsPixelsNotFoundResponseBody
+func ValidateListRedditAdsPixelsNotFoundResponseBody(body *ListRedditAdsPixelsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListRedditAdsPixelsPayloadTooLargeResponseBody runs the validations
+// defined on ListRedditAdsPixelsPayloadTooLargeResponseBody
+func ValidateListRedditAdsPixelsPayloadTooLargeResponseBody(body *ListRedditAdsPixelsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListRedditAdsPixelsUnauthorizedResponseBody runs the validations
+// defined on ListRedditAdsPixelsUnauthorizedResponseBody
+func ValidateListRedditAdsPixelsUnauthorizedResponseBody(body *ListRedditAdsPixelsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateListTwitterAdsCustomAudiencesBadRequestResponseBody runs the
 // validations defined on ListTwitterAdsCustomAudiencesBadRequestResponseBody
 func ValidateListTwitterAdsCustomAudiencesBadRequestResponseBody(body *ListTwitterAdsCustomAudiencesBadRequestResponseBody) (err error) {
@@ -24556,6 +24834,36 @@ func validateRedditAdsCustomAudienceResponseBody(body *RedditAdsCustomAudienceRe
 	}
 	if body.Status == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("status", path))
+	}
+	if body.ID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".id", *body.ID, "^[A-Za-z0-9_]{1,64}$"))
+	}
+	return
+}
+
+// ValidateRedditAdsPixelResponseBody runs the validations defined on
+// reddit-ads-pixel
+func ValidateRedditAdsPixelResponseBody(body *RedditAdsPixelResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.id", *body.ID, "^[A-Za-z0-9_]{1,64}$"))
+	}
+	return
+}
+
+// validateRedditAdsPixelResponseBody checks reddit-ads-pixel and reports
+// errors using the path supplied by its caller
+func validateRedditAdsPixelResponseBody(body *RedditAdsPixelResponseBody, path string) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", path))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
 	}
 	if body.ID != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern(path+".id", *body.ID, "^[A-Za-z0-9_]{1,64}$"))

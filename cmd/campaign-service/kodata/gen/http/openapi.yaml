@@ -12117,6 +12117,79 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/reddit-ads/pixels:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-reddit-ads-pixels lfx-v2-campaign-service-connections
+            description: 'List the conversion pixels on the Reddit ad account a Reddit create for this project uses, live from Reddit Ads API v3 GET /ad_accounts/{ad_account_id}/pixels (list_pixels_by_ad_account), for picking redditConfig.conversionPixelId (#549 gap 10). Follows Reddit''s pagination for at most 10 pages; `truncated` is set when more remained. Sorted by name, ignoring case, then id. Credentials resolve as for a create: the project''s own Reddit connection, or the LF system account when the deployment forces it. The Reddit ad account is shared by every foundation, so the response lists EVERY foundation''s pixels; like list-reddit-ads-custom-audiences it is therefore gated on global_marketing_ops of {project_id}, not campaign_manager. Disabled (400 not supported) unless REDDIT_PIXEL_LIST_ENABLED is "true": the read is built from Reddit''s public OpenAPI document and has not been exercised against a live ad account. An answer this service cannot believe (no data list, an unusable or repeated id) is 503 with nothing partial. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#list-reddit-ads-pixels
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/RedditAdsPixels'
+                        required:
+                            - account_id
+                            - pixels
+                            - pixel_count
+                            - truncated
+                "400":
+                    description: 'BadRequest: Bad request'
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: 'NotFound: Resource not found'
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/send-workflows:
         post:
             tags:
@@ -23387,6 +23460,67 @@ definitions:
             - window
             - rows
             - row_count
+            - truncated
+    RedditAdsPixel:
+        title: RedditAdsPixel
+        type: object
+        properties:
+            business_id:
+                type: string
+                description: The Reddit business that owns the pixel, verbatim. Absent when Reddit sent none.
+                example: 8f2c5b1e-0000-4000-8000-000000000000
+            id:
+                type: string
+                description: The pixel id, in the form redditConfig.conversionPixelId and the connection's conversion_pixel_id take. Send it as-is.
+                example: t2_123456
+                pattern: ^[A-Za-z0-9_]{1,64}$
+            name:
+                type: string
+                description: The pixel's display name. Not an identifier; may be empty.
+                example: Snoo's Pixel
+        example:
+            business_id: 8f2c5b1e-0000-4000-8000-000000000000
+            id: t2_123456
+            name: Snoo's Pixel
+        required:
+            - id
+            - name
+    RedditAdsPixels:
+        title: RedditAdsPixels
+        type: object
+        properties:
+            account_id:
+                type: string
+                description: 'The Reddit ad account the pixels were read from: the account a Reddit create for this project uses'
+                example: t2_gv9wtbfa
+            pixel_count:
+                type: integer
+                description: How many pixels are in `pixels`
+                example: 1
+                format: int64
+            pixels:
+                type: array
+                items:
+                    $ref: '#/definitions/RedditAdsPixel'
+                description: The account's pixels, sorted by name (ignoring case), then id
+                example:
+                    - id: t2_123456
+                      name: Snoo's Pixel
+            truncated:
+                type: boolean
+                description: True when Reddit still had more pages after the 10 this read follows; the list is then incomplete
+                example: false
+        example:
+            account_id: t2_gv9wtbfa
+            pixel_count: 1
+            pixels:
+                - id: t2_123456
+                  name: Snoo's Pixel
+            truncated: false
+        required:
+            - account_id
+            - pixels
+            - pixel_count
             - truncated
     SendWorkflowInput:
         title: SendWorkflowInput
