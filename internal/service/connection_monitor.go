@@ -218,10 +218,11 @@ func toConnAccountMonitorTotals(t *model.AccountMonitorTotals) *conn.AccountMoni
 // they may receive the scope arms in classifyMonitorError; a method that declares no 409 could not
 // encode one.
 var monitorScopeConflictPlatforms = map[model.Provider]bool{
-	model.ProviderGoogleAds:  true,
-	model.ProviderMetaAds:    true,
-	model.ProviderRedditAds:  true,
-	model.ProviderTwitterAds: true,
+	model.ProviderGoogleAds:   true,
+	model.ProviderLinkedInAds: true,
+	model.ProviderMetaAds:     true,
+	model.ProviderRedditAds:   true,
+	model.ProviderTwitterAds:  true,
 }
 
 // classifyMonitorError is classifyDiscoveryError plus the campaign-scope refusals of a
@@ -486,14 +487,55 @@ func (s *ConnectionService) MonitorGoogleAdsAccount(ctx context.Context, p *conn
 		})
 }
 
-// MonitorLinkedinAdsAccount reads every campaign visible on a LinkedIn Ads account, live from
-// the platform, with pacing and action items derived by the ported rule engine.
+// MonitorLinkedinAdsAccount reads this project's own campaigns on a LinkedIn Ads account, live from
+// the platform, with pacing and action items derived by the ported rule engine. Since #581 the LF
+// system row serves several foundations' LinkedIn accounts (its default and its grants), so the
+// read is scoped to the campaigns this service recorded for the project, exactly as Google Ads'
+// is (Orchestrator.ReadAccountCampaignMetrics).
+//
+// account_id is optional, as on Google Ads (#591): omitted, it is the account the project's
+// recorded campaigns were created under (Orchestrator.DefaultMonitorAccount), which is how a
+// project creating through the system row names the default or granted account they live in.
 func (s *ConnectionService) MonitorLinkedinAdsAccount(ctx context.Context, p *conn.MonitorLinkedinAdsAccountPayload) (*conn.AccountMonitor, error) {
+	accountID, done, err := s.defaultMonitorAccountID(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderLinkedInAds, linkedInAdsMonitorDiscovery)
+	if err != nil || done {
+		if err != nil {
+			return nil, err
+		}
+		return buildAccountMonitor("", p.Days, nil, nil, ""), nil
+	}
 	now := time.Now()
-	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderLinkedInAds, linkedInAdsMonitorDiscovery,
+	return s.monitorAccount(ctx, p.ProjectID, accountID, p.Days, model.ProviderLinkedInAds, linkedInAdsMonitorDiscovery,
 		func(read *model.AccountMonitorRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 			return rules.EvaluateLinkedInMonitor(read.Rows, p.Days, now, read.Currency)
 		})
+}
+
+// defaultMonitorAccountID resolves an account-monitor request's account: the caller's when given,
+// otherwise the account the project's recorded campaigns on platform were created under
+// (Orchestrator.DefaultMonitorAccount). done reports that there is none to name, which the caller
+// answers with an empty monitor and no upstream call. The refusals monitorAccount runs first run
+// here too, so a system-scope project or an out-of-range days gets its 400 before the project's
+// campaigns are read.
+func (s *ConnectionService) defaultMonitorAccountID(ctx context.Context, projectID string, given *string, days int, platform model.Provider, discovery accountDiscovery) (accountID string, done bool, err error) {
+	if given != nil {
+		return *given, false, nil
+	}
+	if err := rejectSystemScope(projectID); err != nil {
+		return "", false, err
+	}
+	if err := validateMonitorDays(days); err != nil {
+		return "", false, err
+	}
+	_, _, orch, err := s.resolveBackendWithOrch(discovery.label())
+	if err != nil {
+		return "", false, err
+	}
+	accountID, err = orch.DefaultMonitorAccount(ctx, projectID, platform)
+	if err != nil {
+		return "", false, s.classifyMonitorError(ctx, projectID, platform, discovery, err)
+	}
+	return accountID, accountID == "", nil
 }
 
 // MonitorMetaAdsAccount reads this project's own campaigns on a Meta Ads account, live from the

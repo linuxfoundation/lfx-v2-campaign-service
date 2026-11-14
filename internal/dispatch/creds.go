@@ -153,13 +153,13 @@ type credsSource struct {
 	// the forced path gates on Provider.IsPaidAds(), so email resolution is untouched
 	// even with the flag on.
 	//
-	// The account-monitor endpoints do NOT consult this flag. Google Ads' (#591), Meta's and
-	// Reddit's (#615) resolve through resolveExisting (monitorResolver), keyed on the monitored
-	// account, so they behave the same with the flag on or off: a project on the system account
-	// monitors the system account, scoped to its own recorded campaigns. LinkedIn's, Microsoft's
-	// and X's resolve the project's own connection only (resolveOwned*) — an account-monitor read
-	// must never answer with another tenant's spend; LinkedIn's and Microsoft's are not
-	// campaign-scoped, and X's has not been moved yet. On those, with the flag on, a project with
+	// The account-monitor endpoints do NOT consult this flag. Google Ads' (#591), Meta's,
+	// Reddit's (#615) and LinkedIn's (#581, resolveLinkedInMonitorCredentials, for the system
+	// row's default account and its grants) resolve keyed on the monitored account, so they behave
+	// the same with the flag on or off: a project on the system account monitors the system
+	// account, scoped to its own recorded campaigns. Microsoft's and X's resolve the project's own
+	// connection only (resolveOwned*) — an account-monitor read must never answer with another
+	// tenant's spend; Microsoft's is not campaign-scoped, and X's has not been moved yet. On those, with the flag on, a project with
 	// no connection of its own gets the monitor endpoint's ordinary no-connection 404 rather
 	// than falling through to the system account the create path uses; a project WITH its own
 	// connection resolves credentials for its own account, which will not see campaigns living
