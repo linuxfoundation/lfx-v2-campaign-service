@@ -1698,3 +1698,20 @@ snapshot.
 `followerLookalikeUserIds` from the gap 4 shape is deferred: X has no user lookup to check an id
 before create. Everything here is behind `TWITTER_CREATE_TARGETING_ENABLED` (default off) and is
 not verified live.
+
+## Create-time conversation topics (`create_targeting.go`, #564 gap 8)
+
+`twitterConfig.conversationTopics` adds one `CONVERSATION` criterion (EQ) per topic to the line
+item an X create makes, after the interests and before the included custom audiences. The full
+order is: excluded audiences, locations, languages, keywords, interests, conversation topics,
+included audiences.
+
+`NormalizeConversationTopics` trims and lower-cases each value (X ids are base-36), requires 1-32
+letters or digits, drops duplicates and caps the list at 60; the list counts toward the
+60-criterion per-create cap. Before anything is created every topic must be listed by
+`GET targeting_criteria/conversations` (X's example entry: `targeting_value` `a1`, `name` `NFL`,
+`conversation_type` `SPORTS`), walked to its end by `listTargetingValues`. That walker now maps
+each lower-cased value to the spelling X listed, and the criterion sends X's spelling. A topic the
+list does not hold is a refusal; a list that cannot be read to its end is an error. Either way
+nothing is created. Same default-off `TWITTER_CREATE_TARGETING_ENABLED` flag; not role-gated (a
+topic names no account resource). Not verified live.

@@ -75,6 +75,9 @@ type twitterConfig struct {
 	// TWITTER_CREATE_TARGETING_ENABLED flag.
 	Keywords    []string `json:"keywords,omitempty"`
 	InterestIDs []string `json:"interestIds,omitempty"`
+	// ConversationTopics (CONVERSATION, values from GET targeting_criteria/conversations) target
+	// the new line item too (#564 gap 8), behind the same TWITTER_CREATE_TARGETING_ENABLED flag.
+	ConversationTopics []string `json:"conversationTopics,omitempty"`
 	// CustomAudienceIDs and ExcludedCustomAudienceIDs are X custom audience ids to target and to
 	// exclude on the new line item (#564 gap 3, twitter_custom_audiences.go). Behind
 	// TWITTER_CUSTOM_AUDIENCES_ENABLED, and global_marketing_ops only
@@ -429,6 +432,8 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		Languages:   tgt.langs,
 		Keywords:    tgt.keywords,
 		InterestIDs: tgt.interests,
+
+		ConversationTopics: tgt.topics,
 
 		CustomAudienceIDs:         cfg.CustomAudienceIDs,
 		ExcludedCustomAudienceIDs: cfg.ExcludedCustomAudienceIDs,

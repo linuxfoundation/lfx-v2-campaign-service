@@ -3337,6 +3337,11 @@ type CampaignInput struct {
 	// that type, as before.
 	Keywords    []string
 	InterestIDs []string
+	// ConversationTopics (#564 gap 8) add CONVERSATION criteria (EQ) to the line item, after the
+	// interests and before the included custom audiences. They are checked by
+	// NormalizeConversationTopics; each must be listed by GET targeting_criteria/conversations
+	// before anything is created. Empty means no criterion of that type, as before.
+	ConversationTopics []string
 }
 
 // manualMaxBidMicros encodes a create-time manual bid in micro-units, refusing (never rounding)
@@ -3636,8 +3641,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if kerr != nil {
 		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", kerr.Error())
 	}
+	// Conversation topics (#564 gap 8), the same way.
+	topics, oerr := NormalizeConversationTopics(in.ConversationTopics)
+	if oerr != nil {
+		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", oerr.Error())
+	}
 	// And all the criteria together must fit the paced-write budget (MaxCreateTargetingCriteria).
-	if cerr := CheckCreateCriteriaCount(len(geoTargets) + len(languages) + len(keywords) + len(interestIDs) + len(in.CustomAudienceIDs) + len(in.ExcludedCustomAudienceIDs)); cerr != nil {
+	if cerr := CheckCreateCriteriaCount(len(geoTargets) + len(languages) + len(keywords) + len(interestIDs) + len(topics) + len(in.CustomAudienceIDs) + len(in.ExcludedCustomAudienceIDs)); cerr != nil {
 		// Fixed text and counts only: operator-safe.
 		return nil, domain.PreflightRefusalf("invalid twitterConfig: %s", cerr.Error())
 	}
@@ -3695,7 +3705,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	// Step 1a: resolve the create-time targeting against X's lookups (reads). A value X does not
 	// offer, or a lookup that could not be read, stops the create HERE, with nothing created.
-	criteria, err := c.resolveCreateTargeting(ctx, geoTargets, languages, keywords, interestIDs)
+	criteria, err := c.resolveCreateTargeting(ctx, geoTargets, languages, keywords, interestIDs, topics)
 	if err != nil {
 		return nil, err
 	}

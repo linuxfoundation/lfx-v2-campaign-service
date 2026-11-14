@@ -43,6 +43,8 @@ func twitterTargetingServer(t *testing.T) (*TwitterDispatcher, func() []string, 
 			_, _ = w.Write([]byte(`{"data":[{"targeting_type":"LANGUAGE","targeting_value":"en"}],"next_cursor":null}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/12/targeting_criteria/interests":
 			_, _ = w.Write([]byte(`{"data":[{"name":"Technology","targeting_type":"INTEREST","targeting_value":"1001"}],"next_cursor":null}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/12/targeting_criteria/conversations":
+			_, _ = w.Write([]byte(`{"data":[{"name":"Kubernetes","conversation_type":"TECHNOLOGY","targeting_type":"CONVERSATION","targeting_value":"k8s"}],"next_cursor":null}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
 			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
 		case r.Method == http.MethodGet:
@@ -259,5 +261,37 @@ func TestTwitterCreateTargeting_KeywordsAndInterests(t *testing.T) {
 	// The stored config snapshot reduces a link in a keyword; X received it as given.
 	if strings.Contains(string(camp.ConfigSnapshot), "SECRET") {
 		t.Errorf("config snapshot keeps the keyword's token: %s", camp.ConfigSnapshot)
+	}
+}
+
+// Gap 8 (#564): conversationTopics sits behind the same flag, is refused synchronously when
+// malformed, and reaches the line item as CONVERSATION criteria after the interests.
+func TestTwitterCreateTargeting_ConversationTopics(t *testing.T) {
+	t.Setenv(constants.EnvTwitterCreateTargetingEnabled, "")
+	d, criteria, calls := twitterTargetingServer(t)
+	requireConfigInvalid(t, d.PreflightCreate(context.Background(), "cncf", model.ProviderTwitterAds, twitterTargetingCfg(`,"conversationTopics":["k8s"]`)),
+		constants.EnvTwitterCreateTargetingEnabled)
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds, twitterTargetingCfg(`,"conversationTopics":["k8s"]`))
+	requirePreCreate(t, err)
+	if n := calls.Load(); n != 0 {
+		t.Fatalf("%d X calls with the flag off; want 0", n)
+	}
+
+	t.Setenv(constants.EnvTwitterCreateTargetingEnabled, "true")
+	for extra, want := range map[string]string{
+		`,"conversationTopics":"k8s"`:                        "twitterConfig.conversationTopics: must be an array of strings",
+		`,"CONVERSATIONTOPICS":[1]`:                          "twitterConfig.conversationTopics: must be an array of strings",
+		`,"conversationTopics":[" "]`:                        "twitterConfig.conversationTopics: entry 0 is blank",
+		`,"conversationTopics":["k 8s"]`:                     "twitterConfig.conversationTopics: entry 0",
+		`,"budgetAmount":"bad","conversationTopics":["a/b"]`: "twitterConfig.conversationTopics: entry 0",
+	} {
+		requireConfigInvalid(t, d.PreflightCreate(context.Background(), "cncf", model.ProviderTwitterAds, twitterTargetingCfg(extra)), want)
+	}
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds,
+		twitterTargetingCfg(`,"interestIds":["1001"],"conversationTopics":["K8S"]`)); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if got := strings.Join(criteria(), ","); got != "INTEREST=1001,CONVERSATION=k8s" {
+		t.Fatalf("criteria = %q", got)
 	}
 }

@@ -389,9 +389,10 @@ app:
     REDDIT_TARGETING_RESOLUTION_ENABLED:
       value: "false"
 
-    # Opts this deployment IN to twitterConfig.geoTargets, languages, keywords
-    # and interestIds (#564), sent at create time as LOCATION, LANGUAGE,
-    # BROAD_KEYWORD and INTEREST targeting criteria on the new X line item.
+    # Opts this deployment IN to twitterConfig.geoTargets, languages, keywords,
+    # interestIds and conversationTopics (#564), sent at create time as
+    # LOCATION, LANGUAGE, BROAD_KEYWORD, INTEREST and CONVERSATION targeting
+    # criteria on the new X line item.
     # Default off: the
     # shape is built from X's published v12 reference and no live create has
     # sent it. It names no account resource; it keeps an unverified shape off

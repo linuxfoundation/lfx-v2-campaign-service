@@ -83,12 +83,24 @@ const (
 	maxCreateKeywordRunes = 80
 	// TargetingInterest is X's targeting_type for an interest criterion.
 	TargetingInterest = "INTEREST"
+
+	// FieldConversationTopics is the gap 8 twitterConfig key (#564): conversation topics, sent as
+	// CONVERSATION criteria.
+	FieldConversationTopics = "conversationTopics"
+	// MaxCreateConversationTopics caps the list on its own; the per-create total
+	// (MaxCreateTargetingCriteria) bounds it together with the others.
+	MaxCreateConversationTopics = MaxCreateTargetingCriteria
+	// TargetingConversation is X's targeting_type for a conversation topic criterion.
+	TargetingConversation = "CONVERSATION"
 )
 
 var (
 	countryCodeRe   = regexp.MustCompile(`^[A-Z]{2}$`)
 	languageValueRe = regexp.MustCompile(`^[a-z][a-z-]{1,7}$`)
 	interestIDRe    = regexp.MustCompile(`^[0-9]{1,19}$`)
+	// listedValueRe is the shape of an opaque targeting_value from a targeting_criteria lookup
+	// (a conversation topic's is "a1" in X's example), after lower-casing: X ids are base-36.
+	listedValueRe = regexp.MustCompile(`^[0-9a-z]{1,32}$`)
 )
 
 // foldKey canonicalizes s under Unicode simple case folding: each rune becomes the smallest rune
@@ -145,6 +157,16 @@ func NormalizeKeywordInterestTargeting(keywords, interestIDs []string) (kws, int
 		return nil, nil, err
 	}
 	return kws, interests, nil
+}
+
+// NormalizeConversationTopics applies the gap 8 rules (#564): each conversation topic is the
+// targeting_value of an entry of GET targeting_criteria/conversations, trimmed and lower-cased
+// (X ids are base-36), 1-32 letters or digits; duplicates are dropped and a blank entry refused.
+// Pure, so the dispatcher's synchronous preflight and CreateCampaign apply the same rules. A nil or
+// empty list stays nil.
+func NormalizeConversationTopics(topics []string) ([]string, error) {
+	return normalizeTargetList(FieldConversationTopics, topics, MaxCreateConversationTopics, strings.ToLower, listedValueRe,
+		"must be an X conversation topic value (1-32 letters or digits, from GET targeting_criteria/conversations)")
 }
 
 // TargetingError is a refusal of one create-time targeting list; Field is the twitterConfig key.
@@ -207,8 +229,8 @@ func CheckCreateCriteriaCount(n int) error {
 	if n <= MaxCreateTargetingCriteria {
 		return nil
 	}
-	return fmt.Errorf("%s, %s, %s, %s, %s and %s together name %d targeting criteria; at most %d are accepted per create, since each is a separate X write paced at one per second",
-		FieldGeoTargets, FieldLanguages, FieldKeywords, FieldInterestIDs, FieldCustomAudienceIDs, FieldExcludedCustomAudienceIDs, n, MaxCreateTargetingCriteria)
+	return fmt.Errorf("%s, %s, %s, %s, %s, %s and %s together name %d targeting criteria; at most %d are accepted per create, since each is a separate X write paced at one per second",
+		FieldGeoTargets, FieldLanguages, FieldKeywords, FieldInterestIDs, FieldConversationTopics, FieldCustomAudienceIDs, FieldExcludedCustomAudienceIDs, n, MaxCreateTargetingCriteria)
 }
 
 // createCriterion is one criterion the create path will POST.
@@ -320,11 +342,12 @@ func (c *Client) resolveCountry(ctx context.Context, code string) (string, error
 const maxTargetingValueLen = 128
 
 // listTargetingValues walks one non-account-scoped targeting_criteria lookup (languages,
-// interests) to its end and returns the lower-cased targeting_values of entries of targetingType
-// (an entry with no targeting_type is kept). It refuses to conclude from a list it could not read
+// interests, conversations) to its end and returns the targeting_values of entries of
+// targetingType (an entry with no targeting_type is kept), keyed lower-cased and mapped to the
+// spelling X listed, which is what a criterion sends. It refuses to conclude from a list it could not read
 // to the end: a full page with no usable cursor, the page cap, or a repeated cursor is an error.
-func (c *Client) listTargetingValues(ctx context.Context, kind, targetingType string) (map[string]bool, error) {
-	known := map[string]bool{}
+func (c *Client) listTargetingValues(ctx context.Context, kind, targetingType string) (map[string]string, error) {
+	known := map[string]string{}
 	cursor := ""
 	seenCursors := map[string]bool{}
 	for page := 0; ; page++ {
@@ -344,8 +367,8 @@ func (c *Client) listTargetingValues(ctx context.Context, kind, targetingType st
 			if o.TargetingType != "" && o.TargetingType != targetingType {
 				continue
 			}
-			if v := strings.ToLower(strings.TrimSpace(o.TargetingValue)); v != "" {
-				known[v] = true
+			if v := strings.TrimSpace(o.TargetingValue); v != "" && len(v) <= maxTargetingValueLen {
+				known[strings.ToLower(v)] = v
 			}
 		}
 		verdict := cursorVerdict(resp)
@@ -374,7 +397,7 @@ func (c *Client) resolveLanguages(ctx context.Context, langs []string) error {
 		return err
 	}
 	for _, l := range langs {
-		if !known[l] {
+		if known[l] == "" {
 			return domain.PreflightRefusalf("invalid twitterConfig.%s: X offers no language %s", FieldLanguages, domain.CallerValue(l))
 		}
 	}
@@ -392,16 +415,38 @@ func (c *Client) resolveInterests(ctx context.Context, ids []string) error {
 		return err
 	}
 	for _, id := range ids {
-		if !known[strings.ToLower(id)] {
+		if known[strings.ToLower(id)] == "" {
 			return domain.PreflightRefusalf("invalid twitterConfig.%s: X offers no interest %s", FieldInterestIDs, domain.CallerValue(id))
 		}
 	}
 	return nil
 }
 
+// resolveConversationTopics checks every requested topic against X's
+// GET targeting_criteria/conversations list (#564 gap 8), walked to its end like the languages, and
+// returns each as X spells it. It refuses a topic X does not list.
+func (c *Client) resolveConversationTopics(ctx context.Context, topics []string) ([]string, error) {
+	if len(topics) == 0 {
+		return nil, nil
+	}
+	known, err := c.listTargetingValues(ctx, "conversation", TargetingConversation)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(topics))
+	for _, t := range topics {
+		v := known[t]
+		if v == "" {
+			return nil, domain.PreflightRefusalf("invalid twitterConfig.%s: X offers no conversation topic %s", FieldConversationTopics, domain.CallerValue(t))
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}
+
 // resolveCreateTargeting turns the normalized lists into the criteria to POST, reading X's
 // lookups. Called in the pre-create block, so every failure leaves nothing created.
-func (c *Client) resolveCreateTargeting(ctx context.Context, geo, langs, keywords, interests []string) ([]createCriterion, error) {
+func (c *Client) resolveCreateTargeting(ctx context.Context, geo, langs, keywords, interests, topics []string) ([]createCriterion, error) {
 	var out []createCriterion
 	for _, code := range geo {
 		v, err := c.resolveCountry(ctx, code)
@@ -427,6 +472,14 @@ func (c *Client) resolveCreateTargeting(ctx context.Context, geo, langs, keyword
 	}
 	for _, id := range interests {
 		out = append(out, createCriterion{targetingType: TargetingInterest, value: id, label: "interest " + id})
+	}
+	// Conversation topics (#564 gap 8), each sent as X listed it.
+	listed, err := c.resolveConversationTopics(ctx, topics)
+	if err != nil {
+		return nil, err
+	}
+	for i, v := range listed {
+		out = append(out, createCriterion{targetingType: TargetingConversation, value: v, label: "conversation topic " + topics[i]})
 	}
 	return out, nil
 }
