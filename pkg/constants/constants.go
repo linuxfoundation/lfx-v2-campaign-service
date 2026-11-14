@@ -407,7 +407,9 @@ const (
 	// existing Instant Form that turns the leads objective into an OUTCOME_LEADS lead ad. Only the
 	// exact value "true" enables it; anything else refuses the field with a 400 before any job
 	// exists. Default off until a live probe confirms the payload. The form belongs to the
-	// connection's Page, which the create already uses, so it needs no global_marketing_ops.
+	// connection's Page, which the create already uses, so it needs no global_marketing_ops. It also
+	// gates list-meta-lead-forms, the form picker read, which IS a global_marketing_ops read (the
+	// shared LF Page's forms for a project without its own connection).
 	EnvMetaLeadFormsEnabled = "META_LEAD_FORMS_ENABLED"
 
 	// EnvMetaRegionTargetingEnabled opts a deployment IN to metaConfig.targeting.regions and

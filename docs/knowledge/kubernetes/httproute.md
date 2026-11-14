@@ -111,8 +111,8 @@ MUST have a matching rule in [ruleset.md](ruleset.md) — a routed request with 
 matching Heimdall rule is rejected. The RuleSet's `project-api` rule covers every
 routed project-nested family except `google-ads/conversion-actions`,
 `google-ads/audiences`, `google-ads/user-lists`, `reddit-ads/custom-audiences`,
-`twitter-ads/custom-audiences`, `linkedin-ads/audiences`, `linkedin-ads/conversions` and
-`meta-ads/custom-audiences`, which its
+`twitter-ads/custom-audiences`, `linkedin-ads/audiences`, `linkedin-ads/conversions`,
+`meta-ads/custom-audiences` and `meta-ads/lead-forms`, which its
 `marketing-ops-api` rule covers; its
 `campaigns-placeholder` rule covers the reserved prefixes, so chart↔route parity holds.
 
@@ -142,7 +142,8 @@ project; `TestGoogleAudiencesIsAMarketingOpsRead` and `TestUserListsIsAMarketing
 `TestLinkedInPickersAreMarketingOpsReads` the two LinkedIn pickers (#552), and
 `TestMetaCustomAudiencesIsAMarketingOpsRead` pins `meta-ads/custom-audiences` (#550)
 (`TestMetaTargetingSearchIsACampaignManagerRead` pins its sibling `meta-ads/targeting-search` to
-`project-api`; the route regex carries both as `meta-ads/(custom-audiences|targeting-search)`), and
+`project-api`; the route regex carries them as `meta-ads/(custom-audiences|targeting-search|lead-forms)`),
+`TestMetaLeadFormsIsAMarketingOpsRead` pins `meta-ads/lead-forms` (#550), and
 `TestTwitterCustomAudiencesIsAMarketingOpsRead` pins `twitter-ads/custom-audiences` (#564). A
 separate `TestProjectAPIRuleEnforcesCampaignManager` asserts
 the `project-api` rule has two `openfga_check` authorizers on relation `campaign_manager`, each

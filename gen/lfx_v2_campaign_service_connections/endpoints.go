@@ -67,6 +67,7 @@ type Endpoints struct {
 	ListGoogleAdsAudiences         goa.Endpoint
 	ListMetaCustomAudiences        goa.Endpoint
 	SearchMetaTargetingOptions     goa.Endpoint
+	ListMetaLeadForms              goa.Endpoint
 	ListRedditAdsCustomAudiences   goa.Endpoint
 	ListTwitterAdsCustomAudiences  goa.Endpoint
 	GetMetaAdsAudience             goa.Endpoint
@@ -158,6 +159,7 @@ func NewEndpoints(s Service) *Endpoints {
 		ListGoogleAdsAudiences:         NewListGoogleAdsAudiencesEndpoint(s, a.JWTAuth),
 		ListMetaCustomAudiences:        NewListMetaCustomAudiencesEndpoint(s, a.JWTAuth),
 		SearchMetaTargetingOptions:     NewSearchMetaTargetingOptionsEndpoint(s, a.JWTAuth),
+		ListMetaLeadForms:              NewListMetaLeadFormsEndpoint(s, a.JWTAuth),
 		ListRedditAdsCustomAudiences:   NewListRedditAdsCustomAudiencesEndpoint(s, a.JWTAuth),
 		ListTwitterAdsCustomAudiences:  NewListTwitterAdsCustomAudiencesEndpoint(s, a.JWTAuth),
 		GetMetaAdsAudience:             NewGetMetaAdsAudienceEndpoint(s, a.JWTAuth),
@@ -247,6 +249,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ListGoogleAdsAudiences = m(e.ListGoogleAdsAudiences)
 	e.ListMetaCustomAudiences = m(e.ListMetaCustomAudiences)
 	e.SearchMetaTargetingOptions = m(e.SearchMetaTargetingOptions)
+	e.ListMetaLeadForms = m(e.ListMetaLeadForms)
 	e.ListRedditAdsCustomAudiences = m(e.ListRedditAdsCustomAudiences)
 	e.ListTwitterAdsCustomAudiences = m(e.ListTwitterAdsCustomAudiences)
 	e.GetMetaAdsAudience = m(e.GetMetaAdsAudience)
@@ -1473,6 +1476,30 @@ func NewSearchMetaTargetingOptionsEndpoint(s Service, authJWTFn security.AuthJWT
 			return nil, err
 		}
 		return s.SearchMetaTargetingOptions(ctx, p)
+	}
+}
+
+// NewListMetaLeadFormsEndpoint returns an endpoint function that calls the
+// method "list-meta-lead-forms" of service
+// "lfx-v2-campaign-service-connections".
+func NewListMetaLeadFormsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ListMetaLeadFormsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ListMetaLeadForms(ctx, p)
 	}
 }
 

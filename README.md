@@ -424,8 +424,9 @@ openssl rand -base64 32
   The form is read before anything is created and must be an active form of
   the connection's Page. Only the exact value `true` enables it; anything
   else fails closed, and a create carrying the field is refused with a 400
-  before any job exists. The chart sets it to `"false"`; enable it
-  per-environment in the ArgoCD overlay.
+  before any job exists. It also gates the `GET /projects/{p}/meta-ads/lead-forms`
+  picker read (a `global_marketing_ops` read; 400 while off). The chart sets
+  it to `"false"`; enable it per-environment in the ArgoCD overlay.
 - `META_AUDIENCE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `metaConfig.targeting` (#550): `ageMin`/`ageMax`,
   `genders`, `customAudiences`, `excludedCustomAudiences` and

@@ -7904,6 +7904,143 @@ func EncodeSearchMetaTargetingOptionsError(encoder func(context.Context, http.Re
 	}
 }
 
+// EncodeListMetaLeadFormsResponse returns an encoder for responses returned by
+// the lfx-v2-campaign-service-connections list-meta-lead-forms endpoint.
+func EncodeListMetaLeadFormsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceconnections.MetaLeadForms)
+		enc := encoder(ctx, w)
+		body := NewListMetaLeadFormsResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeListMetaLeadFormsRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-connections list-meta-lead-forms endpoint.
+func DecodeListMetaLeadFormsRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceconnections.ListMetaLeadFormsPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceconnections.ListMetaLeadFormsPayload, error) {
+		var payload *lfxv2campaignserviceconnections.ListMetaLeadFormsPayload
+		var (
+			projectID   string
+			bearerToken *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		payload = NewListMetaLeadFormsPayload(projectID, bearerToken)
+		if payload.BearerToken != nil {
+			cred := *payload.BearerToken
+			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred = cred[index+1:]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeListMetaLeadFormsError returns an encoder for errors returned by the
+// list-meta-lead-forms lfx-v2-campaign-service-connections endpoint.
+func EncodeListMetaLeadFormsError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaLeadFormsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaLeadFormsServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceconnections.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaLeadFormsInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceconnections.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaLeadFormsNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaLeadFormsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceconnections.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaLeadFormsUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // EncodeListRedditAdsCustomAudiencesResponse returns an encoder for responses
 // returned by the lfx-v2-campaign-service-connections
 // list-reddit-ads-custom-audiences endpoint.
@@ -13265,6 +13402,19 @@ func marshalLfxv2campaignserviceconnectionsMetaTargetingOptionToMetaTargetingOpt
 		for i, val := range v.Path {
 			res.Path[i] = val
 		}
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceconnectionsMetaLeadFormToMetaLeadFormResponseBody
+// builds a value of type *MetaLeadFormResponseBody from a value of type
+// *lfxv2campaignserviceconnections.MetaLeadForm.
+func marshalLfxv2campaignserviceconnectionsMetaLeadFormToMetaLeadFormResponseBody(v *lfxv2campaignserviceconnections.MetaLeadForm) *MetaLeadFormResponseBody {
+	res := &MetaLeadFormResponseBody{
+		ID:     v.ID,
+		Name:   v.Name,
+		Status: v.Status,
 	}
 
 	return res

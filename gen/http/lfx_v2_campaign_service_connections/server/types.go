@@ -919,6 +919,19 @@ type SearchMetaTargetingOptionsResponseBody struct {
 	OptionCount int `form:"option_count" json:"option_count" xml:"option_count"`
 }
 
+// ListMetaLeadFormsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-lead-forms"
+// endpoint HTTP response body.
+type ListMetaLeadFormsResponseBody struct {
+	// The Facebook Page the forms were read from: the Page of the connection a
+	// Meta create for this project uses
+	PageID string `form:"page_id" json:"page_id" xml:"page_id"`
+	// Every form of the Page, sorted by name (ignoring case), then id
+	Forms []*MetaLeadFormResponseBody `form:"forms" json:"forms" xml:"forms"`
+	// How many forms are in `forms`
+	FormCount int `form:"form_count" json:"form_count" xml:"form_count"`
+}
+
 // ListRedditAdsCustomAudiencesResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-reddit-ads-custom-audiences" endpoint HTTP response body.
@@ -4687,6 +4700,66 @@ type SearchMetaTargetingOptionsUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListMetaLeadFormsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-lead-forms"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListMetaLeadFormsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaLeadFormsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-lead-forms"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListMetaLeadFormsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaLeadFormsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-lead-forms"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListMetaLeadFormsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaLeadFormsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-lead-forms"
+// endpoint HTTP response body for the "NotFound" error.
+type ListMetaLeadFormsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaLeadFormsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-lead-forms"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListMetaLeadFormsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaLeadFormsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-lead-forms"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListMetaLeadFormsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ListRedditAdsCustomAudiencesBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-reddit-ads-custom-audiences" endpoint HTTP response body for the
@@ -7047,6 +7120,17 @@ type MetaTargetingOptionResponseBody struct {
 	Coverage *int64 `form:"coverage,omitempty" json:"coverage,omitempty" xml:"coverage,omitempty"`
 }
 
+// MetaLeadFormResponseBody is used to define fields on response body types.
+type MetaLeadFormResponseBody struct {
+	// The form id, exactly what metaConfig.leadFormId takes
+	ID string `form:"id" json:"id" xml:"id"`
+	// The form's name in Ads Manager. Not an identifier; empty when Meta sent none.
+	Name string `form:"name" json:"name" xml:"name"`
+	// Meta's form status, verbatim (ACTIVE, ARCHIVED, DELETED, DRAFT, …). Only an
+	// ACTIVE form is accepted by a create.
+	Status string `form:"status" json:"status" xml:"status"`
+}
+
 // RedditAdsCustomAudienceResponseBody is used to define fields on response
 // body types.
 type RedditAdsCustomAudienceResponseBody struct {
@@ -8781,6 +8865,29 @@ func NewSearchMetaTargetingOptionsResponseBody(res *lfxv2campaignserviceconnecti
 		}
 	} else {
 		body.Options = []*MetaTargetingOptionResponseBody{}
+	}
+	return body
+}
+
+// NewListMetaLeadFormsResponseBody builds the HTTP response body from the
+// result of the "list-meta-lead-forms" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaLeadFormsResponseBody(res *lfxv2campaignserviceconnections.MetaLeadForms) *ListMetaLeadFormsResponseBody {
+	body := &ListMetaLeadFormsResponseBody{
+		PageID:    res.PageID,
+		FormCount: res.FormCount,
+	}
+	if res.Forms != nil {
+		body.Forms = make([]*MetaLeadFormResponseBody, len(res.Forms))
+		for i, val := range res.Forms {
+			if val == nil {
+				body.Forms[i] = nil
+				continue
+			}
+			body.Forms[i] = marshalLfxv2campaignserviceconnectionsMetaLeadFormToMetaLeadFormResponseBody(val)
+		}
+	} else {
+		body.Forms = []*MetaLeadFormResponseBody{}
 	}
 	return body
 }
@@ -13202,6 +13309,72 @@ func NewSearchMetaTargetingOptionsUnauthorizedResponseBody(res *lfxv2campaignser
 	return body
 }
 
+// NewListMetaLeadFormsBadRequestResponseBody builds the HTTP response body
+// from the result of the "list-meta-lead-forms" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaLeadFormsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListMetaLeadFormsBadRequestResponseBody {
+	body := &ListMetaLeadFormsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaLeadFormsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "list-meta-lead-forms" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaLeadFormsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListMetaLeadFormsServiceUnavailableResponseBody {
+	body := &ListMetaLeadFormsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaLeadFormsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "list-meta-lead-forms" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaLeadFormsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListMetaLeadFormsInternalServerErrorResponseBody {
+	body := &ListMetaLeadFormsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaLeadFormsNotFoundResponseBody builds the HTTP response body from
+// the result of the "list-meta-lead-forms" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaLeadFormsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListMetaLeadFormsNotFoundResponseBody {
+	body := &ListMetaLeadFormsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaLeadFormsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "list-meta-lead-forms" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaLeadFormsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListMetaLeadFormsPayloadTooLargeResponseBody {
+	body := &ListMetaLeadFormsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaLeadFormsUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "list-meta-lead-forms" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaLeadFormsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListMetaLeadFormsUnauthorizedResponseBody {
+	body := &ListMetaLeadFormsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewListRedditAdsCustomAudiencesBadRequestResponseBody builds the HTTP
 // response body from the result of the "list-reddit-ads-custom-audiences"
 // endpoint of the "lfx-v2-campaign-service-connections" service.
@@ -16011,6 +16184,16 @@ func NewSearchMetaTargetingOptionsPayload(projectID string, type_ string, query 
 	v.ProjectID = projectID
 	v.Type = type_
 	v.Query = query
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListMetaLeadFormsPayload builds a lfx-v2-campaign-service-connections
+// service list-meta-lead-forms endpoint payload.
+func NewListMetaLeadFormsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListMetaLeadFormsPayload {
+	v := &lfxv2campaignserviceconnections.ListMetaLeadFormsPayload{}
+	v.ProjectID = projectID
 	v.BearerToken = bearerToken
 
 	return v

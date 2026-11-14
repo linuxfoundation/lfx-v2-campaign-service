@@ -259,6 +259,20 @@ type Service interface {
 	// Meta is not retried and answers 503. Off (400) unless the deployment sets
 	// META_TARGETING_SEARCH_ENABLED to "true". A pure read: nothing is persisted.
 	SearchMetaTargetingOptions(context.Context, *SearchMetaTargetingOptionsPayload) (res *MetaTargetingOptions, err error)
+	// List the Instant Forms (lead forms) of the Facebook Page on the Meta
+	// connection a Meta create for this project uses, live from the Page's
+	// leadgen_forms edge, for picking metaConfig.leadFormId (#550). Credentials
+	// and the Page resolve as for a create, so every id is one the create can
+	// read. Every status is listed (only ACTIVE passes a create), sorted by name
+	// ignoring case, then id. The read walks at most 1000 forms; more fails it
+	// with 503 rather than truncating, and that 503 does not clear on retry. The
+	// forms belong to the Page of the shared LF connection for every project
+	// without its own, so the response can list other foundations' forms; like
+	// list-meta-custom-audiences it is gated on global_marketing_ops of
+	// {project_id}, not campaign_manager. Off (400) unless the deployment sets
+	// META_LEAD_FORMS_ENABLED to "true", the flag that gates
+	// metaConfig.leadFormId. A pure read: nothing is persisted.
+	ListMetaLeadForms(context.Context, *ListMetaLeadFormsPayload) (res *MetaLeadForms, err error)
 	// List the custom audiences on the Reddit ad account a Reddit create for this
 	// project uses, live from Reddit Ads API v3 GET
 	// /ad_accounts/{ad_account_id}/custom_audiences, for picking
@@ -858,7 +872,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [83]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "list-google-ads-audiences", "list-meta-custom-audiences", "search-meta-targeting-options", "list-reddit-ads-custom-audiences", "list-twitter-ads-custom-audiences", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "list-linkedin-ads-audiences", "list-linkedin-ads-conversions", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
+var MethodNames = [84]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "list-google-ads-audiences", "list-meta-custom-audiences", "search-meta-targeting-options", "list-meta-lead-forms", "list-reddit-ads-custom-audiences", "list-twitter-ads-custom-audiences", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "list-linkedin-ads-audiences", "list-linkedin-ads-conversions", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -2283,6 +2297,15 @@ type ListMetaCustomAudiencesPayload struct {
 	Q *string
 }
 
+// ListMetaLeadFormsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service list-meta-lead-forms method.
+type ListMetaLeadFormsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
 // ListMicrosoftAdsAccountsPayload is the payload type of the
 // lfx-v2-campaign-service-connections service list-microsoft-ads-accounts
 // method.
@@ -2490,6 +2513,28 @@ type MetaCustomAudiences struct {
 	AudienceCount int
 	// True when more audiences matched than were returned; narrow the search with q
 	Truncated bool
+}
+
+type MetaLeadForm struct {
+	// The form id, exactly what metaConfig.leadFormId takes
+	ID string
+	// The form's name in Ads Manager. Not an identifier; empty when Meta sent none.
+	Name string
+	// Meta's form status, verbatim (ACTIVE, ARCHIVED, DELETED, DRAFT, …). Only an
+	// ACTIVE form is accepted by a create.
+	Status string
+}
+
+// MetaLeadForms is the result type of the lfx-v2-campaign-service-connections
+// service list-meta-lead-forms method.
+type MetaLeadForms struct {
+	// The Facebook Page the forms were read from: the Page of the connection a
+	// Meta create for this project uses
+	PageID string
+	// Every form of the Page, sorted by name (ignoring case), then id
+	Forms []*MetaLeadForm
+	// How many forms are in `forms`
+	FormCount int
 }
 
 type MetaTargetingOption struct {

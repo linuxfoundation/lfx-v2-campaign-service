@@ -6,8 +6,11 @@ package meta
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -125,4 +128,111 @@ func withLeadForm(spec map[string]any, formID string) {
 		return
 	}
 	cta["value"] = map[string]any{"lead_gen_form_id": formID}
+}
+
+// Instant Form picker read (#550, gap 8): the forms of the connection's Page, so the UI can offer
+// metaConfig.leadFormId values instead of the operator pasting an id from Ads Manager.
+
+// LeadForm is one Instant Form of the Page: its id (what metaConfig.leadFormId takes), its name, and
+// Meta's status verbatim (ACTIVE, ARCHIVED, DELETED, DRAFT, …). Only an ACTIVE form passes the
+// create's own check (checkLeadForm).
+type LeadForm struct {
+	ID     string
+	Name   string
+	Status string
+}
+
+// Bounds of the lead form walk: 100 per page, at most 10 pages. A Page with more forms fails the read
+// (ErrLeadFormListTooLarge) rather than silently truncating it, as the custom-audience walk does.
+const (
+	leadFormListPageSize = 100
+	leadFormListMaxPages = 10
+	maxLeadFormNameBytes = 1024
+)
+
+// ErrLeadFormListTooLarge reports a Page with more Instant Forms than the read walks.
+var ErrLeadFormListTooLarge = errors.New("meta: the Page has more instant forms than the read lists")
+
+// ListLeadForms lists every Instant Form of pageID, all or nothing:
+// `GET /{page}/leadgen_forms?fields=id,name,status&limit=100`, following the opaque `after` cursor
+// (never Meta's token-bearing paging.next URL) for at most leadFormListMaxPages pages. Every page
+// passes identityjson on its raw bytes; every row must carry a numeric id and a status token and
+// appear once. A missing data field, a next page without a cursor, a repeated cursor, or more forms
+// than the bound fails the read. Errors never echo an upstream value.
+//
+// NOT live-verified: the Page reference documents only POST on this edge; reading it is the Lead
+// Ads retrieval guide's call, and may need a Page access token with pages_manage_ads and
+// leads_retrieval rather than the connection's token.
+func (c *Client) ListLeadForms(ctx context.Context, pageID string) ([]LeadForm, error) {
+	pageID = strings.TrimSpace(pageID)
+	if !numericIDRE.MatchString(pageID) || len(pageID) > maxMetaIDDigits {
+		return nil, errors.New("list meta lead forms: the connection's page_id is not a numeric Page id")
+	}
+	out := []LeadForm{}
+	ids := map[string]struct{}{}
+	cursors := map[string]struct{}{}
+	after := ""
+	for page := 0; page < leadFormListMaxPages; page++ {
+		path := "/" + pageID + "/leadgen_forms?fields=id,name,status&limit=" + strconv.Itoa(leadFormListPageSize)
+		if after != "" {
+			path += "&after=" + url.QueryEscape(after)
+		}
+		raw, err := c.getChecked(ctx, path)
+		if err != nil {
+			return nil, fmt.Errorf("list meta lead forms: %w", err)
+		}
+		p, err := decodePage(raw, path)
+		if err != nil {
+			return nil, fmt.Errorf("list meta lead forms: %w", err)
+		}
+		for i, rowRaw := range *p.Data {
+			f, rerr := decodeLeadForm(rowRaw)
+			if rerr != nil {
+				return nil, &transportError{Method: http.MethodGet, Path: path, Err: fmt.Errorf("page %d row %d: %w", page, i, rerr)}
+			}
+			if _, dup := ids[f.ID]; dup {
+				return nil, &transportError{Method: http.MethodGet, Path: path, Err: fmt.Errorf("page %d row %d: the same form is listed twice", page, i)}
+			}
+			if len(out) == leadFormListPageSize*leadFormListMaxPages {
+				return nil, fmt.Errorf("list meta lead forms: more than %d forms: %w", leadFormListPageSize*leadFormListMaxPages, ErrLeadFormListTooLarge)
+			}
+			ids[f.ID] = struct{}{}
+			out = append(out, f)
+		}
+		next, done, cerr := nextCursor(p, cursors)
+		if cerr != nil {
+			return nil, fmt.Errorf("list meta lead forms: %w", cerr)
+		}
+		if done {
+			return out, nil
+		}
+		after = next
+	}
+	return nil, fmt.Errorf("list meta lead forms: more than %d pages of %d: %w", leadFormListMaxPages, leadFormListPageSize, ErrLeadFormListTooLarge)
+}
+
+// decodeLeadForm validates one listed form. Errors never echo an upstream value.
+func decodeLeadForm(raw json.RawMessage) (LeadForm, error) {
+	var w struct {
+		ID     *graphID `json:"id"`
+		Name   *string  `json:"name"`
+		Status *string  `json:"status"`
+	}
+	if err := json.Unmarshal(raw, &w); err != nil {
+		return LeadForm{}, errors.New("row is not an instant form object of the expected shape")
+	}
+	if w.ID == nil || !numericIDRE.MatchString(string(*w.ID)) {
+		return LeadForm{}, errors.New("row has no canonical form id")
+	}
+	if w.Status == nil || !statusTokenRE.MatchString(*w.Status) {
+		return LeadForm{}, errors.New("row has no form status token")
+	}
+	f := LeadForm{ID: string(*w.ID), Status: *w.Status}
+	if w.Name != nil {
+		f.Name = *w.Name
+	}
+	if len(f.Name) > maxLeadFormNameBytes {
+		return LeadForm{}, fmt.Errorf("name exceeds %d bytes", maxLeadFormNameBytes)
+	}
+	return f, nil
 }
