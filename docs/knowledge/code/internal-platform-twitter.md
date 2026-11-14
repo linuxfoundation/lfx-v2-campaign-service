@@ -1779,3 +1779,27 @@ item gets only the missing look-alikes, as for every criterion. The owner accept
 `TWITTER_FOLLOWER_LOOKALIKES_ENABLED` (`internal/dispatch/twitter_follower_lookalikes.go`), with a
 synchronous 400 for the flag, a malformed id, the cap or a non-array, re-checked in `Dispatch`.
 Not role-gated. Not verified live.
+
+## One promoted tweet per variant (`CampaignInput.TweetVariants`, #564 gap 10)
+
+`twitterConfig.variants` (`[{tweetText}]`, 1-5; `tweet_variants.go`): `NormalizeTweetVariants`
+refuses blanks, case-folded repeats, and any combination with `tweetId` or a top-level
+`tweetText`. Each text is composed and screened up front exactly as `tweetText` is, with its
+destination's `utm_content=variant-N` (`buildTwitterVariantUTMURL`). Step 4 then runs
+`promoteTweetVariants`: one promotable-user resolve, then per variant a paced nullcast tweet POST
+and a paced `promoted_tweets` POST, before the next variant. Each variant's outcome is a
+`PromotedTweetResult` in `CampaignResult.PromotedTweets` (stored in the result blob — no
+migration, following Meta's `Ads []AdResult`); `PromotedTweetID`/`AuthoredTweetID` repeat the
+first. **No rollback** (owner decision 2026-11-14): a variant that fails — authoring refused or
+UNCONFIRMED, promotion refused, UNCONFIRMED, duplicate or id-less — is recorded on its entry and
+named in `PromotedTweetWarning` and a summary step, the loop continues, and the dispatcher's
+existing rule (a non-empty warning) persists the row `created_degraded`. An abort between writes
+(context ended) returns the partial with every published tweet named (`authoredTweetsStatus`). On a
+reused line item: zero live associations → author all; exactly `len(variants)` → reuse them all;
+otherwise, or an unreadable list → author nothing. Pause/resume (`UpdateCampaignAndChildrenStatus`),
+budget, bid and keyword levers address the campaign and the ONE line item every variant hangs off,
+so they act on all variants with no per-tweet call. `TestCreateTargetingCriteriaFitTheDispatchBudget`
+now counts the four extra variants' eight writes. The dispatcher gates it on
+`TWITTER_TWEET_VARIANTS_ENABLED` (`internal/dispatch/twitter_tweet_variants.go`), applies the
+connection's `as_user_id` authorization to variants, and stores their copy through
+`sanitizeSnapshotText`. Not verified live.

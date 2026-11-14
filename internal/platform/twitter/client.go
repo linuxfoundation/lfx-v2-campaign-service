@@ -2793,6 +2793,23 @@ func buildTwitterUTMURL(in CampaignInput) (string, error) {
 	return u.String(), nil
 }
 
+// buildTwitterVariantUTMURL is buildTwitterUTMURL for tweet variant n (#564 gap 10): the same
+// destination with utm_content=variant-N in place of promoted-tweet, as the other platforms tag
+// their variants. validateRegistrationURL must be called before this.
+func buildTwitterVariantUTMURL(in CampaignInput, n int) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(in.RegistrationURL))
+	if err != nil || !u.IsAbs() || u.Hostname() == "" {
+		return "", fmt.Errorf("registration URL %q is not usable to build a destination URL", redactURLForError(in.RegistrationURL))
+	}
+	if _, err := url.ParseQuery(u.RawQuery); err != nil {
+		return "", fmt.Errorf("the query of registration URL %q could not be parsed, so the destination URL cannot be built without silently dropping its parameters; fix or remove the URL's query string", redactURLForError(in.RegistrationURL))
+	}
+	params := twitterUTMParams(in)
+	params["utm_content"] = variantUTMContent(n)
+	u.RawQuery = appendUTMToRawQuery(u.RawQuery, params)
+	return u.String(), nil
+}
+
 // authoredTweetStatus renders, for a partial-failure error message, whether this
 // call published a tweet — the one artifact in this flow a retry does NOT reuse.
 // Empty when nothing was authored, so it appends nothing to the campaign/line-item
@@ -3357,6 +3374,12 @@ type CampaignInput struct {
 	// its criterion POST, stopping the create before any tweet with the PAUSED partial retained.
 	// Empty means no look-alike criterion, as before.
 	FollowerLookalikeUserIDs []string
+	// TweetVariants (#564 gap 10; tweet_variants.go) author one nullcast tweet per entry and
+	// promote each on the line item, each destination tagged utm_content=variant-N. Checked by
+	// NormalizeTweetVariants: 1..MaxTweetVariants non-blank, distinct texts, and never with TweetID
+	// or TweetText. Image, when set, is attached to every variant's tweet. Empty means the single
+	// tweet path (TweetID / TweetText), as before.
+	TweetVariants []string
 }
 
 // manualMaxBidMicros encodes a create-time manual bid in micro-units, refusing (never rounding)
@@ -3400,6 +3423,13 @@ type CampaignResult struct {
 	// of the same bytes reuses. Empty when no image was requested.
 	MediaKey        string
 	PromotedTweetID string
+	// PromotedTweets records every variant's outcome (#564 gap 10), in variant order, including
+	// a tweet published whose promotion was not confirmed. Empty on the single-tweet path, whose
+	// outcome is AuthoredTweetID / PromotedTweetID alone. On the variant path PromotedTweetID and
+	// AuthoredTweetID repeat the FIRST promoted / authored entry, so a reader of the single fields
+	// still sees a tweet when one exists. Set on partial results too: a published tweet is the one
+	// artifact a retry does not reuse.
+	PromotedTweets []PromotedTweetResult `json:",omitempty"`
 	// PromotedTweetWarning is non-empty when the promoted-tweet association could
 	// not be confirmed (POST failed, or returned a malformed/empty response). The
 	// campaign and line item may still have been created, so the overall call is
@@ -3626,13 +3656,34 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		composedTweetText = text
 	}
+	// Tweet variants (#564 gap 10): each composed with its own utm_content and screened exactly as
+	// the single tweetText is, before any request.
+	variantTexts, verr := NormalizeTweetVariants(in.TweetVariants, in.TweetID, in.TweetText)
+	if verr != nil {
+		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", verr.Error())
+	}
+	composedVariants := make([]string, 0, len(variantTexts))
+	for i, t := range variantTexts {
+		destURL, err := buildTwitterVariantUTMURL(in, i+1)
+		if err != nil {
+			return nil, err
+		}
+		text, err := composeTweetText(t, destURL)
+		if err != nil {
+			return nil, domain.PreflightRefusalf("invalid twitterConfig.%s: variant %d: %s", FieldTweetVariants, i+1, err.Error())
+		}
+		if err := rejectCredentialQueryParamsInText(text); err != nil {
+			return nil, err
+		}
+		composedVariants = append(composedVariants, text)
+	}
 	// A creative image rides on the AUTHORED tweet only. Refused here, before any request, when
 	// no tweet will be authored — an explicit TweetID wins over TweetText, and an existing
 	// tweet's media cannot be changed — rather than dropped, because the campaign would then
 	// serve without the image the caller asked for.
 	if in.Image != nil {
-		if composedTweetText == "" {
-			return nil, domain.PreflightRefusalf("invalid creative image: an image is attached only to an authored tweet, so it requires tweetText and no tweetId")
+		if composedTweetText == "" && len(composedVariants) == 0 {
+			return nil, domain.PreflightRefusalf("invalid creative image: an image is attached only to an authored tweet, so it requires tweetText (or variants) and no tweetId")
 		}
 		if err := validateImageInput(in.Image); err != nil {
 			return nil, domain.WrapPreflightRefusal(err)
@@ -3864,6 +3915,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	var lineItemID string
 	var lineItemReused bool
 	var authoredTweetID string
+	// promotedTweets is the variant path's per-variant record (#564 gap 10), captured by the
+	// closure for the same reason as authoredTweetID: it names every tweet already published.
+	var promotedTweets []PromotedTweetResult
 	partialResult := func() *CampaignResult {
 		return &CampaignResult{
 			Platform:        "twitter-ads",
@@ -3872,6 +3926,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			LineItemName:    lineItemName,
 			LineItemID:      lineItemID,
 			AuthoredTweetID: authoredTweetID,
+			PromotedTweets:  append([]PromotedTweetResult(nil), promotedTweets...),
 			MediaKey:        mediaKey,
 			// Reused must be set on partial results too, not just the final success —
 			// a downstream error AFTER a campaign/line-item reuse still carries the
@@ -4090,6 +4145,27 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// has no parent to be found through. Those paths return the tweet's id in
 	// AuthoredTweetID with instructions to pass it back as tweetId (authoredTweetStatus),
 	// and an UNCONFIRMED authoring tells the operator to verify before retrying.
+	// Step 4 for tweet variants (#564 gap 10). With variants, TweetID and TweetText are empty
+	// (NormalizeTweetVariants), so none of the single-tweet branches below run.
+	if len(composedVariants) > 0 {
+		var aborted error
+		promotedTweets, promotedTweetWarning, aborted = c.promoteTweetVariants(ctx, composedVariants, in.AsUserID, mediaKey, lineItemID, lineItemReused, &steps)
+		if aborted != nil {
+			return partialResult(), fmt.Errorf("x tweet variants aborted (%s / %s%s): %w", campaignStatus(), lineItemStatus(), authoredTweetsStatus(promotedTweets), aborted)
+		}
+		for _, r := range promotedTweets {
+			if authoredTweetID == "" && r.Authored {
+				authoredTweetID = r.TweetID
+			}
+			if promotedTweetID == "" && r.PromotedTweetID != "" {
+				promotedTweetID = r.PromotedTweetID
+			}
+		}
+		if promotedTweetID == "" {
+			steps = append(steps, fmt.Sprintf("Destination URL template (sanitized — utm_* only; reapply any required params from the brief's registration URL): %s", displayTwitterUtmURL(in)))
+		}
+	}
+
 	var promotedReused bool
 	step4Blocked := false
 	if lineItemReused && (tweetID != "" || composedTweetText != "") {
@@ -4258,7 +4334,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				steps = append(steps, fmt.Sprintf("Promoted tweet creation UNCONFIRMED for tweet %s (2xx with no ID, malformed response) — verify in X Ads Manager before retrying", tweetID))
 			}
 		}
-	} else if tweetID == "" {
+	} else if tweetID == "" && len(composedVariants) == 0 {
 		// No tweet was promoted, so the operator is in the manual workflow. The two
 		// steps below are gated SEPARATELY, because they answer different questions
 		// and only one of them is specific to how we got here.
@@ -4296,6 +4372,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		AuthoredTweetID:      authoredTweetID,
 		MediaKey:             mediaKey,
 		PromotedTweetID:      promotedTweetID,
+		PromotedTweets:       promotedTweets,
 		PromotedTweetWarning: promotedTweetWarning,
 		Reused:               campaignReused || lineItemReused,
 		BidApplied:           !lineItemReused,

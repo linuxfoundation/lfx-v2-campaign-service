@@ -305,6 +305,14 @@ openssl rand -base64 32
   criterion POST and leaves a PAUSED partial for reconciliation (accepted
   risk). The chart sets it to `"false"`
   (`app.environment.TWITTER_FOLLOWER_LOOKALIKES_ENABLED.value`).
+- `TWITTER_TWEET_VARIANTS_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `twitterConfig.variants` (#564 gap 10): one authored,
+  promoted tweet per variant (at most 5) on the line item an X create makes.
+  Only the exact value `true` enables it; anything else fails closed, and a
+  create setting it is refused with a 400 before any job exists. A variant
+  that fails after another was published leaves the row `created_degraded`;
+  nothing is rolled back. The chart sets it to `"false"`
+  (`app.environment.TWITTER_TWEET_VARIANTS_ENABLED.value`).
 - `TWITTER_KEYWORD_ADD_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to the positive keyword add lever on an existing X campaign
   (#564 gap 12): `POST .../campaigns/{campaign_id}/keyword-targeting/additions`

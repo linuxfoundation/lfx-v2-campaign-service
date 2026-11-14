@@ -3314,6 +3314,33 @@ followerLookalikeUserIds?: string[] — Follower look-alikes (#564 gap 4c): nume
                                   id, a list over its cap, or a value that is not an array of strings
                                   (null reads as absent) is a synchronous 400 `invalid campaign
                                   config: twitterConfig.followerLookalikeUserIds: …`. Not role-gated.
+variants?: {tweetText: string}[] — One promoted tweet per variant (#564 gap 10), the shape the other
+                                  platforms' `variants` take. 1-5 entries; each tweetText trimmed,
+                                  non-blank, unique ignoring case; `tweetText` is the only key. Never
+                                  with `tweetId` or a top-level `tweetText`. Each variant is authored
+                                  as its own nullcast tweet (tweetText's composition, 280-weighted
+                                  length and credential-screen rules, destination tagged
+                                  `utm_content=variant-N`) and promoted on the ONE line item —
+                                  authored then promoted, variant by variant. `imageAssetId` rides on
+                                  every variant. The result records every promoted tweet:
+                                  `PromotedTweets: [{Variant, TweetID, Authored, PromotedTweetID,
+                                  Warning}]` (in the result blob, no migration); `PromotedTweetID` /
+                                  `AuthoredTweetID` repeat the first. DECIDED OUTCOME (2026-11-14): a
+                                  variant that fails does not stop the others and nothing is rolled
+                                  back (a published tweet cannot be unpublished) — the row is
+                                  `created_degraded`, `PromotedTweetWarning` and a step name the
+                                  failed variants. On a line item reused by name: none promoted →
+                                  author every variant; exactly as many promoted as variants → reuse
+                                  them (copy not compared); another count or an unreadable list →
+                                  nothing authored, verify in X Ads Manager. Pause/resume (campaign +
+                                  line item), budget, bid and keyword levers act on the line item
+                                  every variant serves through, so they govern all variants at once.
+                                  `asUserId` / the connection's `as_user_id` bind variants as they
+                                  bind tweetText. OFF unless TWITTER_TWEET_VARIANTS_ENABLED is exactly
+                                  "true" — while off, a non-empty list is a synchronous 400 naming the
+                                  flag. A rule breach or wrong shape (null reads as absent) is a
+                                  synchronous 400 `invalid campaign config: twitterConfig.variants:
+                                  …`. Not role-gated.
 customAudienceIds?: string[]     — X custom audiences to TARGET (#564 gap 3), ids from
                                   GET .../twitter-ads/custom-audiences (e.g. `1nmth`). Sent as
                                   `CUSTOM_AUDIENCE` / `EQ` criteria on the new line item, after
