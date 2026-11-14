@@ -482,6 +482,12 @@ openssl rand -base64 32
   campaign_manager picker read over Meta's Targeting Search (interests,
   behaviors, work positions). While off it answers 400. The chart sets it to
   `"false"`; enable it per-environment in the ArgoCD overlay.
+- `META_TARGETING_READBACK_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to the Meta settings readback of the ad set's regions,
+  cities and ad schedule (#550): `get-campaign-settings` then reports
+  `regions`, `cities` and `ad_schedule`, compared with the row's config
+  snapshot. While off the readback is unchanged. The chart sets it to
+  `"false"`; enable it per-environment in the ArgoCD overlay.
 - `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.performanceMaxAudienceSignal`,
   one existing Google Ads Audience attached to a Performance Max asset

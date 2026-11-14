@@ -639,6 +639,14 @@ app:
     META_TARGETING_SEARCH_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to the Meta settings readback of the ad set's
+    # regions, cities and ad schedule (#550): get-campaign-settings then asks
+    # the ad set for targeting and adset_schedule and reports regions, cities
+    # and ad_schedule, compared with the row's config snapshot. While off the
+    # readback is unchanged. Any value other than "true" is treated as off.
+    META_TARGETING_READBACK_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to googleAdsConfig.performanceMaxAudienceSignal
     # (#461): one existing Google Ads Audience attached to a Performance Max
     # asset group as a signal. A per-deployment opt-in, off by default, like

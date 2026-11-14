@@ -403,6 +403,13 @@ const (
 	// is resolved. Off by default until the answer shapes are checked against a live token.
 	EnvMetaTargetingSearchEnabled = "META_TARGETING_SEARCH_ENABLED"
 
+	// EnvMetaTargetingReadbackEnabled opts a deployment IN to the Meta settings readback of the ad
+	// set's regions, cities and ad schedule (#550): get-campaign-settings then asks the ad set for
+	// targeting and adset_schedule and reports regions, cities and ad_schedule, compared with the
+	// row's config snapshot. Only the exact value "true" enables it; while off the readback is
+	// unchanged. Off by default until the answer shape is checked against a live ad set.
+	EnvMetaTargetingReadbackEnabled = "META_TARGETING_READBACK_ENABLED"
+
 	// EnvMetaLeadFormsEnabled opts a deployment IN to metaConfig.leadFormId (#550, gap 8): an
 	// existing Instant Form that turns the leads objective into an OUTCOME_LEADS lead ad. Only the
 	// exact value "true" enables it; anything else refuses the field with a 400 before any job

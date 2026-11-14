@@ -985,6 +985,22 @@ Unlike adoption, DELETED/ARCHIVED is returned with its status, not as absent.
 minor-unit offset, `known=false` for a currency outside the supported map (never a guessed 100),
 and an error when the preflight fails.
 
+**Regions, cities and the ad schedule (#550).** `GetCampaignSettingsWithTargeting` is the same read
+with `,targeting,adset_schedule` added to the ad set's fields; `decodeAdSetTargeting` fills
+`AdSetSettings.Targeting` (`AdSetTargetingSettings`). Graph omits empty fields, so once targeting is
+read as an object an absent `geo_locations`, `regions`, `cities` or `adset_schedule` is "none"
+(an empty list); a list of an unexpected shape or a non-numeric key is unknown (`GeoUnreadable`,
+`ScheduleUnreadable`), and a missing or non-object targeting leaves `Targeting` nil. None of these
+fails the rest of the read. The dispatcher (`meta_settings.go`) calls it only while
+`META_TARGETING_READBACK_ENABLED` is `"true"` and then appends three COMPARED fields, `regions`,
+`cities` and `ad_schedule`, whose recorded side comes from the row's config snapshot
+(`metaConfig.targeting.regions` / `.cities`, `adSchedule`; no snapshot → absent). Both sides render
+through `renderSettingsKeys` (trimmed, de-duplicated, numeric order, comma-joined; none is `""`) and
+`renderAdSchedule` (`days=<d,…> HH:MM-HH:MM <TIMEZONE_TYPE>`, days sorted, blocks sorted and joined
+by `; `; the recorded schedule is ADVERTISER, what the create sends). While the flag is off the read
+asks for no targeting and reports its seven fields as before. Not verified live: the answer shape
+of `targeting.geo_locations` and `adset_schedule` on a read.
+
 ## Ad sets (`ad_sets.go`, LFXV2-2665)
 
 `ListCampaignAdSets(ctx, campaignID, accountID, window)` reads a campaign's ad sets
@@ -1102,8 +1118,9 @@ days, with a day outside 0–6, and unless the minutes are whole hours with 0 �
 it de-duplicates and sorts the days. The dispatcher gates it behind `META_AD_SCHEDULE_ENABLED`
 (default off) and decodes it on its own in `PreflightCreate` (`decodeMetaAdSchedule`). The budget
 lever writes only the budget kind an ad set already reports, so it cannot move a scheduled ad set to
-a daily budget. Not verified live: the payload, the whole-hour rule and the settings readback,
-which does not report the schedule.
+a daily budget. Not verified live: the payload and the whole-hour rule. The settings readback
+reports the schedule as `ad_schedule` while `META_TARGETING_READBACK_ENABLED` is on (see the
+settings readback section).
 
 `CampaignInput.LeadFormID` (`metaConfig.leadFormId`, gap 8, `lead_forms.go`) names an existing
 Instant Form of the connection's Page; the owner decided (2026-11-14) that LFX never creates a form
@@ -1252,7 +1269,8 @@ country target (Meta refuses overlapping locations) or a DSA territory without b
 refusal. Its own flag, `META_REGION_TARGETING_ENABLED` (default off), gates it like the locale flag;
 not behind `global_marketing_ops`. Not built: a city radius (Meta's default radius applies) and zip
 codes. Not verified live: the lookup's answer shape, whether Meta refuses (rather than merges) an
-overlap, and the settings readback, which still reports countries only.
+overlap. The settings readback reports the regions and cities as `regions` / `cities` while
+`META_TARGETING_READBACK_ENABLED` is on (see the settings readback section).
 
 ## Instant Form list (`lead_forms.go`, #550 gap 8 picker read)
 
