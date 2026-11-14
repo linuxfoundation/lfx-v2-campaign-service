@@ -104,86 +104,24 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 		return nil, decErr
 	}
 
-	// Validation runs in three stages, and the ORDER is the security property: the cheap header
-	// read first, then the declared-size gate, and only then the allocating full decode. Each
-	// stage bounds what the next one may spend.
-	//
-	// Stage 1 — image.DecodeConfig reads only the header. It costs nothing, and it yields both
-	// the format and the DECLARED dimensions, which is what makes stage 2 possible before any
-	// pixel buffer exists. Meta's creative POLICY (minimum dimensions, aspect ratio) is not
-	// checked anywhere here: it is Meta-specific and belongs at dispatch, where Meta's API is the
-	// authority — this endpoint is storage integrity, not platform policy.
-	cfg, format, derr := image.DecodeConfig(bytes.NewReader(decoded))
-	if derr != nil {
-		return nil, &briefs.BadRequestError{Code: "400", Message: "the uploaded bytes are not a decodable PNG or JPEG image"}
-	}
-	sniffed, ok := mimeForImageFormat(format)
-	if !ok {
-		// A format image.DecodeConfig recognised (some registered decoder) but this endpoint does
-		// not accept. Kept distinct from the decode failure above: the bytes ARE an image, just
-		// not one Meta single-image creatives support.
-		return nil, &briefs.BadRequestError{Code: "400", Message: "unsupported image format; only PNG and JPEG are accepted"}
-	}
-	if p.ContentType != sniffed {
-		return nil, &briefs.BadRequestError{Code: "400", Message: "declared content_type does not match the uploaded image bytes"}
-	}
-
-	// Stage 2 — refuse an image whose DECLARED size is beyond anything this endpoint serves,
-	// BEFORE stage 3 allocates a pixel buffer for it. This is the decompression-bomb gate: both
-	// PNG (zlib) and JPEG compress uniformly flat images enormously, so a body well inside the
-	// 42 MiB request cap can declare dimensions whose decoded form is gigabytes. A 30000x30000
-	// PNG is a few hundred KB on the wire and 3.3 GiB decoded. The budget is expressed in
-	// DECODED BYTES and priced from the declared colour model, so a 16-bit PNG — which Go
-	// decodes at 8 bytes per pixel, twice the usual rate — is charged what it really costs. The
-	// check uses only header values, so a bomb is rejected having cost one header read.
-	if !dimensionsWithinLimits(cfg.Width, cfg.Height, cfg.ColorModel) {
-		return nil, &briefs.BadRequestError{Code: "400", Message: "image dimensions exceed the maximum accepted for a creative asset"}
-	}
-
-	// Stage 2b — RESERVE the pixel buffer against the aggregate decode budget before stage 3
-	// allocates it.
-	//
-	// Stage 2 bounds ONE image; it says nothing about how many decode at once, and the upstream
-	// admission middleware cannot cover this because it prices permits from Content-Length.
-	// Compression severs that relationship: a flat 4000x4000 PNG is ~68 KiB on the wire and
-	// 61 MiB decoded, so wire-priced admission charges it the minimum and would let enough of
-	// them through to exhaust the pod at the decode. The declared cost is knowable here — the
-	// header has been read, nothing has been allocated — which is the earliest point an
-	// aggregate bound can be applied at all.
-	//
-	// Shed rather than queue indefinitely: the caller gets the same retryable 503 the admission
-	// middleware uses, for the same reason.
-	release, ok := s.decodeReserver().reserve(ctx, decodedBytesFor(cfg.Width, cfg.Height, cfg.ColorModel))
-	if !ok {
-		return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the service is at upload capacity; retry shortly"}
-	}
-
-	// Stage 3 — decode in full. Stage 1 proved only that a HEADER parses: image.DecodeConfig
-	// stops once it has the format and dimensions, so a PNG truncated immediately after its
-	// IHDR chunk passes it while being unrecoverable image data. Storing that yields a corrupt
-	// asset that fails much later at dispatch, far from the upload that caused it, so the bytes
-	// are proven decodable HERE. This is the allocating step, which is exactly why stage 2 runs
-	// first: the buffer it may allocate is now bounded by the DECODED-BYTE budget, not by what
-	// the header claims. Byte budget rather than pixel count deliberately — the bound that
-	// matters is bytes allocated, and a 16-bit image costs 8 bytes per pixel where an 8-bit one
-	// costs 4, so a pixel-only cap admits twice the memory it appears to for 16-bit uploads.
-	// The decoded image itself is discarded — only the verdict matters.
-	//
-	// The reservation is released the moment this returns, on BOTH arms, and deliberately not
-	// deferred to the method's return. What it reserves is the pixel buffer, which stops
-	// existing here — the decoded image is discarded and only the verdict is kept. Holding it
-	// across the checksum and the insert would keep decode capacity that nothing is occupying
-	// for as long as the database takes, so a slow transaction would shed concurrent uploads
-	// with 503 for memory already free. The failure arm releases too: an undecodable image
-	// costs no pixel buffer either, and returning 400 while still holding its reservation
-	// would leak the budget for the rest of the request.
-	decodeErr := func() error {
-		defer release()
-		_, _, err := image.Decode(bytes.NewReader(decoded))
-		return err
-	}()
-	if decodeErr != nil {
-		return nil, &briefs.BadRequestError{Code: "400", Message: "the uploaded image data is incomplete or corrupt"}
+	// The declared content type picks the validator: an MP4 is checked structurally
+	// (validateMP4Upload), an image by the staged header/size/decode pipeline
+	// (validateImageUpload). A declared type that does not match the bytes fails either way:
+	// MP4 bytes are not a decodable image, and image bytes carry no ftyp box.
+	var (
+		sniffed       string
+		width, height int
+	)
+	if p.ContentType == model.MimeTypeMP4 {
+		if err := validateMP4Upload(decoded); err != nil {
+			return nil, err
+		}
+		sniffed = model.MimeTypeMP4
+	} else {
+		var verr error
+		if sniffed, width, height, verr = s.validateImageUpload(ctx, p, decoded); verr != nil {
+			return nil, verr
+		}
 	}
 
 	asset := &model.CreativeAsset{
@@ -204,8 +142,8 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 		// re-read a header this request already parsed. They are the same values stage 2 bounded
 		// and stage 3 then decoded successfully against, so nothing is stored that was not
 		// already validated; the decoded image is discarded, so cfg is the only source left.
-		Width:  cfg.Width,
-		Height: cfg.Height,
+		Width:  width,
+		Height: height,
 		Bytes:  decoded,
 		// Same nil handling as CreateBrief: a request with no decodable actor stores NULL rather
 		// than refusing the write. On an idempotent re-upload the repo preserves the FIRST
@@ -445,6 +383,93 @@ func decodedBytesFor(width, height int, m color.Model) int64 {
 		return 0
 	}
 	return int64(width) * int64(height) * bytesPerPixelFor(m)
+}
+
+// validateImageUpload runs the image stages of UploadCreativeAsset and returns the sniffed MIME
+// type and the header dimensions. Every error is a ready-to-return Goa error.
+func (s *BriefService) validateImageUpload(ctx context.Context, p *briefs.UploadCreativeAssetPayload, decoded []byte) (string, int, int, error) {
+	// Validation runs in three stages, and the ORDER is the security property: the cheap header
+	// read first, then the declared-size gate, and only then the allocating full decode. Each
+	// stage bounds what the next one may spend.
+	//
+	// Stage 1 — image.DecodeConfig reads only the header. It costs nothing, and it yields both
+	// the format and the DECLARED dimensions, which is what makes stage 2 possible before any
+	// pixel buffer exists. Meta's creative POLICY (minimum dimensions, aspect ratio) is not
+	// checked anywhere here: it is Meta-specific and belongs at dispatch, where Meta's API is the
+	// authority — this endpoint is storage integrity, not platform policy.
+	cfg, format, derr := image.DecodeConfig(bytes.NewReader(decoded))
+	if derr != nil {
+		return "", 0, 0, &briefs.BadRequestError{Code: "400", Message: "the uploaded bytes are not a decodable PNG or JPEG image"}
+	}
+	sniffed, ok := mimeForImageFormat(format)
+	if !ok {
+		// A format image.DecodeConfig recognised (some registered decoder) but this endpoint does
+		// not accept. Kept distinct from the decode failure above: the bytes ARE an image, just
+		// not one Meta single-image creatives support.
+		return "", 0, 0, &briefs.BadRequestError{Code: "400", Message: "unsupported image format; only PNG and JPEG are accepted"}
+	}
+	if p.ContentType != sniffed {
+		return "", 0, 0, &briefs.BadRequestError{Code: "400", Message: "declared content_type does not match the uploaded image bytes"}
+	}
+
+	// Stage 2 — refuse an image whose DECLARED size is beyond anything this endpoint serves,
+	// BEFORE stage 3 allocates a pixel buffer for it. This is the decompression-bomb gate: both
+	// PNG (zlib) and JPEG compress uniformly flat images enormously, so a body well inside the
+	// 42 MiB request cap can declare dimensions whose decoded form is gigabytes. A 30000x30000
+	// PNG is a few hundred KB on the wire and 3.3 GiB decoded. The budget is expressed in
+	// DECODED BYTES and priced from the declared colour model, so a 16-bit PNG — which Go
+	// decodes at 8 bytes per pixel, twice the usual rate — is charged what it really costs. The
+	// check uses only header values, so a bomb is rejected having cost one header read.
+	if !dimensionsWithinLimits(cfg.Width, cfg.Height, cfg.ColorModel) {
+		return "", 0, 0, &briefs.BadRequestError{Code: "400", Message: "image dimensions exceed the maximum accepted for a creative asset"}
+	}
+
+	// Stage 2b — RESERVE the pixel buffer against the aggregate decode budget before stage 3
+	// allocates it.
+	//
+	// Stage 2 bounds ONE image; it says nothing about how many decode at once, and the upstream
+	// admission middleware cannot cover this because it prices permits from Content-Length.
+	// Compression severs that relationship: a flat 4000x4000 PNG is ~68 KiB on the wire and
+	// 61 MiB decoded, so wire-priced admission charges it the minimum and would let enough of
+	// them through to exhaust the pod at the decode. The declared cost is knowable here — the
+	// header has been read, nothing has been allocated — which is the earliest point an
+	// aggregate bound can be applied at all.
+	//
+	// Shed rather than queue indefinitely: the caller gets the same retryable 503 the admission
+	// middleware uses, for the same reason.
+	release, ok := s.decodeReserver().reserve(ctx, decodedBytesFor(cfg.Width, cfg.Height, cfg.ColorModel))
+	if !ok {
+		return "", 0, 0, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the service is at upload capacity; retry shortly"}
+	}
+
+	// Stage 3 — decode in full. Stage 1 proved only that a HEADER parses: image.DecodeConfig
+	// stops once it has the format and dimensions, so a PNG truncated immediately after its
+	// IHDR chunk passes it while being unrecoverable image data. Storing that yields a corrupt
+	// asset that fails much later at dispatch, far from the upload that caused it, so the bytes
+	// are proven decodable HERE. This is the allocating step, which is exactly why stage 2 runs
+	// first: the buffer it may allocate is now bounded by the DECODED-BYTE budget, not by what
+	// the header claims. Byte budget rather than pixel count deliberately — the bound that
+	// matters is bytes allocated, and a 16-bit image costs 8 bytes per pixel where an 8-bit one
+	// costs 4, so a pixel-only cap admits twice the memory it appears to for 16-bit uploads.
+	// The decoded image itself is discarded — only the verdict matters.
+	//
+	// The reservation is released the moment this returns, on BOTH arms, and deliberately not
+	// deferred to the method's return. What it reserves is the pixel buffer, which stops
+	// existing here — the decoded image is discarded and only the verdict is kept. Holding it
+	// across the checksum and the insert would keep decode capacity that nothing is occupying
+	// for as long as the database takes, so a slow transaction would shed concurrent uploads
+	// with 503 for memory already free. The failure arm releases too: an undecodable image
+	// costs no pixel buffer either, and returning 400 while still holding its reservation
+	// would leak the budget for the rest of the request.
+	decodeErr := func() error {
+		defer release()
+		_, _, err := image.Decode(bytes.NewReader(decoded))
+		return err
+	}()
+	if decodeErr != nil {
+		return "", 0, 0, &briefs.BadRequestError{Code: "400", Message: "the uploaded image data is incomplete or corrupt"}
+	}
+	return sniffed, cfg.Width, cfg.Height, nil
 }
 
 // mimeForImageFormat maps an image.DecodeConfig format name to this endpoint's verified MIME

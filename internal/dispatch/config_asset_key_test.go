@@ -17,6 +17,10 @@ import (
 // See the test below for what keeps the two copies honest.
 const snapshotAssetIDKey = "imageassetid"
 
+// snapshotVideoAssetIDKey is postgres.snapshotVideoAssetIDKey (#586), repeated for the same
+// reason: a LinkedIn video variant names its stored MP4 under it.
+const snapshotVideoAssetIDKey = "videoassetid"
+
 // TestPlatformConfigsNameTheirAssetUnderOneKey pins the assumption the campaign repo's
 // dangling-reference check is built on: every platform config that can reference a stored
 // creative asset marshals that reference under a key equal, ignoring case, to `imageAssetId`.
@@ -43,6 +47,8 @@ func TestPlatformConfigsNameTheirAssetUnderOneKey(t *testing.T) {
 		"microsoft": microsoftConfig{ImageAssetID: assetID},
 		"meta":      metaConfig{Variants: []meta.AdVariant{{ImageAssetID: assetID}}},
 		"linkedin":  linkedinConfig{Variants: []linkedin.CreativeVariant{{ImageAssetID: assetID}}},
+		// The video variant (#586) names its asset under the second key.
+		"linkedin-video": linkedinConfig{Variants: []linkedin.CreativeVariant{{VideoAssetID: assetID}}},
 		// EVERY Google slot, not one of them: they are separate fields on several structs,
 		// and one more slot declared as a bare []string would carry no key on its elements
 		// at all.
@@ -64,7 +70,7 @@ func TestPlatformConfigsNameTheirAssetUnderOneKey(t *testing.T) {
 			continue
 		}
 		for _, k := range keys {
-			if !strings.EqualFold(k, snapshotAssetIDKey) {
+			if !strings.EqualFold(k, snapshotAssetIDKey) && !strings.EqualFold(k, snapshotVideoAssetIDKey) {
 				t.Errorf("%s: asset id is marshalled under %q, which postgres.snapshotAssetIDs will not extract; "+
 					"either tag the field `json:\"imageAssetId\"` or widen snapshotAssetIDKey", name, k)
 			}

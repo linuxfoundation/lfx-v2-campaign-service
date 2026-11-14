@@ -418,6 +418,10 @@ func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ mode
 	if _, err := linkedinConversions(cfg); err != nil {
 		return err
 	}
+	// Video variants (#586): the feature gate and the request shape are a synchronous 400 too.
+	if err := checkLinkedInVideoVariants(cfg); err != nil {
+		return err
+	}
 	return domain.ErrPreflightNotApplicable
 }
 
@@ -452,7 +456,7 @@ type LinkedInDispatcher struct {
 	// rely on, verified against this client rather than inherited from them.
 	clients *clientCache
 	opts    []linkedin.Option
-	// creatives and assets resolve variants[].imageAssetId (linkedin_creative.go). Bound by
+	// creatives and assets resolve variants[].imageAssetId and videoAssetId (linkedin_creative.go). Bound by
 	// registerDispatchers; nil in direct-construction tests, where an asset-backed variant
 	// fails pre-create and the reserver reserves nothing.
 	creatives creativeAssetReader
@@ -544,13 +548,16 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if len(cfg.Variants) == 0 {
 		return nil, notCreated(domain.PreflightRefusalf("linkedin campaign creation requires at least one creative variant"))
 	}
+	if err := checkLinkedInVideoVariants(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
 	}
 	// Stored variant images are resolved and validated BEFORE anything is created; the
 	// reservation is held until the upload inside CreateCampaign is done.
-	images, releaseImages, err := d.resolveLinkedInImages(ctx, brief, &cfg)
+	images, videos, releaseImages, err := d.resolveLinkedInImages(ctx, brief, &cfg)
 	if err != nil {
 		return nil, notCreated(err)
 	}
@@ -608,6 +615,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		Variants:         cfg.Variants,
 		AdAccountID:      adAccountID,
 		Images:           images,
+		Videos:           videos,
 		ManualCPCBid:     plan.amount,
 		Targeting:        cfg.Targeting,
 		Conversions:      cfg.Conversions,

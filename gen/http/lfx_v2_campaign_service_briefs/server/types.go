@@ -40,8 +40,8 @@ type UploadCreativeAssetRequestBody struct {
 	// Declared MIME type of the uploaded bytes. The bytes are re-sniffed
 	// server-side and must match; the stored mime_type is the verified one.
 	ContentType *string `form:"content_type,omitempty" json:"content_type,omitempty" xml:"content_type,omitempty"`
-	// The image, base64-encoded (RFC 4648 standard alphabet, padded). Decoded
-	// server-side; the decoded image must not exceed 30 MiB.
+	// The image or video, base64-encoded (RFC 4648 standard alphabet, padded).
+	// Decoded server-side; the decoded file must not exceed 30 MiB.
 	Bytes *string `form:"bytes,omitempty" json:"bytes,omitempty" xml:"bytes,omitempty"`
 }
 
@@ -482,8 +482,8 @@ type UploadCreativeAssetOKResponseBody struct {
 	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
 	// Parent brief
 	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
-	// Stored image MIME type, as verified from the bytes (not merely the declared
-	// header)
+	// Stored MIME type, as verified from the bytes (not merely the declared
+	// header). video/mp4 since #586.
 	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
 	// Size of the stored image in bytes
 	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
@@ -534,8 +534,8 @@ type GetCreativeAssetResponseBody struct {
 	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
 	// Parent brief
 	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
-	// Stored image MIME type, as verified from the bytes (not merely the declared
-	// header)
+	// Stored MIME type, as verified from the bytes (not merely the declared
+	// header). video/mp4 since #586.
 	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
 	// Size of the stored image in bytes
 	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
@@ -4688,8 +4688,8 @@ type CreativeAssetResponseBody struct {
 	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
 	// Parent brief
 	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
-	// Stored image MIME type, as verified from the bytes (not merely the declared
-	// header)
+	// Stored MIME type, as verified from the bytes (not merely the declared
+	// header). video/mp4 since #586.
 	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
 	// Size of the stored image in bytes
 	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
@@ -5633,7 +5633,29 @@ type CampaignCreateInputRequestBody struct {
 	// unless MICROSOFT_CREATE_TARGETING_ENABLED is exactly "true". A wrong JSON
 	// type (null reads as absent), a rule breach, or any of them while the flag is
 	// off is refused with 400 "invalid campaign config: microsoftConfig.<field>:
-	// ..." before any job exists. Not role-gated.
+	// ..." before any job exists. Not role-gated. LINKEDIN VIDEO SPONSORED CONTENT
+	// (#586): a linkedInConfig variant may name a stored MP4 creative asset
+	// (upload-creative-asset with content_type video/mp4) by `videoAssetId` in
+	// place of imageUrn and imageAssetId. At dispatch the video is uploaded once
+	// through LinkedIn's Videos API (initializeUpload, the part uploads,
+	// finalizeUpload), the create waits up to 60 seconds for it to become
+	// AVAILABLE, and the variant's dark post carries it as content.media (the
+	// headline as its title) with the registration URL as contentLandingPage and
+	// the REGISTER call to action. The campaign is created with format
+	// SINGLE_VIDEO and its name's Ad Format segment reads Video instead of Static.
+	// Every variant must carry a videoAssetId or none may, and a video variant
+	// carries no image. LinkedIn accepts 75 KiB to 500 MB; the asset store caps a
+	// file at 30 MiB. Objectives and bidding are unchanged (WEBSITE_VISIT
+	// automatic, WEBSITE_CONVERSION manual). OFF unless LINKEDIN_ADS_VIDEO_ENABLED
+	// is exactly "true". A videoAssetId that is not a UUID, that is combined with
+	// an image, that is mixed with variants without one, or that is sent while the
+	// flag is off is refused with 400 before any job exists; a missing asset, an
+	// image named as a videoAssetId or a video LinkedIn cannot accept is refused
+	// at dispatch before anything is created. A video that fails to upload or
+	// process, or is not AVAILABLE in time, leaves the PAUSED campaign
+	// created_degraded with zero creatives and the minted URN in the result's
+	// videoUrns; the job is never re-dispatched, so nothing is uploaded or posted
+	// twice.
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed
@@ -10718,8 +10740,8 @@ func ValidateUploadCreativeAssetRequestBody(body *UploadCreativeAssetRequestBody
 		err = goa.MergeErrors(err, goa.MissingFieldError("bytes", "body"))
 	}
 	if body.ContentType != nil {
-		if !(*body.ContentType == "image/png" || *body.ContentType == "image/jpeg") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.content_type", *body.ContentType, []any{"image/png", "image/jpeg"}))
+		if !(*body.ContentType == "image/png" || *body.ContentType == "image/jpeg" || *body.ContentType == "video/mp4") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.content_type", *body.ContentType, []any{"image/png", "image/jpeg", "video/mp4"}))
 		}
 	}
 	if body.Bytes != nil {

@@ -62,6 +62,15 @@ func TestSnapshotAssetIDs_ExtractsEverySpelling(t *testing.T) {
 	wantIDs(t, `{"imageassetid":"`+assetA+`"}`, assetA)
 }
 
+// TestSnapshotAssetIDs_FindsVideoAssetKey pins the second key (#586): a LinkedIn video variant
+// names its stored MP4 under videoAssetId, and the dangling-reference guard must see it in every
+// spelling encoding/json binds, alongside an image id in the same snapshot.
+func TestSnapshotAssetIDs_FindsVideoAssetKey(t *testing.T) {
+	wantIDs(t, `{"variants":[{"VideoAssetID":"`+assetA+`"}]}`, assetA)
+	wantIDs(t, `{"variants":[{"videoAssetId":"`+assetA+`"}]}`, assetA)
+	wantIDs(t, `{"variants":[{"videoAssetId":"`+assetA+`"},{"imageAssetId":"`+assetB+`"}]}`, assetA, assetB)
+}
+
 // TestSnapshotAssetIDs_WalksNestedShapes pins that the walk reaches the place the two biggest
 // platforms actually put the id: inside `variants`, an ARRAY of objects. A top-level-only scan
 // would find nothing at all for Meta and LinkedIn.

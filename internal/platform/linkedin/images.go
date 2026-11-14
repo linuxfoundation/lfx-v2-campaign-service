@@ -151,7 +151,7 @@ func ValidateImage(in ImageUpload) error {
 	return nil
 }
 
-// imageUploadError is a failed image step. It carries the step's own classification, because
+// imageUploadError is a failed image or video step (videos.go reuses it unchanged). It carries the step's own classification, because
 // the shared one (createOutcomeAmbiguous) answers "may this request have been applied", and for
 // an image that is only the right question for the two mutating calls. unconfirmed is true when
 // an image MAY exist that this run cannot name or confirm.
@@ -227,7 +227,7 @@ func (c *Client) uploadVariantImages(ctx context.Context, accountID string, in C
 		steps = append(steps, fmt.Sprintf("Image uploaded for asset %s: %s", assetID, urn))
 	}
 
-	if err := c.awaitImagesAvailable(ctx, order, urns); err != nil {
+	if err := c.awaitMediaAvailable(ctx, imageMedia, c.imagePollInterval, c.imageAvailabilityWait, order, urns); err != nil {
 		steps = append(steps, fmt.Sprintf("Images NOT used (no dark post was created): %s", err.Error()))
 		return urns, steps, err
 	}
@@ -246,7 +246,7 @@ func (c *Client) uploadImage(ctx context.Context, owner string, img ImageUpload)
 	if err != nil {
 		return "", &imageUploadError{err: fmt.Errorf("marshal initializeUpload: %w", err)}
 	}
-	raw, err := c.imageRequest(ctx, http.MethodPost, c.baseURL+"/"+initPath, initPath, body, "application/json", true)
+	raw, _, err := c.mediaRequest(ctx, http.MethodPost, c.baseURL+"/"+initPath, initPath, body, "application/json", true)
 	if err != nil {
 		// A mutating call: a 5xx, a mutating 429, a transport failure or a mutating 401 may have
 		// registered an image this run cannot name. It is unreferenced, so it serves nothing.
@@ -263,7 +263,7 @@ func (c *Client) uploadImage(ctx context.Context, owner string, img ImageUpload)
 		// Nothing was uploaded: the minted image stays empty (WAITING_UPLOAD) and unreferenced.
 		return urn, &imageUploadError{err: fmt.Errorf("image upload: initializeUpload returned an upload URL outside LinkedIn for %s; nothing was uploaded", urn)}
 	}
-	if _, err := c.imageRequest(ctx, http.MethodPut, resp.Value.UploadURL, "image upload URL", img.Data, img.MimeType, false); err != nil {
+	if _, _, err := c.mediaRequest(ctx, http.MethodPut, resp.Value.UploadURL, "image upload URL", img.Data, img.MimeType, false); err != nil {
 		// Not retried: the URN is known, and a second PUT of a partially-received body is not
 		// something LinkedIn documents as safe. The image is NOT referenced either way.
 		return urn, &imageUploadError{err: fmt.Errorf("image upload: upload of %s failed: %w", urn, err), unconfirmed: createOutcomeAmbiguous(err)}
@@ -271,25 +271,37 @@ func (c *Client) uploadImage(ctx context.Context, owner string, img ImageUpload)
 	return urn, nil
 }
 
-// awaitImagesAvailable polls each URN until AVAILABLE, all within ONE shared deadline. A poll
-// that fails transiently (429, 5xx, transport) is retried at the next tick; a definite answer
-// (PROCESSING_FAILED, a non-429 4xx, an expired credential) stops at once. Only GETs are sent,
-// so a failure here is never outcome-ambiguous: no post references the image.
-func (c *Client) awaitImagesAvailable(ctx context.Context, order []string, urns map[string]string) error {
+// mediaKind names what awaitMediaAvailable polls: the noun its errors use and the REST resource
+// its status GET addresses. The Images and Videos APIs share the status field and its values.
+type mediaKind struct {
+	noun, resource string
+}
+
+var (
+	imageMedia = mediaKind{noun: "image", resource: "images"}
+	videoMedia = mediaKind{noun: "video", resource: "videos"}
+)
+
+// awaitMediaAvailable polls each URN until AVAILABLE, all within ONE shared deadline (wait). A
+// poll that fails transiently (429, 5xx, transport) is retried at the next tick; a definite
+// answer (PROCESSING_FAILED, a non-429 4xx, an expired credential) stops at once. Only GETs are
+// sent, so a failure here is never outcome-ambiguous: no post references the media.
+func (c *Client) awaitMediaAvailable(ctx context.Context, kind mediaKind, interval, wait time.Duration, order []string, urns map[string]string) error {
 	// ONE context bounds the whole phase — every status GET and every sleep — so the shared wait
 	// is a real ceiling. A deadline checked only between polls let a slow GET (each has its own
-	// 30 s attempt timeout) or an AVAILABLE reply for an earlier image carry the phase past it.
-	pollCtx, cancel := context.WithTimeout(ctx, c.imageAvailabilityWait)
+	// 30 s attempt timeout) or an AVAILABLE reply for an earlier item carry the phase past it.
+	pollCtx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
 	for _, assetID := range order {
 		urn := urns[assetID]
-		path := "images/" + encodeURNForPath(urn)
+		path := kind.resource + "/" + encodeURNForPath(urn)
+		label := kind.resource + "/{urn}"
 		last := "unknown"
 		for {
 			if pollCtx.Err() != nil {
-				return c.availabilityWaitError(ctx, urn, assetID, last)
+				return availabilityWaitError(ctx, kind, wait, urn, assetID, last)
 			}
-			raw, err := c.imageRequest(pollCtx, http.MethodGet, c.baseURL+"/"+path, "images/{urn}", nil, "", true)
+			raw, _, err := c.mediaRequest(pollCtx, http.MethodGet, c.baseURL+"/"+path, label, nil, "", true)
 			if err == nil {
 				var st imageStatusResponse
 				if json.Unmarshal(raw, &st) == nil {
@@ -299,30 +311,30 @@ func (c *Client) awaitImagesAvailable(ctx context.Context, order []string, urns 
 					break
 				}
 				if last == "PROCESSING_FAILED" {
-					return &imageUploadError{err: fmt.Errorf("image %s for asset %s failed LinkedIn processing (PROCESSING_FAILED)", urn, assetID)}
+					return &imageUploadError{err: fmt.Errorf("%s %s for asset %s failed LinkedIn processing (PROCESSING_FAILED)", kind.noun, urn, assetID)}
 				}
 			} else if pollCtx.Err() != nil {
 				// The request was cut off by the shared wait (or the caller): report the wait,
 				// not the truncated request.
-				return c.availabilityWaitError(ctx, urn, assetID, last)
+				return availabilityWaitError(ctx, kind, wait, urn, assetID, last)
 			} else if !imagePollTransient(err) {
-				return &imageUploadError{err: fmt.Errorf("image %s for asset %s: status check failed: %w", urn, assetID, err)}
+				return &imageUploadError{err: fmt.Errorf("%s %s for asset %s: status check failed: %w", kind.noun, urn, assetID, err)}
 			}
-			if sleepCtx(pollCtx, c.imagePollInterval) != nil {
-				return c.availabilityWaitError(ctx, urn, assetID, last)
+			if sleepCtx(pollCtx, interval) != nil {
+				return availabilityWaitError(ctx, kind, wait, urn, assetID, last)
 			}
 		}
 	}
 	return nil
 }
 
-// availabilityWaitError reports an image that did not become AVAILABLE before the shared wait
-// (or the caller's context) ended. last is always a value from knownImageStatus.
-func (c *Client) availabilityWaitError(ctx context.Context, urn, assetID, last string) error {
+// availabilityWaitError reports media that did not become AVAILABLE before the shared wait (or
+// the caller's context) ended. last is always a value from knownImageStatus.
+func availabilityWaitError(ctx context.Context, kind mediaKind, wait time.Duration, urn, assetID, last string) error {
 	if err := ctx.Err(); err != nil {
-		return &imageUploadError{err: fmt.Errorf("image %s for asset %s: waiting for availability: %w", urn, assetID, err)}
+		return &imageUploadError{err: fmt.Errorf("%s %s for asset %s: waiting for availability: %w", kind.noun, urn, assetID, err)}
 	}
-	return &imageUploadError{err: fmt.Errorf("image %s for asset %s was not AVAILABLE within %s (last status %s)", urn, assetID, c.imageAvailabilityWait, last)}
+	return &imageUploadError{err: fmt.Errorf("%s %s for asset %s was not AVAILABLE within %s (last status %s)", kind.noun, urn, assetID, wait, last)}
 }
 
 // knownImageStatus returns s when it is one of the Images API's documented MediaStatus values,
@@ -377,16 +389,17 @@ func (c *Client) trustedUploadURL(raw string) bool {
 	return u.Scheme == "https" && (host == "linkedin.com" || strings.HasSuffix(host, ".linkedin.com"))
 }
 
-// imageRequest sends one image call and returns the 2xx body. It never retries. label names the
+// mediaRequest sends one image or video call and returns the 2xx body and response headers (the
+// Videos API's part upload answers with the ETag finalizeUpload needs). It never retries. label names the
 // call in errors in place of the URL, because the upload URL is signed and must not reach a
 // Step, a log line or a client. api adds the Marketing API version headers, which the upload
 // URL does not take. The error types match doRequest's, so createOutcomeAmbiguous classifies
 // them the same way; no response body is ever rendered.
-func (c *Client) imageRequest(ctx context.Context, method, rawURL, label string, body []byte, contentType string, api bool) ([]byte, error) {
+func (c *Client) mediaRequest(ctx context.Context, method, rawURL, label string, body []byte, contentType string, api bool) ([]byte, http.Header, error) {
 	attemptCtx, cancel, token, err := c.authorizedAttempt(ctx)
 	defer cancel()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var rdr io.Reader = http.NoBody
 	if body != nil {
@@ -394,7 +407,7 @@ func (c *Client) imageRequest(ctx context.Context, method, rawURL, label string,
 	}
 	req, err := http.NewRequestWithContext(attemptCtx, method, rawURL, rdr)
 	if err != nil {
-		return nil, fmt.Errorf("linkedin %s %s: build request failed", method, label)
+		return nil, nil, fmt.Errorf("linkedin %s %s: build request failed", method, label)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	if contentType != "" {
@@ -407,9 +420,9 @@ func (c *Client) imageRequest(ctx context.Context, method, rawURL, label string,
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		if isPreSendDialError(err) {
-			return nil, &preSendError{Method: method, Path: label}
+			return nil, nil, &preSendError{Method: method, Path: label}
 		}
-		return nil, &transportError{Method: method, Path: label, Err: errors.New("request failed in flight")}
+		return nil, nil, &transportError{Method: method, Path: label, Err: errors.New("request failed in flight")}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	buf := new(bytes.Buffer)
@@ -420,12 +433,12 @@ func (c *Client) imageRequest(ctx context.Context, method, rawURL, label string,
 			text = buf.String()
 		}
 		if ce := c.expiredCredentialsError(resp.StatusCode, text, method); ce != nil {
-			return nil, ce
+			return nil, nil, ce
 		}
-		return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: label}
+		return nil, nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: label}
 	}
 	if rerr != nil || int64(buf.Len()) > maxResponseBytes {
-		return nil, &transportError{Method: method, Path: label, Err: errors.New("response body could not be read")}
+		return nil, nil, &transportError{Method: method, Path: label, Err: errors.New("response body could not be read")}
 	}
-	return buf.Bytes(), nil
+	return buf.Bytes(), resp.Header, nil
 }

@@ -33,9 +33,15 @@ type Service interface {
 	// Fetch an event page and extract its details, for pre-filling a brief. Does
 	// not create anything.
 	FetchEventURL(context.Context, *FetchEventURLPayload) (res *EventDetails, err error)
-	// Upload an image asset for a brief so a Meta ad creative can reference it by
-	// id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored,
-	// then the asset id is returned. Re-uploading identical bytes to the same
+	// Upload an image or MP4 video asset for a brief so an ad creative can
+	// reference it by id. Synchronous: the image is validated (PNG/JPEG, size
+	// limit) and stored, then the asset id is returned. An MP4 (content_type
+	// video/mp4, #586) is checked structurally rather than decoded: it must open
+	// with an ftyp box of an MP4 brand, its top-level boxes must tile the file
+	// exactly, and it must carry moov and mdat boxes; it is stored with no width
+	// or height, and only a LinkedIn video variant
+	// (linkedInConfig.variants[].videoAssetId) consumes it — every image slot
+	// refuses a video asset at dispatch. Re-uploading identical bytes to the same
 	// brief returns the existing asset (idempotent). This does not touch any ad
 	// platform; the account-scoped Meta image_hash is resolved later, at campaign
 	// dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft
@@ -1428,7 +1434,29 @@ type CampaignCreateInput struct {
 	// unless MICROSOFT_CREATE_TARGETING_ENABLED is exactly "true". A wrong JSON
 	// type (null reads as absent), a rule breach, or any of them while the flag is
 	// off is refused with 400 "invalid campaign config: microsoftConfig.<field>:
-	// ..." before any job exists. Not role-gated.
+	// ..." before any job exists. Not role-gated. LINKEDIN VIDEO SPONSORED CONTENT
+	// (#586): a linkedInConfig variant may name a stored MP4 creative asset
+	// (upload-creative-asset with content_type video/mp4) by `videoAssetId` in
+	// place of imageUrn and imageAssetId. At dispatch the video is uploaded once
+	// through LinkedIn's Videos API (initializeUpload, the part uploads,
+	// finalizeUpload), the create waits up to 60 seconds for it to become
+	// AVAILABLE, and the variant's dark post carries it as content.media (the
+	// headline as its title) with the registration URL as contentLandingPage and
+	// the REGISTER call to action. The campaign is created with format
+	// SINGLE_VIDEO and its name's Ad Format segment reads Video instead of Static.
+	// Every variant must carry a videoAssetId or none may, and a video variant
+	// carries no image. LinkedIn accepts 75 KiB to 500 MB; the asset store caps a
+	// file at 30 MiB. Objectives and bidding are unchanged (WEBSITE_VISIT
+	// automatic, WEBSITE_CONVERSION manual). OFF unless LINKEDIN_ADS_VIDEO_ENABLED
+	// is exactly "true". A videoAssetId that is not a UUID, that is combined with
+	// an image, that is mixed with variants without one, or that is sent while the
+	// flag is off is refused with 400 before any job exists; a missing asset, an
+	// image named as a videoAssetId or a video LinkedIn cannot accept is refused
+	// at dispatch before anything is created. A video that fails to upload or
+	// process, or is not AVAILABLE in time, leaves the PAUSED campaign
+	// created_degraded with zero creatives and the minted URN in the result's
+	// videoUrns; the job is never re-dispatched, so nothing is uploaded or posted
+	// twice.
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed
@@ -1812,8 +1840,8 @@ type CreativeAsset struct {
 	ProjectID string
 	// Parent brief
 	BriefID string
-	// Stored image MIME type, as verified from the bytes (not merely the declared
-	// header)
+	// Stored MIME type, as verified from the bytes (not merely the declared
+	// header). video/mp4 since #586.
 	MimeType string
 	// Size of the stored image in bytes
 	ByteSize int64
@@ -3073,8 +3101,8 @@ type UploadCreativeAssetPayload struct {
 	// Declared MIME type of the uploaded bytes. The bytes are re-sniffed
 	// server-side and must match; the stored mime_type is the verified one.
 	ContentType string
-	// The image, base64-encoded (RFC 4648 standard alphabet, padded). Decoded
-	// server-side; the decoded image must not exceed 30 MiB.
+	// The image or video, base64-encoded (RFC 4648 standard alphabet, padded).
+	// Decoded server-side; the decoded file must not exceed 30 MiB.
 	Bytes string
 }
 

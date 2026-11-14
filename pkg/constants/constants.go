@@ -404,6 +404,14 @@ const (
 	// The ids also require global_marketing_ops on the project (service.LinkedInMarketingOpsInputs).
 	EnvLinkedInAdsConversionsEnabled = "LINKEDIN_ADS_CONVERSIONS_ENABLED"
 
+	// EnvLinkedInAdsVideoEnabled opts a deployment IN to LinkedIn video Sponsored Content (#586):
+	// linkedInConfig.variants[].videoAssetId, a stored MP4 uploaded through the Videos API and
+	// posted as a SINGLE_VIDEO campaign's dark post. Only the exact value "true" enables it; unset
+	// or any other value fails closed, and a create naming a videoAssetId is refused before a job
+	// exists. It keeps the UNVERIFIED Videos API upload and video post shape off the live ad
+	// account until the probe in the field's docs passes.
+	EnvLinkedInAdsVideoEnabled = "LINKEDIN_ADS_VIDEO_ENABLED"
+
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,
 	// so every campaign authenticates as the marketing-ops account regardless of any

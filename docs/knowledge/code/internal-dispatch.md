@@ -5610,3 +5610,12 @@ and `Dispatch` (not-created refusal) both run, after `checkConversionsShape` ref
 are not JSON strings (encoding/json would decode a number to `""`); `Dispatch` keeps the de-duplicated copy for the
 client and the snapshot. `campaignFromLinkedIn` reports a result with `ConversionsFailed` as
 `created_degraded`.
+
+**LinkedIn video variants (#586).** `checkLinkedInVideoVariants` (gate `LINKEDIN_ADS_VIDEO_ENABLED`,
+uuid shape, no image alongside, all-or-none) runs in `PreflightCreate` and `Dispatch`.
+`resolveLinkedInImages` now resolves images AND videos under one `AssetReserver` reservation and
+returns both maps; a video must be `video/mp4` and pass `linkedin.ValidateVideo`. Every image
+consumer (`linkedin_creative.go`, `meta.go`, `microsoft_creative.go`, `twitter_creative.go`,
+`googleads_creative_assets.go`) refuses a `model.MimeTypeMP4` asset before any request.
+`TestPlatformConfigsNameTheirAssetUnderOneKey` accepts `videoAssetId` as the second snapshot key.
+See [LinkedIn Video Sponsored Content](../architecture/linkedin-video-ads.md).

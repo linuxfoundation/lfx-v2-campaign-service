@@ -583,6 +583,17 @@ app:
     LINKEDIN_ADS_CONVERSIONS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to LinkedIn video Sponsored Content (#586):
+    # linkedInConfig.variants[].videoAssetId names a stored MP4 that is uploaded
+    # through LinkedIn's Videos API and posted as the dark post of a SINGLE_VIDEO
+    # campaign. The upload and the video post have not been exercised against a
+    # live LinkedIn account. Set it to exactly "true" in lfx-v2-argocd once the
+    # probe in the PR passes. While off, a create naming a videoAssetId is
+    # refused before a job exists. Any value other than "true" is treated as
+    # off, so a typo fails closed.
+    LINKEDIN_ADS_VIDEO_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to the X (Twitter) Ads ACCOUNT MONITOR
     # (/projects/{project_id}/connection-twitter-ads/account-monitor). Default
     # off for the same reason as MICROSOFT_METRICS_ENABLED above: the X account

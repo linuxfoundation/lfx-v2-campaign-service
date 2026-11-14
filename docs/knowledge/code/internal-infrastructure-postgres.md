@@ -564,6 +564,13 @@ leaving headroom over reusing a number a sibling branch might renumber into.
     `TestLiveMigration000056RetriesADeadlock` and
     `TestLiveListCampaignsForBriefExcludesAnotherProject`.
 
+- `000057` — `creative_assets.mime_type` admits `video/mp4` (#586): replaces `000028`'s unnamed
+  CHECK (`creative_assets_mime_type_check`) with one listing `image/png`, `image/jpeg`,
+  `video/mp4`. A video stores NULL `width`/`height` (`000047`'s pair CHECK allows it). The down
+  restores the image-only list `NOT VALID`, so a rollback neither fails on nor deletes a stored
+  video. `snapshotAssetIDs` also extracts ids under a `videoAssetId` key
+  (`snapshotVideoAssetIDKey`), so a video a campaign names is guarded like an image.
+
 ## Terminal-job retention (`JobRepo.PruneTerminalJobs`)
 
 `campaign_jobs` is append-only — nothing else in the service deletes a row — so it
