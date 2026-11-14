@@ -2038,6 +2038,30 @@ func BuildListTwitterAdsCustomAudiencesPayload(lfxV2CampaignServiceConnectionsLi
 	return v, nil
 }
 
+// BuildListMicrosoftAdsRemarketingListsPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-microsoft-ads-remarketing-lists
+// endpoint from CLI flags.
+func BuildListMicrosoftAdsRemarketingListsPayload(lfxV2CampaignServiceConnectionsListMicrosoftAdsRemarketingListsProjectID *string, lfxV2CampaignServiceConnectionsListMicrosoftAdsRemarketingListsBearerToken *string) (*lfxv2campaignserviceconnections.ListMicrosoftAdsRemarketingListsPayload, error) {
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsListMicrosoftAdsRemarketingListsProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsListMicrosoftAdsRemarketingListsProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListMicrosoftAdsRemarketingListsBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsListMicrosoftAdsRemarketingListsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListMicrosoftAdsRemarketingListsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildGetMetaAdsAudiencePayload builds the payload for the
 // lfx-v2-campaign-service-connections get-meta-ads-audience endpoint from CLI
 // flags.

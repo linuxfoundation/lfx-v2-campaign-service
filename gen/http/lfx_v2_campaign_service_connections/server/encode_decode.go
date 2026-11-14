@@ -8019,6 +8019,146 @@ func EncodeListTwitterAdsCustomAudiencesError(encoder func(context.Context, http
 	}
 }
 
+// EncodeListMicrosoftAdsRemarketingListsResponse returns an encoder for
+// responses returned by the lfx-v2-campaign-service-connections
+// list-microsoft-ads-remarketing-lists endpoint.
+func EncodeListMicrosoftAdsRemarketingListsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceconnections.MicrosoftAdsRemarketingLists)
+		enc := encoder(ctx, w)
+		body := NewListMicrosoftAdsRemarketingListsResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeListMicrosoftAdsRemarketingListsRequest returns a decoder for requests
+// sent to the lfx-v2-campaign-service-connections
+// list-microsoft-ads-remarketing-lists endpoint.
+func DecodeListMicrosoftAdsRemarketingListsRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceconnections.ListMicrosoftAdsRemarketingListsPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceconnections.ListMicrosoftAdsRemarketingListsPayload, error) {
+		var payload *lfxv2campaignserviceconnections.ListMicrosoftAdsRemarketingListsPayload
+		var (
+			projectID   string
+			bearerToken *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		payload = NewListMicrosoftAdsRemarketingListsPayload(projectID, bearerToken)
+		if payload.BearerToken != nil {
+			cred := *payload.BearerToken
+			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred = cred[index+1:]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeListMicrosoftAdsRemarketingListsError returns an encoder for errors
+// returned by the list-microsoft-ads-remarketing-lists
+// lfx-v2-campaign-service-connections endpoint.
+func EncodeListMicrosoftAdsRemarketingListsError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMicrosoftAdsRemarketingListsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMicrosoftAdsRemarketingListsServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceconnections.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMicrosoftAdsRemarketingListsInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceconnections.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMicrosoftAdsRemarketingListsNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMicrosoftAdsRemarketingListsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceconnections.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMicrosoftAdsRemarketingListsUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // EncodeGetMetaAdsAudienceResponse returns an encoder for responses returned
 // by the lfx-v2-campaign-service-connections get-meta-ads-audience endpoint.
 func EncodeGetMetaAdsAudienceResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
@@ -13117,6 +13257,22 @@ func marshalLfxv2campaignserviceconnectionsTwitterAdsCustomAudienceToTwitterAdsC
 		}
 	} else {
 		res.ReasonsNotTargetable = []string{}
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceconnectionsMicrosoftAdsRemarketingListToMicrosoftAdsRemarketingListResponseBody
+// builds a value of type *MicrosoftAdsRemarketingListResponseBody from a value
+// of type *lfxv2campaignserviceconnections.MicrosoftAdsRemarketingList.
+func marshalLfxv2campaignserviceconnectionsMicrosoftAdsRemarketingListToMicrosoftAdsRemarketingListResponseBody(v *lfxv2campaignserviceconnections.MicrosoftAdsRemarketingList) *MicrosoftAdsRemarketingListResponseBody {
+	res := &MicrosoftAdsRemarketingListResponseBody{
+		ID:                 v.ID,
+		Name:               v.Name,
+		Description:        v.Description,
+		Scope:              v.Scope,
+		MembershipDuration: v.MembershipDuration,
+		SearchSize:         v.SearchSize,
 	}
 
 	return res

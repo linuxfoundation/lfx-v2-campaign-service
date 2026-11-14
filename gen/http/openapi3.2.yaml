@@ -17592,6 +17592,104 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/microsoft-ads/remarketing-lists:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-microsoft-ads-remarketing-lists lfx-v2-campaign-service-connections
+            description: 'List the remarketing lists on the Microsoft Advertising account a Microsoft create for this project uses, live from Campaign Management v13 GetAudiencesByIds (POST Audiences/QueryByIds with no ids and Type RemarketingList, which returns every list of the type), for picking microsoftConfig.audienceIds and excludedAudienceIds (#563). The same call, with ids, is the check a create makes before anything is created, so every id listed is one it accepts. System lists (All Visitors, All Converters, Smart lists) are not returned by that call and are not listed. Sorted by name, ignoring case, then id. Credentials resolve as for a create: the project''s own Microsoft connection, or the LF system account when the deployment forces it. The Microsoft Advertising account is shared by every foundation, so the response lists EVERY foundation''s lists; like list-twitter-ads-custom-audiences it is therefore gated on global_marketing_ops of {project_id} (the LF marketing team), not campaign_manager, which also admits a foundation''s executive director. Disabled (400 not supported) unless MICROSOFT_REMARKETING_LISTS_ENABLED is "true": the read is built from the v13 reference and has not been exercised against a live account. An answer this service cannot believe (no Audiences array, a null entry, an unusable or repeated id, an entry that is not a remarketing list, any partial error) is 503 with nothing partial. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#list-microsoft-ads-remarketing-lists
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/MicrosoftAdsRemarketingLists'
+                            example:
+                                account_id: "1234567"
+                                list_count: 1
+                                lists:
+                                    - description: ""
+                                      id: "8394012"
+                                      membership_duration: 30
+                                      name: KubeCon NA site visitors 30d
+                                      scope: Account
+                                      search_size: 12000
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/reddit-ads/audience:
         get:
             tags:
@@ -27646,6 +27744,86 @@ components:
                 - metrics_pending
                 - conversions_complete
                 - data_incomplete
+        MicrosoftAdsRemarketingList:
+            type: object
+            properties:
+                description:
+                    type: string
+                    description: The list's description, verbatim; may be empty.
+                    example: Visitors of the KubeCon NA site in the last 30 days
+                id:
+                    type: string
+                    description: The remarketing list id, in exactly the form microsoftConfig.audienceIds and excludedAudienceIds accept. Send it as-is.
+                    example: "8394012"
+                    pattern: ^[1-9][0-9]{0,18}$
+                membership_duration:
+                    type: integer
+                    description: Microsoft's MembershipDuration, in days. Absent when Microsoft sent none.
+                    example: 30
+                    format: int64
+                name:
+                    type: string
+                    description: The list's display name. Not an identifier; may be empty.
+                    example: KubeCon NA site visitors 30d
+                scope:
+                    type: string
+                    description: Microsoft's Scope, verbatim (Account or Customer); may be empty.
+                    example: Account
+                search_size:
+                    type: integer
+                    description: 'Microsoft''s SearchSize: the list members reachable on Search. Absent when Microsoft sent none, which is not a size of 0.'
+                    example: 12000
+                    format: int64
+            example:
+                description: Visitors of the KubeCon NA site in the last 30 days
+                id: "8394012"
+                membership_duration: 30
+                name: KubeCon NA site visitors 30d
+                scope: Account
+                search_size: 12000
+            required:
+                - id
+                - name
+                - description
+                - scope
+        MicrosoftAdsRemarketingLists:
+            type: object
+            properties:
+                account_id:
+                    type: string
+                    description: 'The Microsoft Advertising account the lists were read from: the account a Microsoft create for this project uses'
+                    example: "1234567"
+                list_count:
+                    type: integer
+                    description: How many lists are in `lists`
+                    example: 1
+                    format: int64
+                lists:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/MicrosoftAdsRemarketingList'
+                    description: The account's remarketing lists, sorted by name (ignoring case), then id
+                    example:
+                        - description: ""
+                          id: "8394012"
+                          membership_duration: 30
+                          name: KubeCon NA site visitors 30d
+                          scope: Account
+                          search_size: 12000
+            example:
+                account_id: "1234567"
+                list_count: 1
+                lists:
+                    - description: ""
+                      id: "8394012"
+                      membership_duration: 30
+                      name: KubeCon NA site visitors 30d
+                      scope: Account
+                      search_size: 12000
+            required:
+                - account_id
+                - lists
+                - list_count
         NegativeKeywordInput:
             type: object
             properties:

@@ -444,6 +444,13 @@ func (d upstreamCapableDispatcher) ListTwitterCustomAudiences(context.Context, s
 	return &model.TwitterCustomAudiences{Audiences: []model.TwitterCustomAudience{}}, true, nil
 }
 
+func (d upstreamCapableDispatcher) ListMicrosoftRemarketingLists(context.Context, string, model.Provider) (*model.MicrosoftRemarketingLists, bool, error) {
+	if d.err != nil {
+		return nil, true, d.err
+	}
+	return &model.MicrosoftRemarketingLists{Lists: []model.MicrosoftRemarketingList{}}, true, nil
+}
+
 func (d upstreamCapableDispatcher) SearchEmails(context.Context, string, model.Provider, string) ([]model.MarketingEmail, error) {
 	if d.err != nil {
 		return nil, d.err
@@ -724,6 +731,14 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opListTwitterCustomAudiences,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ReadTwitterCustomAudiences(ctx, "p1", platform)
+				return err
+			},
+		},
+		{
+			name: "list microsoft remarketing lists",
+			op:   opListMicrosoftRemarketingLists,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadMicrosoftRemarketingLists(ctx, "p1", platform)
 				return err
 			},
 		},
