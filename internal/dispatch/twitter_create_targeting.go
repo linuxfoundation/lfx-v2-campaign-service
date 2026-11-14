@@ -38,11 +38,15 @@ var twitterTargetingFields = []string{twitter.FieldGeoTargets, twitter.FieldLang
 // interest ids (gap 4), conversation topics (gap 8) and device platforms (gap 9).
 type twitterCreateTargeting struct {
 	geo, langs, keywords, interests, topics, platforms []string
+	// lookalikes are the follower look-alike ids (#564 gap 4c). They sit behind their own flag
+	// (checkTwitterFollowerLookalikes), not this file's, and are set by the caller; carried here so
+	// the per-create criteria count covers them.
+	lookalikes []string
 }
 
 // count is how many criteria these lists post (the custom audiences are counted separately).
 func (t twitterCreateTargeting) count() int {
-	return len(t.geo) + len(t.langs) + len(t.keywords) + len(t.interests) + len(t.topics) + len(t.platforms)
+	return len(t.geo) + len(t.langs) + len(t.keywords) + len(t.interests) + len(t.topics) + len(t.platforms) + len(t.lookalikes)
 }
 
 // checkTwitterCreateTargeting refuses a config that sets any of the lists while the deployment

@@ -3351,6 +3351,12 @@ type CampaignInput struct {
 	// nothing: X applies no expansion, as before. Only a line item THIS call creates carries it; a
 	// reused one keeps its own, and a step says so.
 	AudienceExpansion string
+	// FollowerLookalikeUserIDs (#564 gap 4c) add SIMILAR_TO_FOLLOWERS_OF_USER criteria (EQ) after
+	// the platforms and before the included custom audiences. Checked by
+	// NormalizeFollowerLookalikes for shape only: X has no user lookup, so an id X refuses fails at
+	// its criterion POST, stopping the create before any tweet with the PAUSED partial retained.
+	// Empty means no look-alike criterion, as before.
+	FollowerLookalikeUserIDs []string
 }
 
 // manualMaxBidMicros encodes a create-time manual bid in micro-units, refusing (never rounding)
@@ -3665,8 +3671,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if perr != nil {
 		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", perr.Error())
 	}
+	// Follower look-alikes (#564 gap 4c): shape only; X has no user lookup.
+	lookalikes, lerr := NormalizeFollowerLookalikes(in.FollowerLookalikeUserIDs)
+	if lerr != nil {
+		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", lerr.Error())
+	}
 	// And all the criteria together must fit the paced-write budget (MaxCreateTargetingCriteria).
-	if cerr := CheckCreateCriteriaCount(len(geoTargets) + len(languages) + len(keywords) + len(interestIDs) + len(topics) + len(platforms) + len(in.CustomAudienceIDs) + len(in.ExcludedCustomAudienceIDs)); cerr != nil {
+	if cerr := CheckCreateCriteriaCount(len(geoTargets) + len(languages) + len(keywords) + len(interestIDs) + len(topics) + len(platforms) + len(lookalikes) + len(in.CustomAudienceIDs) + len(in.ExcludedCustomAudienceIDs)); cerr != nil {
 		// Fixed text and counts only: operator-safe.
 		return nil, domain.PreflightRefusalf("invalid twitterConfig: %s", cerr.Error())
 	}
@@ -3728,6 +3739,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, err
 	}
+	// The follower look-alikes (#564 gap 4c) follow the platforms. Nothing is looked up: an id X
+	// refuses fails at its criterion POST in Step 3b, which stops before any tweet.
+	criteria = append(criteria, followerLookalikeCriteria(lookalikes)...)
 	// Step 1a': the custom audiences (#564 gap 3) must each be live and targetable on this ad
 	// account, also before anything is created. Exclusions go first among all the criteria, so a
 	// create that stops part-way has applied the suppression before any inclusion.

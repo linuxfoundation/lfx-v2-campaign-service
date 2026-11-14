@@ -296,6 +296,15 @@ openssl rand -base64 32
   exists. It names no account resource; it keeps a line-item parameter no
   live create has sent off the shared ad account. The chart sets it to
   `"false"` (`app.environment.TWITTER_AUDIENCE_EXPANSION_ENABLED.value`).
+- `TWITTER_FOLLOWER_LOOKALIKES_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `twitterConfig.followerLookalikeUserIds` (#564 gap 4c):
+  each numeric X user id becomes a `SIMILAR_TO_FOLLOWERS_OF_USER` criterion on
+  the line item an X create makes. Only the exact value `true` enables it;
+  anything else fails closed, and a create setting it is refused with a 400
+  before any job exists. X has no user lookup, so an id X refuses fails at its
+  criterion POST and leaves a PAUSED partial for reconciliation (accepted
+  risk). The chart sets it to `"false"`
+  (`app.environment.TWITTER_FOLLOWER_LOOKALIKES_ENABLED.value`).
 - `TWITTER_KEYWORD_ADD_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to the positive keyword add lever on an existing X campaign
   (#564 gap 12): `POST .../campaigns/{campaign_id}/keyword-targeting/additions`

@@ -86,6 +86,10 @@ type twitterConfig struct {
 	// audience_expansion (#564 gap 11, twitter_audience_expansion.go). Behind
 	// TWITTER_AUDIENCE_EXPANSION_ENABLED; omitted, X applies no expansion, as before.
 	AudienceExpansion string `json:"audienceExpansion,omitempty"`
+	// FollowerLookalikeUserIDs (numeric X user ids) become SIMILAR_TO_FOLLOWERS_OF_USER criteria on
+	// the new line item (#564 gap 4c, twitter_follower_lookalikes.go). Behind
+	// TWITTER_FOLLOWER_LOOKALIKES_ENABLED; shape-checked only, since X has no user lookup.
+	FollowerLookalikeUserIDs []string `json:"followerLookalikeUserIds,omitempty"`
 	// CustomAudienceIDs and ExcludedCustomAudienceIDs are X custom audience ids to target and to
 	// exclude on the new line item (#564 gap 3, twitter_custom_audiences.go). Behind
 	// TWITTER_CUSTOM_AUDIENCES_ENABLED, and global_marketing_ops only
@@ -136,6 +140,10 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 	if err := checkTwitterAudienceExpansionShape(config); err != nil {
 		return err
 	}
+	// And a mistyped followerLookalikeUserIds (#564 gap 4c).
+	if err := checkTwitterFollowerLookalikesShape(config); err != nil {
+		return err
+	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
 	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
 	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
@@ -151,6 +159,9 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 		return err
 	}
 	if err := checkTwitterCustomAudiences(cfg); err != nil {
+		return err
+	}
+	if tgt.lookalikes, err = checkTwitterFollowerLookalikes(cfg); err != nil {
 		return err
 	}
 	if err := checkTwitterCreateCriteriaCount(tgt, cfg); err != nil {
@@ -322,6 +333,9 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if err := checkTwitterAudienceExpansionShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	if err := checkTwitterFollowerLookalikesShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg twitterConfig
 	if err := unmarshalPlatformConfig(config, "twitterConfig", &cfg); err != nil {
 		return nil, notCreated(err)
@@ -344,6 +358,10 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// Likewise the custom audience gate and id rules (#564 gap 3). The role check ran before the
 	// job existed (service.TwitterMarketingOpsInputs) and is not repeated here.
 	if err := checkTwitterCustomAudiences(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// And the follower look-alike gate and shape (#564 gap 4c), for the same reason.
+	if tgt.lookalikes, err = checkTwitterFollowerLookalikes(cfg); err != nil {
 		return nil, notCreated(err)
 	}
 	if err := checkTwitterCreateCriteriaCount(tgt, cfg); err != nil {
@@ -474,6 +492,8 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		Platforms:          tgt.platforms,
 
 		AudienceExpansion: audienceExpansion,
+
+		FollowerLookalikeUserIDs: tgt.lookalikes,
 
 		CustomAudienceIDs:         cfg.CustomAudienceIDs,
 		ExcludedCustomAudienceIDs: cfg.ExcludedCustomAudienceIDs,

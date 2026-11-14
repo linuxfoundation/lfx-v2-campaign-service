@@ -1762,3 +1762,20 @@ is a refusal before any request. The dispatcher gates it on its own default-off 
 `TWITTER_AUDIENCE_EXPANSION_ENABLED` (`internal/dispatch/twitter_audience_expansion.go`), with a
 synchronous 400 for the flag, a bad value or a non-string. X's echo is not checked for the value:
 the line-item POST is confirmed by its id, as before. Not verified live.
+
+## Create-time follower look-alikes (`CampaignInput.FollowerLookalikeUserIDs`, #564 gap 4c)
+
+`twitterConfig.followerLookalikeUserIds` (`follower_lookalikes.go`): each numeric X user id
+(`NormalizeFollowerLookalikes`: trimmed, 1-19 digits, no leading zero, within int64, de-duplicated,
+at most 60) becomes one `SIMILAR_TO_FOLLOWERS_OF_USER` criterion (EQ), appended after the platforms
+and before the included custom audiences, and counted in `CheckCreateCriteriaCount`. **Nothing is
+looked up**: X's Ads API has no user lookup, so an id X refuses fails at its own criterion POST in
+Step 3b — the create stops before any tweet with the PAUSED campaign and line item returned as a
+partial carrying `ErrCreateTargetingIncomplete` (retained; a repeat answers reconciliation
+required), exactly the rule for any other criterion failure
+(`docs/reviews/knowledge-base/mutation-ordering-and-partial-results.md`). A reused PAUSED line
+item gets only the missing look-alikes, as for every criterion. The owner accepted that risk on
+2026-11-14. The dispatcher gates it on its own default-off flag,
+`TWITTER_FOLLOWER_LOOKALIKES_ENABLED` (`internal/dispatch/twitter_follower_lookalikes.go`), with a
+synchronous 400 for the flag, a malformed id, the cap or a non-array, re-checked in `Dispatch`.
+Not role-gated. Not verified live.

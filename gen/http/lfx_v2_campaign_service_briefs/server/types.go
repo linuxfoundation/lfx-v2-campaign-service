@@ -5627,12 +5627,25 @@ type CampaignCreateInputRequestBody struct {
 	// and a line item reused by name keeps its own. It is OFF unless
 	// TWITTER_AUDIENCE_EXPANSION_ENABLED is exactly "true"; a non-blank value
 	// while off, a value outside the set, or a non-string is refused with 400
-	// "invalid campaign config: twitterConfig..." before any job exists. X CUSTOM
-	// AUDIENCES (#564): twitterConfig takes `customAudienceIds` and
-	// `excludedCustomAudienceIds`, arrays of X custom audience ids
-	// (list-twitter-ads-custom-audiences offers them) to target and to exclude,
-	// sent as CUSTOM_AUDIENCE targeting criteria on the new line item with
-	// operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
+	// "invalid campaign config: twitterConfig..." before any job exists. X
+	// FOLLOWER LOOK-ALIKES (#564 gap 4c): twitterConfig takes
+	// `followerLookalikeUserIds` (numeric X user ids, 1-19 digits with no leading
+	// zero and within int64, trimmed and de-duplicated, at most 60), each sent as
+	// a SIMILAR_TO_FOLLOWERS_OF_USER criterion (operator EQ) after the platforms
+	// and before the included custom audiences; they count toward the 60-criteria
+	// per-create total. Only the shape is checked before create: X has no user
+	// lookup, so an id X refuses fails at its own criterion POST, which stops the
+	// create before any tweet with the PAUSED campaign and line item retained for
+	// reconciliation, exactly as for any other criterion failure. OFF unless
+	// TWITTER_FOLLOWER_LOOKALIKES_ENABLED is exactly "true"; a non-empty list
+	// while off, a malformed id, a list over its cap, or a value that is not an
+	// array of strings (null reads as absent) is refused with 400 "invalid
+	// campaign config: twitterConfig.followerLookalikeUserIds: ..." before any job
+	// exists. Not role-gated. X CUSTOM AUDIENCES (#564): twitterConfig takes
+	// `customAudienceIds` and `excludedCustomAudienceIds`, arrays of X custom
+	// audience ids (list-twitter-ads-custom-audiences offers them) to target and
+	// to exclude, sent as CUSTOM_AUDIENCE targeting criteria on the new line item
+	// with operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
 	// given; at most 60 per list; no id twice and none in both lists. geoTargets,
 	// languages, keywords, interestIds, conversationTopics, platforms,
 	// customAudienceIds and excludedCustomAudienceIds together may name at most 60

@@ -3297,6 +3297,23 @@ audienceExpansion?: string       — Line-item audience expansion (#564 gap 11):
                                   outside the set, or one that is not a string (null reads as
                                   absent), is a synchronous 400 `invalid campaign config:
                                   twitterConfig.audienceExpansion: …`. Not role-gated.
+followerLookalikeUserIds?: string[] — Follower look-alikes (#564 gap 4c): numeric X user ids
+                                  (1-19 digits, no leading zero, within int64; trimmed and
+                                  de-duplicated; at most 60), e.g. `14230524`. Each is sent as a
+                                  `SIMILAR_TO_FOLLOWERS_OF_USER` / `EQ` criterion on the new line
+                                  item, after `platforms` and before the included custom audiences,
+                                  and counts toward the 60-criteria per-create total. NOT looked up
+                                  before create — X's Ads API has no user lookup — so an id X refuses
+                                  fails at its own criterion POST: the create stops before any tweet,
+                                  returning the PAUSED campaign and line item as a retained partial
+                                  ("targeting incomplete … do not enable the line item"), exactly as
+                                  for any other criterion failure; repeating the request answers
+                                  reconciliation required. OFF unless
+                                  TWITTER_FOLLOWER_LOOKALIKES_ENABLED is exactly "true" — while off,
+                                  a non-empty list is a synchronous 400 naming the flag. A malformed
+                                  id, a list over its cap, or a value that is not an array of strings
+                                  (null reads as absent) is a synchronous 400 `invalid campaign
+                                  config: twitterConfig.followerLookalikeUserIds: …`. Not role-gated.
 customAudienceIds?: string[]     — X custom audiences to TARGET (#564 gap 3), ids from
                                   GET .../twitter-ads/custom-audiences (e.g. `1nmth`). Sent as
                                   `CUSTOM_AUDIENCE` / `EQ` criteria on the new line item, after

@@ -239,6 +239,17 @@ const (
 	// lfx-v2-argocd.
 	EnvTwitterAudienceExpansionEnabled = "TWITTER_AUDIENCE_EXPANSION_ENABLED"
 
+	// EnvTwitterFollowerLookalikesEnabled opts a deployment IN to
+	// twitterConfig.followerLookalikeUserIds (#564 gap 4c): each id becomes a
+	// SIMILAR_TO_FOLLOWERS_OF_USER criterion on the line item an X create makes. Only the exact
+	// value "true" enables it; unset or any other value fails closed, and a create setting it is
+	// refused with a 400 before any job exists (and again at dispatch, before anything upstream).
+	//
+	// It names no account resource (a public user id). It keeps an UNVERIFIED targeting type off
+	// the shared ad account until a live create confirms it: X has no user lookup, so an id X
+	// refuses fails at its criterion POST and leaves a PAUSED partial for reconciliation.
+	EnvTwitterFollowerLookalikesEnabled = "TWITTER_FOLLOWER_LOOKALIKES_ENABLED"
+
 	// EnvTwitterKeywordAddEnabled opts a deployment IN to the positive keyword add lever on an
 	// existing X campaign (#564 gap 12): POST .../keyword-targeting/additions, one BROAD_KEYWORD
 	// targeting criterion (operator_type EQ) per keyword on the line item this service created.
