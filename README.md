@@ -470,6 +470,12 @@ openssl rand -base64 32
   account targeting validation read before anything is created. Same rules
   as `META_LOCALE_TARGETING_ENABLED`. The chart sets it to `"false"`; enable
   it per-environment in the ArgoCD overlay.
+- `META_OS_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a deployment
+  IN to `metaConfig.targeting.userOs` (#550), Meta `user_os` values (iOS,
+  Android, optionally with a version) checked against Meta's documented
+  formats and combination rule before any request. Same rules as
+  `META_LOCALE_TARGETING_ENABLED`. The chart sets it to `"false"`; enable it
+  per-environment in the ArgoCD overlay.
 - `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.performanceMaxAudienceSignal`,
   one existing Google Ads Audience attached to a Performance Max asset

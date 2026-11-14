@@ -73,6 +73,12 @@ type AudienceTargeting struct {
 	// deployment flag.
 	Behaviors     []string `json:"behaviors"`
 	WorkPositions []string `json:"workPositions"`
+	// UserOS are Meta user_os values (#550, gap 15 remainder): iOS, Android, or either with a
+	// minimum version or a version range (user_os.go), at most MaxUserOS distinct, sent as the ad
+	// set's `user_os`. Like DevicePlatforms it is a placement control, not an audience inclusion, so
+	// it sends no Advantage+ flag. Checked against the reference's formats and combination rule
+	// before any request (normalizeUserOS, CheckUserOS). Gated by its own deployment flag.
+	UserOS []string `json:"userOs"`
 }
 
 const (
@@ -112,13 +118,14 @@ func (t *AudienceTargeting) IsZero() bool {
 	return t == nil || (t.AgeMin == nil && t.AgeMax == nil && len(t.Genders) == 0 &&
 		len(t.CustomAudiences) == 0 && len(t.ExcludedCustomAudiences) == 0 && t.AdvantageAudience == nil &&
 		len(t.Locales) == 0 && len(t.DevicePlatforms) == 0 && len(t.Interests) == 0 &&
-		len(t.Regions) == 0 && len(t.Cities) == 0 && len(t.Behaviors) == 0 && len(t.WorkPositions) == 0)
+		len(t.Regions) == 0 && len(t.Cities) == 0 && len(t.Behaviors) == 0 && len(t.WorkPositions) == 0 &&
+		len(t.UserOS) == 0)
 }
 
 // HasAudienceFields reports whether t sets any of the six fields META_AUDIENCE_TARGETING_ENABLED
 // gates — age, gender, the two custom audience lists, advantageAudience — as opposed to only the
-// later fields (locales, devicePlatforms, interests, regions, cities, behaviors, workPositions) that
-// have their own deployment flags.
+// later fields (locales, devicePlatforms, interests, regions, cities, behaviors, workPositions,
+// userOs) that have their own deployment flags.
 func (t *AudienceTargeting) HasAudienceFields() bool {
 	return t != nil && (t.AgeMin != nil || t.AgeMax != nil || len(t.Genders) > 0 ||
 		len(t.CustomAudiences) > 0 || len(t.ExcludedCustomAudiences) > 0 || t.AdvantageAudience != nil)
@@ -181,6 +188,9 @@ func NormalizeAudienceTargeting(t *AudienceTargeting) (*AudienceTargeting, error
 		return nil, err
 	}
 	if out.WorkPositions, err = normalizeNumericIDs("workPositions", "Meta work position id", t.WorkPositions, MaxWorkPositions); err != nil {
+		return nil, err
+	}
+	if out.UserOS, err = normalizeUserOS(t.UserOS); err != nil {
 		return nil, err
 	}
 	if out.Regions, err = normalizeNumericIDs("regions", "Meta region key", t.Regions, MaxGeoKeys); err != nil {
@@ -339,6 +349,9 @@ func (t *AudienceTargeting) apply(targeting map[string]any) {
 	}
 	if len(t.DevicePlatforms) == 1 {
 		targeting["device_platforms"] = t.DevicePlatforms
+	}
+	if len(t.UserOS) > 0 {
+		targeting["user_os"] = t.UserOS
 	}
 	if t.inclusion() || t.AdvantageAudience != nil {
 		flag := 0

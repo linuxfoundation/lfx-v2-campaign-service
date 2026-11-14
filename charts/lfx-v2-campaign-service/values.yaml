@@ -619,6 +619,15 @@ app:
     META_BEHAVIOR_TARGETING_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to metaConfig.targeting.userOs (#550): Meta
+    # user_os values (iOS, Android, optionally with a minimum version or a
+    # range) sent as the ad set's user_os, checked against Meta's documented
+    # formats and combination rule before any request. Same rules as
+    # META_LOCALE_TARGETING_ENABLED. It names no account resource. Any value
+    # other than "true" is treated as off.
+    META_OS_TARGETING_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to googleAdsConfig.performanceMaxAudienceSignal
     # (#461): one existing Google Ads Audience attached to a Performance Max
     # asset group as a signal. A per-deployment opt-in, off by default, like

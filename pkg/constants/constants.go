@@ -391,6 +391,12 @@ const (
 	// are Meta's own taxonomy, not account resources, so they need no global_marketing_ops.
 	EnvMetaBehaviorTargetingEnabled = "META_BEHAVIOR_TARGETING_ENABLED"
 
+	// EnvMetaOSTargetingEnabled opts a deployment IN to metaConfig.targeting.userOs (#550, gap 15
+	// remainder): Meta user_os values (iOS, Android, optionally with a version) sent as the ad set's
+	// user_os, checked against Meta's documented formats and combination rule before any request.
+	// Same rules as EnvMetaLocaleTargetingEnabled. It names no account resource.
+	EnvMetaOSTargetingEnabled = "META_OS_TARGETING_ENABLED"
+
 	// EnvMetaLeadFormsEnabled opts a deployment IN to metaConfig.leadFormId (#550, gap 8): an
 	// existing Instant Form that turns the leads objective into an OUTCOME_LEADS lead ad. Only the
 	// exact value "true" enables it; anything else refuses the field with a 400 before any job

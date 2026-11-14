@@ -212,12 +212,15 @@ type Service interface {
 	// synchronous 400 "invalid campaign config: metaConfig.targeting..."; a block
 	// that sets only targeting.locales, targeting.devicePlatforms,
 	// targeting.interests, targeting.regions, targeting.cities,
-	// targeting.behaviors or targeting.workPositions needs
+	// targeting.behaviors, targeting.workPositions or targeting.userOs needs
 	// META_LOCALE_TARGETING_ENABLED, META_DEVICE_TARGETING_ENABLED,
-	// META_INTEREST_TARGETING_ENABLED, META_REGION_TARGETING_ENABLED or
-	// META_BEHAVIOR_TARGETING_ENABLED instead, and any of those lists while its
-	// flag is not "true", or devicePlatforms [desktop] with the audienceNetwork
-	// placement, is a synchronous 400 too. Every targeting.regions and
+	// META_INTEREST_TARGETING_ENABLED, META_REGION_TARGETING_ENABLED,
+	// META_BEHAVIOR_TARGETING_ENABLED or META_OS_TARGETING_ENABLED instead, and
+	// any of those lists while its flag is not "true", or devicePlatforms
+	// [desktop] with the audienceNetwork placement, a userOs value outside Meta's
+	// documented user_os formats, a version of one OS family with the other
+	// family, userOs with devicePlatforms [desktop], or an OS version on the
+	// awareness objective, is a synchronous 400 too. Every targeting.regions and
 	// targeting.cities key is looked up before anything is created; one whose
 	// country is sanctioned, regulated, already a geoTargets country, or in the EU
 	// without the DSA disclosures fails the job with nothing created. An invalid

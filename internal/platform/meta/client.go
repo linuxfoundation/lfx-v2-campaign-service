@@ -3257,6 +3257,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err := CheckDevicePlacements(audience, in.Placements); err != nil {
 		return nil, err
 	}
+	if err := CheckUserOS(audience, objective); err != nil {
+		return nil, err
+	}
 	if err := NormalizeFrequencyCap(objective, in.FrequencyCap); err != nil {
 		return nil, err
 	}
