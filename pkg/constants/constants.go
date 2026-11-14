@@ -260,6 +260,15 @@ const (
 	// account until a live create confirms them. Turn it on per environment, in lfx-v2-argocd.
 	EnvMicrosoftCreateTargetingEnabled = "MICROSOFT_CREATE_TARGETING_ENABLED"
 
+	// EnvMicrosoftSearchNetworkEnabled opts a deployment IN to microsoftConfig.searchPartners
+	// (#563 gap 11): the new ad group's AdGroup.Network, Microsoft's own sites with or without its
+	// syndicated search partners. Only the exact value "true" enables it; unset or any other value
+	// fails closed, and a create naming it is refused with a 400 before any job exists (and again
+	// at dispatch, before anything upstream). It names no account resource; it keeps an
+	// UNVERIFIED request shape (from the v13 reference) off the shared account until a live create
+	// confirms it.
+	EnvMicrosoftSearchNetworkEnabled = "MICROSOFT_SEARCH_NETWORK_ENABLED"
+
 	// EnvMicrosoftAdExtensionsEnabled opts a deployment IN to microsoftConfig.sitelinks and
 	// microsoftConfig.callouts (#563), created at create time as SitelinkAdExtension and
 	// CalloutAdExtension entries and associated with the new Search campaign. Only the exact value

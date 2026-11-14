@@ -5613,7 +5613,18 @@ type CampaignCreateInputRequestBody struct {
 	// unless MICROSOFT_CREATE_TARGETING_ENABLED is exactly "true". A wrong JSON
 	// type (null reads as absent), a rule breach, or any of them while the flag is
 	// off is refused with 400 "invalid campaign config: microsoftConfig.<field>:
-	// ..." before any job exists. Not role-gated.
+	// ..." before any job exists. Not role-gated. MICROSOFT SEARCH NETWORK (#563):
+	// microsoftConfig takes `searchPartners`, a boolean sent as the new ad group's
+	// Network: true is OwnedAndOperatedAndSyndicatedSearch (Microsoft's sites and
+	// its syndicated search partners), false is OwnedAndOperatedOnly (Microsoft's
+	// own sites only). Omitted, no Network is sent and Microsoft's default
+	// (partners included) applies, as before. It is set only on an ad group this
+	// run creates; an ad group reused from an earlier attempt keeps its network
+	// and a warning step says so. OFF unless MICROSOFT_SEARCH_NETWORK_ENABLED is
+	// exactly "true". A value that is not a JSON boolean (null reads as absent),
+	// or the field while the flag is off (false included), is refused with 400
+	// "invalid campaign config: microsoftConfig.searchPartners: ..." before any
+	// job exists. Not role-gated.
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

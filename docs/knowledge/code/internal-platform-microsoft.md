@@ -1619,3 +1619,18 @@ group created under it could be left without a language or could mask its langua
 Not verified live: no Microsoft call was made. The dispatcher keeps all three behind
 `MICROSOFT_CREATE_TARGETING_ENABLED` (default off). They name no account resource and are not
 role-gated.
+
+## Search network at create (#563 gap 11)
+
+`CampaignInput.SearchPartners` (`*bool`) sets the new ad group's `AdGroup.Network` through
+`adGroupNetwork`: true is `OwnedAndOperatedAndSyndicatedSearch`, false `OwnedAndOperatedOnly`, and
+nil sends no `Network` at all (`msAdGroup.Network` is `omitempty`), so a create without the field is
+byte-for-byte what it was and Microsoft's default (partners included) applies.
+`SyndicatedSearchOnly` is not offered. The value travels in `targeting.network`;
+`findOrCreateAdGroup` now takes the whole `targeting` instead of its fields one by one. Like the
+flight dates, the network is set only on an ad group this run creates: a reused ad group is not
+written to, and a warning step says its network is unchanged.
+
+The dispatcher (`internal/dispatch/microsoft_search_network.go`) refuses a non-boolean, and the
+field (false included) while `MICROSOFT_SEARCH_NETWORK_ENABLED` is off, with a synchronous 400.
+Not verified live; not role-gated.

@@ -339,6 +339,14 @@ openssl rand -base64 32
   400 before any job exists. They name no account resource; the flag keeps a
   shape no live create has sent off the shared account. The chart sets it to
   `"false"` (`app.environment.MICROSOFT_CREATE_TARGETING_ENABLED.value`).
+- `MICROSOFT_SEARCH_NETWORK_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `microsoftConfig.searchPartners` (#563): the new ad group's
+  search network (`AdGroup.Network`), with or without Microsoft's syndicated
+  search partners. Only the exact value `true` enables it; anything else fails
+  closed, and a create naming it is refused with a 400 before any job exists.
+  It names no account resource; the flag keeps a shape no live create has sent
+  off the shared account. The chart sets it to `"false"`
+  (`app.environment.MICROSOFT_SEARCH_NETWORK_ENABLED.value`).
 - `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.demandGenAudience`, one
   existing Google Ads Audience on a Demand Gen ad group (#459). Only the

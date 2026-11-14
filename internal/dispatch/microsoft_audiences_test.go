@@ -40,6 +40,8 @@ var microsoftUngatedFields = map[string]bool{
 	"negativeKeywords": true, "audienceBidAdjustment": true,
 	// #563 gaps 5-6: ISO countries, coordinates and languages name no account resource.
 	"excludedGeoTargets": true, "proximityTargets": true, "languages": true,
+	// #563 gap 11: a search network choice names no account resource.
+	"searchPartners": true,
 }
 
 // TestEveryMicrosoftConfigFieldIsClassifiedForTheMarketingOpsGate fails when a microsoftConfig
