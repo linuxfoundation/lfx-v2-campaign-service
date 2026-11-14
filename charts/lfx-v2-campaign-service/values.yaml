@@ -529,6 +529,17 @@ app:
     META_AUDIENCE_TARGETING_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to metaConfig.targeting.locales (#550): Meta locale
+    # keys sent as the ad set's targeting.locales. Off by default until the
+    # payload is verified against a live ad account; set exactly "true" in
+    # lfx-v2-argocd. While off, a create carrying the list is refused with a 400
+    # before any job exists. Independent of META_AUDIENCE_TARGETING_ENABLED: a
+    # targeting block that sets only locales needs only this flag. A locale names
+    # no account resource, so it needs no global_marketing_ops. Any value other
+    # than "true" is treated as off.
+    META_LOCALE_TARGETING_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to googleAdsConfig.performanceMaxAudienceSignal
     # (#461): one existing Google Ads Audience attached to a Performance Max
     # asset group as a signal. A per-deployment opt-in, off by default, like

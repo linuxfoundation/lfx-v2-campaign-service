@@ -80,8 +80,9 @@ type metaConfig struct {
 	ConversionEvent string `json:"conversionEvent"`
 	// Targeting is the optional audience targeting (#550): age, gender, custom audiences to include
 	// and exclude, and the Advantage+ audience flag. Refused while META_AUDIENCE_TARGETING_ENABLED is
-	// not "true" (metaTargetingEnabled); validated by meta.NormalizeAudienceTargeting. Null or absent
-	// targets as before.
+	// not "true" (metaTargetingEnabled); the later fields (locales) have their own flags
+	// (checkMetaTargeting). Validated by meta.NormalizeAudienceTargeting. Null or absent targets as
+	// before.
 	Targeting *meta.AudienceTargeting `json:"targeting,omitempty"`
 	// OptimizationGoal is the traffic objective's ad set optimization goal (#550, gap 11),
 	// meta.NormalizeOptimizationGoal's allow-list (LINK_CLICKS, LANDING_PAGE_VIEWS); empty keeps the
@@ -136,15 +137,24 @@ func metaTargetingEnabled() bool {
 	return os.Getenv(constants.EnvMetaAudienceTargetingEnabled) == "true"
 }
 
-// checkMetaTargeting refuses a metaConfig.targeting the create cannot send: any targeting block
-// while the deployment flag is off, and otherwise one that meta.NormalizeAudienceTargeting refuses.
+// checkMetaTargeting refuses a metaConfig.targeting the create cannot send: a field whose
+// deployment flag is off, and otherwise a block meta.NormalizeAudienceTargeting refuses. Each later
+// field (locales) has its own flag; META_AUDIENCE_TARGETING_ENABLED gates the six audience fields
+// and any block that sets none of the later ones, an empty block included, as it did before.
 // Every refusal is a domain.PreflightRefusal, so PreflightCreate answers it with a 400 before any
 // job exists and Dispatch fails the job before any Meta request.
 func checkMetaTargeting(t *meta.AudienceTargeting) error {
 	if t == nil {
 		return nil
 	}
-	if !metaTargetingEnabled() {
+	ownFlag := false
+	if len(t.Locales) > 0 {
+		if os.Getenv(constants.EnvMetaLocaleTargetingEnabled) != "true" {
+			return metaCreativeOptionDisabled("targeting.locales", constants.EnvMetaLocaleTargetingEnabled)
+		}
+		ownFlag = true
+	}
+	if (!ownFlag || t.HasAudienceFields()) && !metaTargetingEnabled() {
 		return domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig.targeting is disabled on this deployment (%s is not \"true\"); omit targeting, or ask an operator to set %s to \"true\"",
 			domain.ErrCreateConfigInvalid, constants.EnvMetaAudienceTargetingEnabled, constants.EnvMetaAudienceTargetingEnabled))
 	}
@@ -1755,7 +1765,7 @@ func decodeMetaTargeting(config json.RawMessage) (*meta.AudienceTargeting, error
 		}
 		var got meta.AudienceTargeting
 		if err := json.Unmarshal(platformCfg[k], &got); err != nil {
-			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig: %s must be an object of ageMin, ageMax (integers), genders, customAudiences, excludedCustomAudiences (string lists) and advantageAudience (boolean)", domain.ErrCreateConfigInvalid, quoteKey(k)))
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig: %s must be an object of ageMin, ageMax (integers), genders, customAudiences, excludedCustomAudiences (string lists), advantageAudience (boolean) and locales (an integer list)", domain.ErrCreateConfigInvalid, quoteKey(k)))
 		}
 		t = &got
 	}

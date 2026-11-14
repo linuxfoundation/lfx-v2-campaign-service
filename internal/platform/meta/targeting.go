@@ -36,6 +36,12 @@ type AudienceTargeting struct {
 	// AdvantageAudience sets targeting_automation.advantage_audience. Nil means "not said": it is
 	// then sent only when an inclusion is set (see inclusion), as 0.
 	AdvantageAudience *bool `json:"advantageAudience"`
+	// Locales are Meta locale keys (positive integers such as 6, English (US), or 1001, English
+	// (All); the Targeting Search `adlocale` type lists them), at most MaxLocales distinct (#550,
+	// gap 12). Sent as `locales`. A language is a hard constraint even with Advantage+ audience on
+	// (Advantage+ Audience reference), so it is not an inclusion. Gated by its own deployment flag,
+	// not by the one that gates the six audience fields above.
+	Locales []int `json:"locales"`
 }
 
 const (
@@ -50,6 +56,9 @@ const (
 	// MaxCustomAudiences caps each audience list. Meta documents no lower limit than this would
 	// hit; an LF campaign names a handful, and each id costs one ownership read before the create.
 	MaxCustomAudiences = 25
+	// MaxLocales caps the locales list. Meta documents no limit; an event targets a handful of
+	// languages, and a long list is more likely a client bug than a campaign.
+	MaxLocales = 50
 )
 
 // metaGenderCodes maps the request's gender names to Meta's targeting codes.
@@ -58,7 +67,16 @@ var metaGenderCodes = map[string]int{"male": 1, "female": 2}
 // IsZero reports whether t asks for nothing, in which case the ad set's targeting is unchanged.
 func (t *AudienceTargeting) IsZero() bool {
 	return t == nil || (t.AgeMin == nil && t.AgeMax == nil && len(t.Genders) == 0 &&
-		len(t.CustomAudiences) == 0 && len(t.ExcludedCustomAudiences) == 0 && t.AdvantageAudience == nil)
+		len(t.CustomAudiences) == 0 && len(t.ExcludedCustomAudiences) == 0 && t.AdvantageAudience == nil &&
+		len(t.Locales) == 0)
+}
+
+// HasAudienceFields reports whether t sets any of the six fields META_AUDIENCE_TARGETING_ENABLED
+// gates — age, gender, the two custom audience lists, advantageAudience — as opposed to only the
+// later fields (locales) that have their own deployment flags.
+func (t *AudienceTargeting) HasAudienceFields() bool {
+	return t != nil && (t.AgeMin != nil || t.AgeMax != nil || len(t.Genders) > 0 ||
+		len(t.CustomAudiences) > 0 || len(t.ExcludedCustomAudiences) > 0 || t.AdvantageAudience != nil)
 }
 
 // NormalizeAudienceTargeting validates t and returns the copy the create sends: gender names
@@ -108,6 +126,9 @@ func NormalizeAudienceTargeting(t *AudienceTargeting) (*AudienceTargeting, error
 			return nil, targetingInvalid("custom audience %s is in both customAudiences and excludedCustomAudiences", domain.CallerValue(id))
 		}
 	}
+	if out.Locales, err = normalizeLocales(t.Locales); err != nil {
+		return nil, err
+	}
 	if out.AdvantageAudience != nil && *out.AdvantageAudience {
 		if out.AgeMin != nil && *out.AgeMin > maxAdvantageAgeMin {
 			return nil, targetingInvalid("with advantageAudience true, Meta accepts an ageMin of at most %d (ageMin is %d); lower it or set advantageAudience false", maxAdvantageAgeMin, *out.AgeMin)
@@ -149,6 +170,27 @@ func normalizeAudienceIDs(field string, ids []string) ([]string, error) {
 	return out, nil
 }
 
+// normalizeLocales de-duplicates the locale keys in order, refusing a key that is not a positive
+// integer or a list over MaxLocales distinct keys.
+func normalizeLocales(keys []int) ([]int, error) {
+	var out []int
+	seen := map[int]bool{}
+	for _, k := range keys {
+		if k <= 0 {
+			return nil, targetingInvalid("locales entry %d is not a Meta locale key (a positive integer)", k)
+		}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, k)
+	}
+	if len(out) > MaxLocales {
+		return nil, targetingInvalid("locales names %d languages; at most %d are allowed", len(out), MaxLocales)
+	}
+	return out, nil
+}
+
 // inclusion reports whether t narrows WHO is reached — a non-default age, a single gender or an
 // included custom audience. These are the fields Meta's v23.0 rule names: setting one without an
 // explicit targeting_automation.advantage_audience is an error on ad-set create. Exclusions are
@@ -182,6 +224,9 @@ func (t *AudienceTargeting) apply(targeting map[string]any) {
 	}
 	if len(t.ExcludedCustomAudiences) > 0 {
 		targeting["excluded_custom_audiences"] = audienceRefs(t.ExcludedCustomAudiences)
+	}
+	if len(t.Locales) > 0 {
+		targeting["locales"] = t.Locales
 	}
 	if t.inclusion() || t.AdvantageAudience != nil {
 		flag := 0

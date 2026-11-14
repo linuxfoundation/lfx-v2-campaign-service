@@ -97,6 +97,12 @@ belong to the connected Meta ad account before anything is created, and create-c
 `global_marketing_ops` on the project for the audience lists. Only exactly `"true"` enables it;
 off, a create carrying a targeting block is refused with a 400 before any job exists.
 
+`META_LOCALE_TARGETING_ENABLED` is the same kind of gate, defaulting to `"false"` (#550): it opts a
+cluster in to `metaConfig.targeting.locales` (Meta locale keys on the ad set). Only exactly `"true"`
+enables it; off, a create carrying the list is refused with a 400 before any job exists. A
+targeting block that sets only `locales` does not need `META_AUDIENCE_TARGETING_ENABLED`. It names
+no account resource, so it is not behind `global_marketing_ops`.
+
 `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is the same kind of gate, defaulting to `"false"`
 (#461): it opts a cluster in to `googleAdsConfig.performanceMaxAudienceSignal`, one existing
 Google Ads Audience attached to a Performance Max asset group as a signal. Like the Demand Gen

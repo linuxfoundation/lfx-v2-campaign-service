@@ -353,6 +353,15 @@ const (
 	// gated.
 	EnvMetaAudienceTargetingEnabled = "META_AUDIENCE_TARGETING_ENABLED"
 
+	// EnvMetaLocaleTargetingEnabled opts a deployment IN to metaConfig.targeting.locales (#550,
+	// gap 12): Meta locale keys sent as the ad set's targeting `locales`. Only the exact value
+	// "true" enables it; unset or any other value fails closed, and a create carrying the list is
+	// refused with a 400 before any job exists (and again in the job, before any Meta request). It
+	// is independent of EnvMetaAudienceTargetingEnabled: a targeting block that sets only locales
+	// needs only this flag. Off by default until the payload is verified against a live ad account.
+	// A locale names no account resource, so it needs no global_marketing_ops.
+	EnvMetaLocaleTargetingEnabled = "META_LOCALE_TARGETING_ENABLED"
+
 	// EnvGoogleAdsPMaxAudienceSignalEnabled opts a deployment IN to
 	// googleAdsConfig.performanceMaxAudienceSignal (#461): one existing Google Ads Audience
 	// attached to a Performance Max asset group as a signal. Only the exact value "true"

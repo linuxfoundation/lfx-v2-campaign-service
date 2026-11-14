@@ -2949,7 +2949,9 @@ optimizationGoal?: string       — OPTIONAL ad set `optimization_goal` for the 
 targeting?: object              — OPTIONAL audience targeting on the ad set (#550). Refused
                                   with a 400 before any job exists unless the deployment sets
                                   META_AUDIENCE_TARGETING_ENABLED to exactly "true" (not yet
-                                  live-verified). null/absent → targeting unchanged. Keys:
+                                  live-verified); a block that sets only keys with their own
+                                  flag (locales) needs only that flag. null/absent → targeting
+                                  unchanged. Keys:
   ageMin?, ageMax?: integer      — 18–65 each, ageMin ≤ ageMax → `age_min` / `age_max`. null or
                                   absent is Meta's default; an explicit 0 is out of range (400).
   genders?: string[]             — subset of male, female (case-insensitive, de-duplicated);
@@ -2965,6 +2967,12 @@ targeting?: object              — OPTIONAL audience targeting on the ad set (#
                                   non-default inclusion without it); otherwise it is sent only
                                   when given. true is refused with ageMin > 25 or ageMax < 65
                                   (Meta's Advantage+ limits).
+  locales?: integer[]            — Meta locale keys (the Targeting Search `adlocale` type, e.g.
+                                  6 English (US), 1001 English (All)), positive, de-duplicated,
+                                  at most 50 distinct → `locales`. A language is a hard
+                                  constraint even with Advantage+ on, so it is not an inclusion.
+                                  Refused with a 400 unless META_LOCALE_TARGETING_ENABLED is
+                                  exactly "true"; not gated by global_marketing_ops.
                                   Every invalid value is a synchronous 400 ("invalid campaign
                                   config: metaConfig.targeting: …"). Before anything is created
                                   each audience is read (`GET /{id}?fields=id,account_id,subtype`);
