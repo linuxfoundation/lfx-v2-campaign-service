@@ -462,6 +462,15 @@ openssl rand -base64 32
   require `global_marketing_ops`. The chart sets it to `"false"`
   (`app.environment.LINKEDIN_ADS_CONVERSIONS_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once the probe passes.
+- `LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED` (default unset, i.e. OFF) — opts
+  a deployment IN to `linkedInConfig.adAccountId` naming one of the LF system
+  LinkedIn row's account grants (#581; installed with `bootstrap-system-account
+  -linkedin-grant account:org[:label]`). The campaign is created in that account
+  under the grant's org. Only the exact value `true` enables it; anything else
+  fails closed, and a create naming any account but the connection's own is
+  refused with a 400 before a job exists. While on, any `adAccountId` requires
+  `global_marketing_ops`. The chart sets it to `"false"`
+  (`app.environment.LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED.value`).
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request
   names no `source_workflow_url`. Unset or empty selects the in-code

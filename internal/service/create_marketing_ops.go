@@ -7,12 +7,14 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // MarketingOpsChecker answers whether a user holds global_marketing_ops on a project. A false
@@ -413,9 +415,20 @@ func LinkedInMarketingOpsInputs(config json.RawMessage) []string {
 			Exclude map[string][]string   `json:"exclude"`
 		} `json:"targeting"`
 		Conversions []string `json:"conversions"`
+		AdAccountID string   `json:"adAccountId"`
 	}
 	_ = json.Unmarshal(raw, &cfg) // see above: a partial decode is still inspected
 	var set []string
+	// adAccountId (#581): while account selection is on it can name one of the LF system row's
+	// granted accounts, i.e. spend another foundation's money under that foundation's page, so
+	// any non-empty value is ops-only (the 2026-11-05 owner decision: shared-account selectors
+	// stay global_marketing_ops). The service does not resolve the connection, so it cannot tell
+	// the default account from a grant; the default needs no adAccountId at all, which is how an
+	// executive director creates. While the flag is off only the connection's own account is
+	// accepted, so nothing is gated.
+	if strings.TrimSpace(cfg.AdAccountID) != "" && os.Getenv(constants.EnvLinkedInAdsAccountSelectionEnabled) == "true" {
+		set = append(set, "linkedInConfig.adAccountId")
+	}
 	if len(cfg.Conversions) > 0 {
 		set = append(set, "linkedInConfig.conversions")
 	}

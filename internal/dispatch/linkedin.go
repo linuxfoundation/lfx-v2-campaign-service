@@ -386,7 +386,7 @@ func linkedinBidPlan(cfg linkedinConfig) (bidPlan, error) {
 // created as asked. It never calls LinkedIn, so every other outcome is ErrPreflightNotApplicable;
 // a config that does not decode is left to Dispatch — except a wrong-typed `bidding`, refused here by
 // checkBiddingShape.
-func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
+func (d *LinkedInDispatcher) PreflightCreate(ctx context.Context, projectID string, platform model.Provider, config json.RawMessage) error {
 	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
 	if err := checkBiddingShape(config, "linkedInConfig"); err != nil {
 		return err
@@ -417,6 +417,16 @@ func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ mode
 	}
 	if _, err := linkedinConversions(cfg); err != nil {
 		return err
+	}
+	// linkedInConfig.adAccountId (#581) is a synchronous 400 when it names an account a create
+	// would refuse. It needs the resolution a create uses (a database read, no LinkedIn call); a
+	// resolution that fails is left to Dispatch, which reports the connection fault itself.
+	if strings.TrimSpace(cfg.AdAccountID) != "" {
+		if res, rerr := d.creds.resolve(ctx, projectID, platform); rerr == nil && res != nil {
+			if _, serr := selectLinkedInAccount(res, cfg.AdAccountID); serr != nil {
+				return serr
+			}
+		}
 	}
 	return domain.ErrPreflightNotApplicable
 }
@@ -490,6 +500,21 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	// See stampProvenance for why this is a defer on the named return, not a per-return call.
 	defer func() { res.stampProvenance(camp) }()
 
+	var cfg linkedinConfig
+	if err := unmarshalPlatformConfig(config, "linkedInConfig", &cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// linkedInConfig.adAccountId (#581): the resolved account, or — with account selection on —
+	// one of the LF system row's grants, whose account AND org replace the row's below. Decided
+	// before anything else reads the account or org, so the runtime allowlist, the org check and
+	// the recorded provenance all describe the account the campaign is created in. res is
+	// reassigned, so the deferred stampProvenance above records the selected resolution.
+	selected, serr := selectLinkedInAccount(res, cfg.AdAccountID)
+	if serr != nil {
+		return nil, notCreated(serr)
+	}
+	res = selected
+
 	// The org id is creation-only (the toggle and metrics paths never read it), so it is
 	// checked here rather than in the shared helper. The helper has already refused an empty
 	// account id.
@@ -497,11 +522,6 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	accountID := strings.TrimSpace(res.accountID)
 	if orgID == "" {
 		return nil, notCreated(linkedInMissingOrgIDRefusal(res))
-	}
-
-	var cfg linkedinConfig
-	if err := unmarshalPlatformConfig(config, "linkedInConfig", &cfg); err != nil {
-		return nil, notCreated(err)
 	}
 	// The bidding choice, validated before any upstream call; recorded on every returned row.
 	if err := checkBiddingShape(config, "linkedInConfig"); err != nil {
@@ -560,12 +580,12 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	// bits the caller supplied in config (targeting profiles / exclusions the
 	// connection doesn't persist). The single account is always present so
 	// AdAccountID defaults resolve.
-	// The runtime allowlist is sourced ONLY from the connection's own account. Do NOT
-	// append a caller-supplied adAccountId — that would defeat the client's
-	// cross-tenant fail-closed check (targeting.go), letting any account reachable by
-	// the bearer token be treated as authorized and paired with this connection's org.
-	// A caller override is therefore only honored when it MATCHES the connection's
-	// account; any other value is rejected before an upstream call.
+	// The runtime allowlist is sourced ONLY from the resolved account: the connection's own, or
+	// the one grant selectLinkedInAccount scoped res to (#581), with that grant's org. Do NOT
+	// append a caller-supplied adAccountId — that would defeat the client's cross-tenant
+	// fail-closed check (targeting.go), letting any account reachable by the bearer token be
+	// treated as authorized and paired with this connection's org. selectLinkedInAccount has
+	// already refused every other value before an upstream call.
 	runtime := linkedin.RuntimeConfig{
 		DefaultAccountID:   accountID,
 		DefaultOrgID:       orgID,
@@ -573,13 +593,10 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		TargetingProfiles:  cfg.TargetingProfiles,
 		EmployerExclusions: cfg.EmployerExclusions,
 	}
-	// Trim the override once and use the TRIMMED value both for the guard AND for the
-	// client input — otherwise a whitespace-padded value that matches the connection
-	// passes the guard but reaches the client as a different (padded) account.
+	// Trimmed once, and the TRIMMED value reaches the client — otherwise a whitespace-padded
+	// value that matches the account would reach the client as a different (padded) one.
+	// selectLinkedInAccount has made accountID equal to it whenever it is non-empty.
 	adAccountID := strings.TrimSpace(cfg.AdAccountID)
-	if adAccountID != "" && adAccountID != accountID {
-		return nil, notCreated(domain.PreflightRefusalf("linkedin adAccountId %s does not match the connection's account %s — cross-account campaigns are not allowed", domain.CallerValue(adAccountID), domain.CallerValue(accountID)))
-	}
 
 	// hsToken is a documented TOP-LEVEL config envelope field (docs/api-catalog.md);
 	// a request-supplied token takes precedence over the brief blobs, so a config
@@ -974,6 +991,11 @@ func (d *LinkedInDispatcher) ListAccounts(ctx context.Context, projectID string,
 	res, creds, err := d.resolveLinkedInDiscoveryCredentials(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
+	}
+	// With account selection on (#581), the LF system row answers with the accounts a create may
+	// name — its own and its grants — instead of everything its token reaches. No LinkedIn call.
+	if res.isFromSystem() && linkedinAccountSelectionEnabled() {
+		return linkedInGrantAccounts(res), nil
 	}
 	// RuntimeConfig is left ZERO: the accounts finder asks what the TOKEN reaches, so
 	// scoping the client to one of the answers would narrow the response to a subset of

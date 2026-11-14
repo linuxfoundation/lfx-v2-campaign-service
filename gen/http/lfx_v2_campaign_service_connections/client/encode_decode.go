@@ -11499,6 +11499,11 @@ func EncodeListLinkedinAdsAudiencesRequest(encoder func(*http.Request) goahttp.E
 				req.Header.Set("Authorization", head)
 			}
 		}
+		values := req.URL.Query()
+		if p.AccountID != nil {
+			values.Add("account_id", *p.AccountID)
+		}
+		req.URL.RawQuery = values.Encode()
 		return nil
 	}
 }
@@ -11699,6 +11704,11 @@ func EncodeListLinkedinAdsConversionsRequest(encoder func(*http.Request) goahttp
 				req.Header.Set("Authorization", head)
 			}
 		}
+		values := req.URL.Query()
+		if p.AccountID != nil {
+			values.Add("account_id", *p.AccountID)
+		}
+		req.URL.RawQuery = values.Encode()
 		return nil
 	}
 }

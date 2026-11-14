@@ -5373,11 +5373,21 @@ type CampaignCreateInputRequestBody struct {
 	// two decimals, a whole minor unit of the account currency (checked against
 	// the currency at dispatch), and only for the traffic or leads objective;
 	// Reddit only for the traffic objective; LinkedIn whole cents; X at most the
-	// campaign's daily budget (X does not accept a line item bid above it). REDDIT
-	// CUSTOM AUDIENCES (#549): redditConfig takes `customAudienceIds` and
-	// `excludedCustomAudienceIds`, arrays of Reddit custom audience ids
-	// (list-reddit-ads-custom-audiences offers them) to target and to exclude,
-	// sent as the ad group's targeting.custom_audience_ids and
+	// campaign's daily budget (X does not accept a line item bid above it).
+	// LINKEDIN AD ACCOUNT (#581): linkedInConfig.adAccountId is optional; omitted,
+	// the campaign is created in the connection's account (the project's own, else
+	// the LF system account). Naming that same account is always accepted. Naming
+	// any other account is accepted only while
+	// LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is "true", only when the create
+	// resolves to the LF system account, and only for one of its
+	// operator-installed account grants; the campaign is then created in that
+	// account under the GRANT'S organization page (the caller never names the
+	// org). While the flag is on, any adAccountId requires global_marketing_ops on
+	// the project (403 otherwise). Every other value is a synchronous 400 before a
+	// job exists. REDDIT CUSTOM AUDIENCES (#549): redditConfig takes
+	// `customAudienceIds` and `excludedCustomAudienceIds`, arrays of Reddit custom
+	// audience ids (list-reddit-ads-custom-audiences offers them) to target and to
+	// exclude, sent as the ad group's targeting.custom_audience_ids and
 	// targeting.excluded_custom_audience_ids on every ad-group attempt, including
 	// the retry that drops communities and interests. Each id is 1-64 letters,
 	// digits or underscores, sent exactly as given; at most 100 per list; no id

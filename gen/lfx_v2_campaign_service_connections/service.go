@@ -354,8 +354,11 @@ type Service interface {
 	// team), not campaign_manager, which also admits a foundation's executive
 	// director. The read pages LinkedIn's finder 100 at a time and never
 	// truncates: more than 1000 entries, a page that repeats an earlier one, or an
-	// entry of another ad account fails it with 503. A pure read: nothing is
-	// persisted.
+	// entry of another ad account fails it with 503. account_id (optional, #581)
+	// names the account to list instead: the resolved account itself, or one of
+	// the LF system account's operator-installed grants (the accounts
+	// linkedInConfig.adAccountId may name); any other account is a 400. A pure
+	// read: nothing is persisted.
 	ListLinkedinAdsAudiences(context.Context, *ListLinkedinAdsAudiencesPayload) (res *LinkedinAdsAudienceSegments, err error)
 	// List the conversion rules on the LinkedIn ad account a create for this
 	// project uses, live from LinkedIn's Conversions finder, for picking
@@ -369,8 +372,11 @@ type Service interface {
 	// (the LF marketing team), not campaign_manager, which also admits a
 	// foundation's executive director. The read pages LinkedIn's finder 100 at a
 	// time and never truncates: more than 1000 entries, a page that repeats an
-	// earlier one, or an entry of another ad account fails it with 503. A pure
-	// read: nothing is persisted.
+	// earlier one, or an entry of another ad account fails it with 503. account_id
+	// (optional, #581) names the account to list instead: the resolved account
+	// itself, or one of the LF system account's operator-installed grants (the
+	// accounts linkedInConfig.adAccountId may name); any other account is a 400. A
+	// pure read: nothing is persisted.
 	ListLinkedinAdsConversions(context.Context, *ListLinkedinAdsConversionsPayload) (res *LinkedinAdsConversionRules, err error)
 	// Read Microsoft Advertising keyword performance for this project's own
 	// campaigns, in the same row shape as get-google-ads-keywords. Scoped to the
@@ -2248,6 +2254,10 @@ type ListLinkedinAdsAudiencesPayload struct {
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
 	ProjectID string
+	// The LinkedIn ad account to list. Optional: omitted, the account a create for
+	// this project uses; otherwise that account or one of the LF system account's
+	// granted accounts.
+	AccountID *string
 }
 
 // ListLinkedinAdsConversionsPayload is the payload type of the
@@ -2258,6 +2268,10 @@ type ListLinkedinAdsConversionsPayload struct {
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
 	ProjectID string
+	// The LinkedIn ad account to list. Optional: omitted, the account a create for
+	// this project uses; otherwise that account or one of the LF system account's
+	// granted accounts.
+	AccountID *string
 }
 
 // ListMetaAdsAccountsPayload is the payload type of the

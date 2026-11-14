@@ -26,6 +26,17 @@ func (d *LinkedInDispatcher) createLookupClient(ctx context.Context, projectID s
 	if err != nil {
 		return nil, nil, "", err
 	}
+	// An account the caller named (#581): the resolved account itself, or one of the LF system
+	// row's grants, read through the grant-scoped copy. Any other is refused before a request, as
+	// the monitor refuses an account the connection does not manage.
+	if want := model.PickerAccount(ctx); want != "" && want != strings.TrimSpace(res.accountID) {
+		granted, ok := res.grantScoped(want)
+		if !ok {
+			return nil, nil, "", fmt.Errorf("%w: linkedin account %s is neither this project's connection account nor one of the LF system account's granted accounts",
+				domain.ErrAccountNotManagedByConnection, want)
+		}
+		res = granted
+	}
 	accountID := strings.TrimSpace(res.accountID)
 	// A malformed bound account is stored connection configuration the operator must repair, and
 	// it is refused here, before any request, so the read is not recorded as an upstream call.

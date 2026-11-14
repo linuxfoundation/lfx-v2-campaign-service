@@ -124,6 +124,14 @@ LinkedIn: `linkedInConfig.conversions` sends a Campaign Conversions PUT that has
 against a live LinkedIn account. Only exactly `"true"` enables it; off, a create naming it is
 refused with a 400 before a job exists. The ids additionally require `global_marketing_ops`.
 
+`LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED` defaults to `"false"` (#581) and gates
+`linkedInConfig.adAccountId` naming one of the LF system LinkedIn row's account grants
+(`bootstrap-system-account -linkedin-grant`). Only exactly `"true"` enables it; off, a create naming
+any account but the connection's own is refused with a 400 before a job exists. While on, any
+`adAccountId` requires `global_marketing_ops`, and the system scope's LinkedIn accounts list returns
+the default account and the grants. Flip it only after the release that pauses, reads and budgets
+granted-account campaigns is in prod and the grants are installed.
+
 `SURVEY_SEQUENCE_WORKFLOW_ID` is a plain value defaulting to `""`, which selects the in-code
 default `1841232183`: the LF Research survey-promo workflow a survey send series
 (`send-workflows`) is copied from when a request names none. That id exists only in the LF

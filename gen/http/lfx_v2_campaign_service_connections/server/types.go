@@ -15896,9 +15896,10 @@ func NewGetLinkedinAdsAudiencePayload(projectID string, window *string, bearerTo
 // NewListLinkedinAdsAudiencesPayload builds a
 // lfx-v2-campaign-service-connections service list-linkedin-ads-audiences
 // endpoint payload.
-func NewListLinkedinAdsAudiencesPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListLinkedinAdsAudiencesPayload {
+func NewListLinkedinAdsAudiencesPayload(projectID string, accountID *string, bearerToken *string) *lfxv2campaignserviceconnections.ListLinkedinAdsAudiencesPayload {
 	v := &lfxv2campaignserviceconnections.ListLinkedinAdsAudiencesPayload{}
 	v.ProjectID = projectID
+	v.AccountID = accountID
 	v.BearerToken = bearerToken
 
 	return v
@@ -15907,9 +15908,10 @@ func NewListLinkedinAdsAudiencesPayload(projectID string, bearerToken *string) *
 // NewListLinkedinAdsConversionsPayload builds a
 // lfx-v2-campaign-service-connections service list-linkedin-ads-conversions
 // endpoint payload.
-func NewListLinkedinAdsConversionsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload {
+func NewListLinkedinAdsConversionsPayload(projectID string, accountID *string, bearerToken *string) *lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload {
 	v := &lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload{}
 	v.ProjectID = projectID
+	v.AccountID = accountID
 	v.BearerToken = bearerToken
 
 	return v

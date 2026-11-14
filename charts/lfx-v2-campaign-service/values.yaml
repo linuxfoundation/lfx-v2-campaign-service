@@ -583,6 +583,20 @@ app:
     LINKEDIN_ADS_CONVERSIONS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to linkedInConfig.adAccountId naming one of the LF
+    # system LinkedIn row's operator-installed account grants (#581): the
+    # campaign is created in that account under the grant's organization page.
+    # Grants are installed with `bootstrap-system-account -linkedin-grant`.
+    # While on, any adAccountId requires global_marketing_ops on the project,
+    # and the system scope's LinkedIn accounts list returns the default account
+    # and the grants. Set it to exactly "true" in lfx-v2-argocd only after the
+    # release that pauses, reads and budgets campaigns in granted accounts is in
+    # prod and the grants are installed. While off, a create naming any account
+    # but the connection's own is refused before a job exists. Any value other
+    # than "true" is treated as off, so a typo fails closed.
+    LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to the X (Twitter) Ads ACCOUNT MONITOR
     # (/projects/{project_id}/connection-twitter-ads/account-monitor). Default
     # off for the same reason as MICROSOFT_METRICS_ENABLED above: the X account

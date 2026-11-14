@@ -404,6 +404,15 @@ const (
 	// The ids also require global_marketing_ops on the project (service.LinkedInMarketingOpsInputs).
 	EnvLinkedInAdsConversionsEnabled = "LINKEDIN_ADS_CONVERSIONS_ENABLED"
 
+	// EnvLinkedInAdsAccountSelectionEnabled opts a deployment IN to linkedInConfig.adAccountId naming
+	// one of the LF system LinkedIn row's operator-installed account grants (#581): the campaign is
+	// created in that account, under the grant's organization page. Only the exact value "true"
+	// enables it; unset or any other value fails closed, and a create naming any account other than
+	// the connection's own is refused before a job exists, as before #581. While on, a create naming
+	// any adAccountId requires global_marketing_ops on the project (service.LinkedInMarketingOpsInputs),
+	// and the system scope's LinkedIn accounts list returns the default account and the grants.
+	EnvLinkedInAdsAccountSelectionEnabled = "LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED"
+
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,
 	// so every campaign authenticates as the marketing-ops account regardless of any

@@ -3537,6 +3537,18 @@ The LinkedIn account monitor and audience insights read through the same rule (s
 `AccountMonitorDefaulter`, and the system credential is served only for its default account or a
 grant, and only to a campaign-scoped read (see the account-monitor architecture concept).
 
+Create-time selection (step 4 of #581, behind `LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED`):
+`selectLinkedInAccount(res, adAccountId)` keeps the resolved account, or — flag on, system row, a
+grant — returns the grant-scoped copy, so `Dispatch` builds its `RuntimeConfig` (default account,
+org, single-entry allowlist) from the grant and records that account. Every other value is a
+pre-flight 400 (`ErrCreateConfigInvalid`); `PreflightCreate` runs the same check after a
+database-only `creds.resolve`, leaving a resolution failure to `Dispatch`. The pickers
+(`createLookupClient`) read `model.PickerAccount(ctx)` and accept the resolved account or a grant
+(else `ErrAccountNotManagedByConnection`). With the flag on, `ListAccounts` on the system row returns
+`linkedInGrantAccounts` (default + grants, no LinkedIn call). Pinned by
+`TestLinkedIn_CreateInAGrantedAccount`, `TestLinkedIn_AdAccountIDRefusals` and
+`TestLinkedIn_PickersAndAccountsListFollowTheGrants`.
+
 Pinned by `TestLinkedIn_PauseReachesACampaignInAGrantedAccount`,
 `TestLinkedIn_GrantedAndDefaultAccountsDoNotShareAClient`, `TestGrantScopedHonoursOnlyTheSystemRow`
 and `TestLinkedIn_BrokenSystemRowIsBlamedForAGrantedCampaign`.

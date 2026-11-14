@@ -8533,16 +8533,33 @@ func DecodeListLinkedinAdsAudiencesRequest(mux goahttp.Muxer, decoder func(*http
 		var payload *lfxv2campaignserviceconnections.ListLinkedinAdsAudiencesPayload
 		var (
 			projectID   string
+			accountID   *string
 			bearerToken *string
+			err         error
 
 			params = mux.Vars(r)
 		)
 		projectID = params["project_id"]
+		accountIDRaw := r.URL.Query().Get("account_id")
+		if accountIDRaw != "" {
+			accountID = &accountIDRaw
+		}
+		if accountID != nil {
+			err = goa.MergeErrors(err, goa.ValidatePattern("account_id", *accountID, "^[0-9]+$"))
+		}
+		if accountID != nil {
+			if utf8.RuneCountInString(*accountID) > 64 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", *accountID, utf8.RuneCountInString(*accountID), 64, false))
+			}
+		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
 		}
-		payload = NewListLinkedinAdsAudiencesPayload(projectID, bearerToken)
+		if err != nil {
+			return payload, err
+		}
+		payload = NewListLinkedinAdsAudiencesPayload(projectID, accountID, bearerToken)
 		if payload.BearerToken != nil {
 			cred := *payload.BearerToken
 			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
@@ -8673,16 +8690,33 @@ func DecodeListLinkedinAdsConversionsRequest(mux goahttp.Muxer, decoder func(*ht
 		var payload *lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload
 		var (
 			projectID   string
+			accountID   *string
 			bearerToken *string
+			err         error
 
 			params = mux.Vars(r)
 		)
 		projectID = params["project_id"]
+		accountIDRaw := r.URL.Query().Get("account_id")
+		if accountIDRaw != "" {
+			accountID = &accountIDRaw
+		}
+		if accountID != nil {
+			err = goa.MergeErrors(err, goa.ValidatePattern("account_id", *accountID, "^[0-9]+$"))
+		}
+		if accountID != nil {
+			if utf8.RuneCountInString(*accountID) > 64 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", *accountID, utf8.RuneCountInString(*accountID), 64, false))
+			}
+		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
 		}
-		payload = NewListLinkedinAdsConversionsPayload(projectID, bearerToken)
+		if err != nil {
+			return payload, err
+		}
+		payload = NewListLinkedinAdsConversionsPayload(projectID, accountID, bearerToken)
 		if payload.BearerToken != nil {
 			cred := *payload.BearerToken
 			if index := strings.IndexByte(string(cred), ' '); index >= 0 {

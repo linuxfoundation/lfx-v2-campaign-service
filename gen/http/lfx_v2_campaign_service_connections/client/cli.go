@@ -2155,13 +2155,27 @@ func BuildGetLinkedinAdsAudiencePayload(lfxV2CampaignServiceConnectionsGetLinked
 // BuildListLinkedinAdsAudiencesPayload builds the payload for the
 // lfx-v2-campaign-service-connections list-linkedin-ads-audiences endpoint
 // from CLI flags.
-func BuildListLinkedinAdsAudiencesPayload(lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesProjectID *string, lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesBearerToken *string) (*lfxv2campaignserviceconnections.ListLinkedinAdsAudiencesPayload, error) {
+func BuildListLinkedinAdsAudiencesPayload(lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesProjectID *string, lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesAccountID *string, lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesBearerToken *string) (*lfxv2campaignserviceconnections.ListLinkedinAdsAudiencesPayload, error) {
+	var err error
 	var projectID string
 	{
 		if lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesProjectID == nil {
 			return nil, fmt.Errorf("missing required flag --project-id")
 		}
 		projectID = *lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesProjectID
+	}
+	var accountID *string
+	{
+		if lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesAccountID != nil {
+			accountID = lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesAccountID
+			err = goa.MergeErrors(err, goa.ValidatePattern("account_id", *lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesAccountID, "^[0-9]+$"))
+			if utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesAccountID) > 64 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", *lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesAccountID, utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsListLinkedinAdsAudiencesAccountID), 64, false))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	var bearerToken *string
 	{
@@ -2171,6 +2185,7 @@ func BuildListLinkedinAdsAudiencesPayload(lfxV2CampaignServiceConnectionsListLin
 	}
 	v := &lfxv2campaignserviceconnections.ListLinkedinAdsAudiencesPayload{}
 	v.ProjectID = projectID
+	v.AccountID = accountID
 	v.BearerToken = bearerToken
 
 	return v, nil
@@ -2179,13 +2194,27 @@ func BuildListLinkedinAdsAudiencesPayload(lfxV2CampaignServiceConnectionsListLin
 // BuildListLinkedinAdsConversionsPayload builds the payload for the
 // lfx-v2-campaign-service-connections list-linkedin-ads-conversions endpoint
 // from CLI flags.
-func BuildListLinkedinAdsConversionsPayload(lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsProjectID *string, lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsBearerToken *string) (*lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload, error) {
+func BuildListLinkedinAdsConversionsPayload(lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsProjectID *string, lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsAccountID *string, lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsBearerToken *string) (*lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload, error) {
+	var err error
 	var projectID string
 	{
 		if lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsProjectID == nil {
 			return nil, fmt.Errorf("missing required flag --project-id")
 		}
 		projectID = *lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsProjectID
+	}
+	var accountID *string
+	{
+		if lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsAccountID != nil {
+			accountID = lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsAccountID
+			err = goa.MergeErrors(err, goa.ValidatePattern("account_id", *lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsAccountID, "^[0-9]+$"))
+			if utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsAccountID) > 64 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", *lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsAccountID, utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsListLinkedinAdsConversionsAccountID), 64, false))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	var bearerToken *string
 	{
@@ -2195,6 +2224,7 @@ func BuildListLinkedinAdsConversionsPayload(lfxV2CampaignServiceConnectionsListL
 	}
 	v := &lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload{}
 	v.ProjectID = projectID
+	v.AccountID = accountID
 	v.BearerToken = bearerToken
 
 	return v, nil
