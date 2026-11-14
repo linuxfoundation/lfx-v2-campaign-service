@@ -2959,7 +2959,8 @@ targeting?: object              — OPTIONAL audience targeting on the ad set (#
                                   with a 400 before any job exists unless the deployment sets
                                   META_AUDIENCE_TARGETING_ENABLED to exactly "true" (not yet
                                   live-verified); a block that sets only keys with their own
-                                  flag (locales, devicePlatforms) needs only that flag. null/absent → targeting
+                                  flag (locales, devicePlatforms, interests) needs only that
+                                  flag. null/absent → targeting
                                   unchanged. Keys:
   ageMin?, ageMax?: integer      — 18–65 each, ageMin ≤ ageMax → `age_min` / `age_max`. null or
                                   absent is Meta's default; an explicit 0 is out of range (400).
@@ -2970,7 +2971,8 @@ targeting?: object              — OPTIONAL audience targeting on the ad set (#
   excludedCustomAudiences?: string[] — same rules → `excluded_custom_audiences`; an id may not
                                   be in both lists.
   advantageAudience?: boolean    — `targeting_automation.advantage_audience`. When any INCLUSION
-                                  is set (an age other than 18/65, one gender, customAudiences)
+                                  is set (an age other than 18/65, one gender, customAudiences,
+                                  interests)
                                   the flag is always sent, defaulting to 0 so the chosen
                                   targeting is a hard constraint (Meta v23+ errors on a
                                   non-default inclusion without it); otherwise it is sent only
@@ -2989,6 +2991,16 @@ targeting?: object              — OPTIONAL audience targeting on the ad set (#
                                   Network is mobile only). Refused with a 400 unless
                                   META_DEVICE_TARGETING_ENABLED is exactly "true"; not gated by
                                   global_marketing_ops.
+  interests?: string[]           — numeric Meta detailed-targeting interest ids (the Targeting
+                                  Search `adinterest` type), de-duplicated, at most 25 →
+                                  `flexible_spec: [{"interests": [{"id"}]}]` (any one matches).
+                                  An INCLUSION: the advantageAudience rule above applies. Before
+                                  anything is created every id is checked in one
+                                  `GET /search?type=adinterestvalid&interest_fbid_list=[…]`; an
+                                  id Meta marks invalid, or a read that fails or leaves an id
+                                  unanswered, fails the job with nothing created. Refused with a
+                                  400 unless META_INTEREST_TARGETING_ENABLED is exactly "true";
+                                  not gated by global_marketing_ops.
                                   Every invalid value is a synchronous 400 ("invalid campaign
                                   config: metaConfig.targeting: …"). Before anything is created
                                   each audience is read (`GET /{id}?fields=id,account_id,subtype`);

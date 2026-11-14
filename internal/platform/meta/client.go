@@ -3362,6 +3362,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err := c.checkCustomAudiences(ctx, accountID, audience); err != nil {
 		return nil, err
 	}
+	// Every interest is validated the same way (#550, gap 7).
+	if err := c.checkInterests(ctx, audience); err != nil {
+		return nil, err
+	}
 
 	// Resolve the currency offset used to convert the whole-currency-unit budget to
 	// Meta minor units (NOT an FX conversion — the caller's amount is already in the

@@ -1157,6 +1157,20 @@ Its own flag, `META_DEVICE_TARGETING_ENABLED` (default off), gates it exactly as
 `META_LOCALE_TARGETING_ENABLED` gates locales. Not verified live: the payload, and whether Meta
 refuses desktop-only with the Instagram, Stories or Reels placements.
 
+**Interests (gap 7, core).** `AudienceTargeting.Interests` (`metaConfig.targeting.interests`) is a
+list of numeric detailed-targeting interest ids, de-duplicated, at most `MaxInterests` (25), sent
+as ONE `flexible_spec` entry (`[{"interests": [{"id": …}]}]`, so matching any listed interest
+qualifies). Detailed targeting is an inclusion under Meta's v23.0 rule, so `inclusion` counts it
+and the Advantage+ flag is sent explicitly (0 unless the caller said `true`). After the account
+preflight and before the campaign create, `checkInterests` sends every id in one
+`GET /search?type=adinterestvalid&interest_fbid_list=[…]`: a row with `valid` false (or absent) is
+a refusal, and a failed read or an answer missing an id is an error, so a retired interest cannot
+orphan a campaign at the ad set. Its own flag, `META_INTEREST_TARGETING_ENABLED` (default off),
+gates it like the locale flag; interests are Meta's taxonomy, not an account resource, so they are
+not behind `global_marketing_ops`. Not built yet: behaviors and work positions, and the
+`/search?type=adinterest` picker read. Not verified live: the validation read's answer shape and the
+`flexible_spec` payload.
+
 ## Ads under an ad set (`ads.go`, decision D7 first step)
 
 `ListAdSetAds(ctx, adSetID, campaignID, accountID, window)` is read-only: `GET /{ad_set}/ads`

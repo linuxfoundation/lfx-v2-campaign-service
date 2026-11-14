@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -47,6 +48,13 @@ type AudienceTargeting struct {
 	// control, not an audience inclusion, so it sends no Advantage+ flag. Gated by its own deployment
 	// flag.
 	DevicePlatforms []string `json:"devicePlatforms"`
+	// Interests are numeric Meta interest ids (detailed targeting; the Targeting Search
+	// `adinterest` type lists them), at most MaxInterests distinct (#550, gap 7). Sent as one
+	// `flexible_spec` entry, `[{"interests": [{"id": …}, …]}]`, so a person matching ANY listed
+	// interest qualifies. Detailed targeting IS an inclusion under Meta's v23.0 rule, so it makes the
+	// Advantage+ flag explicit (see inclusion). Gated by its own deployment flag. Each id is checked
+	// with Meta's interest validation read before anything is created (checkInterests).
+	Interests []string `json:"interests"`
 }
 
 const (
@@ -64,6 +72,9 @@ const (
 	// MaxLocales caps the locales list. Meta documents no limit; an event targets a handful of
 	// languages, and a long list is more likely a client bug than a campaign.
 	MaxLocales = 50
+	// MaxInterests caps the interests list, for the same reason as MaxCustomAudiences: an event
+	// names a handful, and the validation read sends every id in one request URL.
+	MaxInterests = 25
 )
 
 // metaGenderCodes maps the request's gender names to Meta's targeting codes.
@@ -77,12 +88,12 @@ var metaDevicePlatforms = map[string]bool{"mobile": true, "desktop": true}
 func (t *AudienceTargeting) IsZero() bool {
 	return t == nil || (t.AgeMin == nil && t.AgeMax == nil && len(t.Genders) == 0 &&
 		len(t.CustomAudiences) == 0 && len(t.ExcludedCustomAudiences) == 0 && t.AdvantageAudience == nil &&
-		len(t.Locales) == 0 && len(t.DevicePlatforms) == 0)
+		len(t.Locales) == 0 && len(t.DevicePlatforms) == 0 && len(t.Interests) == 0)
 }
 
 // HasAudienceFields reports whether t sets any of the six fields META_AUDIENCE_TARGETING_ENABLED
 // gates — age, gender, the two custom audience lists, advantageAudience — as opposed to only the
-// later fields (locales, devicePlatforms) that have their own deployment flags.
+// later fields (locales, devicePlatforms, interests) that have their own deployment flags.
 func (t *AudienceTargeting) HasAudienceFields() bool {
 	return t != nil && (t.AgeMin != nil || t.AgeMax != nil || len(t.Genders) > 0 ||
 		len(t.CustomAudiences) > 0 || len(t.ExcludedCustomAudiences) > 0 || t.AdvantageAudience != nil)
@@ -138,6 +149,9 @@ func NormalizeAudienceTargeting(t *AudienceTargeting) (*AudienceTargeting, error
 	if out.Locales, err = normalizeLocales(t.Locales); err != nil {
 		return nil, err
 	}
+	if out.Interests, err = normalizeNumericIDs("interests", "Meta interest id", t.Interests, MaxInterests); err != nil {
+		return nil, err
+	}
 	seenDevice := map[string]bool{}
 	for _, d := range t.DevicePlatforms {
 		key := strings.ToLower(strings.TrimSpace(d))
@@ -171,12 +185,18 @@ func targetingInvalid(format string, args ...any) error {
 // normalizeAudienceIDs trims and de-duplicates one audience list, refusing a non-numeric id or a
 // list over MaxCustomAudiences distinct ids.
 func normalizeAudienceIDs(field string, ids []string) ([]string, error) {
+	return normalizeNumericIDs(field, "Meta custom audience id", ids, MaxCustomAudiences)
+}
+
+// normalizeNumericIDs trims and de-duplicates one id list, refusing an id that is not a numeric
+// string (what names the kind of id) or a list over limit distinct ids.
+func normalizeNumericIDs(field, what string, ids []string, limit int) ([]string, error) {
 	var out []string
 	seen := map[string]bool{}
 	for _, raw := range ids {
 		id := strings.TrimSpace(raw)
 		if !numericIDRE.MatchString(id) {
-			return nil, targetingInvalid("%s entry %s is not a Meta custom audience id (a numeric string)", field, domain.CallerValue(raw))
+			return nil, targetingInvalid("%s entry %s is not a %s (a numeric string)", field, domain.CallerValue(raw), what)
 		}
 		if seen[id] {
 			continue
@@ -184,8 +204,8 @@ func normalizeAudienceIDs(field string, ids []string) ([]string, error) {
 		seen[id] = true
 		out = append(out, id)
 	}
-	if len(out) > MaxCustomAudiences {
-		return nil, targetingInvalid("%s names %d audiences; at most %d are allowed", field, len(out), MaxCustomAudiences)
+	if len(out) > limit {
+		return nil, targetingInvalid("%s names %d ids; at most %d are allowed", field, len(out), limit)
 	}
 	return out, nil
 }
@@ -226,15 +246,16 @@ func normalizeLocales(keys []int) ([]int, error) {
 	return out, nil
 }
 
-// inclusion reports whether t narrows WHO is reached — a non-default age, a single gender or an
-// included custom audience. These are the fields Meta's v23.0 rule names: setting one without an
+// inclusion reports whether t narrows WHO is reached — a non-default age, a single gender, an
+// included custom audience or a detailed-targeting interest. These are the fields Meta's v23.0 rule names: setting one without an
 // explicit targeting_automation.advantage_audience is an error on ad-set create. Exclusions are
 // not inclusions: they are a hard constraint either way.
 func (t *AudienceTargeting) inclusion() bool {
 	return (t.AgeMin != nil && *t.AgeMin != MinTargetAge) ||
 		(t.AgeMax != nil && *t.AgeMax != MaxTargetAge) ||
 		len(t.Genders) == 1 ||
-		len(t.CustomAudiences) > 0
+		len(t.CustomAudiences) > 0 ||
+		len(t.Interests) > 0
 }
 
 // apply adds t to an ad set's targeting spec. t must be NormalizeAudienceTargeting's output. The
@@ -262,6 +283,9 @@ func (t *AudienceTargeting) apply(targeting map[string]any) {
 	}
 	if len(t.Locales) > 0 {
 		targeting["locales"] = t.Locales
+	}
+	if len(t.Interests) > 0 {
+		targeting["flexible_spec"] = []map[string]any{{"interests": audienceRefs(t.Interests)}}
 	}
 	if len(t.DevicePlatforms) == 1 {
 		targeting["device_platforms"] = t.DevicePlatforms
@@ -334,6 +358,55 @@ func (c *Client) checkCustomAudiences(ctx context.Context, accountID string, t *
 			if owner.ID != id || !sameMetaAccount(owner.AccountID, accountID) {
 				return domain.PreflightRefusalf("meta targeting: %s audience %s is not a custom audience of the connected ad account %s; nothing was created", list.field, domain.CallerValue(id), accountID)
 			}
+		}
+	}
+	return nil
+}
+
+// interestValidation is one row of Meta's interest validation read: GET
+// /search?type=adinterestvalid&interest_fbid_list=[…] (Targeting Search reference, "Validation").
+// Meta answers a row per requested id, with valid false for an id it no longer offers (detailed
+// targeting options are retired regularly).
+type interestValidation struct {
+	ID    string `json:"id"`
+	Valid *bool  `json:"valid"`
+}
+
+// checkInterests proves, before the first mutating call, that every interest t names is one Meta
+// currently offers. A retired or mistyped id would otherwise be refused at the AD SET create, after
+// the campaign already exists. A read that fails, or an answer without a row for every id, is an
+// error and nothing is created; a row with valid false (or no valid field) is a refusal.
+func (c *Client) checkInterests(ctx context.Context, t *AudienceTargeting) error {
+	if t == nil || len(t.Interests) == 0 {
+		return nil
+	}
+	list, err := json.Marshal(t.Interests)
+	if err != nil {
+		return fmt.Errorf("meta targeting: encode the interest list: %w", err)
+	}
+	path := "/search?type=adinterestvalid&interest_fbid_list=" + url.QueryEscape(string(list))
+	raw, err := c.getChecked(ctx, path)
+	if err != nil {
+		return fmt.Errorf("meta targeting: the interests could not be validated, so nothing was created: %w", err)
+	}
+	var page struct {
+		Data *[]interestValidation `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &page); err != nil || page.Data == nil {
+		return fmt.Errorf("meta targeting: the interest validation read returned no rows, so nothing was created")
+	}
+	valid := make(map[string]bool, len(*page.Data))
+	answered := make(map[string]bool, len(*page.Data))
+	for _, row := range *page.Data {
+		answered[row.ID] = true
+		valid[row.ID] = row.Valid != nil && *row.Valid
+	}
+	for _, id := range t.Interests {
+		if !answered[id] {
+			return fmt.Errorf("meta targeting: the interest validation read did not answer for interest %s, so nothing was created", domain.CallerValue(id))
+		}
+		if !valid[id] {
+			return domain.PreflightRefusalf("meta targeting: interest %s is not a detailed targeting interest Meta currently offers; nothing was created", domain.CallerValue(id))
 		}
 	}
 	return nil
