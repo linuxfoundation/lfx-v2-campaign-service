@@ -5,6 +5,7 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -41,9 +42,11 @@ const (
 //     absent whenever it is not reported). The create path records none of these, so each
 //     reads `unknown`.
 //   - objective_type is COMPARED since LFXV2-2665: the create path's objective follows the
-//     bidding strategy it records (automatic → WEBSITE_VISIT, manual → WEBSITE_CONVERSION;
-//     linkedinRecordedObjective), so a row with a recorded strategy has a recorded objective. A
-//     row without one (legacy, adopted) reads `unknown`, never a guessed objective.
+//     bidding strategy it records (automatic → WEBSITE_VISIT, manual → WEBSITE_CONVERSION) unless
+//     the config snapshot records linkedInConfig.objective "conversions" (#582: automatic →
+//     WEBSITE_CONVERSION; linkedinRecordedObjective), so a row with a recorded strategy has a
+//     recorded objective. A row without one (legacy, adopted) reads `unknown`, never a guessed
+//     objective.
 //
 // BUDGET. The create path sets exactly one of dailyBudget/totalBudget in USD, so a campaign
 // reporting one is compared as that type. One reporting BOTH (LinkedIn allows a daily budget
@@ -161,18 +164,52 @@ func linkedinAccountIDUnusable(res *resolved, projectID, op string) error {
 }
 
 // linkedinRecordedObjective is the objectiveType the create path sent for this row's recorded
-// bidding strategy (LFXV2-2665; linkedin.campaignBidding): automatic → WEBSITE_VISIT, manual →
-// WEBSITE_CONVERSION. nil when no strategy is recorded — a legacy or adopted row — so the field
-// reads `unknown` rather than comparing against a guess.
+// bidding strategy (LFXV2-2665; linkedin.campaignBidding) and the linkedInConfig.objective its
+// config snapshot records (#582): manual → WEBSITE_CONVERSION; automatic → WEBSITE_CONVERSION
+// when the snapshot records objective "conversions" (MAX_CONVERSION), else WEBSITE_VISIT. nil
+// when no strategy is recorded — a legacy or adopted row — or when an automatic row's snapshot
+// cannot be read, so the field reads `unknown` rather than comparing against a guess. A snapshot
+// with no objective key (every row before #582) is the strategy's default, as before.
 func linkedinRecordedObjective(campaign *model.Campaign) *string {
 	if campaign == nil || campaign.BiddingStrategy == nil {
 		return nil
 	}
 	switch *campaign.BiddingStrategy {
 	case model.BiddingAutomatic:
-		return strPtr(linkedin.ObjectiveWebsiteVisit)
+		objective, ok := linkedinSnapshotObjective(campaign.ConfigSnapshot)
+		switch {
+		case !ok:
+			return nil
+		case objective == linkedinObjectiveConversions:
+			return strPtr(linkedin.ObjectiveWebsiteConversion)
+		case objective == "" || objective == linkedinObjectiveTraffic:
+			return strPtr(linkedin.ObjectiveWebsiteVisit)
+		}
+		return nil
 	case model.BiddingManual:
 		return strPtr(linkedin.ObjectiveWebsiteConversion)
 	}
 	return nil
+}
+
+// linkedinSnapshotObjective reads `objective` from a LinkedIn config snapshot (the marshalled
+// linkedinConfig). ok is false when the snapshot is present but not an object, or its objective
+// is not a string; an empty snapshot or an absent key is ("", true) — no objective was asked for.
+func linkedinSnapshotObjective(snapshot json.RawMessage) (string, bool) {
+	if len(snapshot) == 0 {
+		return "", true
+	}
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(snapshot, &raw) != nil {
+		return "", false
+	}
+	v, present := raw["objective"]
+	if !present {
+		return "", true
+	}
+	var objective string
+	if json.Unmarshal(v, &objective) != nil {
+		return "", false
+	}
+	return objective, true
 }

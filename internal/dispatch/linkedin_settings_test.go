@@ -5,6 +5,7 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -265,13 +266,22 @@ func TestLinkedIn_ReadSettings_ObjectiveIsComparedAgainstTheRecordedStrategy(t *
 	cases := []struct {
 		name     string
 		strategy *model.BiddingStrategy
+		snapshot string
 		upstream string
 		want     fieldWant
 	}{
-		{"manual matches WEBSITE_CONVERSION", &manual, "WEBSITE_CONVERSION", fieldWant{"WEBSITE_CONVERSION", "WEBSITE_CONVERSION", model.SettingsMatch}},
-		{"automatic matches WEBSITE_VISIT", &automatic, "WEBSITE_VISIT", fieldWant{"WEBSITE_VISIT", "WEBSITE_VISIT", model.SettingsMatch}},
-		{"automatic diverges from WEBSITE_CONVERSION", &automatic, "WEBSITE_CONVERSION", fieldWant{"WEBSITE_VISIT", "WEBSITE_CONVERSION", model.SettingsDiverged}},
-		{"unrecorded is unknown", nil, "WEBSITE_CONVERSION", fieldWant{"", "WEBSITE_CONVERSION", model.SettingsUnknown}},
+		{"manual matches WEBSITE_CONVERSION", &manual, "", "WEBSITE_CONVERSION", fieldWant{"WEBSITE_CONVERSION", "WEBSITE_CONVERSION", model.SettingsMatch}},
+		{"automatic matches WEBSITE_VISIT", &automatic, "", "WEBSITE_VISIT", fieldWant{"WEBSITE_VISIT", "WEBSITE_VISIT", model.SettingsMatch}},
+		{"automatic diverges from WEBSITE_CONVERSION", &automatic, "", "WEBSITE_CONVERSION", fieldWant{"WEBSITE_VISIT", "WEBSITE_CONVERSION", model.SettingsDiverged}},
+		{"unrecorded is unknown", nil, "", "WEBSITE_CONVERSION", fieldWant{"", "WEBSITE_CONVERSION", model.SettingsUnknown}},
+		// #582: an automatic row whose snapshot records objective "conversions" was created
+		// WEBSITE_CONVERSION / MAX_CONVERSION.
+		{"automatic conversions matches WEBSITE_CONVERSION", &automatic, `{"objective":"conversions"}`, "WEBSITE_CONVERSION", fieldWant{"WEBSITE_CONVERSION", "WEBSITE_CONVERSION", model.SettingsMatch}},
+		{"automatic conversions diverges from WEBSITE_VISIT", &automatic, `{"objective":"conversions"}`, "WEBSITE_VISIT", fieldWant{"WEBSITE_CONVERSION", "WEBSITE_VISIT", model.SettingsDiverged}},
+		{"automatic traffic matches WEBSITE_VISIT", &automatic, `{"objective":"traffic"}`, "WEBSITE_VISIT", fieldWant{"WEBSITE_VISIT", "WEBSITE_VISIT", model.SettingsMatch}},
+		{"snapshot without objective keeps the strategy default", &automatic, `{"budgetUsd":100}`, "WEBSITE_VISIT", fieldWant{"WEBSITE_VISIT", "WEBSITE_VISIT", model.SettingsMatch}},
+		{"unreadable snapshot is unknown", &automatic, `[1]`, "WEBSITE_VISIT", fieldWant{"", "WEBSITE_VISIT", model.SettingsUnknown}},
+		{"manual ignores the snapshot objective", &manual, `{"objective":"conversions"}`, "WEBSITE_CONVERSION", fieldWant{"WEBSITE_CONVERSION", "WEBSITE_CONVERSION", model.SettingsMatch}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -279,6 +289,9 @@ func TestLinkedIn_ReadSettings_ObjectiveIsComparedAgainstTheRecordedStrategy(t *
 			d, _ := liLeverDispatcher(t, map[string]settingsRoute{liCampaignPath: {status: 200, body: body}})
 			row := liRow()
 			row.BiddingStrategy = tc.strategy
+			if tc.snapshot != "" {
+				row.ConfigSnapshot = json.RawMessage(tc.snapshot)
+			}
 			rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderLinkedInAds, row)
 			if err != nil {
 				t.Fatalf("ReadSettings: %v", err)

@@ -5404,7 +5404,12 @@ rounds) — and each platform's `*BidPlan` adds its own: Microsoft `microsoft.Va
 and `automatic` refuses it); Meta `meta.ManualBidSupported` (traffic/leads) and at most two
 decimals; Reddit `reddit.ManualCPCBidSupported` (traffic); LinkedIn `linkedin.ValidateBidAmount` (whole
 cents), the client choosing the objective from the strategy (automatic `WEBSITE_VISIT` +
-`MAX_CLICK`, manual `WEBSITE_CONVERSION`; decision 2026-10-13); X nothing further. Refusals wrap `domain.ErrCreateConfigInvalid` with
+`MAX_CLICK`, manual `WEBSITE_CONVERSION`; decision 2026-10-13), and `linkedinObjective` resolving
+`linkedInConfig.objective` (#582: `traffic` automatic only; `conversions` automatic is
+`WEBSITE_CONVERSION` / `MAX_CONVERSION` and requires a non-empty `conversions`, so it inherits
+`LINKEDIN_ADS_CONVERSIONS_ENABLED` and `global_marketing_ops`; `checkObjectiveShape` refuses null,
+`""` and non-strings; the settings readback reads the snapshot's `objective` in
+`linkedinRecordedObjective`); X nothing further. Refusals wrap `domain.ErrCreateConfigInvalid` with
 `<configKey>.bidding: <reason>`, and `biddingInvalid` marks every one a `domain.PreflightRefusal`
 (issue #208): each is a pure check raised before any upstream call, its only caller-derived text is
 an amount or a config key rendered through `domain.CallerValue` (`quoteKey`), so when `Dispatch`

@@ -259,6 +259,12 @@ type CampaignInput struct {
 	// MAX_CLICK; a positive value is a manual max CPC under WEBSITE_CONVERSION. The objective and
 	// the campaign name's Objective segment follow the choice. See campaignBidding.
 	ManualCPCBid float64
+	// Objective is the requested objectiveType (#582): "" lets ManualCPCBid decide, as above;
+	// ObjectiveWebsiteVisit is automatic only; ObjectiveWebsiteConversion with ManualCPCBid 0 is
+	// automatic bidding for conversions (MAX_CONVERSION, costType CPM) and requires Conversions,
+	// because LinkedIn will not activate a MAX_CONVERSION campaign without an associated
+	// conversion. See campaignBidding.
+	Objective string
 	// Images holds the stored image for every ImageAssetID a variant names, keyed by that
 	// id. Each distinct key is uploaded ONCE per CreateCampaign however many variants share it.
 	Images map[string]ImageUpload
@@ -436,6 +442,9 @@ type responseElement struct {
 	// ObjectiveType is a campaign search result's objectiveType, checked by
 	// findCampaignByNameInGroup so a same-name campaign with another objective is not reused.
 	ObjectiveType string `json:"objectiveType"`
+	// OptimizationTargetType is a campaign search result's bidding target, checked by
+	// findCampaignByNameInGroup so a manual campaign is not reused for automatic bidding (#582).
+	OptimizationTargetType string `json:"optimizationTargetType"`
 	// Type, Currency, Test, ServingStatuses and Reference are only populated for
 	// ad-account search results (ListAdAccounts, accounts.go). An ad account carries two
 	// independent health axes — its lifecycle `status`, decoded above, and the
@@ -1487,7 +1496,7 @@ func (c *Client) findByName(ctx context.Context, nestedPath, name string) (strin
 // findMatch exhaust the set and report absence, and the caller would POST a
 // DUPLICATE. So this case returns an error to abort, consistent with the
 // fail-closed handling for matched-but-id-less elements inside findMatch.
-func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, name, groupID, objectiveType string) (string, error) {
+func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, name, groupID, objectiveType, optimizationTarget string) (string, error) {
 	return c.findMatch(ctx, campaignsPath, name, func(el responseElement) (bool, error) {
 		if el.Name != name {
 			return false, nil
@@ -1508,6 +1517,16 @@ func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, n
 		// unreported objectiveType cannot contradict, so it does not block the reuse.
 		if objectiveType != "" && el.ObjectiveType != "" && el.ObjectiveType != objectiveType {
 			return false, fmt.Errorf("campaign %q already exists in this campaign group with objectiveType %s, not %s — it was not created for this bidding strategy; aborting rather than reuse it or create a duplicate", el.Name, el.ObjectiveType, objectiveType)
+		}
+		// Same name and objective, but the other bidding MODE (#582). Automatic and manual
+		// Website conversions campaigns share the "Conversions" name segment, so the objective no
+		// longer tells them apart: a manual campaign (NONE / ENHANCED_CONVERSION) is never reused
+		// for MAX_CONVERSION, nor the reverse. Only manual-vs-automated is compared, so a manual
+		// campaign moved between NONE and ENHANCED_CONVERSION in Campaign Manager is still reused,
+		// and an unreported optimizationTargetType cannot contradict.
+		if optimizationTarget != "" && el.OptimizationTargetType != "" &&
+			manualBiddingTarget(el.OptimizationTargetType) != manualBiddingTarget(optimizationTarget) {
+			return false, fmt.Errorf("campaign %q already exists in this campaign group with optimizationTargetType %s, not %s — it was not created for this bidding strategy; aborting rather than reuse it or create a duplicate", el.Name, el.OptimizationTargetType, optimizationTarget)
 		}
 		return true, nil
 	})
@@ -2088,7 +2107,7 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 	// new campaign is never created under the correct group. The lookup also refuses a
 	// same-name campaign reporting a DIFFERENT objectiveType (LFXV2-2665): reusing it would
 	// silently run the other bidding strategy.
-	existing, err := c.findCampaignByNameInGroup(ctx, campaignsPath, name, groupID, bidding.objectiveType)
+	existing, err := c.findCampaignByNameInGroup(ctx, campaignsPath, name, groupID, bidding.objectiveType, bidding.optimizationTarget)
 	if err != nil {
 		return "", false, err
 	}
@@ -2143,6 +2162,7 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 		"type":          "SPONSORED_UPDATES",
 		// objectiveType, costType, optimizationTargetType and (manual only) unitCost come from
 		// campaignBidding and are merged below: WEBSITE_VISIT + MAX_CLICK for automatic,
+		// WEBSITE_CONVERSION + MAX_CONVERSION for automatic conversions (#582),
 		// WEBSITE_CONVERSION + NONE + unitCost for manual. Before LFXV2-2665 this body sent
 		// WEBSITE_CONVERSION, costType CPC and NO optimizationTargetType, which LinkedIn defaults
 		// to NONE — manual bidding — with unitCost 0, under which "the campaign does not deliver".
@@ -2727,9 +2747,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// The bidding fields, resolved BEFORE any POST: a manual bid that is not a whole number of cents
 	// is refused here, with nothing created, rather than after the campaign group exists. The plan
 	// also decides the objective and the campaign name's Objective segment.
-	bidding, err := campaignBidding(in.ManualCPCBid)
+	bidding, err := campaignBidding(in.ManualCPCBid, in.Objective)
 	if err != nil {
-		// ValidateBidAmount's sentences are service-authored and numeric-only (issue #208).
+		// ValidateBidAmount's sentences are service-authored and numeric-only (issue #208), and
+		// campaignBidding's objective sentences name only this package's constants.
 		return nil, domain.WrapPreflightRefusal(err)
 	}
 
@@ -2737,6 +2758,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	conversions, err := ValidateConversions(in.Conversions)
 	if err != nil {
 		return nil, domain.WrapPreflightRefusal(err)
+	}
+	// MAX_CONVERSION (#582) "must have a conversion associated with it to be activated": refused
+	// before any POST without one, so this service never creates a campaign that cannot run.
+	if bidding.optimizationTarget == OptimizationTargetMaxConversion && len(conversions) == 0 {
+		return nil, domain.WrapPreflightRefusal(ErrAutomaticConversionsNeedConversion)
 	}
 
 	// Refuse to create a campaign with no creatives: LinkedIn campaign-group and
@@ -2856,10 +2882,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	groupName := fmt.Sprintf("Events | %s | %s", eventName, project)
-	// The Objective segment follows the bidding plan (LFXV2-2665): "Conversions" for a manual
-	// WEBSITE_CONVERSION campaign — the name every campaign had before — and "Traffic" for an
-	// automatic WEBSITE_VISIT one, so the two never share a name and a retry of one can never
-	// find and reuse the other (findCampaignByNameInGroup also refuses an objective mismatch).
+	// The Objective segment follows the bidding plan (LFXV2-2665): "Conversions" for a
+	// WEBSITE_CONVERSION campaign, manual — the name every campaign had before — or automatic
+	// MAX_CONVERSION (#582), and "Traffic" for an automatic WEBSITE_VISIT one. A retry of one can
+	// never reuse a campaign of another bidding: findCampaignByNameInGroup refuses an objective
+	// mismatch and a manual-vs-automated optimizationTargetType mismatch.
 	//
 	// The stage, tactic and slot tokens (multi-campaign cs-4) come from the claimed row; see
 	// buildCampaignName. The 255-character check below covers the labelled name too, before any

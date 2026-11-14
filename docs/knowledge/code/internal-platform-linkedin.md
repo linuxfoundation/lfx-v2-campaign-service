@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding whose objective follows the strategy (automatic WEBSITE_VISIT + MAX_CLICK + CPM, manual WEBSITE_CONVERSION + CPC/NONE/unitCost) where the create once sent no optimizationTargetType, and optional single-flight access-token refresh."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding whose objective follows the strategy (automatic WEBSITE_VISIT + MAX_CLICK + CPM, manual WEBSITE_CONVERSION + CPC/NONE/unitCost) unless the caller asks for automatic website conversions (WEBSITE_CONVERSION + MAX_CONVERSION + CPM, only with a conversion to associate), where the create once sent no optimizationTargetType, and optional single-flight access-token refresh."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -952,6 +952,26 @@ same-group campaign reporting a different `objectiveType` (`responseElement.Obje
 an unreported objective cannot contradict, so it is reused. The two strategies' names already
 differ in the Objective segment, which also changes the automatic campaigns' `utm_term`. The bid is
 resolved before the first POST. Neither shape is verified against a live account.
+
+**Automatic website conversions (#582)**: `CampaignInput.Objective` (`""`, `ObjectiveWebsiteVisit`,
+`ObjectiveWebsiteConversion`) is passed to `campaignBidding(manualBid, objective)`. Automatic with
+`WEBSITE_CONVERSION` is `objectiveType` `WEBSITE_CONVERSION`, `optimizationTargetType`
+`MAX_CONVERSION` (`OptimizationTargetMaxConversion`, LinkedIn's "Maximum delivery"), `costType`
+`CPM`, no `unitCost`, name segment `Conversions`. `CreateCampaign` refuses it before any POST
+without at least one conversion id (`ErrAutomaticConversionsNeedConversion`), because LinkedIn's
+"Create and Manage Campaigns" says MAX_CONVERSION campaigns "must have a conversion associated with
+it to be activated ... should be created and then associated with a conversion before activating"
+— the create sends `PAUSED` and associates `Conversions` right after the campaign POST. Manual
+with `WEBSITE_VISIT`, or any other objective, is refused before any POST. `campaignBiddingPlan`
+now carries `optimizationTarget`, and since automatic and manual conversions share the
+`Conversions` name, `findCampaignByNameInGroup` also aborts on a same-name, same-objective campaign
+of the other bidding MODE (`manualBiddingTarget`: NONE / ENHANCED_CONVERSION versus automated,
+`responseElement.OptimizationTargetType`); an unreported target does not block reuse. The bid
+lever already refuses MAX_CONVERSION (not a manual CPC). Sources (li-lms-2026-02, the pinned
+`202602`; the same text li-lms-2025-11..2026-10, consulted 2026-11-13): "Ad Budget Type Allowable
+Combinations" (WEBSITE_CONVERSION allows NONE, ENHANCED_CONVERSION, MAX_CONVERSION; auto-bidding
+`costType` is always CPM) and "Create and Manage Campaigns" row `STANDARD_UPDATE | AUTO |
+MAX_CONVERSION` (costType CPM, Bid Type CPC, conversion tracking Required). Not verified live.
 
 `CampaignResult.BidApplied` is false when `createSponsoredCampaign` reused a campaign found by name
 in the group (it now returns `(id, reused, err)`), with a "bid NOT applied to reused campaign" step.

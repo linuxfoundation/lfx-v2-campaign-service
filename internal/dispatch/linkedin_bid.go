@@ -34,6 +34,11 @@ import (
 // live account, and is not relied on: the guard decides on what LinkedIn REPORTS, and an
 // automated or unreported strategy is refused exactly like the siblings' auto-bid campaigns.
 //
+// AUTOMATIC CONVERSIONS (#582). A campaign created with linkedInConfig.objective "conversions"
+// and automatic bidding is WEBSITE_CONVERSION / MAX_CONVERSION / CPM with no unitCost: LinkedIn
+// sets every bid, so GUARD 3 refuses it (409) exactly like a MAX_CLICK campaign. Moving it to a
+// manual bid is a strategy change this endpoint never makes.
+//
 // ADOPTED ROWS ARE REFUSED (see linkedin_adopt.go): adoption verified identity, not bidding.
 //
 // NOTHING IS MUTATED UNTIL EVERY GUARD HAS PASSED, and the one mutation is sent ONCE.
