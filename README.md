@@ -462,6 +462,16 @@ openssl rand -base64 32
   require `global_marketing_ops`. The chart sets it to `"false"`
   (`app.environment.LINKEDIN_ADS_CONVERSIONS_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once the probe passes.
+- `LINKEDIN_ADS_VIDEO_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to LinkedIn video Sponsored Content (#586):
+  `linkedInConfig.variants[].videoAssetId`, a stored MP4 uploaded through
+  LinkedIn's Videos API and posted as a `SINGLE_VIDEO` campaign's dark post.
+  Only the exact value `true` enables it; anything else fails closed, and a
+  create naming a `videoAssetId` is refused with a 400 before a job exists.
+  The chart sets it to `"false"`
+  (`app.environment.LINKEDIN_ADS_VIDEO_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once the live probe passes,
+  including a measurement of real processing time for a 20-30 MiB MP4.
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request
   names no `source_workflow_url`. Unset or empty selects the in-code

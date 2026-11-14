@@ -10,8 +10,12 @@
 -- creative_assets_mime_type_check. It is replaced, not widened in place, because a CHECK cannot
 -- be altered. A video carries no pixel dimensions from the upload handler, so width/height stay
 -- NULL, which 000047's pair CHECK already allows.
+--
+-- No IF EXISTS on the DROP, deliberately: if the constraint were ever named differently, IF EXISTS
+-- would skip the drop silently and leave the image-only CHECK in force beside the new one, so
+-- every MP4 insert would still fail. Without it a name mismatch fails this migration loudly.
 ALTER TABLE creative_assets
-    DROP CONSTRAINT IF EXISTS creative_assets_mime_type_check;
+    DROP CONSTRAINT creative_assets_mime_type_check;
 ALTER TABLE creative_assets
     ADD CONSTRAINT creative_assets_mime_type_check
     CHECK (mime_type IN ('image/png','image/jpeg','video/mp4'));

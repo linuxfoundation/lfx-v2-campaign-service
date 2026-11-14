@@ -49,8 +49,11 @@ never holds part of the budget while waiting for the rest), refusing before any 
 that does not exist for this brief, outside 75 KiB..500 MB on its recorded size, not
 `video/mp4` (an image named as a video, or a video named as an image), or failing
 `linkedin.ValidateVideo`. Every image slot on every platform (Meta, Microsoft, X, Google,
-LinkedIn images) refuses a `video/mp4` asset at dispatch; Reddit's signed URL already served
-PNG/JPEG only.
+LinkedIn images, Reddit) refuses a `video/mp4` asset at dispatch, before any request. Reddit's
+`checkRedditAsset` reads the bytes-free `GetAssetMetadata` row (size and mime type in one query)
+rather than relying on the signed route: that route serves PNG/JPEG only, but it is fetched at
+promoted-post time, after the Reddit campaign and ad group exist, so leaving the refusal to it
+would strand a partial campaign.
 
 ## Wire sequence
 
@@ -102,12 +105,23 @@ cannot use ends `PROCESSING_FAILED` before any post references it. The whole dis
 inside the orchestrator's two-minute provider call, which is why the availability wait is bounded
 at 60 s; a long video that is still `PROCESSING` then is reported, not waited for.
 
+**Live-verification blocker — processing time.** The 60 s wait shares the two-minute
+`providerCallTimeout` with the uploads, `finalizeUpload` and the post/creative loop, and it is NOT
+to be lengthened. Before `LINKEDIN_ADS_VIDEO_ENABLED` is set to `"true"` anywhere, measure real
+LinkedIn processing time (`initializeUpload` to `AVAILABLE`) for a 20-30 MiB MP4. If processing is
+routinely slower than the wait, the follow-up is to decouple the upload from create — pre-upload
+at asset-store time or in an earlier job phase, then reference the already-`AVAILABLE` video URN —
+not to stretch the wait inside the provider call.
+
 ## Not done here (#586 follow-ups)
 
 - The `VIDEO_VIEW` objective (`costType` `CPV`, `optimizationTargetType` `MAX_VIDEO_VIEW`) and the
   other video objectives: video campaigns use the existing bidding plans (`WEBSITE_VISIT`
   automatic, `WEBSITE_CONVERSION` manual), both of which allow `SINGLE_VIDEO`.
 - A caller-chosen call to action (fixed `REGISTER`), captions (SRT) and a custom thumbnail.
+- Decoupling the Videos API upload from create (pre-upload at asset-store time or an earlier job
+  phase, then reference the `AVAILABLE` URN), if the processing-time measurement above shows the
+  60 s wait is routinely too short.
 - Resuming a video that was still `PROCESSING` when the wait ended (its URN is in `videoUrns`; the
   campaign is retained, so today an operator finishes it in Campaign Manager).
 - Videos larger than the 30 MiB asset-store ceiling, and classifying video assets in the

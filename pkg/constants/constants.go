@@ -409,7 +409,10 @@ const (
 	// posted as a SINGLE_VIDEO campaign's dark post. Only the exact value "true" enables it; unset
 	// or any other value fails closed, and a create naming a videoAssetId is refused before a job
 	// exists. It keeps the UNVERIFIED Videos API upload and video post shape off the live ad
-	// account until the probe in the field's docs passes.
+	// account until the probe in the field's docs passes. Blocker before enabling: measure real
+	// LinkedIn processing time for a 20-30 MiB MP4 against the 60 s availability wait (which runs
+	// inside the two-minute provider call and must not be lengthened); if routinely slow, decouple
+	// the upload from create first. See docs/knowledge/architecture/linkedin-video-ads.md.
 	EnvLinkedInAdsVideoEnabled = "LINKEDIN_ADS_VIDEO_ENABLED"
 
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account

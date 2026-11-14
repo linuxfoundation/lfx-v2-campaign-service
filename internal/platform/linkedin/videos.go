@@ -65,6 +65,11 @@ const (
 // two-minute provider call, so it cannot be unbounded either. A video that is still PROCESSING
 // when the wait ends is reported (the campaign is left with zero creatives and the minted URN on
 // the result); see the file comment.
+//
+// Do NOT lengthen the wait: it shares the provider call with the uploads, finalize and the
+// post/creative loop. Live-verification blocker for LINKEDIN_ADS_VIDEO_ENABLED: measure real
+// processing time for a 20-30 MiB MP4 first; if it is routinely slow, decouple the upload from
+// create (pre-upload at asset-store time or an earlier job phase, then reference the AVAILABLE URN).
 const (
 	defaultVideoPollInterval     = 3 * time.Second
 	defaultVideoAvailabilityWait = 60 * time.Second

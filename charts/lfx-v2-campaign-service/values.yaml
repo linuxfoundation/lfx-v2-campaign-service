@@ -590,7 +590,9 @@ app:
     # live LinkedIn account. Set it to exactly "true" in lfx-v2-argocd once the
     # probe in the PR passes. While off, a create naming a videoAssetId is
     # refused before a job exists. Any value other than "true" is treated as
-    # off, so a typo fails closed.
+    # off, so a typo fails closed. Blocker before enabling: measure LinkedIn's
+    # real processing time for a 20-30 MiB MP4 against the 60 s availability
+    # wait inside the two-minute provider call (see linkedin-video-ads.md).
     LINKEDIN_ADS_VIDEO_ENABLED:
       value: "false"
 

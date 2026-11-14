@@ -5616,6 +5616,11 @@ uuid shape, no image alongside, all-or-none) runs in `PreflightCreate` and `Disp
 `resolveLinkedInImages` now resolves images AND videos under one `AssetReserver` reservation and
 returns both maps; a video must be `video/mp4` and pass `linkedin.ValidateVideo`. Every image
 consumer (`linkedin_creative.go`, `meta.go`, `microsoft_creative.go`, `twitter_creative.go`,
-`googleads_creative_assets.go`) refuses a `model.MimeTypeMP4` asset before any request.
+`googleads_creative_assets.go`, `reddit_asset.go`) refuses a `model.MimeTypeMP4` asset before any
+request. Reddit holds no bytes, so its port (`redditAssetSizer`) is the bytes-free
+`GetAssetMetadata` rather than `GetAssetSize`: `checkRedditAsset` gets size and mime type from one
+query and refuses a video before the campaign and ad group exist (the signed route would 404 it
+only at promoted-post time). Pinned by the `video asset in the image slot` case of
+`TestRedditAsset_RefusedBeforeAnyUpstreamCall`.
 `TestPlatformConfigsNameTheirAssetUnderOneKey` accepts `videoAssetId` as the second snapshot key.
 See [LinkedIn Video Sponsored Content](../architecture/linkedin-video-ads.md).
