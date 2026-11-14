@@ -2290,9 +2290,12 @@ demandGenVideoCreative?:        — OPTIONAL Demand Gen VIDEO responsive ad (#46
                                   `longHeadlines` 1-5 (<=90), REQUIRED; the probe accepted 90 for
                                   both. `businessName` REQUIRED, <=25. `callToAction` is optional
                                   and must be one of SIGN_UP, LEARN_MORE, BOOK_NOW, VISIT_SITE,
-                                  WATCH_NOW — each accepted by the same probe; anything else is
-                                  REFUSED (REGISTER and GET_STARTED are not CallToActionType values
-                                  at all: the probe got 400 "Invalid value"). One logo and a
+                                  WATCH_NOW, APPLY_NOW, CONTACT_US, DOWNLOAD, GET_QUOTE, SUBSCRIBE,
+                                  SHOP_NOW — exactly the values a validateOnly probe on 2026-11-14
+                                  (#604) accepted, in that spelling; anything else is REFUSED,
+                                  including a lower-case or label spelling ("Sign up" is not a
+                                  value: Google answers 400 "Invalid value"), and REGISTER and
+                                  GET_STARTED, which are not CallToActionType values at all. One logo and a
                                   required long headline are this service's conservative reading
                                   of the shape the probe accepted, not Google limits cited
                                   elsewhere.

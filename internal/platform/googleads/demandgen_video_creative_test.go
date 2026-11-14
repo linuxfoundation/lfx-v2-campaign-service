@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -254,9 +255,11 @@ func TestValidateDemandGenVideoCreative_Bounds(t *testing.T) {
 		"wide business name": {func(v *DemandGenVideoCreative) { v.BusinessName = strings.Repeat("a", 26) }, "exceeding the 25 limit"},
 		// REGISTER is not a CallToActionType at all: the 2026-11-03 validateOnly probe got
 		// 400 "Invalid value" for it (and for GET_STARTED).
-		"unlisted CTA":          {func(v *DemandGenVideoCreative) { v.CallToAction = "REGISTER" }, `call to action "REGISTER" is not one this client accepts`},
-		"GET_STARTED CTA":       {func(v *DemandGenVideoCreative) { v.CallToAction = "GET_STARTED" }, "is not one this client accepts"},
-		"lower-case CTA":        {func(v *DemandGenVideoCreative) { v.CallToAction = "sign_up" }, "is not one this client accepts"},
+		"unlisted CTA":    {func(v *DemandGenVideoCreative) { v.CallToAction = "REGISTER" }, `call to action "REGISTER" is not one this client accepts`},
+		"GET_STARTED CTA": {func(v *DemandGenVideoCreative) { v.CallToAction = "GET_STARTED" }, "is not one this client accepts"},
+		"lower-case CTA":  {func(v *DemandGenVideoCreative) { v.CallToAction = "sign_up" }, "is not one this client accepts"},
+		// Google refused the label spelling (400 "Invalid value", 2026-11-14 probe, #604).
+		"label-spelling CTA":    {func(v *DemandGenVideoCreative) { v.CallToAction = "Sign up" }, "is not one this client accepts"},
 		"duplicate description": {func(v *DemandGenVideoCreative) { v.Descriptions = []string{"Same", "same"} }, "listed more than once"},
 	}
 	for name, tc := range cases {
@@ -274,8 +277,8 @@ func TestValidateDemandGenVideoCreative_Bounds(t *testing.T) {
 }
 
 // The widths a validateOnly probe on 2026-11-03 accepted at the edge: a 40-character
-// headline and 90-character long headline and description, and each of the five calls to
-// action.
+// headline and 90-character long headline and description, and each call to action the
+// 2026-11-14 probe accepted (#604).
 func TestValidateDemandGenVideoCreative_ProbedEdgesAreAccepted(t *testing.T) {
 	for _, cta := range demandGenVideoCallToActions {
 		v := fullVideoCreative("https://cdn.example.org")
@@ -287,6 +290,29 @@ func TestValidateDemandGenVideoCreative_ProbedEdgesAreAccepted(t *testing.T) {
 		in.DemandGenVideoCreative = v
 		if _, err := validateDemandGenVideoCreative(campaignKindDemandGen, in); err != nil {
 			t.Errorf("CTA %s with 40/90/90 text: %v", cta, err)
+		}
+	}
+}
+
+// The call-to-action allowlist is exactly the set a validateOnly adGroupAds:mutate probe
+// accepted on a Demand Gen video ad on 2026-11-14 (#604, v23, account 8666746580): every
+// value sent was accepted, so none is dropped and the six new ones are added.
+func TestDemandGenVideoCallToActions_AreTheProbedSet(t *testing.T) {
+	want := []string{
+		"SIGN_UP", "LEARN_MORE", "BOOK_NOW", "VISIT_SITE", "WATCH_NOW",
+		"APPLY_NOW", "CONTACT_US", "DOWNLOAD", "GET_QUOTE", "SUBSCRIBE", "SHOP_NOW",
+	}
+	if !slices.Equal(demandGenVideoCallToActions, want) {
+		t.Errorf("demandGenVideoCallToActions = %q, want the probed %q", demandGenVideoCallToActions, want)
+	}
+	for _, cta := range []string{"APPLY_NOW", "CONTACT_US", "DOWNLOAD", "GET_QUOTE", "SUBSCRIBE", "SHOP_NOW"} {
+		v := fullVideoCreative("https://cdn.example.org")
+		v.CallToAction = cta
+		in := demandGenInput()
+		in.DemandGenVideoCreative = v
+		plan, err := validateDemandGenVideoCreative(campaignKindDemandGen, in)
+		if err != nil || plan.callToAction != cta {
+			t.Errorf("CTA %s: plan.callToAction=%q err=%v, want it accepted and sent as given", cta, plan.callToAction, err)
 		}
 	}
 }
