@@ -2869,6 +2869,10 @@ type CampaignInput struct {
 	// DefaultConversionEvent (PURCHASE, the only event before #550). Refused before any request on
 	// any other objective or when not in the list.
 	ConversionEvent string
+	// Format is the creative format (metaConfig.format, #550 gap 10): "" or "single" keeps one ad
+	// per variant; "carousel" builds ONE ad whose cards are the variants (carousel.go,
+	// ValidateCarousel). Refused before any request when not one of the two.
+	Format string
 	// Targeting is the optional audience targeting (metaConfig.targeting, #550): age, gender,
 	// custom audiences to include and exclude, and the Advantage+ audience flag. Nil or zero adds
 	// nothing to the ad set's targeting. It is validated (NormalizeAudienceTargeting) before any
@@ -2952,6 +2956,9 @@ type CampaignResult struct {
 	// so a video left unused by a failed or not-yet-ready variant is findable. Empty without
 	// video variants.
 	VideoIDs map[string]string `json:",omitempty"`
+	// Format is "carousel" when this run built one carousel ad from the variants (#550 gap 10);
+	// empty for one ad per variant. A carousel's full count is one ad.
+	Format string `json:",omitempty"`
 	// Ads carries one entry per SUCCESSFULLY-created ad (so len(Ads) == AdCount), in
 	// variant order, each with its ad/creative ids and the image_hash attached to its
 	// creative. A per-variant failure contributes a Steps line, not an Ads entry.
@@ -2977,6 +2984,9 @@ type AdResult struct {
 	// VideoID is the uploaded video the ad's creative plays (#550 gap 9); empty for an image or
 	// link ad.
 	VideoID string `json:",omitempty"`
+	// CardImageHashes is a carousel ad's per-card image_hash, in card order ("" for an imageUrl
+	// card), #550 gap 10. Empty for a single-format ad, whose hash is ImageHash.
+	CardImageHashes []string `json:",omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -3006,6 +3016,21 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if len(in.Variants) == 0 {
 		return nil, domain.PreflightRefusalf("at least one ad variant is required for Meta campaign creation")
 	}
+	// The creative format (#550 gap 10): a carousel's cards are checked as a whole here, before
+	// the per-variant checks below, and its later cards need no primaryText of their own.
+	format, err := NormalizeFormat(in.Format)
+	if err != nil {
+		return nil, err
+	}
+	carousel := format == FormatCarousel
+	if carousel {
+		if err := ValidateCarousel(in.Variants); err != nil {
+			return nil, err
+		}
+		if n := utf8.RuneCountInString(carouselCreativeName(in.EventName)); n > maxCreativeNameChars {
+			return nil, domain.PreflightRefusalf("carousel ad-creative name is %d characters; Meta allows at most %d (shorten the event name)", n, maxCreativeNameChars)
+		}
+	}
 
 	// Reject any variant missing primary text or headline by NAMING its index,
 	// rather than silently dropping it. Silent filtering would renumber the
@@ -3014,7 +3039,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// input ordering — a surprising mismatch. A partially-specified variant is a
 	// caller error, so fail fast (consistent with every other up-front check here).
 	for i, v := range in.Variants {
-		if strings.TrimSpace(v.PrimaryText) == "" || strings.TrimSpace(v.Headline) == "" {
+		needsText := !carousel || i == 0
+		if (needsText && strings.TrimSpace(v.PrimaryText) == "") || strings.TrimSpace(v.Headline) == "" {
 			return nil, domain.PreflightRefusalf("variant %d must have non-empty primary text and headline", i+1)
 		}
 	}
@@ -3625,6 +3651,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	var ads []AdResult
 	// Every video this run uploads (#550 gap 9), captured by reference like ads.
 	videoIDs := map[string]string{}
+	resultFormat := ""
+	if carousel {
+		resultFormat = FormatCarousel
+	}
 	partialResult := func() *CampaignResult {
 		var vids map[string]string
 		if len(videoIDs) > 0 {
@@ -3642,6 +3672,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			Steps:        steps,
 			Ads:          ads,
 			VideoIDs:     vids,
+			Format:       resultFormat,
 		}
 	}
 
@@ -3813,6 +3844,30 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// The upload cache is per-CAMPAIGN and created here, not on the Client: it must not
 	// outlive the campaign it was built for (see uploadCache's godoc).
 	uploads := newUploadCache()
+	// A carousel (#550 gap 10) is ONE ad whose cards are the variants, in place of the loop below.
+	if carousel {
+		adID, creativeID, hashes, cerr := c.createCarouselAd(ctx, in, adSetID, uploads)
+		switch {
+		case cerr != nil && ctx.Err() != nil:
+			if creativeID != "" {
+				return partialResult(), fmt.Errorf("meta campaign aborted while creating the carousel ad (campaign %s created, PAUSED; orphaned creative: %s): %w", campaignID, creativeID, ctx.Err())
+			}
+			return partialResult(), fmt.Errorf("meta campaign aborted while creating the carousel ad (campaign %s created, PAUSED): %w", campaignID, ctx.Err())
+		case cerr != nil:
+			steps = append(steps, carouselFailureStep(cerr, creativeID, in.Variants))
+			steps = append(steps, "No ads could be created — create them manually in Meta Ads Manager")
+		default:
+			adCount = 1
+			ads = append(ads, AdResult{Variant: 1, AdID: adID, CreativeID: creativeID, CardImageHashes: hashes})
+			steps = append(steps, fmt.Sprintf("Carousel ad created: %s (creative: %s, %d cards) → %s", adID, creativeID, len(in.Variants), displayMetaUTMURL(in, 0)))
+		}
+		r := partialResult()
+		r.BidApplied = adSetCreated
+		if ev, _ := promotedObject["custom_event_type"].(string); adSetCreated {
+			r.ConversionEvent = ev
+		}
+		return r, nil
+	}
 	// Videos (#550 gap 9) are uploaded and awaited once, before the first creative: each distinct
 	// video uploads once and every video shares one bounded readiness wait. The ad set already
 	// exists, so a cancelled caller returns the partial (the claim is retained, nothing re-uploads).

@@ -341,6 +341,13 @@ const (
 	// call and must not be lengthened.
 	EnvMetaVideoEnabled = "META_VIDEO_ENABLED"
 
+	// EnvMetaCarouselEnabled opts a deployment IN to metaConfig.format "carousel" (#550 gap 10): ONE
+	// Meta ad whose 2-10 cards are the variants (link_data.child_attachments) instead of one ad per
+	// variant. Only the exact value "true" enables it; unset or any other value fails closed, and a
+	// carousel create is refused with a 400 before any job exists. Off until the child_attachments
+	// payload is verified against a live ad account.
+	EnvMetaCarouselEnabled = "META_CAROUSEL_ENABLED"
+
 	// EnvMetaAudienceTargetingEnabled opts a deployment IN to metaConfig.targeting (#550): age,
 	// gender, custom audiences to include and exclude, and the Advantage+ audience flag on the ad
 	// set. Only the exact value "true" enables it; unset or any other value fails closed, and a

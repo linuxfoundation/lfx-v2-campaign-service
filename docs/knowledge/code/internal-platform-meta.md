@@ -1078,6 +1078,16 @@ once to `/act_<id>/advideos` (`uploadVideo`: one attempt, multipart `source` fra
 non-fatal Steps lines; a cancelled caller returns the partial. `CampaignResult.VideoIDs` and
 `AdResult.VideoID` record the minted ids. See [Meta Video Ads](../architecture/meta-video-ads.md).
 
+## Carousel ads (`carousel.go`, #550 gap 10)
+
+`CampaignInput.Format` (`NormalizeFormat`: single | carousel). A carousel is checked whole by
+`ValidateCarousel` (2-10 image cards, no video, one message) before the per-variant checks, which
+then require `primaryText` only on card 1; the creative name `<event> - Carousel` is bounded too.
+After the ad set, `createCarouselAd` replaces the variant loop: card images through the
+`uploadCache`, one `child_attachments` creative (`carouselStorySpec`), one ad. Failures are worded
+by `carouselFailureStep` (card URLs scrubbed as `scrubURLFromErr` does). `CampaignResult.Format`
+and `AdResult.CardImageHashes` record it. See [Meta Carousel Ads](../architecture/meta-carousel-ads.md).
+
 ## Audience targeting (`targeting.go`, #550)
 
 `CampaignInput.Targeting` (`metaConfig.targeting`) adds an age range, a gender, custom audiences to

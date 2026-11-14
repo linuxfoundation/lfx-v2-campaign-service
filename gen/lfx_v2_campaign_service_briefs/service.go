@@ -168,8 +168,15 @@ type Service interface {
 	// "true", one that is not a UUID, or one alongside imageUrl or imageAssetId on
 	// the same variant is a synchronous 400 "invalid campaign config:
 	// metaConfig.variants[...].videoAssetId..."; with the flag on, the stored MP4
-	// is uploaded to the ad account and run as a video ad. REDDIT SHARED-ACCOUNT
-	// INPUTS (#549): a redditConfig that sets customAudienceIds or
+	// is uploaded to the ad account and run as a video ad. META CAROUSEL (#550):
+	// metaConfig.format other than single or carousel, carousel while
+	// META_CAROUSEL_ENABLED is not "true", or a carousel whose variants are not
+	// 2-10 cards that each carry an image (no video) with variant 1's primaryText
+	// as the one message (later cards empty or identical) is a synchronous 400
+	// "invalid campaign config: metaConfig.format..." or
+	// "...metaConfig.variants[...]..."; with the flag on, a carousel creates ONE
+	// ad whose cards are the variants instead of one ad per variant. REDDIT
+	// SHARED-ACCOUNT INPUTS (#549): a redditConfig that sets customAudienceIds or
 	// excludedCustomAudienceIds (any non-empty list) on a create that selects
 	// reddit-ads requires global_marketing_ops on this project in the same single
 	// check, with the same 403 and 503; the custom audiences belong to the LF

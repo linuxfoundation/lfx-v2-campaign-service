@@ -398,6 +398,12 @@ openssl rand -base64 32
   create naming a `videoAssetId` is refused with a 400 before any job exists.
   The chart sets it to `"false"`; enable it per-environment in the ArgoCD
   overlay once Meta's encoding time for a 20-30 MiB MP4 is measured.
+- `META_CAROUSEL_ENABLED` (default unset, i.e. OFF) — opts a deployment IN
+  to `metaConfig.format: "carousel"` (#550): one Meta ad whose 2-10 cards are
+  the variants (`link_data.child_attachments`) instead of one ad per variant.
+  Only the exact value `true` enables it; anything else fails closed, and a
+  carousel create is refused with a 400 before any job exists. The chart sets
+  it to `"false"`.
 - `META_AUDIENCE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `metaConfig.targeting` (#550): `ageMin`/`ageMax`,
   `genders`, `customAudiences`, `excludedCustomAudiences` and

@@ -2937,6 +2937,13 @@ conversionEvent?: string        — OPTIONAL `promoted_object.custom_event_type`
                                   LEAD, SUBMIT_APPLICATION, SUBSCRIBE. On any other objective, or
                                   outside the list, a synchronous 400. Refused with a 400 unless
                                   META_CONVERSION_EVENT_ENABLED is exactly "true".
+format?: string                 — OPTIONAL creative format (#550 gap 10), case-insensitive:
+                                  `single` (default — one ad per variant, as before) or
+                                  `carousel` — ONE ad whose cards are the variants, in order
+                                  (`object_story_spec.link_data.child_attachments`). Anything
+                                  else is a synchronous 400; a non-string is a 400. `carousel`
+                                  is refused with a 400 unless META_CAROUSEL_ENABLED is exactly
+                                  "true". See "Meta carousel" below the AdVariant block.
 targeting?: object              — OPTIONAL audience targeting on the ad set (#550). Refused
                                   with a 400 before any job exists unless the deployment sets
                                   META_AUDIENCE_TARGETING_ENABLED to exactly "true" (not yet
@@ -3043,6 +3050,29 @@ videoAssetId?: string            — OPTIONAL id of an MP4 creative asset upload
                                   id is recorded in the result's `VideoIDs` (asset id -> video
                                   id) and on each ad as `VideoID`.
 ```
+
+**Meta carousel** (`metaConfig.format: "carousel"`, #550 gap 10). Each variant is one card:
+
+```
+cards                           — 2-10 variants (else a synchronous 400). Each card REQUIRES an
+                                  image — `imageUrl` (→ card `picture`) or `imageAssetId`
+                                  (uploaded once per distinct image → card `image_hash`) — and
+                                  carries no `videoAssetId`. Card fields: `headline` → `name`,
+                                  `description` → `description`, its own UTM-tagged registration
+                                  link (`utm_content=variant-N`) → `link`, and the ad's
+                                  `callToAction` button with that link.
+message                         — variant 1's `primaryText` (required) is the ad's one
+                                  `link_data.message`; every later card's `primaryText` must be
+                                  empty or identical (nothing is silently dropped) — else a 400.
+link                            — `link_data.link` (the end card and message destination) is card
+                                  1's UTM link. Meta's card ordering default is left as is.
+```
+
+The creative is named `<eventName> - Carousel` and the ad `<eventName> - Carousel Ad`; the
+campaign and ad set are unchanged. One ad is the full count: the result has `AdCount` 1,
+`Format` `"carousel"` and the ad's per-card `CardImageHashes`. A card image the upload refuses
+creates no creative, and a creative or ad Meta refuses creates no ad — either leaves the
+campaign `created_degraded` with the reason in Steps (nothing is retried by a re-dispatch).
 
 Copy limits are enforced by the client before any upstream call, so a variant that
 exceeds them fails the platform job pre-create (async — not a synchronous 4xx). The
