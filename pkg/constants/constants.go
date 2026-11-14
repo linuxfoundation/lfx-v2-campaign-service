@@ -377,6 +377,13 @@ const (
 	// account resource.
 	EnvMetaDeviceTargetingEnabled = "META_DEVICE_TARGETING_ENABLED"
 
+	// EnvMetaInterestTargetingEnabled opts a deployment IN to metaConfig.targeting.interests (#550,
+	// gap 7): detailed targeting interest ids sent as the ad set's flexible_spec. Same rules as
+	// EnvMetaLocaleTargetingEnabled. Each id is validated with Meta's interest validation read
+	// before anything is created. An interest is Meta's own taxonomy, not an account resource, so it
+	// needs no global_marketing_ops.
+	EnvMetaInterestTargetingEnabled = "META_INTEREST_TARGETING_ENABLED"
+
 	// EnvGoogleAdsPMaxAudienceSignalEnabled opts a deployment IN to
 	// googleAdsConfig.performanceMaxAudienceSignal (#461): one existing Google Ads Audience
 	// attached to a Performance Max asset group as a signal. Only the exact value "true"

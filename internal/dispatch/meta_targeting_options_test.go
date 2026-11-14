@@ -124,16 +124,34 @@ func TestMeta_DispatchCarriesLocalesToTheAdSet(t *testing.T) {
 // dispatchMetaAdSetTargeting dispatches a minimal Meta create carrying extra metaConfig fields
 // against a fake Graph API and returns the ad set's targeting object.
 func dispatchMetaAdSetTargeting(t *testing.T, extra string) map[string]any {
+	targeting, _ := dispatchMetaAdSetTargetingSearched(t, extra)
+	return targeting
+}
+
+// dispatchMetaAdSetTargetingSearched is dispatchMetaAdSetTargeting that also returns the interest
+// ids the validation read was asked about.
+func dispatchMetaAdSetTargetingSearched(t *testing.T, extra string) (map[string]any, []string) {
 	t.Helper()
 	var (
-		mu    sync.Mutex
-		adSet map[string]any
+		mu       sync.Mutex
+		adSet    map[string]any
+		searched []string
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		mu.Lock()
 		defer mu.Unlock()
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/search":
+			// The interest validation read: every requested id is valid.
+			var ids []string
+			_ = json.Unmarshal([]byte(r.URL.Query().Get("interest_fbid_list")), &ids)
+			rows := make([]map[string]any, len(ids))
+			for i, id := range ids {
+				rows[i] = map[string]any{"id": id, "valid": true}
+			}
+			searched = append(searched, ids...)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": rows})
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -166,5 +184,49 @@ func dispatchMetaAdSetTargeting(t *testing.T, extra string) map[string]any {
 	if !ok {
 		t.Fatalf("ad set targeting = %#v, want an object", adSet["targeting"])
 	}
-	return targeting
+	return targeting, searched
+}
+
+// TestMeta_PreflightCreate_InterestsFlag: targeting.interests has its own flag, like locales; with it
+// on, a non-numeric id is a 400 and an interests-only block needs no META_AUDIENCE_TARGETING_ENABLED.
+func TestMeta_PreflightCreate_InterestsFlag(t *testing.T) {
+	t.Run("off", func(t *testing.T) {
+		t.Setenv(constants.EnvMetaInterestTargetingEnabled, "on")
+		t.Setenv(constants.EnvMetaAudienceTargetingEnabled, "true")
+		runBiddingPreflight(t, &MetaDispatcher{}, model.ProviderMetaAds, []biddingPreflightCase{
+			{name: "interests", config: `{"metaConfig":{"targeting":{"interests":["6003"]}}}`,
+				want: "metaConfig.targeting.interests is disabled on this deployment (META_INTEREST_TARGETING_ENABLED is not \"true\")"},
+		})
+	})
+	t.Run("on, audience flag off", func(t *testing.T) {
+		t.Setenv(constants.EnvMetaInterestTargetingEnabled, "true")
+		t.Setenv(constants.EnvMetaAudienceTargetingEnabled, "false")
+		runBiddingPreflight(t, &MetaDispatcher{}, model.ProviderMetaAds, []biddingPreflightCase{
+			{name: "interests only", config: `{"metaConfig":{"targeting":{"interests":["6003","6004"]}}}`},
+			{name: "interests and an age", config: `{"metaConfig":{"targeting":{"interests":["6003"],"ageMax":54}}}`,
+				want: "META_AUDIENCE_TARGETING_ENABLED"},
+			{name: "a name instead of an id", config: `{"metaConfig":{"targeting":{"interests":["Kubernetes"]}}}`,
+				want: `invalid campaign config: metaConfig.targeting: interests entry "Kubernetes" is not a Meta interest id`},
+			{name: "numbers instead of strings", config: `{"metaConfig":{"targeting":{"interests":[6003]}}}`,
+				want: `"targeting" must be an object of`},
+		})
+	})
+}
+
+// TestMeta_DispatchCarriesInterestsToTheAdSet: with only the interest flag on, the ids are validated
+// and reach the ad set as one flexible_spec entry with an explicit Advantage+ flag of 0.
+func TestMeta_DispatchCarriesInterestsToTheAdSet(t *testing.T) {
+	t.Setenv(constants.EnvMetaInterestTargetingEnabled, "true")
+	t.Setenv(constants.EnvMetaAudienceTargetingEnabled, "false")
+	targeting, searched := dispatchMetaAdSetTargetingSearched(t, `"targeting":{"interests":["6003"," 6004"]}`)
+	if !reflect.DeepEqual(searched, []string{"6003", "6004"}) {
+		t.Errorf("validated interests = %v, want [6003 6004]", searched)
+	}
+	want := []any{map[string]any{"interests": []any{map[string]any{"id": "6003"}, map[string]any{"id": "6004"}}}}
+	if !reflect.DeepEqual(targeting["flexible_spec"], want) {
+		t.Errorf("flexible_spec = %#v, want %#v", targeting["flexible_spec"], want)
+	}
+	if !reflect.DeepEqual(targeting["targeting_automation"], map[string]any{"advantage_audience": float64(0)}) {
+		t.Errorf("targeting_automation = %#v, want advantage_audience 0", targeting["targeting_automation"])
+	}
 }

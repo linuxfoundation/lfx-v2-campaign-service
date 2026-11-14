@@ -428,6 +428,12 @@ openssl rand -base64 32
   or `desktop` only, sent as the ad set's `targeting.device_platforms`.
   Same rules as `META_LOCALE_TARGETING_ENABLED`. The chart sets it to
   `"false"`; enable it per-environment in the ArgoCD overlay.
+- `META_INTEREST_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `metaConfig.targeting.interests` (#550), detailed
+  targeting interest ids sent as the ad set's `flexible_spec`, each
+  validated with Meta's interest validation read before anything is
+  created. Same rules as `META_LOCALE_TARGETING_ENABLED`. The chart sets it
+  to `"false"`; enable it per-environment in the ArgoCD overlay.
 - `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.performanceMaxAudienceSignal`,
   one existing Google Ads Audience attached to a Performance Max asset
