@@ -48,6 +48,8 @@ var microsoftUngatedFields = map[string]bool{
 	"adSchedules": true,
 	// #563 gap 8: devices, age ranges and genders name no account resource.
 	"deviceBidAdjustments": true, "ageBidAdjustments": true, "genderBidAdjustments": true,
+	// #563 gap 13: structured snippets are created new for the campaign and name no resource.
+	"structuredSnippets": true,
 }
 
 // TestEveryMicrosoftConfigFieldIsClassifiedForTheMarketingOpsGate fails when a microsoftConfig

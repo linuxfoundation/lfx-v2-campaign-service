@@ -5675,7 +5675,23 @@ type CampaignCreateInputRequestBody struct {
 	// refused with 400 "invalid campaign config:
 	// microsoftConfig.sharedNegativeKeywordListIds: ..." before any job exists.
 	// The lists belong to the shared LF account, so the field needs
-	// global_marketing_ops (403, or 503 when the check cannot be made).
+	// global_marketing_ops (403, or 503 when the check cannot be made). MICROSOFT
+	// STRUCTURED SNIPPETS (#563): microsoftConfig takes `structuredSnippets`, at
+	// most 10 {header, values} objects. header is one of Amenities, Brands,
+	// Courses, Degree programs, Destinations, Featured hotels, Insurance coverage,
+	// Models, Neighborhoods, Service catalog, Shows, Styles, Types (any casing,
+	// each once, sent in that spelling); values holds 3-10 entries of 1-25
+	// characters (12 with a double-width character), trimmed, no repeat ignoring
+	// case. They are created as StructuredSnippetAdExtension entries and
+	// associated with the confirmed campaign, skipped with a step when the
+	// campaign already has one; ids are recorded as
+	// structuredSnippetAdExtensionIds, and a failed or unconfirmed snippet leaves
+	// the campaign created_degraded without failing the job. OFF unless
+	// MICROSOFT_STRUCTURED_SNIPPETS_ENABLED is exactly "true". A wrong JSON type
+	// (null reads as absent), a rule breach, or the list while the flag is off is
+	// refused with 400 "invalid campaign config:
+	// microsoftConfig.structuredSnippets: ..." before any job exists. Not
+	// role-gated.
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

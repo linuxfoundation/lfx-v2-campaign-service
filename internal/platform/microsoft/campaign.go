@@ -331,6 +331,10 @@ type CampaignResult struct {
 	// already had is skipped, and the Steps entry says so.
 	SitelinkAdExtensionIDs []string `json:"sitelinkAdExtensionIds,omitempty"`
 	CalloutAdExtensionIDs  []string `json:"calloutAdExtensionIds,omitempty"`
+	// StructuredSnippetAdExtensionIDs are the structured snippet extensions THIS RUN created and
+	// associated with the campaign (#563 gap 13), set by the DISPATCHER after
+	// AttachCampaignStructuredSnippets; empty does not mean the campaign has none, as above.
+	StructuredSnippetAdExtensionIDs []string `json:"structuredSnippetAdExtensionIds,omitempty"`
 	// NegativeKeywords is the positional outcome of the create-time campaign negatives
 	// (microsoftConfig.negativeKeywords, #563), one entry per requested keyword in request
 	// order. Like the image ids it is set by the DISPATCHER after AddCampaignNegativeKeywords —

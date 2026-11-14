@@ -113,8 +113,11 @@ func newMSTextDispatcher(t *testing.T, api *msTextAPI) *MicrosoftDispatcher {
 			api.next++
 			id := fmt.Sprint(9000 + api.next)
 			typ := "CalloutAdExtension"
-			if strings.Contains(body, "SitelinkAdExtension") {
+			switch {
+			case strings.Contains(body, "SitelinkAdExtension"):
 				typ = "SitelinkAdExtension"
+			case strings.Contains(body, "StructuredSnippetAdExtension"):
+				typ = "StructuredSnippetAdExtension"
 			}
 			api.pending[id] = typ
 			_, _ = fmt.Fprintf(w, `{"AdExtensionIdentities":[{"Id":%s,"Version":1}],"NestedPartialErrors":[]}`, id)

@@ -185,15 +185,17 @@ type Service interface {
 	// genderBidAdjustments that breaks its rules or is sent while
 	// MICROSOFT_BID_ADJUSTMENTS_ENABLED is not "true". So is a
 	// microsoftConfig.sharedNegativeKeywordListIds that breaks its rules or is
-	// sent while MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED is not "true". An X
-	// custom audience list is also refused synchronously with 400 "invalid
-	// campaign config: twitterConfig.<field>: ..." when it is not an array of
-	// strings, when an id is not 1-32 letters or digits, repeats, or is in both
-	// lists, when a list holds more than 60 ids or the X targeting lists together
-	// name more than 60 criteria, and when TWITTER_CUSTOM_AUDIENCES_ENABLED is not
-	// "true" on this deployment. When both platforms' inputs are refused, the 403
-	// names each platform's fields in its own sentence. A Reddit custom audience
+	// sent while MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED is not "true". So is a
+	// microsoftConfig.structuredSnippets that breaks its rules or is sent while
+	// MICROSOFT_STRUCTURED_SNIPPETS_ENABLED is not "true". An X custom audience
 	// list is also refused synchronously with 400 "invalid campaign config:
+	// twitterConfig.<field>: ..." when it is not an array of strings, when an id
+	// is not 1-32 letters or digits, repeats, or is in both lists, when a list
+	// holds more than 60 ids or the X targeting lists together name more than 60
+	// criteria, and when TWITTER_CUSTOM_AUDIENCES_ENABLED is not "true" on this
+	// deployment. When both platforms' inputs are refused, the 403 names each
+	// platform's fields in its own sentence. A Reddit custom audience list is also
+	// refused synchronously with 400 "invalid campaign config:
 	// redditConfig.<field>: ..." when it is not an array of strings, when an id is
 	// not 1-64 letters, digits or underscores, repeats, or is in both lists, when
 	// a list holds more than 100 ids, and when REDDIT_CUSTOM_AUDIENCES_ENABLED is
@@ -1478,7 +1480,23 @@ type CampaignCreateInput struct {
 	// refused with 400 "invalid campaign config:
 	// microsoftConfig.sharedNegativeKeywordListIds: ..." before any job exists.
 	// The lists belong to the shared LF account, so the field needs
-	// global_marketing_ops (403, or 503 when the check cannot be made).
+	// global_marketing_ops (403, or 503 when the check cannot be made). MICROSOFT
+	// STRUCTURED SNIPPETS (#563): microsoftConfig takes `structuredSnippets`, at
+	// most 10 {header, values} objects. header is one of Amenities, Brands,
+	// Courses, Degree programs, Destinations, Featured hotels, Insurance coverage,
+	// Models, Neighborhoods, Service catalog, Shows, Styles, Types (any casing,
+	// each once, sent in that spelling); values holds 3-10 entries of 1-25
+	// characters (12 with a double-width character), trimmed, no repeat ignoring
+	// case. They are created as StructuredSnippetAdExtension entries and
+	// associated with the confirmed campaign, skipped with a step when the
+	// campaign already has one; ids are recorded as
+	// structuredSnippetAdExtensionIds, and a failed or unconfirmed snippet leaves
+	// the campaign created_degraded without failing the job. OFF unless
+	// MICROSOFT_STRUCTURED_SNIPPETS_ENABLED is exactly "true". A wrong JSON type
+	// (null reads as absent), a rule breach, or the list while the flag is off is
+	// refused with 400 "invalid campaign config:
+	// microsoftConfig.structuredSnippets: ..." before any job exists. Not
+	// role-gated.
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

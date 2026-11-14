@@ -275,6 +275,9 @@ type msTextAdExtension struct {
 	Description2 string   `json:"Description2,omitempty"`
 	FinalUrls    []string `json:"FinalUrls,omitempty"`
 	Text         string   `json:"Text,omitempty"`
+	// Header and Values are a StructuredSnippetAdExtension's (#563 gap 13, structured_snippets.go).
+	Header string   `json:"Header,omitempty"`
+	Values []string `json:"Values,omitempty"`
 }
 
 type addTextAdExtensionsRequest struct {
@@ -289,7 +292,9 @@ type addTextAdExtensionsRequest struct {
 type TextExtensionsResult struct {
 	SitelinkAdExtensionIDs []string
 	CalloutAdExtensionIDs  []string
-	Steps                  []string
+	// StructuredSnippetAdExtensionIDs is set only by AttachCampaignStructuredSnippets.
+	StructuredSnippetAdExtensionIDs []string
+	Steps                           []string
 	// Failed counts extensions NOT attached (definite); Unconfirmed counts those that may be.
 	// A type skipped because its lookup failed counts every requested item of it as Failed.
 	Failed, Unconfirmed int
