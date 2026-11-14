@@ -33,6 +33,11 @@ const settingsCampaignFields = "id,name,status,account_id,objective,daily_budget
 // strategy the create path sets ON THE AD SET, plus campaign_id to prove which campaign it is in.
 const settingsAdSetFields = "id,campaign_id,daily_budget,lifetime_budget,start_time,end_time,bid_strategy"
 
+// settingsAdSetTargetingFields is added to settingsAdSetFields when the caller asks for the
+// targeting readback (#550): the ad set's targeting spec (whose geo_locations carry the regions and
+// cities the create path adds) and its adset_schedule.
+const settingsAdSetTargetingFields = ",targeting,adset_schedule"
+
 // CampaignSettings is one campaign's live configuration as the settings readback reads it, from
 // the campaign node and — when the row recorded one — the ad set the create path made under it.
 //
@@ -63,6 +68,32 @@ type AdSetSettings struct {
 	StartTime   *string
 	EndTime     *string
 	BidStrategy *string
+	// Targeting is the regions, cities and schedule readback (#550); nil when it was not asked for
+	// or the ad set's targeting could not be read as an object. See AdSetTargetingSettings.
+	Targeting *AdSetTargetingSettings
+}
+
+// AdSetTargetingSettings is what the readback reads of the ad set's targeting and schedule. Graph
+// omits an empty field, so once the targeting object itself is read an absent list is "none", not
+// "unknown": Regions and Cities are then non-nil (empty when none); Schedule is non-nil (empty when
+// the ad set has no schedule) unless adset_schedule was present but unreadable, in which case it
+// is nil and ScheduleUnreadable is true. Region and city keys are Meta's, verbatim.
+type AdSetTargetingSettings struct {
+	Regions            []string
+	Cities             []string
+	Schedule           []AdScheduleBlock
+	ScheduleUnreadable bool
+	// GeoUnreadable is true when geo_locations was present but not of the documented shape, so the
+	// regions and cities are unknown (nil).
+	GeoUnreadable bool
+}
+
+// AdScheduleBlock is one adset_schedule entry as Meta reports it.
+type AdScheduleBlock struct {
+	Days         []int
+	StartMinute  int
+	EndMinute    int
+	TimezoneType string
 }
 
 // campaignSettingsWire / adSetSettingsWire are string-only decodes, so a decode error can only
@@ -82,6 +113,10 @@ type adSetSettingsWire struct {
 	StartTime      *string `json:"start_time"`
 	EndTime        *string `json:"end_time"`
 	BidStrategy    *string `json:"bid_strategy"`
+	// Targeting and AdsetSchedule are decoded on their own (decodeAdSetTargeting), so a shape this
+	// client does not expect leaves only those fields unknown rather than failing the read.
+	Targeting     json.RawMessage `json:"targeting"`
+	AdsetSchedule json.RawMessage `json:"adset_schedule"`
 }
 
 // GetCampaignSettings reads the campaign node and, when adSetID is non-empty, that ad set. Both
@@ -110,6 +145,17 @@ type adSetSettingsWire struct {
 // reports what the platform holds, and "this campaign is archived" is exactly the observation an
 // operator opening the readback needs. Its status is returned verbatim.
 func (c *Client) GetCampaignSettings(ctx context.Context, campaignID, adSetID string) (*CampaignSettings, error) {
+	return c.getCampaignSettings(ctx, campaignID, adSetID, false)
+}
+
+// GetCampaignSettingsWithTargeting is GetCampaignSettings that also reads the ad set's targeting and
+// adset_schedule (#550) into AdSetSettings.Targeting. The rest of the read is unchanged; a
+// targeting or schedule of an unexpected shape leaves only those fields unknown.
+func (c *Client) GetCampaignSettingsWithTargeting(ctx context.Context, campaignID, adSetID string) (*CampaignSettings, error) {
+	return c.getCampaignSettings(ctx, campaignID, adSetID, true)
+}
+
+func (c *Client) getCampaignSettings(ctx context.Context, campaignID, adSetID string, withTargeting bool) (*CampaignSettings, error) {
 	if err := ValidateCampaignID(campaignID); err != nil {
 		return nil, err
 	}
@@ -146,7 +192,11 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID, adSetID st
 	}
 
 	var adRaw json.RawMessage
-	if err := c.doRequest(ctx, http.MethodGet, "/"+adSetID+"?fields="+settingsAdSetFields, nil, &adRaw); err != nil {
+	adSetFields := settingsAdSetFields
+	if withTargeting {
+		adSetFields += settingsAdSetTargetingFields
+	}
+	if err := c.doRequest(ctx, http.MethodGet, "/"+adSetID+"?fields="+adSetFields, nil, &adRaw); err != nil {
 		if graphObjectMissing(err) {
 			return out, nil
 		}
@@ -175,8 +225,77 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID, adSetID st
 	if as.DailyMinor != nil && as.LifetimeMinor != nil {
 		return nil, fmt.Errorf("meta campaign settings read for %s: ad set %s reports both a daily and a lifetime budget, which Meta documents as mutually exclusive", campaignID, adSetID)
 	}
+	if withTargeting {
+		as.Targeting = decodeAdSetTargeting(ad.Targeting, ad.AdsetSchedule)
+	}
 	out.AdSet = as
 	return out, nil
+}
+
+// decodeAdSetTargeting reads the regions, cities and schedule out of an ad set's targeting and
+// adset_schedule. A missing or non-object targeting is nil (nothing about it can be said); within
+// it, an absent geo_locations or list is none (Graph omits empty fields), and a list of an
+// unexpected shape is unknown. The same for adset_schedule: absent is none, unreadable is unknown.
+func decodeAdSetTargeting(targeting, schedule json.RawMessage) *AdSetTargetingSettings {
+	var t struct {
+		GeoLocations json.RawMessage `json:"geo_locations"`
+	}
+	if len(targeting) == 0 || string(targeting) == "null" || json.Unmarshal(targeting, &t) != nil {
+		return nil
+	}
+	out := &AdSetTargetingSettings{Regions: []string{}, Cities: []string{}, Schedule: []AdScheduleBlock{}}
+	if len(t.GeoLocations) > 0 && string(t.GeoLocations) != "null" {
+		var geo struct {
+			Regions []struct {
+				Key graphID `json:"key"`
+			} `json:"regions"`
+			Cities []struct {
+				Key graphID `json:"key"`
+			} `json:"cities"`
+		}
+		if json.Unmarshal(t.GeoLocations, &geo) != nil {
+			out.Regions, out.Cities, out.GeoUnreadable = nil, nil, true
+		} else {
+			for _, list := range []struct {
+				keys []struct {
+					Key graphID `json:"key"`
+				}
+				dst *[]string
+			}{{geo.Regions, &out.Regions}, {geo.Cities, &out.Cities}} {
+				for _, k := range list.keys {
+					if !numericIDRE.MatchString(string(k.Key)) {
+						out.Regions, out.Cities, out.GeoUnreadable = nil, nil, true
+						break
+					}
+					*list.dst = append(*list.dst, string(k.Key))
+				}
+				if out.GeoUnreadable {
+					break
+				}
+			}
+		}
+	}
+	if len(schedule) > 0 {
+		// A JSON null decodes to no blocks: no schedule, like an absent field.
+		var blocks []struct {
+			Days         []int  `json:"days"`
+			StartMinute  *int   `json:"start_minute"`
+			EndMinute    *int   `json:"end_minute"`
+			TimezoneType string `json:"timezone_type"`
+		}
+		if json.Unmarshal(schedule, &blocks) != nil {
+			out.Schedule, out.ScheduleUnreadable = nil, true
+			return out
+		}
+		for _, b := range blocks {
+			if b.StartMinute == nil || b.EndMinute == nil || len(b.Days) == 0 {
+				out.Schedule, out.ScheduleUnreadable = nil, true
+				return out
+			}
+			out.Schedule = append(out.Schedule, AdScheduleBlock{Days: b.Days, StartMinute: *b.StartMinute, EndMinute: *b.EndMinute, TimezoneType: b.TimezoneType})
+		}
+	}
+	return out
 }
 
 // AccountCurrencyOffset reads the ad account's currency and returns its minor-unit offset (100

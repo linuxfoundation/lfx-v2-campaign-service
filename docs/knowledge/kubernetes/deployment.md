@@ -150,6 +150,10 @@ any request), with the same rules as `META_LOCALE_TARGETING_ENABLED`.
 `GET /projects/{p}/meta-ads/targeting-search`, the campaign_manager picker read over Meta's
 Targeting Search; while off the endpoint answers 400.
 
+`META_TARGETING_READBACK_ENABLED` defaults to `"false"` (#550) and opts a cluster in to the Meta
+settings readback of the ad set's regions, cities and ad schedule (`regions`, `cities`,
+`ad_schedule`, compared with the row's config snapshot); while off the readback is unchanged.
+
 `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is the same kind of gate, defaulting to `"false"`
 (#461): it opts a cluster in to `googleAdsConfig.performanceMaxAudienceSignal`, one existing
 Google Ads Audience attached to a Performance Max asset group as a signal. Like the Demand Gen
