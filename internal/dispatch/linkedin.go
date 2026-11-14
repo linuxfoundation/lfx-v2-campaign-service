@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/campaignname"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
@@ -310,56 +311,17 @@ func linkedinNamingV2Enabled() bool {
 
 // checkNamingShape refuses a linkedInConfig.naming whose JSON shape is wrong (#587): an explicit
 // null, a non-object, a non-string value, or any key other than region, audienceIntent and
-// businessUnit (a misspelled key would otherwise be dropped and the name composed from a
-// default the caller did not choose). Anything it cannot attribute to naming is left to the
-// ordinary decode.
+// businessUnit. See campaignname.CheckShape, shared with the other paid-social dispatchers.
 func checkNamingShape(config json.RawMessage) error {
-	var envelope map[string]json.RawMessage
-	if json.Unmarshal(config, &envelope) != nil {
-		return nil
-	}
-	var platformCfg map[string]json.RawMessage
-	if json.Unmarshal(envelope["linkedInConfig"], &platformCfg) != nil {
-		return nil
-	}
-	for k, raw := range platformCfg {
-		if !strings.EqualFold(k, "naming") {
-			continue
-		}
-		var n linkedin.CampaignNaming
-		dec := json.NewDecoder(bytes.NewReader(raw))
-		dec.DisallowUnknownFields()
-		if isJSONNull(raw) || dec.Decode(&n) != nil {
-			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.naming must be an object {\"region\": string, \"audienceIntent\": string, \"businessUnit\": string}, each optional", domain.ErrCreateConfigInvalid))
-		}
-	}
-	return nil
+	return campaignname.CheckShape(config, "linkedInConfig")
 }
 
 // linkedinNaming checks linkedInConfig.naming before any job or request and returns what the
 // client composes the name from: nil while the deployment gate is off (the legacy name), else the
 // canonical copy. Every value outside its closed list is refused whatever the gate says; while
-// the gate is on a business unit is required, because no default can be derived from an LFX
-// project slug without guessing a foundation. Both are ErrCreateConfigInvalid pre-flight
-// refusals, so PreflightCreate answers them with a synchronous 400 and Dispatch fails the job with
-// the same sentence.
+// the gate is on a business unit is required. See campaignname.ResolveRequest.
 func linkedinNaming(cfg linkedinConfig) (*linkedin.CampaignNaming, error) {
-	var n linkedin.CampaignNaming
-	if cfg.Naming != nil {
-		v, err := linkedin.ValidateNaming(*cfg.Naming)
-		if err != nil {
-			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.naming: %w", domain.ErrCreateConfigInvalid, err))
-		}
-		n = v
-	}
-	if !linkedinNamingV2Enabled() {
-		return nil, nil
-	}
-	if n.BusinessUnit == "" {
-		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.naming.businessUnit is required on this deployment (%s is \"true\"); send one of %s",
-			domain.ErrCreateConfigInvalid, constants.EnvLinkedInAdsNamingV2Enabled, strings.Join(linkedin.NameBusinessUnits, ", ")))
-	}
-	return &n, nil
+	return campaignname.ResolveRequest("linkedInConfig", cfg.Naming, linkedin.ErrNamingInvalid, linkedinNamingV2Enabled(), constants.EnvLinkedInAdsNamingV2Enabled)
 }
 
 // linkedinConversionsEnabled reports whether this deployment opted in to

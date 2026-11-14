@@ -993,7 +993,8 @@ the same group. Pinned by `TestCreateCampaign_FrozenNameReusesTheCampaignAnEarli
 LF's convention with `buildCampaignNameV2`: `Events | <event> | <Region> | <Objective> |
 <AudienceIntent>[ <tactic>][ #<n>] | <Format> | <BusinessUnit> | <Funnel>`. Region, audience intent
 and business unit come from closed lists (`NameRegions`, `NameAudienceIntents`,
-`NameBusinessUnits`); `ValidateNaming` canonicalises them and `resolveNaming` refuses a value off
+`NameBusinessUnits`, this package's names for the shared lists in internal/domain/campaignname);
+`ValidateNaming` canonicalises them and `resolveNaming` refuses a value off
 its list or a missing business unit before any request. Empty region defaults to the one bucket
 every geo target's URN falls in (`geoRegion`, the verified `geoResolveMap` URNs bucketed like Meta's
 `geoToRegion`), else `Global`; empty intent defaults to `Retargeting` for the `retargeting` tactic

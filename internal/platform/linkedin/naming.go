@@ -4,11 +4,10 @@
 package linkedin
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/campaignname"
 )
 
 // Campaign naming v2 (#587): LF's own LinkedIn ad set convention,
@@ -25,100 +24,49 @@ import (
 // Every value below comes from a CLOSED list, never free text: a name segment is a reporting
 // dimension, and the pipeline's fallback parsers match words anywhere in a name.
 
-// Regions a v2 name's Region segment may carry. The buckets are Meta's and Reddit's (geoToRegion
-// in internal/platform/meta), so one event reports one region across platforms. lf-dbt's
-// keyword fallback (parse_campaign_region) knows NA, EMEA, APAC and Global only, but a well-formed
-// 8-segment name is read positionally, so LATAM and India are reported as written.
-var NameRegions = []string{"NA", "EMEA", "APAC", "LATAM", "India", "Global"}
+// The closed lists, the validator and the composer are shared by every platform's naming v2 and
+// live in internal/domain/campaignname (#587); the names below are this package's view of them,
+// kept so LinkedIn's callers and tests read exactly as before the move.
+
+// NameRegions are the values a v2 name's Region segment may carry (campaignname.Regions).
+var NameRegions = campaignname.Regions
 
 // NameRegionGlobal is the region of a campaign whose geo targets name no single bucket.
-const NameRegionGlobal = "Global"
+const NameRegionGlobal = campaignname.RegionGlobal
 
-// Audience intents a v2 name's segment 5 may lead with. Prospecting and Retargeting are derived
-// when the caller sends none (defaultAudienceIntent); Intent (in-market, high-intent audiences)
-// is only ever the caller's choice.
-var NameAudienceIntents = []string{"Intent", "Prospecting", "Retargeting"}
+// NameAudienceIntents are the intents a v2 name's segment 5 may lead with. Prospecting and
+// Retargeting are derived when the caller sends none (defaultAudienceIntent); Intent (in-market,
+// high-intent audiences) is only ever the caller's choice on LinkedIn.
+var NameAudienceIntents = campaignname.AudienceIntents
 
 // Ad formats a v2 name's segment 6 may carry. The format is derived server-side from the creative
 // type (campaignNameFormat) and never sent by a caller.
 const (
-	NameFormatStatic = "Static" // single-image sponsored content: every campaign this client creates today
-	NameFormatMotion = "Motion" // video sponsored content
-	NameFormatSocial = "Social" // reserved: LF's list carries it; no LinkedIn creative type maps to it yet
-	NameFormatText   = "Text"   // text ads
+	NameFormatStatic = campaignname.FormatStatic // single-image sponsored content: every campaign this client creates today
+	NameFormatMotion = campaignname.FormatMotion // video sponsored content
+	NameFormatSocial = campaignname.FormatSocial // reserved: LF's list carries it; no LinkedIn creative type maps to it yet
+	NameFormatText   = campaignname.FormatText   // text ads
 )
 
-// NameBusinessUnits are the values a v2 name's segment 7 may carry: exactly the canonical project
-// names lf-dbt resolves to a Salesforce project id. Source, read-only: lf-dbt
-// macros/parse_campaign_name.sql at origin/main 0b6b6c15d (unchanged since 2ac0d65dc) — the
-// outputs of normalize_project_name, plus the LF umbrella names map_paid_ads_project_id maps to
-// the Linux Foundation project id. Each value is a fixed point of normalize_project_name (it
-// normalizes to itself) and is listed in map_paid_ads_project_id, so a campaign carrying it lands
-// in the right foundation roll-up; TestNameBusinessUnits_AreFixedPointsOfTheDbtNormalizer pins the
-// first property against a copy of the macro.
-//
-// This is a COPY of a list another repository owns. When lf-dbt adds a project to
-// map_paid_ads_project_id, add it here too (or a caller cannot select it); a value removed there
-// must be removed here before a campaign reports under a name dbt no longer maps.
-var NameBusinessUnits = []string{
-	"Cloud Native Computing Foundation (CNCF)",
-	"LF Education",
-	"LF Events",
-	"PyTorch Project",
-	"OpenSearch Project",
-	"Open Source Security Foundation (OpenSSF)",
-	"RISC-V International",
-	"Agentic AI Foundation (AAIF)",
-	"Valkey",
-	"FinOps Project",
-	"LF Core",
-	"LF Corporate",
-	"LF Training",
-	"LFX Platform",
-	"The Linux Foundation",
-}
+// NameBusinessUnits are the values a v2 name's segment 7 may carry: lf-dbt's canonical project
+// names (campaignname.BusinessUnits, where the provenance is recorded).
+var NameBusinessUnits = campaignname.BusinessUnits
 
 // CampaignNaming is the caller's choice of the v2 name's caller-chosen segments
 // (linkedInConfig.naming). Each is optional at the JSON level; see the dispatcher for which are
 // required while v2 is on.
-type CampaignNaming struct {
-	Region         string `json:"region,omitempty"`
-	AudienceIntent string `json:"audienceIntent,omitempty"`
-	BusinessUnit   string `json:"businessUnit,omitempty"`
-}
+type CampaignNaming = campaignname.Naming
 
-// ErrNamingInvalid marks a CampaignNaming refused by ValidateNaming.
-var ErrNamingInvalid = errors.New("linkedin-ads: invalid naming")
+// ErrNamingInvalid marks a CampaignNaming refused by ValidateNaming. It wraps
+// campaignname.ErrInvalid.
+var ErrNamingInvalid = fmt.Errorf("linkedin-ads: %w", campaignname.ErrInvalid)
 
 // ValidateNaming checks every set field against its closed list, matching case-insensitively,
 // and returns the copy with each value in its canonical spelling. An empty field is left empty
 // (its default is applied when the name is composed). The refusal names the field and the list;
 // the caller's value is quoted through domain.CallerValue.
 func ValidateNaming(n CampaignNaming) (CampaignNaming, error) {
-	var err error
-	if n.Region, err = canonicalName("region", n.Region, NameRegions); err != nil {
-		return CampaignNaming{}, err
-	}
-	if n.AudienceIntent, err = canonicalName("audienceIntent", n.AudienceIntent, NameAudienceIntents); err != nil {
-		return CampaignNaming{}, err
-	}
-	if n.BusinessUnit, err = canonicalName("businessUnit", n.BusinessUnit, NameBusinessUnits); err != nil {
-		return CampaignNaming{}, err
-	}
-	return n, nil
-}
-
-func canonicalName(field, value string, list []string) (string, error) {
-	v := strings.TrimSpace(value)
-	if v == "" {
-		return "", nil
-	}
-	for _, c := range list {
-		if strings.EqualFold(v, c) {
-			return c, nil
-		}
-	}
-	return "", fmt.Errorf("%w: %s %s is not one of %s", ErrNamingInvalid, field, domain.CallerValue(value), strings.Join(list, ", "))
+	return campaignname.Validate(n, ErrNamingInvalid)
 }
 
 // geoRegion buckets the URNs of geoResolveMap (the only geo URNs this package has verified) the
@@ -141,18 +89,11 @@ var geoRegion = map[string]string{
 // (US and Germany) is Global rather than reported under its first country, and a geo this
 // package cannot bucket makes it Global too. A caller who knows better sends naming.region.
 func defaultRegion(geos []GeoTarget) string {
-	region := ""
-	for _, g := range geos {
-		r, ok := geoRegion[strings.TrimSpace(g.URN)]
-		if !ok || (region != "" && r != region) {
-			return NameRegionGlobal
-		}
-		region = r
+	regions := make([]string, len(geos))
+	for i, g := range geos {
+		regions[i] = geoRegion[strings.TrimSpace(g.URN)]
 	}
-	if region == "" {
-		return NameRegionGlobal
-	}
-	return region
+	return campaignname.UnanimousRegion(regions)
 }
 
 // defaultAudienceIntent is the intent a v2 name leads segment 5 with when the caller sends none:
@@ -203,24 +144,12 @@ func buildCampaignNameV2(eventName, nameObjective string, n CampaignNaming, in C
 	if intent == "" {
 		intent = defaultAudienceIntent(in.Tactic, in.Targeting)
 	}
-	for _, p := range []string{in.Tactic, in.SlotToken} {
-		if p = nameToken(p); p != "" {
-			intent += " " + p
-		}
-	}
-	return fmt.Sprintf("Events | %s | %s | %s | %s | %s | %s | %s", eventName, region, nameObjective, intent, campaignNameFormat(in), n.BusinessUnit, funnel)
+	return campaignname.Compose(eventName, region, nameObjective, campaignname.IntentSegment(intent, in.Tactic, in.SlotToken), campaignNameFormat(in), n.BusinessUnit, funnel)
 }
 
 // resolveNaming validates in.Naming for CreateCampaign: every value in its closed list and a
 // business unit present. The dispatcher has already refused both before the job existed; this is
 // the client's own fail-closed check, a PreflightRefusal sent before any request.
 func resolveNaming(n CampaignNaming) (CampaignNaming, error) {
-	v, err := ValidateNaming(n)
-	if err != nil {
-		return CampaignNaming{}, domain.WrapPreflightRefusal(err)
-	}
-	if v.BusinessUnit == "" {
-		return CampaignNaming{}, domain.PreflightRefusalf("campaign naming v2 requires a business unit, one of %s", strings.Join(NameBusinessUnits, ", "))
-	}
-	return v, nil
+	return campaignname.RequireForCreate(n, ErrNamingInvalid)
 }

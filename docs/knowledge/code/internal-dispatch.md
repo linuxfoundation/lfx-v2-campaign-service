@@ -5613,7 +5613,8 @@ client and the snapshot. `campaignFromLinkedIn` reports a result with `Conversio
 
 **LinkedIn naming (#587).** `linkedinConfig.Naming` (`linkedInConfig.naming`: region, audienceIntent,
 businessUnit) is shape-checked by `checkNamingShape` (unknown keys, null, non-string values) and
-validated by `linkedinNaming` through `linkedin.ValidateNaming` (closed lists, canonical spelling)
+validated by `linkedinNaming` (closed lists, canonical spelling) — both thin wrappers over
+`campaignname.CheckShape` / `campaignname.ResolveRequest` (internal/domain/campaignname) —
 whatever the gate says, so a value outside its list is a synchronous 400 from `PreflightCreate` and
 a not-created refusal from `Dispatch`. `linkedinNaming` returns nil while
 `LINKEDIN_ADS_NAMING_V2_ENABLED` is not exactly `"true"` (the client then composes the legacy name
