@@ -198,9 +198,11 @@ type Service interface {
 	// cannot be made); age, gender and advantageAudience are not gated. An invalid
 	// metaConfig.targeting, or any targeting block while
 	// META_AUDIENCE_TARGETING_ENABLED is not "true" on the deployment, is a
-	// synchronous 400 "invalid campaign config: metaConfig.targeting...". An
-	// invalid per-platform `bidding` object (see the config attribute) is also
-	// refused synchronously, with 400 "invalid campaign config:
+	// synchronous 400 "invalid campaign config: metaConfig.targeting..."; a block
+	// that sets only targeting.locales needs META_LOCALE_TARGETING_ENABLED
+	// instead, and locales while that flag is not "true" are a synchronous 400
+	// too. An invalid per-platform `bidding` object (see the config attribute) is
+	// also refused synchronously, with 400 "invalid campaign config:
 	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
 	// Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc)
 	// and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are

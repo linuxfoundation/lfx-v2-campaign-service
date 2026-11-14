@@ -1126,6 +1126,16 @@ two audience lists name custom audiences of the Meta ad account every foundation
 custom audiences, and the `account_id` field of the audience read are from the docs only; the flag
 stays off until a probe confirms them.
 
+**Languages (gap 12).** `AudienceTargeting.Locales` (`metaConfig.targeting.locales`) is a list of
+Meta locale keys — positive integers such as 6 (English US) or 1001 (English, all), as the
+Targeting Search `adlocale` type lists them — de-duplicated in order, at most `MaxLocales` (50)
+distinct, sent as `targeting.locales`. A language is a hard constraint with Advantage+ on, so it is
+not an inclusion and sends no flag. It has its own flag, `META_LOCALE_TARGETING_ENABLED`
+(default off): `checkMetaTargeting` refuses the list while that flag is off, and a block that sets
+only locales does not need `META_AUDIENCE_TARGETING_ENABLED`, which still gates the six audience
+fields (`HasAudienceFields`) and an empty block. Locales name no account resource, so they are not
+behind `global_marketing_ops`. Not verified live: the `locales` payload.
+
 ## Ads under an ad set (`ads.go`, decision D7 first step)
 
 `ListAdSetAds(ctx, adSetID, campaignID, accountID, window)` is read-only: `GET /{ad_set}/ads`

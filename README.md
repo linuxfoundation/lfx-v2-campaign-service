@@ -409,6 +409,13 @@ openssl rand -base64 32
   without it, 503 when the check cannot be made). The chart sets it to
   `"false"` (`app.environment.META_AUDIENCE_TARGETING_ENABLED.value`);
   enable it per-environment by setting it to `"true"` in the ArgoCD overlay.
+- `META_LOCALE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `metaConfig.targeting.locales` (#550), Meta locale keys
+  sent as the ad set's `targeting.locales`. Only the exact value `true`
+  enables it; anything else fails closed, and a create carrying the list is
+  refused with a 400 before any job exists. A targeting block that sets only
+  `locales` does not need `META_AUDIENCE_TARGETING_ENABLED`. The chart sets
+  it to `"false"`; enable it per-environment in the ArgoCD overlay.
 - `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.performanceMaxAudienceSignal`,
   one existing Google Ads Audience attached to a Performance Max asset
