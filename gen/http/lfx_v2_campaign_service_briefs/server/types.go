@@ -147,6 +147,15 @@ type RemoveKeywordTargetingRequestBody struct {
 	Revision *string `form:"revision,omitempty" json:"revision,omitempty" xml:"revision,omitempty"`
 }
 
+// AddKeywordTargetingRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint
+// HTTP request body.
+type AddKeywordTargetingRequestBody struct {
+	// The keywords to add, as broad keywords: 1-80 characters each after trimming,
+	// no control character.
+	Keywords []string `form:"keywords,omitempty" json:"keywords,omitempty" xml:"keywords,omitempty"`
+}
+
 // ToggleMetaAdSetStatusRequestBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
 // endpoint HTTP request body.
@@ -1277,6 +1286,21 @@ type RemoveKeywordTargetingResponseBody struct {
 	// last keyword is not sent (WOULD_EMPTY).
 	Results []*KeywordTargetingRemovalResultResponseBody `form:"results" json:"results" xml:"results"`
 	// How many results are APPLIED.
+	AppliedCount int `form:"applied_count" json:"applied_count" xml:"applied_count"`
+}
+
+// AddKeywordTargetingResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint
+// HTTP response body.
+type AddKeywordTargetingResponseBody struct {
+	// The campaign whose targeting was changed
+	CampaignID string `form:"campaign_id" json:"campaign_id" xml:"campaign_id"`
+	// Exactly one entry per DISTINCT requested keyword after normalization
+	// (trimmed; a case-insensitive repeat is dropped, first spelling kept), in
+	// request order. One POST per keyword sent, each with its own outcome.
+	Results []*KeywordTargetingAdditionResultResponseBody `form:"results" json:"results" xml:"results"`
+	// How many requested keywords the line item now targets: results whose outcome
+	// is APPLIED or ALREADY_PRESENT.
 	AppliedCount int `form:"applied_count" json:"applied_count" xml:"applied_count"`
 }
 
@@ -3691,6 +3715,79 @@ type RemoveKeywordTargetingUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// AddKeywordTargetingBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint
+// HTTP response body for the "BadRequest" error.
+type AddKeywordTargetingBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// AddKeywordTargetingConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint
+// HTTP response body for the "Conflict" error.
+type AddKeywordTargetingConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// AddKeywordTargetingServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type AddKeywordTargetingServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// AddKeywordTargetingInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint
+// HTTP response body for the "InternalServerError" error.
+type AddKeywordTargetingInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// AddKeywordTargetingNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint
+// HTTP response body for the "NotFound" error.
+type AddKeywordTargetingNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// AddKeywordTargetingPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type AddKeywordTargetingPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// AddKeywordTargetingUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint
+// HTTP response body for the "Unauthorized" error.
+type AddKeywordTargetingUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ListMetaAdSetsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "list-meta-ad-sets" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -5103,6 +5200,26 @@ type KeywordTargetingRemovalResultResponseBody struct {
 	ErrorCode *string `form:"error_code,omitempty" json:"error_code,omitempty" xml:"error_code,omitempty"`
 }
 
+// KeywordTargetingAdditionResultResponseBody is used to define fields on
+// response body types.
+type KeywordTargetingAdditionResultResponseBody struct {
+	// The keyword this result answers, as normalized: trimmed, first spelling of a
+	// case-insensitive duplicate kept.
+	Keyword string `form:"keyword" json:"keyword" xml:"keyword"`
+	// The X targeting criterion that holds the keyword: the one this request
+	// created (APPLIED), or the one the line item already had (ALREADY_PRESENT).
+	// Absent for FAILED and UNCONFIRMED.
+	CriterionID *string `form:"criterion_id,omitempty" json:"criterion_id,omitempty" xml:"criterion_id,omitempty"`
+	// APPLIED — added by this request; ALREADY_PRESENT — the line item already
+	// targets it as a broad keyword, so nothing was sent; FAILED — definitely not
+	// added (see error_code); UNCONFIRMED — may have been added, read the keyword
+	// targeting again before retrying.
+	Outcome string `form:"outcome" json:"outcome" xml:"outcome"`
+	// Why a keyword is FAILED: NOT_SENT (the request carrying it was never sent)
+	// or REJECTED (X refused it). X's own text is never returned.
+	ErrorCode *string `form:"error_code,omitempty" json:"error_code,omitempty" xml:"error_code,omitempty"`
+}
+
 // MetaAdSetResponseBody is used to define fields on response body types.
 type MetaAdSetResponseBody struct {
 	// The Meta ad set id
@@ -6452,6 +6569,29 @@ func NewRemoveKeywordTargetingResponseBody(res *lfxv2campaignservicebriefs.Keywo
 		}
 	} else {
 		body.Results = []*KeywordTargetingRemovalResultResponseBody{}
+	}
+	return body
+}
+
+// NewAddKeywordTargetingResponseBody builds the HTTP response body from the
+// result of the "add-keyword-targeting" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewAddKeywordTargetingResponseBody(res *lfxv2campaignservicebriefs.KeywordTargetingAdditions) *AddKeywordTargetingResponseBody {
+	body := &AddKeywordTargetingResponseBody{
+		CampaignID:   res.CampaignID,
+		AppliedCount: res.AppliedCount,
+	}
+	if res.Results != nil {
+		body.Results = make([]*KeywordTargetingAdditionResultResponseBody, len(res.Results))
+		for i, val := range res.Results {
+			if val == nil {
+				body.Results[i] = nil
+				continue
+			}
+			body.Results[i] = marshalLfxv2campaignservicebriefsKeywordTargetingAdditionResultToKeywordTargetingAdditionResultResponseBody(val)
+		}
+	} else {
+		body.Results = []*KeywordTargetingAdditionResultResponseBody{}
 	}
 	return body
 }
@@ -9028,6 +9168,84 @@ func NewRemoveKeywordTargetingUnauthorizedResponseBody(res *lfxv2campaignservice
 	return body
 }
 
+// NewAddKeywordTargetingBadRequestResponseBody builds the HTTP response body
+// from the result of the "add-keyword-targeting" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewAddKeywordTargetingBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *AddKeywordTargetingBadRequestResponseBody {
+	body := &AddKeywordTargetingBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewAddKeywordTargetingConflictResponseBody builds the HTTP response body
+// from the result of the "add-keyword-targeting" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewAddKeywordTargetingConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *AddKeywordTargetingConflictResponseBody {
+	body := &AddKeywordTargetingConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewAddKeywordTargetingServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "add-keyword-targeting" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewAddKeywordTargetingServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *AddKeywordTargetingServiceUnavailableResponseBody {
+	body := &AddKeywordTargetingServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewAddKeywordTargetingInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "add-keyword-targeting" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewAddKeywordTargetingInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *AddKeywordTargetingInternalServerErrorResponseBody {
+	body := &AddKeywordTargetingInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewAddKeywordTargetingNotFoundResponseBody builds the HTTP response body
+// from the result of the "add-keyword-targeting" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewAddKeywordTargetingNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *AddKeywordTargetingNotFoundResponseBody {
+	body := &AddKeywordTargetingNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewAddKeywordTargetingPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "add-keyword-targeting" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewAddKeywordTargetingPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *AddKeywordTargetingPayloadTooLargeResponseBody {
+	body := &AddKeywordTargetingPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewAddKeywordTargetingUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "add-keyword-targeting" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewAddKeywordTargetingUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *AddKeywordTargetingUnauthorizedResponseBody {
+	body := &AddKeywordTargetingUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewListMetaAdSetsBadRequestResponseBody builds the HTTP response body from
 // the result of the "list-meta-ad-sets" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -10465,6 +10683,22 @@ func NewRemoveKeywordTargetingPayload(body *RemoveKeywordTargetingRequestBody, p
 	return v
 }
 
+// NewAddKeywordTargetingPayload builds a lfx-v2-campaign-service-briefs
+// service add-keyword-targeting endpoint payload.
+func NewAddKeywordTargetingPayload(body *AddKeywordTargetingRequestBody, projectID string, briefID string, campaignID string, bearerToken *string) *lfxv2campaignservicebriefs.AddKeywordTargetingPayload {
+	v := &lfxv2campaignservicebriefs.AddKeywordTargetingPayload{}
+	v.Keywords = make([]string, len(body.Keywords))
+	for i, val := range body.Keywords {
+		v.Keywords[i] = val
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.CampaignID = campaignID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
 // NewListMetaAdSetsPayload builds a lfx-v2-campaign-service-briefs service
 // list-meta-ad-sets endpoint payload.
 func NewListMetaAdSetsPayload(projectID string, briefID string, campaignID string, window *string, bearerToken *string) *lfxv2campaignservicebriefs.ListMetaAdSetsPayload {
@@ -10923,6 +11157,29 @@ func ValidateRemoveKeywordTargetingRequestBody(body *RemoveKeywordTargetingReque
 	if body.Revision != nil {
 		if utf8.RuneCountInString(*body.Revision) > 128 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.revision", *body.Revision, utf8.RuneCountInString(*body.Revision), 128, false))
+		}
+	}
+	return
+}
+
+// ValidateAddKeywordTargetingRequestBody runs the validations defined on
+// AddKeywordTargetingRequestBody
+func ValidateAddKeywordTargetingRequestBody(body *AddKeywordTargetingRequestBody) (err error) {
+	if body.Keywords == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("keywords", "body"))
+	}
+	if len(body.Keywords) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.keywords", body.Keywords, len(body.Keywords), 1, true))
+	}
+	if len(body.Keywords) > 20 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.keywords", body.Keywords, len(body.Keywords), 20, false))
+	}
+	for _, e := range body.Keywords {
+		if utf8.RuneCountInString(e) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.keywords[*]", e, utf8.RuneCountInString(e), 1, true))
+		}
+		if utf8.RuneCountInString(e) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.keywords[*]", e, utf8.RuneCountInString(e), 200, false))
 		}
 	}
 	return

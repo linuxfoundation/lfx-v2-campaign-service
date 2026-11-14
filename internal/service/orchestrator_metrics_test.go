@@ -514,6 +514,17 @@ func (d upstreamCapableDispatcher) RemoveKeywordTargeting(_ context.Context, _ s
 	return out, nil
 }
 
+func (d upstreamCapableDispatcher) AddKeywordTargeting(_ context.Context, _ string, _ model.Provider, _ *model.Campaign, keywords []string) ([]model.KeywordTargetingOutcome, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	out := make([]model.KeywordTargetingOutcome, 0, len(keywords))
+	for _, k := range keywords {
+		out = append(out, model.KeywordTargetingOutcome{Keyword: k, Outcome: model.KeywordOutcomeApplied})
+	}
+	return out, nil
+}
+
 // ApplyKeywordActions returns ONE outcome per requested action, which is the contract the
 // orchestrator enforces. A fake returning an empty slice makes every "success" call fail with
 // unconfirmedOutcomeCountError, so a test that does not assert the success arm's error would
@@ -780,6 +791,14 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opRemoveKeywordTargeting,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.RemoveKeywordTargeting(ctx, "p1", platform, campaign, []model.KeywordTargetingRemoval{{Keyword: "k"}}, "rev")
+				return err
+			},
+		},
+		{
+			name: "add keyword targeting",
+			op:   opAddKeywordTargeting,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.AddKeywordTargeting(ctx, "p1", platform, campaign, []string{"kubernetes"})
 				return err
 			},
 		},
@@ -1678,6 +1697,13 @@ func (d lockingKeywordDispatcher) RemoveKeywordTargeting(ctx context.Context, p 
 	return upstreamCapableDispatcher{}.RemoveKeywordTargeting(ctx, p, pl, c, removals, rev)
 }
 
+func (d lockingKeywordDispatcher) AddKeywordTargeting(ctx context.Context, p string, pl model.Provider, c *model.Campaign, keywords []string) ([]model.KeywordTargetingOutcome, error) {
+	if err := d.lockThen(ctx); err != nil {
+		return nil, err
+	}
+	return upstreamCapableDispatcher{}.AddKeywordTargeting(ctx, p, pl, c, keywords)
+}
+
 func (d lockingKeywordDispatcher) AddNegativeKeywords(ctx context.Context, p string, pl model.Provider, c *model.Campaign, keywords []model.NegativeKeyword, rev string) ([]model.NegativeKeywordOutcome, error) {
 	if err := d.lockThen(ctx); err != nil {
 		return nil, err
@@ -1699,6 +1725,10 @@ func TestKeywordTargetingLockIsNotUpstream(t *testing.T) {
 		},
 		opNegativeKeywords: func(ctx context.Context, o *Orchestrator) error {
 			_, err := o.AddNegativeKeywords(ctx, "p1", platform, campaign, []model.NegativeKeyword{{Text: "free", MatchType: "Broad"}}, "rev")
+			return err
+		},
+		opAddKeywordTargeting: func(ctx context.Context, o *Orchestrator) error {
+			_, err := o.AddKeywordTargeting(ctx, "p1", platform, campaign, []string{"kubernetes"})
 			return err
 		},
 	}

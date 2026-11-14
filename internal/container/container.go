@@ -640,16 +640,21 @@ func (c *Container) bindStatsJobLease(dispatchers map[model.Provider]service.Pla
 	c.mu.Unlock()
 }
 
-// bindKeywordTargetingWriteLock gives the Reddit dispatcher the Postgres advisory lock that
-// serializes its whole-targeting keyword writes per ad group across replicas (see
-// domain.KeywordTargetingWriteLock). Both wiring paths call it with the pool they built the
-// dispatchers on; without it the dispatcher's in-process lock serializes one replica only.
+// bindKeywordTargetingWriteLock gives the Reddit and X dispatchers the Postgres advisory lock that
+// serializes their keyword targeting writes across replicas (see domain.KeywordTargetingWriteLock):
+// Reddit's whole-targeting writes per ad group, and X's positive keyword add per line item (#564
+// gap 12). Both wiring paths call it with the pool they built the dispatchers on; without it each
+// dispatcher's in-process lock serializes one replica only.
 func bindKeywordTargetingWriteLock(dispatchers map[model.Provider]service.PlatformDispatcher, pool *postgres.Pool) {
-	rd, ok := dispatchers[model.ProviderRedditAds].(*dispatch.RedditDispatcher)
-	if !ok || pool == nil {
+	if pool == nil {
 		return
 	}
-	rd.SetKeywordTargetingWriteLock(postgres.NewKeywordTargetingWriteLock(pool))
+	if rd, ok := dispatchers[model.ProviderRedditAds].(*dispatch.RedditDispatcher); ok {
+		rd.SetKeywordTargetingWriteLock(postgres.NewKeywordTargetingWriteLock(pool))
+	}
+	if td, ok := dispatchers[model.ProviderTwitterAds].(*dispatch.TwitterDispatcher); ok {
+		td.SetKeywordTargetingWriteLock(postgres.NewKeywordTargetingWriteLock(pool))
+	}
 }
 
 // bindRedditReportLedger gives the Reddit dispatcher the Postgres ledger its reporting budget

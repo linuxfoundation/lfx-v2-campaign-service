@@ -4892,6 +4892,145 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-targeting/additions:
+        post:
+            tags:
+                - lfx-v2-campaign-service-briefs
+            summary: add-keyword-targeting lfx-v2-campaign-service-briefs
+            description: 'Add POSITIVE keywords to the keyword TARGETING of an X campaign (#564 gap 12) — the counterpart of remove-keyword-targeting. Each keyword becomes one BROAD_KEYWORD targeting criterion (operator_type EQ) on the ONE line item this service created for the campaign, the criterion an X create sends for twitterConfig.keywords. Any platform but X is **400** (Reddit''s positive add is not built). A MUTATION on a live paid campaign that can WIDEN delivery, guarded like the removal, all before X is mutated: the batch, the campaign''s provisioning, its recorded ad account (a row that records none is refused, never assumed) and the account''s match with the project''s connection; then the line item is read and must report THIS campaign, and its targeting criteria are listed completely. It persists nothing, so it takes no If-Match. KEYWORDS follow the create-time rules: each is trimmed, must be 1-80 characters with no control character, and a case-insensitive repeat is dropped (first spelling kept); 1 to 20 distinct keywords per request (each is its own paced POST). THE LINE ITEM IS CAPPED AT 60 TARGETING CRITERIA, the per-create cap, counting every live criterion it already holds (locations, languages, keywords, negatives, audiences …) plus the keywords this request would send: over it is **409** with nothing sent. IDEMPOTENT: a keyword the line item already targets as a live broad keyword (compared ignoring case and repeated whitespace) is ALREADY_PRESENT, reports that criterion''s id, and is not sent again. One POST per remaining keyword, in order, paced and sent ONCE (never retried on a 429), each APPLIED (+ criterion id), FAILED (NOT_SENT, REJECTED) or UNCONFIRMED. A per-line-item lock shared by every replica is held from the criteria read through the last POST, so two LFX adds to one line item never both pass the cap or both send the same keyword; after an UNCONFIRMED POST it is kept a further 15 seconds. OFF until TWITTER_KEYWORD_ADD_ENABLED is "true" (answered 400 like an unsupported platform), because no positive criterion has yet been added to a live line item. **400** for a malformed batch, an unsupported platform or the gate off. **409** as for the removal (unprovisioned, a different or unrecorded ad account, an unusable connection, a line item this service did not record or X no longer reports under this campaign, unreadable targeting), the 60-criterion cap, or another LFX add to the same line item still in progress after a short wait. **503** only when no keyword got a definite answer; its MESSAGE separates a DEFINITE failure (nothing was added — retry) from an UNCONFIRMED one (read the targeting again).'
+            operationId: lfx-v2-campaign-service-briefs#add-keyword-targeting
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+                - name: brief_id
+                  in: path
+                  description: Brief UUID
+                  required: true
+                  schema:
+                    type: string
+                    description: Brief UUID
+                    example: cdf0e840-3b22-4235-92e3-c308c3afdb40
+                    format: uuid
+                  example: cdf0e840-3b22-4235-92e3-c308c3afdb40
+                - name: campaign_id
+                  in: path
+                  description: Campaign UUID
+                  required: true
+                  schema:
+                    type: string
+                    description: Campaign UUID
+                    example: 56b1d054-9b0d-4b8d-ae99-018893df2bd5
+                    format: uuid
+                  example: 56b1d054-9b0d-4b8d-ae99-018893df2bd5
+            requestBody:
+                description: Request body for add-keyword-targeting.
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/AddKeywordTargetingRequestBody'
+                        example:
+                            keywords:
+                                - kubernetes
+                                - cloud native
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/KeywordTargetingAdditions'
+                            example:
+                                applied_count: 2
+                                campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                                results:
+                                    - criterion_id: 2kzxf
+                                      keyword: kubernetes
+                                      outcome: APPLIED
+                                    - criterion_id: 2kzxg
+                                      keyword: cloud native
+                                      outcome: ALREADY_PRESENT
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-targeting/removals:
         post:
             tags:
@@ -18795,6 +18934,29 @@ components:
                 - clicks
                 - campaign_count
                 - unmeasured_campaigns
+        AddKeywordTargetingRequestBody:
+            type: object
+            properties:
+                keywords:
+                    type: array
+                    items:
+                        type: string
+                        example: b
+                        minLength: 1
+                        maxLength: 200
+                    description: 'The keywords to add, as broad keywords: 1-80 characters each after trimming, no control character.'
+                    example:
+                        - kubernetes
+                        - cloud native
+                    minItems: 1
+                    maxItems: 20
+            description: Request body for add-keyword-targeting.
+            example:
+                keywords:
+                    - kubernetes
+                    - cloud native
+            required:
+                - keywords
         AddNegativeKeywordsRequestBody:
             type: object
             properties:
@@ -25601,6 +25763,78 @@ components:
                 - platform
                 - targeting_entity_id
                 - keywords
+        KeywordTargetingAdditionResult:
+            type: object
+            properties:
+                criterion_id:
+                    type: string
+                    description: 'The X targeting criterion that holds the keyword: the one this request created (APPLIED), or the one the line item already had (ALREADY_PRESENT). Absent for FAILED and UNCONFIRMED.'
+                    example: 2kzxf
+                error_code:
+                    type: string
+                    description: 'Why a keyword is FAILED: NOT_SENT (the request carrying it was never sent) or REJECTED (X refused it). X''s own text is never returned.'
+                    example: NOT_SENT
+                keyword:
+                    type: string
+                    description: 'The keyword this result answers, as normalized: trimmed, first spelling of a case-insensitive duplicate kept.'
+                    example: kubernetes
+                outcome:
+                    type: string
+                    description: APPLIED — added by this request; ALREADY_PRESENT — the line item already targets it as a broad keyword, so nothing was sent; FAILED — definitely not added (see error_code); UNCONFIRMED — may have been added, read the keyword targeting again before retrying.
+                    example: UNCONFIRMED
+                    enum:
+                        - APPLIED
+                        - ALREADY_PRESENT
+                        - FAILED
+                        - UNCONFIRMED
+            example:
+                criterion_id: 2kzxf
+                error_code: NOT_SENT
+                keyword: kubernetes
+                outcome: UNCONFIRMED
+            required:
+                - keyword
+                - outcome
+        KeywordTargetingAdditions:
+            type: object
+            properties:
+                applied_count:
+                    type: integer
+                    description: 'How many requested keywords the line item now targets: results whose outcome is APPLIED or ALREADY_PRESENT.'
+                    example: 2
+                    format: int64
+                campaign_id:
+                    type: string
+                    description: The campaign whose targeting was changed
+                    example: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                results:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/KeywordTargetingAdditionResult'
+                    description: Exactly one entry per DISTINCT requested keyword after normalization (trimmed; a case-insensitive repeat is dropped, first spelling kept), in request order. One POST per keyword sent, each with its own outcome.
+                    example:
+                        - criterion_id: 2kzxf
+                          error_code: NOT_SENT
+                          keyword: kubernetes
+                          outcome: UNCONFIRMED
+                        - criterion_id: 2kzxf
+                          error_code: NOT_SENT
+                          keyword: kubernetes
+                          outcome: UNCONFIRMED
+            example:
+                applied_count: 2
+                campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                results:
+                    - criterion_id: 2kzxf
+                      keyword: kubernetes
+                      outcome: APPLIED
+                    - criterion_id: 2kzxg
+                      keyword: cloud native
+                      outcome: ALREADY_PRESENT
+            required:
+                - campaign_id
+                - results
+                - applied_count
         KeywordTargetingEntry:
             type: object
             properties:

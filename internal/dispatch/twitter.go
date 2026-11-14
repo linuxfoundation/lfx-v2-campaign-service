@@ -203,6 +203,14 @@ type TwitterDispatcher struct {
 	// asset-referencing config is refused as "store not configured" and the reserver is a no-op.
 	creatives creativeAssetReader
 	assets    *AssetReserver
+	// targetingLock serializes the positive keyword add (AddKeywordTargeting, #564 gap 12) per
+	// line item, from the criteria read that decides ALREADY_PRESENT and the criteria cap through
+	// the last POST: in-process by default, the Postgres advisory lock Reddit's whole-targeting
+	// writes use once the container binds it (SetKeywordTargetingWriteLock), so replicas
+	// serialize too. targetingCooldown is how long it is kept after an UNCONFIRMED POST
+	// (domain.KeywordTargetingUnconfirmedCooldown); a field only so tests can shorten it.
+	targetingLock     domain.KeywordTargetingWriteLock
+	targetingCooldown time.Duration
 }
 
 // SetStatsJobLease binds the cross-pod stats-job lease the audience read and the account
@@ -226,7 +234,13 @@ func NewTwitterDispatcher(repo connReader, enc domain.Encryptor, opts ...twitter
 	// the caller's options: two projects whose connections point at one ad account then pace
 	// (and reserve stats-job batches) against the same state. See twitter.AccountPacers.
 	opts = append(opts[:len(opts):len(opts)], twitter.WithAccountPacers(twitter.NewAccountPacers()))
-	return &TwitterDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts, audience: newTwitterAudienceGuard()}
+	d := &TwitterDispatcher{opts: opts}
+	d.creds = newCredsSource(repo, enc)
+	d.clients = newClientCache()
+	d.audience = newTwitterAudienceGuard()
+	d.targetingLock = newLocalTargetingLock(domain.KeywordTargetingLockWait)
+	d.targetingCooldown = domain.KeywordTargetingUnconfirmedCooldown
+	return d
 }
 
 // cachedTwitterClient returns the client for this connection, building it only when there is

@@ -44,6 +44,7 @@ type Endpoints struct {
 	AddNegativeKeywords    goa.Endpoint
 	GetKeywordTargeting    goa.Endpoint
 	RemoveKeywordTargeting goa.Endpoint
+	AddKeywordTargeting    goa.Endpoint
 	ListMetaAdSets         goa.Endpoint
 	ListMetaAds            goa.Endpoint
 	ToggleMetaAdSetStatus  goa.Endpoint
@@ -93,6 +94,7 @@ func NewEndpoints(s Service) *Endpoints {
 		AddNegativeKeywords:    NewAddNegativeKeywordsEndpoint(s, a.JWTAuth),
 		GetKeywordTargeting:    NewGetKeywordTargetingEndpoint(s, a.JWTAuth),
 		RemoveKeywordTargeting: NewRemoveKeywordTargetingEndpoint(s, a.JWTAuth),
+		AddKeywordTargeting:    NewAddKeywordTargetingEndpoint(s, a.JWTAuth),
 		ListMetaAdSets:         NewListMetaAdSetsEndpoint(s, a.JWTAuth),
 		ListMetaAds:            NewListMetaAdsEndpoint(s, a.JWTAuth),
 		ToggleMetaAdSetStatus:  NewToggleMetaAdSetStatusEndpoint(s, a.JWTAuth),
@@ -140,6 +142,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.AddNegativeKeywords = m(e.AddNegativeKeywords)
 	e.GetKeywordTargeting = m(e.GetKeywordTargeting)
 	e.RemoveKeywordTargeting = m(e.RemoveKeywordTargeting)
+	e.AddKeywordTargeting = m(e.AddKeywordTargeting)
 	e.ListMetaAdSets = m(e.ListMetaAdSets)
 	e.ListMetaAds = m(e.ListMetaAds)
 	e.ToggleMetaAdSetStatus = m(e.ToggleMetaAdSetStatus)
@@ -797,6 +800,29 @@ func NewRemoveKeywordTargetingEndpoint(s Service, authJWTFn security.AuthJWTFunc
 			return nil, err
 		}
 		return s.RemoveKeywordTargeting(ctx, p)
+	}
+}
+
+// NewAddKeywordTargetingEndpoint returns an endpoint function that calls the
+// method "add-keyword-targeting" of service "lfx-v2-campaign-service-briefs".
+func NewAddKeywordTargetingEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*AddKeywordTargetingPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.AddKeywordTargeting(ctx, p)
 	}
 }
 

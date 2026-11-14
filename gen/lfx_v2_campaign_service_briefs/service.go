@@ -698,6 +698,43 @@ type Service interface {
 	// answered. Its MESSAGE separates a DEFINITE failure (nothing was removed —
 	// retry) from an UNCONFIRMED one (read the targeting again before retrying).
 	RemoveKeywordTargeting(context.Context, *RemoveKeywordTargetingPayload) (res *KeywordTargetingRemovals, err error)
+	// Add POSITIVE keywords to the keyword TARGETING of an X campaign (#564 gap
+	// 12) — the counterpart of remove-keyword-targeting. Each keyword becomes one
+	// BROAD_KEYWORD targeting criterion (operator_type EQ) on the ONE line item
+	// this service created for the campaign, the criterion an X create sends for
+	// twitterConfig.keywords. Any platform but X is **400** (Reddit's positive add
+	// is not built). A MUTATION on a live paid campaign that can WIDEN delivery,
+	// guarded like the removal, all before X is mutated: the batch, the campaign's
+	// provisioning, its recorded ad account (a row that records none is refused,
+	// never assumed) and the account's match with the project's connection; then
+	// the line item is read and must report THIS campaign, and its targeting
+	// criteria are listed completely. It persists nothing, so it takes no
+	// If-Match. KEYWORDS follow the create-time rules: each is trimmed, must be
+	// 1-80 characters with no control character, and a case-insensitive repeat is
+	// dropped (first spelling kept); 1 to 20 distinct keywords per request (each
+	// is its own paced POST). THE LINE ITEM IS CAPPED AT 60 TARGETING CRITERIA,
+	// the per-create cap, counting every live criterion it already holds
+	// (locations, languages, keywords, negatives, audiences …) plus the keywords
+	// this request would send: over it is **409** with nothing sent. IDEMPOTENT: a
+	// keyword the line item already targets as a live broad keyword (compared
+	// ignoring case and repeated whitespace) is ALREADY_PRESENT, reports that
+	// criterion's id, and is not sent again. One POST per remaining keyword, in
+	// order, paced and sent ONCE (never retried on a 429), each APPLIED (+
+	// criterion id), FAILED (NOT_SENT, REJECTED) or UNCONFIRMED. A per-line-item
+	// lock shared by every replica is held from the criteria read through the last
+	// POST, so two LFX adds to one line item never both pass the cap or both send
+	// the same keyword; after an UNCONFIRMED POST it is kept a further 15 seconds.
+	// OFF until TWITTER_KEYWORD_ADD_ENABLED is "true" (answered 400 like an
+	// unsupported platform), because no positive criterion has yet been added to a
+	// live line item. **400** for a malformed batch, an unsupported platform or
+	// the gate off. **409** as for the removal (unprovisioned, a different or
+	// unrecorded ad account, an unusable connection, a line item this service did
+	// not record or X no longer reports under this campaign, unreadable
+	// targeting), the 60-criterion cap, or another LFX add to the same line item
+	// still in progress after a short wait. **503** only when no keyword got a
+	// definite answer; its MESSAGE separates a DEFINITE failure (nothing was added
+	// — retry) from an UNCONFIRMED one (read the targeting again).
+	AddKeywordTargeting(context.Context, *AddKeywordTargetingPayload) (res *KeywordTargetingAdditions, err error)
 	// Read the AD SETS of a Meta campaign live (LFXV2-2665): each ad set's name,
 	// configured and effective status, bid strategy and own budget, with its
 	// impressions, clicks, spend and CTR over the window. A pure read — the
@@ -866,7 +903,23 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [41]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "list-creative-assets", "get-creative-asset", "get-asset-plan", "delete-creative-asset", "create-campaigns", "create-send-workflow", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "list-meta-ad-sets", "list-meta-ads", "toggle-meta-ad-set-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
+var MethodNames = [42]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "list-creative-assets", "get-creative-asset", "get-asset-plan", "delete-creative-asset", "create-campaigns", "create-send-workflow", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "add-keyword-targeting", "list-meta-ad-sets", "list-meta-ads", "toggle-meta-ad-set-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
+
+// AddKeywordTargetingPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service add-keyword-targeting method.
+type AddKeywordTargetingPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+	// The keywords to add, as broad keywords: 1-80 characters each after trimming,
+	// no control character.
+	Keywords []string
+}
 
 // AddNegativeKeywordsPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service add-negative-keywords method.
@@ -2363,6 +2416,38 @@ type KeywordTargeting struct {
 	// targeting has changed since, so a removal is never applied to a targeting
 	// the caller did not see. Absent on X.
 	Revision *string
+}
+
+type KeywordTargetingAdditionResult struct {
+	// The keyword this result answers, as normalized: trimmed, first spelling of a
+	// case-insensitive duplicate kept.
+	Keyword string
+	// The X targeting criterion that holds the keyword: the one this request
+	// created (APPLIED), or the one the line item already had (ALREADY_PRESENT).
+	// Absent for FAILED and UNCONFIRMED.
+	CriterionID *string
+	// APPLIED — added by this request; ALREADY_PRESENT — the line item already
+	// targets it as a broad keyword, so nothing was sent; FAILED — definitely not
+	// added (see error_code); UNCONFIRMED — may have been added, read the keyword
+	// targeting again before retrying.
+	Outcome string
+	// Why a keyword is FAILED: NOT_SENT (the request carrying it was never sent)
+	// or REJECTED (X refused it). X's own text is never returned.
+	ErrorCode *string
+}
+
+// KeywordTargetingAdditions is the result type of the
+// lfx-v2-campaign-service-briefs service add-keyword-targeting method.
+type KeywordTargetingAdditions struct {
+	// The campaign whose targeting was changed
+	CampaignID string
+	// Exactly one entry per DISTINCT requested keyword after normalization
+	// (trimmed; a case-insensitive repeat is dropped, first spelling kept), in
+	// request order. One POST per keyword sent, each with its own outcome.
+	Results []*KeywordTargetingAdditionResult
+	// How many requested keywords the line item now targets: results whose outcome
+	// is APPLIED or ALREADY_PRESENT.
+	AppliedCount int
 }
 
 type KeywordTargetingEntry struct {

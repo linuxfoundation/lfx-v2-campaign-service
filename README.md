@@ -296,6 +296,16 @@ openssl rand -base64 32
   exists. It names no account resource; it keeps a line-item parameter no
   live create has sent off the shared ad account. The chart sets it to
   `"false"` (`app.environment.TWITTER_AUDIENCE_EXPANSION_ENABLED.value`).
+- `TWITTER_KEYWORD_ADD_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to the positive keyword add lever on an existing X campaign
+  (#564 gap 12): `POST .../campaigns/{campaign_id}/keyword-targeting/additions`
+  (`add-keyword-targeting`), one `BROAD_KEYWORD` targeting criterion
+  (`operator_type` `EQ`) per keyword on the line item this service created.
+  Only the exact value `true` enables it; anything else fails closed, and the
+  endpoint answers 400 before X is contacted. It names no account resource
+  (role gating is the removal's: `campaign_manager`); it keeps a write no live
+  call has made off the shared ad account. The chart sets it to `"false"`
+  (`app.environment.TWITTER_KEYWORD_ADD_ENABLED.value`).
 - `META_CONVERSIONS_METRICS_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to conversions in the Meta metrics read (#550): for a
   campaign this service created with the conversions objective, the Insights
