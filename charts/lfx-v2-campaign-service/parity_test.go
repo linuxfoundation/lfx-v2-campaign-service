@@ -124,6 +124,11 @@ const redditCustomAudiencesPath = "/projects/:projectId/reddit-ads/custom-audien
 // TestTwitterCustomAudiencesIsAMarketingOpsRead pins that.
 const twitterCustomAudiencesPath = "/projects/:projectId/twitter-ads/custom-audiences"
 
+// microsoftRemarketingListsPath is the Microsoft remarketing-list picker (#563). It lists every
+// foundation's remarketing lists on the shared LF Microsoft Advertising account, so it is ruled by
+// marketing-ops-api only, and TestMicrosoftRemarketingListsIsAMarketingOpsRead pins that.
+const microsoftRemarketingListsPath = "/projects/:projectId/microsoft-ads/remarketing-lists"
+
 // linkedInAudiencesPath and linkedInConversionsPath are the LinkedIn picker reads (#552). They
 // read the account a LinkedIn create uses, the LF system account for every project without its
 // own connection, so they are ruled by marketing-ops-api only.
@@ -133,7 +138,7 @@ const (
 )
 
 // marketingOpsPaths is every path the marketing-ops-api rule must hold, in order, and nothing else.
-var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, redditCustomAudiencesPath, twitterCustomAudiencesPath, linkedInAudiencesPath, linkedInConversionsPath, metaCustomAudiencesPath}
+var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, redditCustomAudiencesPath, twitterCustomAudiencesPath, microsoftRemarketingListsPath, linkedInAudiencesPath, linkedInConversionsPath, metaCustomAudiencesPath}
 
 // ruleBlock isolates one rendered Heimdall rule (from its `- id: "<id>"` line up to
 // the next `- id:` or EOF) so path/authorizer extraction is scoped to a SINGLE rule.
@@ -274,6 +279,26 @@ func TestTwitterCustomAudiencesIsAMarketingOpsRead(t *testing.T) {
 	}
 	if !matched {
 		t.Errorf("%s rule no longer matches %s, the campaign_manager X audience insights read", projectAPIRuleID, insights)
+	}
+}
+
+// TestMicrosoftRemarketingListsIsAMarketingOpsRead pins the same for the Microsoft
+// remarketing-list picker (#563): it lists every foundation's lists on the shared LF Microsoft
+// Advertising account, so a campaign_manager (executive_director included) must not reach it. The
+// sibling microsoft-ads/audience and microsoft-ads/keywords reads stay project-api paths.
+func TestMicrosoftRemarketingListsIsAMarketingOpsRead(t *testing.T) {
+	assertMarketingOpsRead(t, microsoftRemarketingListsPath, "/projects/p1/microsoft-ads/remarketing-lists")
+	ruleset := helmTemplate(t, "templates/ruleset.yaml")
+	for _, sibling := range []string{"/projects/p1/microsoft-ads/audience", "/projects/p1/microsoft-ads/keywords"} {
+		matched := false
+		for _, p := range rulePatterns(t, ruleset, projectAPIRuleID) {
+			if ruleMatcher(t, p).MatchString(sibling) {
+				matched = true
+			}
+		}
+		if !matched {
+			t.Errorf("%s rule no longer matches %s, a campaign_manager read", projectAPIRuleID, sibling)
+		}
 	}
 }
 
@@ -723,6 +748,8 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/microsoft-ads/keywords/x", false},
 		{"/projects/p1/microsoft-ads/campaign-ref", true},
 		{"/projects/p1/microsoft-ads/campaign-ref/x", false},
+		{"/projects/p1/microsoft-ads/remarketing-lists", true},
+		{"/projects/p1/microsoft-ads/remarketing-lists/x", false},
 		// The Meta, Reddit, X and LinkedIn audience reads (LFXV2-2665).
 		{"/projects/p1/meta-ads/audience", true},
 		{"/projects/p1/meta-ads/audience/x", false},

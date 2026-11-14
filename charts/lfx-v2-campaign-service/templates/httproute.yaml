@@ -19,7 +19,8 @@ spec:
     # /projects/{projectId}/…, gated on the project `campaign_manager` relation,
     # except google-ads/conversion-actions, google-ads/audiences,
     # google-ads/user-lists, reddit-ads/custom-audiences, twitter-ads/custom-audiences,
-    # linkedin-ads/audiences, linkedin-ads/conversions and meta-ads/custom-audiences, gated on
+    # microsoft-ads/remarketing-lists, linkedin-ads/audiences, linkedin-ads/conversions and
+    # meta-ads/custom-audiences, gated on
     # `global_marketing_ops`).
     #
     # project-service owns `PathPrefix: /projects/`, so we cannot claim that
@@ -42,8 +43,8 @@ spec:
     # The trailing wildcard is per-family and MUST mirror the RuleSet
     # (ruleset.yaml `project-api`, plus `marketing-ops-api` for
     # google-ads/conversion-actions, google-ads/audiences, google-ads/user-lists,
-    # reddit-ads/custom-audiences, twitter-ads/custom-audiences, linkedin-ads/audiences|conversions
-    # and meta-ads/custom-audiences) exactly, or the route would forward sub-paths
+    # reddit-ads/custom-audiences, twitter-ads/custom-audiences, microsoft-ads/remarketing-lists,
+    # linkedin-ads/audiences|conversions and meta-ads/custom-audiences) exactly, or the route would forward sub-paths
     # Heimdall has no rule for (a route/rule parity violation — an unruled path is
     # denied, or worse). Only briefs/jobs/hubspot carry `**` in the RuleSet, so
     # only they get the free `(/.*)?` tail here — which is also what routes every
@@ -51,7 +52,7 @@ spec:
     # (campaigns/{id}/meta-ad-sets[/{adSetId}/status|/{adSetId}/ads], LFXV2-2665), with no branch of its own. The connection-* family is ruled
     # for exactly the base, /test, and /set-credential sub-paths;
     # google-ads/keywords|audience|audiences|campaign-ref|geo-targets|user-lists|conversion-actions,
-    # microsoft-ads/keywords|audience|campaign-ref,
+    # microsoft-ads/keywords|audience|campaign-ref|remarketing-lists,
     # (linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience, linkedin-ads/audiences|conversions,
     # meta-ads/custom-audiences, reddit-ads/keywords|custom-audiences, twitter-ads/custom-audiences
     # and (meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref are
@@ -94,7 +95,7 @@ spec:
     - matches:
       - path:
           type: RegularExpression
-          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads|reddit-ads)(/(test|set-credential|accounts|account-monitor))?|connection-hubspot(/(test|set-credential|emails|campaigns|account-monitor))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|send-workflows|google-ads/(keywords|audience|audiences|campaign-ref|geo-targets|user-lists|conversion-actions)|microsoft-ads/(keywords|audience|campaign-ref)|(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience|linkedin-ads/(audiences|conversions)|meta-ads/custom-audiences|reddit-ads/(keywords|custom-audiences)|twitter-ads/custom-audiences|(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run|custom/(interpret|preview|create)))$
+          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads|reddit-ads)(/(test|set-credential|accounts|account-monitor))?|connection-hubspot(/(test|set-credential|emails|campaigns|account-monitor))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|send-workflows|google-ads/(keywords|audience|audiences|campaign-ref|geo-targets|user-lists|conversion-actions)|microsoft-ads/(keywords|audience|campaign-ref|remarketing-lists)|(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience|linkedin-ads/(audiences|conversions)|meta-ads/custom-audiences|reddit-ads/(keywords|custom-audiences)|twitter-ads/custom-audiences|(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run|custom/(interpret|preview|create)))$
       {{- if .Values.heimdall.enabled }}
       filters:
         - type: ExtensionRef

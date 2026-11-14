@@ -1583,6 +1583,30 @@ Not verified live: no Microsoft call was made. The dispatcher keeps all three fi
 `MICROSOFT_AUDIENCES_ENABLED` (default off). The lists belong to the shared LF account, so they
 also need `global_marketing_ops` (`service.MicrosoftMarketingOpsInputs`).
 
+## Remarketing-list picker read (`remarketing_lists.go`, #563 gap 4 follow-up)
+
+`ListRemarketingLists` is the read behind `GET /projects/{project_id}/microsoft-ads/remarketing-lists`
+(`list-microsoft-ads-remarketing-lists`), for picking `audienceIds` / `excludedAudienceIds`. It is
+the call `CheckRemarketingLists` makes, `POST Audiences/QueryByIds` with `Type: "RemarketingList"`,
+but with `AudienceIds: null`, which v13 documents as "every audience of the type". There is no
+paging, so the answer is complete. It is a read, retried on 429. Each row carries `Id`, `Name`,
+`Description`, `Scope`, and `MembershipDuration` and `SearchSize` when sent (nil otherwise, never
+0). An answer this client cannot believe is `ErrRemarketingListsMalformed` with no rows, and the
+service answers 503 with nothing partial: no `Audiences` array, a null entry, an id that is not the
+canonical spelling of a positive int64 or repeats, an entry of another type (the filter was not
+applied), more than 5,000 entries, or any partial error with a present code. A zero or null
+placeholder code is not an error (`audienceErrorCode`).
+
+The dispatcher (`internal/dispatch/microsoft_remarketing_lists.go`,
+`ListMicrosoftRemarketingLists`) answers `ErrTargetingLookupUnsupported` (400 "not supported")
+before resolving anything unless `MICROSOFT_REMARKETING_LISTS_ENABLED` is exactly `"true"`, then
+resolves credentials as a create does (`creds.resolve`, LF system fallback included) and validates
+them with `validateMicrosoftConnection`, so every listed id is one a create for the project can
+send. The service (`internal/service/microsoft_ads_lookups.go`) sorts by name ignoring case, then
+id, and records the upstream call only when Microsoft was contacted. The shared LF account holds
+every foundation's lists, so the route is in the gateway's `marketing-ops-api` rule
+(`global_marketing_ops`), like the Reddit and X custom-audience pickers. Not verified live.
+
 ## Excluded countries, radius targets and campaign languages (`create_targeting.go`, #563 gaps 5-6)
 
 `ValidateCreateTargeting` holds the pure rules once, so the dispatcher's synchronous preflight and

@@ -938,6 +938,19 @@ type ListTwitterAdsCustomAudiencesResponseBody struct {
 	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
 }
 
+// ListMicrosoftAdsRemarketingListsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-remarketing-lists" endpoint HTTP response body.
+type ListMicrosoftAdsRemarketingListsResponseBody struct {
+	// The Microsoft Advertising account the lists were read from: the account a
+	// Microsoft create for this project uses
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The account's remarketing lists, sorted by name (ignoring case), then id
+	Lists []*MicrosoftAdsRemarketingListResponseBody `form:"lists,omitempty" json:"lists,omitempty" xml:"lists,omitempty"`
+	// How many lists are in `lists`
+	ListCount *int `form:"list_count,omitempty" json:"list_count,omitempty" xml:"list_count,omitempty"`
+}
+
 // GetMetaAdsAudienceResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body.
@@ -4739,6 +4752,72 @@ type ListTwitterAdsCustomAudiencesUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListMicrosoftAdsRemarketingListsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-remarketing-lists" endpoint HTTP response body for the
+// "BadRequest" error.
+type ListMicrosoftAdsRemarketingListsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMicrosoftAdsRemarketingListsServiceUnavailableResponseBody is the type
+// of the "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-remarketing-lists" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type ListMicrosoftAdsRemarketingListsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMicrosoftAdsRemarketingListsInternalServerErrorResponseBody is the type
+// of the "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-remarketing-lists" endpoint HTTP response body for the
+// "InternalServerError" error.
+type ListMicrosoftAdsRemarketingListsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMicrosoftAdsRemarketingListsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-remarketing-lists" endpoint HTTP response body for the
+// "NotFound" error.
+type ListMicrosoftAdsRemarketingListsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMicrosoftAdsRemarketingListsPayloadTooLargeResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-remarketing-lists" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type ListMicrosoftAdsRemarketingListsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMicrosoftAdsRemarketingListsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-remarketing-lists" endpoint HTTP response body for the
+// "Unauthorized" error.
+type ListMicrosoftAdsRemarketingListsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetMetaAdsAudienceBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -6983,6 +7062,25 @@ type TwitterAdsCustomAudienceResponseBody struct {
 	// X's reasons_not_targetable (for example TOO_SMALL or PROCESSING); only
 	// enum-shaped values are passed through. Empty when targetable.
 	ReasonsNotTargetable []string `form:"reasons_not_targetable,omitempty" json:"reasons_not_targetable,omitempty" xml:"reasons_not_targetable,omitempty"`
+}
+
+// MicrosoftAdsRemarketingListResponseBody is used to define fields on response
+// body types.
+type MicrosoftAdsRemarketingListResponseBody struct {
+	// The remarketing list id, in exactly the form microsoftConfig.audienceIds and
+	// excludedAudienceIds accept. Send it as-is.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// The list's display name. Not an identifier; may be empty.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// The list's description, verbatim; may be empty.
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Microsoft's Scope, verbatim (Account or Customer); may be empty.
+	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
+	// Microsoft's MembershipDuration, in days. Absent when Microsoft sent none.
+	MembershipDuration *int `form:"membership_duration,omitempty" json:"membership_duration,omitempty" xml:"membership_duration,omitempty"`
+	// Microsoft's SearchSize: the list members reachable on Search. Absent when
+	// Microsoft sent none, which is not a size of 0.
+	SearchSize *int64 `form:"search_size,omitempty" json:"search_size,omitempty" xml:"search_size,omitempty"`
 }
 
 // MetaAdsAudienceBucketResponseBody is used to define fields on response body
@@ -12863,6 +12961,100 @@ func NewListTwitterAdsCustomAudiencesUnauthorized(body *ListTwitterAdsCustomAudi
 	return v
 }
 
+// NewListMicrosoftAdsRemarketingListsMicrosoftAdsRemarketingListsOK builds a
+// "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-remarketing-lists" endpoint result from a HTTP "OK"
+// response.
+func NewListMicrosoftAdsRemarketingListsMicrosoftAdsRemarketingListsOK(body *ListMicrosoftAdsRemarketingListsResponseBody) *lfxv2campaignserviceconnections.MicrosoftAdsRemarketingLists {
+	v := &lfxv2campaignserviceconnections.MicrosoftAdsRemarketingLists{
+		AccountID: *body.AccountID,
+		ListCount: *body.ListCount,
+	}
+	v.Lists = make([]*lfxv2campaignserviceconnections.MicrosoftAdsRemarketingList, len(body.Lists))
+	for i, val := range body.Lists {
+		if val == nil {
+			v.Lists[i] = nil
+			continue
+		}
+		v.Lists[i] = unmarshalMicrosoftAdsRemarketingListResponseBodyToLfxv2campaignserviceconnectionsMicrosoftAdsRemarketingList(val)
+	}
+
+	return v
+}
+
+// NewListMicrosoftAdsRemarketingListsBadRequest builds a
+// lfx-v2-campaign-service-connections service
+// list-microsoft-ads-remarketing-lists endpoint BadRequest error.
+func NewListMicrosoftAdsRemarketingListsBadRequest(body *ListMicrosoftAdsRemarketingListsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMicrosoftAdsRemarketingListsServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service
+// list-microsoft-ads-remarketing-lists endpoint ServiceUnavailable error.
+func NewListMicrosoftAdsRemarketingListsServiceUnavailable(body *ListMicrosoftAdsRemarketingListsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMicrosoftAdsRemarketingListsInternalServerError builds a
+// lfx-v2-campaign-service-connections service
+// list-microsoft-ads-remarketing-lists endpoint InternalServerError error.
+func NewListMicrosoftAdsRemarketingListsInternalServerError(body *ListMicrosoftAdsRemarketingListsInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMicrosoftAdsRemarketingListsNotFound builds a
+// lfx-v2-campaign-service-connections service
+// list-microsoft-ads-remarketing-lists endpoint NotFound error.
+func NewListMicrosoftAdsRemarketingListsNotFound(body *ListMicrosoftAdsRemarketingListsNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMicrosoftAdsRemarketingListsPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service
+// list-microsoft-ads-remarketing-lists endpoint PayloadTooLarge error.
+func NewListMicrosoftAdsRemarketingListsPayloadTooLarge(body *ListMicrosoftAdsRemarketingListsPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMicrosoftAdsRemarketingListsUnauthorized builds a
+// lfx-v2-campaign-service-connections service
+// list-microsoft-ads-remarketing-lists endpoint Unauthorized error.
+func NewListMicrosoftAdsRemarketingListsUnauthorized(body *ListMicrosoftAdsRemarketingListsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetMetaAdsAudienceMetaAdsAudienceOK builds a
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint result from a HTTP "OK" response.
@@ -16788,6 +16980,28 @@ func ValidateListTwitterAdsCustomAudiencesResponseBody(body *ListTwitterAdsCusto
 	for _, e := range body.Audiences {
 		if e != nil {
 			if err2 := validateTwitterAdsCustomAudienceResponseBody(e, "body.audiences[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateListMicrosoftAdsRemarketingListsResponseBody runs the validations
+// defined on ListMicrosoftAdsRemarketingListsResponseBody
+func ValidateListMicrosoftAdsRemarketingListsResponseBody(body *ListMicrosoftAdsRemarketingListsResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.Lists == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("lists", "body"))
+	}
+	if body.ListCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("list_count", "body"))
+	}
+	for _, e := range body.Lists {
+		if e != nil {
+			if err2 := validateMicrosoftAdsRemarketingListResponseBody(e, "body.lists[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -21694,6 +21908,82 @@ func ValidateListTwitterAdsCustomAudiencesUnauthorizedResponseBody(body *ListTwi
 	return
 }
 
+// ValidateListMicrosoftAdsRemarketingListsBadRequestResponseBody runs the
+// validations defined on ListMicrosoftAdsRemarketingListsBadRequestResponseBody
+func ValidateListMicrosoftAdsRemarketingListsBadRequestResponseBody(body *ListMicrosoftAdsRemarketingListsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMicrosoftAdsRemarketingListsServiceUnavailableResponseBody runs
+// the validations defined on
+// ListMicrosoftAdsRemarketingListsServiceUnavailableResponseBody
+func ValidateListMicrosoftAdsRemarketingListsServiceUnavailableResponseBody(body *ListMicrosoftAdsRemarketingListsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMicrosoftAdsRemarketingListsInternalServerErrorResponseBody runs
+// the validations defined on
+// ListMicrosoftAdsRemarketingListsInternalServerErrorResponseBody
+func ValidateListMicrosoftAdsRemarketingListsInternalServerErrorResponseBody(body *ListMicrosoftAdsRemarketingListsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMicrosoftAdsRemarketingListsNotFoundResponseBody runs the
+// validations defined on ListMicrosoftAdsRemarketingListsNotFoundResponseBody
+func ValidateListMicrosoftAdsRemarketingListsNotFoundResponseBody(body *ListMicrosoftAdsRemarketingListsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMicrosoftAdsRemarketingListsPayloadTooLargeResponseBody runs the
+// validations defined on
+// ListMicrosoftAdsRemarketingListsPayloadTooLargeResponseBody
+func ValidateListMicrosoftAdsRemarketingListsPayloadTooLargeResponseBody(body *ListMicrosoftAdsRemarketingListsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMicrosoftAdsRemarketingListsUnauthorizedResponseBody runs the
+// validations defined on
+// ListMicrosoftAdsRemarketingListsUnauthorizedResponseBody
+func ValidateListMicrosoftAdsRemarketingListsUnauthorizedResponseBody(body *ListMicrosoftAdsRemarketingListsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetMetaAdsAudienceBadRequestResponseBody runs the validations
 // defined on GetMetaAdsAudienceBadRequestResponseBody
 func ValidateGetMetaAdsAudienceBadRequestResponseBody(body *GetMetaAdsAudienceBadRequestResponseBody) (err error) {
@@ -24608,6 +24898,49 @@ func validateTwitterAdsCustomAudienceResponseBody(body *TwitterAdsCustomAudience
 	}
 	if body.ID != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern(path+".id", *body.ID, "^[A-Za-z0-9]{1,32}$"))
+	}
+	return
+}
+
+// ValidateMicrosoftAdsRemarketingListResponseBody runs the validations defined
+// on microsoft-ads-remarketing-list
+func ValidateMicrosoftAdsRemarketingListResponseBody(body *MicrosoftAdsRemarketingListResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.Description == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("description", "body"))
+	}
+	if body.Scope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("scope", "body"))
+	}
+	if body.ID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.id", *body.ID, "^[1-9][0-9]{0,18}$"))
+	}
+	return
+}
+
+// validateMicrosoftAdsRemarketingListResponseBody checks
+// microsoft-ads-remarketing-list and reports errors using the path supplied by
+// its caller
+func validateMicrosoftAdsRemarketingListResponseBody(body *MicrosoftAdsRemarketingListResponseBody, path string) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", path))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	if body.Description == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("description", path))
+	}
+	if body.Scope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("scope", path))
+	}
+	if body.ID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".id", *body.ID, "^[1-9][0-9]{0,18}$"))
 	}
 	return
 }

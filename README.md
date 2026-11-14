@@ -364,6 +364,16 @@ openssl rand -base64 32
   flag keeps shapes no live create has sent off the shared account. The chart
   sets it to `"false"`
   (`app.environment.MICROSOFT_BID_ADJUSTMENTS_ENABLED.value`).
+- `MICROSOFT_REMARKETING_LISTS_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to the remarketing-list picker read (#563,
+  `GET /projects/{project_id}/microsoft-ads/remarketing-lists`): every
+  remarketing list on the account a Microsoft create uses, for picking
+  `microsoftConfig.audienceIds` / `excludedAudienceIds`. Only the exact value
+  `true` enables it; anything else answers the read 400 "not supported" before
+  Microsoft is contacted. It lists every foundation's lists on the shared
+  account, so the gateway admits only `global_marketing_ops` to the route. The
+  chart sets it to `"false"`
+  (`app.environment.MICROSOFT_REMARKETING_LISTS_ENABLED.value`).
 - `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.demandGenAudience`, one
   existing Google Ads Audience on a Demand Gen ad group (#459). Only the

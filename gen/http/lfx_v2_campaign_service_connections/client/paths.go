@@ -269,6 +269,11 @@ func ListTwitterAdsCustomAudiencesLfxV2CampaignServiceConnectionsPath(projectID 
 	return fmt.Sprintf("/projects/%v/twitter-ads/custom-audiences", projectID)
 }
 
+// ListMicrosoftAdsRemarketingListsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-microsoft-ads-remarketing-lists HTTP endpoint.
+func ListMicrosoftAdsRemarketingListsLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/microsoft-ads/remarketing-lists", projectID)
+}
+
 // GetMetaAdsAudienceLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service get-meta-ads-audience HTTP endpoint.
 func GetMetaAdsAudienceLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/meta-ads/audience", projectID)

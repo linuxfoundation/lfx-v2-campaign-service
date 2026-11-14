@@ -286,6 +286,16 @@ const (
 	// them, notably that a device criterion can be ADDED to a new campaign.
 	EnvMicrosoftBidAdjustmentsEnabled = "MICROSOFT_BID_ADJUSTMENTS_ENABLED"
 
+	// EnvMicrosoftRemarketingListsEnabled opts a deployment IN to the remarketing-list picker read
+	// (#563 gap 4 follow-up, GET /projects/{project_id}/microsoft-ads/remarketing-lists): every
+	// remarketing list on the account a Microsoft create for the project uses, live from
+	// GetAudiencesByIds. Only the exact value "true" enables it; unset or any other value answers
+	// the read 400 "not supported" before Microsoft is contacted. The read lists every
+	// foundation's lists on the shared account, so the gateway admits only global_marketing_ops to
+	// it; the flag keeps an UNVERIFIED read (from the v13 reference) off until a live call confirms
+	// it.
+	EnvMicrosoftRemarketingListsEnabled = "MICROSOFT_REMARKETING_LISTS_ENABLED"
+
 	// EnvMicrosoftAdExtensionsEnabled opts a deployment IN to microsoftConfig.sitelinks and
 	// microsoftConfig.callouts (#563), created at create time as SitelinkAdExtension and
 	// CalloutAdExtension entries and associated with the new Search campaign. Only the exact value

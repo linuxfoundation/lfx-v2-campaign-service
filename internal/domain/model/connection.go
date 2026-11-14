@@ -551,6 +551,26 @@ type RedditCustomAudiences struct {
 	Truncated bool
 }
 
+// MicrosoftRemarketingList is one remarketing list on a Microsoft Advertising account (#563 gap 4
+// follow-up), for the microsoftConfig.audienceIds / excludedAudienceIds picker. Scope is
+// Microsoft's value verbatim (Account or Customer); MembershipDuration (days) and SearchSize are
+// nil when Microsoft sent none.
+type MicrosoftRemarketingList struct {
+	ID                 string
+	Name               string
+	Description        string
+	Scope              string
+	MembershipDuration *int
+	SearchSize         *int64
+}
+
+// MicrosoftRemarketingLists is the remarketing-list read on the account a Microsoft create for
+// the project uses. GetAudiencesByIds does not page, so the list is complete.
+type MicrosoftRemarketingLists struct {
+	AccountID string
+	Lists     []MicrosoftRemarketingList
+}
+
 // KeywordAction is one requested keyword mutation on a live campaign.
 type KeywordAction struct {
 	AdGroupID   string
