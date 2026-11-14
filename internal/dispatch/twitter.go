@@ -82,6 +82,12 @@ type twitterConfig struct {
 	// device platforms (#564 gap 9), behind the same TWITTER_CREATE_TARGETING_ENABLED flag. These
 	// are X's device platforms (iOS, Android, desktop), not the request's ad platforms.
 	Platforms []string `json:"platforms,omitempty"`
+	// Devices (DEVICE, values from GET targeting_criteria/devices), AgeBucket (one AGE bucket such
+	// as AGE_18_TO_34) and Gender (MALE or FEMALE, sent as X's GENDER 1 or 2) narrow the new line
+	// item too (#564 gap 9), behind the same TWITTER_CREATE_TARGETING_ENABLED flag.
+	Devices   []string `json:"devices,omitempty"`
+	AgeBucket string   `json:"ageBucket,omitempty"`
+	Gender    string   `json:"gender,omitempty"`
 	// AudienceExpansion (BROAD, DEFINED or EXPANDED) is sent as the new line item's
 	// audience_expansion (#564 gap 11, twitter_audience_expansion.go). Behind
 	// TWITTER_AUDIENCE_EXPANSION_ENABLED; omitted, X applies no expansion, as before.
@@ -555,6 +561,9 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 
 		ConversationTopics: tgt.topics,
 		Platforms:          tgt.platforms,
+		Devices:            tgt.devices,
+		AgeBucket:          tgt.ageBucket,
+		Gender:             tgt.gender,
 
 		AudienceExpansion: audienceExpansion,
 

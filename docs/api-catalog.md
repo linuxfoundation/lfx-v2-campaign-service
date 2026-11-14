@@ -3285,6 +3285,38 @@ platforms?: string[]             — Device platform targeting (#564 gap 9): X p
                                   the line item serves on every platform, as before. The same flag,
                                   criterion path, failure and reuse rules and synchronous 400s as
                                   `conversationTopics`. Not role-gated.
+devices?: string[]               — Device targeting (#564 gap 9): X device values (the
+                                  `targeting_value` of `GET targeting_criteria/devices`, e.g. `1q`
+                                  for the iPhone 3GS). Trimmed, lowercased, 1-32 letters or digits,
+                                  duplicates dropped, at most 60. Each is sent as a `DEVICE` / `EQ`
+                                  criterion after the platforms, spelled as X listed it; the device
+                                  list is walked to its end first, and a value it does not list, or a
+                                  list that cannot be read, fails the job with nothing created. X
+                                  refuses a platform broader than a chosen device (iOS with an
+                                  iPhone); that is not checked here, so such a pair fails at its
+                                  criterion POST, after the PAUSED line item exists. Same flag,
+                                  failure and reuse rules and synchronous 400s as `platforms`.
+                                  Not role-gated.
+ageBucket?: string               — Age targeting (#564 gap 9): ONE of X's AGE_BUCKET values (X
+                                  allows a single age bucket per line item), trimmed and
+                                  uppercased: AGE_13_TO_24, AGE_13_TO_34, AGE_13_TO_49,
+                                  AGE_13_TO_54, AGE_OVER_13, AGE_18_TO_34, AGE_18_TO_49,
+                                  AGE_18_TO_54, AGE_OVER_18, AGE_21_TO_34, AGE_21_TO_49,
+                                  AGE_21_TO_54, AGE_OVER_21, AGE_25_TO_49, AGE_25_TO_54,
+                                  AGE_OVER_25, AGE_35_TO_49, AGE_35_TO_54, AGE_OVER_35,
+                                  AGE_OVER_50 (there is no AGE_18_TO_24). Sent as one `AGE` / `EQ`
+                                  criterion after the devices, with the bucket as its value. The
+                                  list is X's SDK enumeration (docs.x.com shows only AGE_21_TO_34)
+                                  and is not confirmed live. Blank or omitted: every age.
+gender?: string                  — Gender targeting (#564 gap 9): `MALE` or `FEMALE`
+                                  (case-insensitive), sent as one `GENDER` / `EQ` criterion after
+                                  the age bucket with X's value `1` (male) or `2` (female). Blank or
+                                  omitted: every gender, X's default.
+                                  `ageBucket` and `gender` must be JSON strings (null reads as
+                                  absent); otherwise, or outside their sets, or set while
+                                  TWITTER_CREATE_TARGETING_ENABLED is off, the create is a
+                                  synchronous 400 `invalid campaign config: twitterConfig.<field>: …`,
+                                  re-checked at dispatch. Not role-gated.
 audienceExpansion?: string       — Line-item audience expansion (#564 gap 11): `BROAD`, `DEFINED`
                                   or `EXPANDED` (trimmed, case-insensitive), sent as the new line
                                   item's `audience_expansion` on `POST accounts/:id/line_items`
@@ -3402,7 +3434,7 @@ excludedCustomAudienceIds?: string[]
                                   `invalid campaign config: twitterConfig.<field>: …`, as is a
                                   value that is not an array of strings (null reads as absent).
                                   ALL THE TARGETING LISTS TOGETHER (`geoTargets`, `languages`,
-                                  `keywords`, `interestIds`, `conversationTopics`, `platforms`, `customAudienceIds`,
+                                  `keywords`, `interestIds`, `conversationTopics`, `platforms`, `devices`, `ageBucket`, `gender`, `customAudienceIds`,
                                   `excludedCustomAudienceIds`, counted after de-duplication) may
                                   name at most 60 criteria per create: each is
                                   a separate X write paced at one per second inside the two-minute

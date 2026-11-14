@@ -1746,9 +1746,7 @@ letters or digits, drops duplicates and caps the list at 10; it counts toward th
 per-create cap. Every value must be listed by `GET targeting_criteria/platforms` before anything is
 created; the check shares `resolveListedValues` with the conversation topics, and the criterion
 sends X's spelling. Same default-off `TWITTER_CREATE_TARGETING_ENABLED` flag; not role-gated. Not
-verified live. Devices (`DEVICE`), age (`AGE`) and gender (`GENDER`) from gap 9 are not built: X's
-reference names their targeting types but this bundle has no source for the age-bucket or gender
-values, so they wait for a live probe.
+verified live. Devices, age and gender followed; see the next section.
 
 ## Create-time audience expansion (`CampaignInput.AudienceExpansion`, #564 gap 11)
 
@@ -1844,3 +1842,33 @@ writes and 30 s wait). The dispatcher (`internal/dispatch/twitter_video.go`) gat
 and `resolveTwitterVideo` loads the MP4 (size before blob, `AssetReserver`, `video/mp4` only)
 before any X request. The asset store side (video/mp4 uploads, migration `000057`) is #586's,
 taken unchanged. Not verified live: amplify_video processing time is the open question.
+
+## Create-time devices, age and gender (`create_targeting.go`, #564 gap 9)
+
+`twitterConfig.devices`, `ageBucket` and `gender` add criteria (all EQ) after the platforms, in
+that order, before the follower look-alikes. Each set one counts toward the 60-criterion
+per-create cap and the 30-criterion cap of a create with a video.
+
+- **Devices** (`DEVICE`): `NormalizeDevices` has the platform rules (trimmed, lower-cased, 1-32
+  letters or digits, duplicates dropped), capped at 60. Every value must be listed by
+  `GET targeting_criteria/devices` (X's example: `1q`, iPhone 3GS), through `resolveListedValues`,
+  and the criterion sends X's spelling. X refuses a platform broader than a chosen device (iOS
+  with an iPhone). That is not checked before create, so such a pair fails at its criterion POST.
+- **Age** (`AGE`): one bucket, because X allows "a single `AGE` bucket per line item".
+  `NormalizeAgeBucket` upper-cases it and requires a member of `ageBuckets`. docs.x.com shows only
+  `AGE_21_TO_34` and links the full list to an Enumerations page it no longer serves, so the set is
+  the `AGE_BUCKET` enum of X's Python Ads SDK (`twitter_ads/enum.py`): 20 buckets, and no
+  `AGE_18_TO_24`. The bucket name is sent as the value.
+- **Gender** (`GENDER`): `NormalizeGender` takes `MALE` or `FEMALE`. The Campaign Management guide
+  says "males (1) or females (2)", so the criterion sends `1` or `2`. X's recommendations example
+  echoes a GENDER value as a bare number, so `targetingCriterionWire.criterion` now also reads an
+  all-digit JSON number as its text. Before, such an echo read as "" and a confirmed criterion
+  looked UNCONFIRMED.
+
+The dispatcher gates all three on the same default-off `TWITTER_CREATE_TARGETING_ENABLED` flag. A
+blank `ageBucket` or `gender` counts as unset. `checkTwitterTargetingShape` refuses a non-string
+`ageBucket` or `gender` synchronously, and every rule is re-checked in `Dispatch`. Not
+role-gated. Not verified live: the device list, the age enum and the gender echo all need a probe.
+Line-item `placements` stay fixed at `ALL_ON_TWITTER`. X's reference lists the placement values but
+leaves the valid combinations to `GET line_items/placements`, and its only example is for
+`PROMOTED_ACCOUNT`.

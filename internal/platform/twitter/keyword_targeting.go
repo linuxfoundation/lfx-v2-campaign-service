@@ -118,6 +118,10 @@ func (w targetingCriterionWire) criterion() TargetingCriterion {
 		if json.Unmarshal(v, &s) == nil {
 			out.TargetingValue = s
 		}
+	} else if echoedIntegerRe.Match(v) {
+		// X's recommendations example spells a GENDER value as a bare number (1), not "1" (#564
+		// gap 9), so a decimal integer reads as its text. Anything else stays "".
+		out.TargetingValue = string(v)
 	}
 	return out
 }

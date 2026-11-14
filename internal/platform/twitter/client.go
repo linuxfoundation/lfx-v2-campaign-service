@@ -3369,6 +3369,15 @@ type CampaignInput struct {
 	// checked by NormalizePlatforms; each must be listed by GET targeting_criteria/platforms before
 	// anything is created. Empty means no platform criterion: every platform, as before.
 	Platforms []string
+	// Devices (#564 gap 9) add DEVICE criteria (EQ) after the platforms. They are checked by
+	// NormalizeDevices; each must be listed by GET targeting_criteria/devices before anything is
+	// created. Empty means no device criterion, as before.
+	Devices []string
+	// AgeBucket and Gender (#564 gap 9) add one AGE and one GENDER criterion (EQ) after the
+	// devices, checked by NormalizeAgeBucket and NormalizeGender (closed sets, no lookup). Empty
+	// means no criterion of that type: every age, every gender, as before.
+	AgeBucket string
+	Gender    string
 	// AudienceExpansion (#564 gap 11) is sent as the line item's audience_expansion (BROAD,
 	// DEFINED or EXPANDED, checked by NormalizeAudienceExpansion before any request). Empty sends
 	// nothing: X applies no expansion, as before. Only a line item THIS call creates carries it; a
@@ -3779,13 +3788,26 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if perr != nil {
 		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", perr.Error())
 	}
+	// Devices, age and gender (#564 gap 9), the same way.
+	devices, derr := NormalizeDevices(in.Devices)
+	if derr != nil {
+		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", derr.Error())
+	}
+	ageBucket, aerr := NormalizeAgeBucket(in.AgeBucket)
+	if aerr != nil {
+		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", aerr.Error())
+	}
+	gender, gerr := NormalizeGender(in.Gender)
+	if gerr != nil {
+		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", gerr.Error())
+	}
 	// Follower look-alikes (#564 gap 4c): shape only; X has no user lookup.
 	lookalikes, lerr := NormalizeFollowerLookalikes(in.FollowerLookalikeUserIDs)
 	if lerr != nil {
 		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", lerr.Error())
 	}
 	// And all the criteria together must fit the paced-write budget (MaxCreateTargetingCriteria).
-	nCriteria := len(geoTargets) + len(languages) + len(keywords) + len(interestIDs) + len(topics) + len(platforms) + len(lookalikes) + len(in.CustomAudienceIDs) + len(in.ExcludedCustomAudienceIDs)
+	nCriteria := len(geoTargets) + len(languages) + len(keywords) + len(interestIDs) + len(topics) + len(platforms) + len(devices) + countSet(ageBucket) + countSet(gender) + len(lookalikes) + len(in.CustomAudienceIDs) + len(in.ExcludedCustomAudienceIDs)
 	if cerr := CheckCreateCriteriaCount(nCriteria); cerr != nil {
 		// Fixed text and counts only: operator-safe.
 		return nil, domain.PreflightRefusalf("invalid twitterConfig: %s", cerr.Error())
@@ -3850,11 +3872,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	// Step 1a: resolve the create-time targeting against X's lookups (reads). A value X does not
 	// offer, or a lookup that could not be read, stops the create HERE, with nothing created.
-	criteria, err := c.resolveCreateTargeting(ctx, geoTargets, languages, keywords, interestIDs, topics, platforms)
+	criteria, err := c.resolveCreateTargeting(ctx, geoTargets, languages, keywords, interestIDs, topics, platforms, devices, ageBucket, gender)
 	if err != nil {
 		return nil, err
 	}
-	// The follower look-alikes (#564 gap 4c) follow the platforms. Nothing is looked up: an id X
+	// The follower look-alikes (#564 gap 4c) follow the platforms, devices, age and gender. Nothing is looked up: an id X
 	// refuses fails at its criterion POST in Step 3b, which stops before any tweet.
 	criteria = append(criteria, followerLookalikeCriteria(lookalikes)...)
 	// Step 1a': the custom audiences (#564 gap 3) must each be live and targetable on this ad
