@@ -266,6 +266,16 @@ openssl rand -base64 32
   cannot run) and, at dispatch, a job failure with nothing created (fail
   closed). Only the exact value `true` enables it; anything else keeps the
   create as before. Not role-gated. The chart sets it to `"false"`.
+- `REDDIT_VIDEO_ENABLED` (default unset, i.e. OFF) — opts a deployment IN
+  to Reddit VIDEO posts (#549): `redditConfig.videoAssetId` (a stored
+  `video/mp4`) and `thumbnailAssetId` (a stored PNG or JPEG), authored as a
+  VIDEO post whose video and thumbnail Reddit fetches from short-lived signed
+  URLs; the video's URL serves only `video/mp4`. It also needs the signed
+  creative-asset URLs configured. Only the exact value `true` enables it;
+  anything else fails closed, and a create naming either field is refused
+  with a 400 before any job exists. It names no account resource; it keeps a
+  post shape no live create has sent off the shared ad account. The chart
+  sets it to `"false"` (`app.environment.REDDIT_VIDEO_ENABLED.value`).
 - `REDDIT_TARGETING_EXCLUSIONS_ENABLED` (default unset, i.e. OFF) — opts
   a deployment IN to `redditConfig.excludedSubreddits` and
   `redditConfig.excludedGeoTargets` (#549), sent at create time as the ad

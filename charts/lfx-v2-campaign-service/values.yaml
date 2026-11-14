@@ -389,6 +389,18 @@ app:
     REDDIT_TARGETING_RESOLUTION_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to Reddit VIDEO posts (#549):
+    # redditConfig.videoAssetId (a stored video/mp4) and thumbnailAssetId (a
+    # stored PNG/JPEG), authored as a VIDEO post whose video and thumbnail
+    # Reddit fetches from short-lived signed URLs (the video URL serves only
+    # video/mp4). Needs the signed creative-asset URLs configured too.
+    # Default off: the post shape is built from Reddit's published v3 schema
+    # and no live create has sent it. While off, a create naming either field
+    # is refused with a 400 before any job exists. Any value other than "true"
+    # is treated as off, so a typo fails closed.
+    REDDIT_VIDEO_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to twitterConfig.geoTargets, languages, keywords
     # and interestIds (#564), sent at create time as LOCATION, LANGUAGE,
     # BROAD_KEYWORD and INTEREST targeting criteria on the new X line item.

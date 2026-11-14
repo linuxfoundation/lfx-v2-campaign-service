@@ -488,6 +488,16 @@ type CampaignInput struct {
 	// returned as (nil, err): nothing has been created at that point. It must not be logged
 	// or persisted by the client: the URL may be a bearer credential.
 	ImageURLSource func(ctx context.Context) (string, error)
+	// VideoURLSource and ThumbnailURLSource, set TOGETHER (and with PostURL, ImageURL and
+	// ImageURLSource all empty), make CreateCampaign author a VIDEO post instead of an IMAGE one
+	// (#549): {"type":"VIDEO","thumbnail_url":<thumbnail>,"content":[{"media_url":<video>,..}]}
+	// on the same legacy /profiles/{id}/posts endpoint (components_schema_post: media_url is
+	// "required for image, video and carousel posts", thumbnail_url "required for video posts").
+	// Both are called LATE, exactly like ImageURLSource — video first, then thumbnail — and each
+	// URL gets validateImageURL's shape check. An error from either is (nil, err): nothing has
+	// been created. Neither URL may be logged or persisted: each may be a bearer credential.
+	VideoURLSource     func(ctx context.Context) (string, error)
+	ThumbnailURLSource func(ctx context.Context) (string, error)
 	// CallToAction is the button label on an AUTHORED post (see ImageURL). It must
 	// be one of Reddit's accepted CTA labels (case-insensitive, e.g. "Learn More",
 	// "Sign Up", "Buy Tickets"); empty defaults to defaultRedditCTA. Ignored when a
@@ -1863,11 +1873,23 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// a DEGRADED success, not a clean one.
 		authorFailure *PromoOutcomeRow
 	)
-	if validatedPostID == "" && (strings.TrimSpace(in.ImageURL) != "" || in.ImageURLSource != nil) {
+	hasVideo := in.VideoURLSource != nil || in.ThumbnailURLSource != nil
+	if hasVideo {
+		// A VIDEO post (#549) is all-or-nothing and exclusive: Reddit requires a thumbnail for
+		// it, and an image or an existing post alongside would leave it ambiguous which
+		// creative the caller meant. Refused before any request.
+		if in.VideoURLSource == nil || in.ThumbnailURLSource == nil {
+			return nil, domain.PreflightRefusalf("a Reddit video post needs both a video URL and a thumbnail URL")
+		}
+		if strings.TrimSpace(in.PostURL) != "" || strings.TrimSpace(in.ImageURL) != "" || in.ImageURLSource != nil {
+			return nil, domain.PreflightRefusalf("a Reddit video post cannot be combined with a post URL or an image")
+		}
+	}
+	if validatedPostID == "" && (strings.TrimSpace(in.ImageURL) != "" || in.ImageURLSource != nil || hasVideo) {
 		if in.ImageURLSource != nil && strings.TrimSpace(in.ImageURL) != "" {
 			return nil, domain.PreflightRefusalf("supply ImageURL or ImageURLSource, not both")
 		}
-		if in.ImageURLSource == nil {
+		if in.ImageURLSource == nil && !hasVideo {
 			imageURL := strings.TrimSpace(in.ImageURL)
 			if err := validateImageURL(imageURL); err != nil {
 				return nil, err
@@ -2081,18 +2103,34 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// attempt, e.g. after a 401 above invalidated the cached token), which adds at most one
 		// more request timeout — assetsign.MinTTL covers it. Nothing has been created yet, so
 		// a failure is (nil, err).
-		if in.ImageURLSource != nil {
-			lateURL, lerr := in.ImageURLSource(ctx)
-			if lerr != nil {
-				return nil, fmt.Errorf("obtain the promoted-post image URL: %w", lerr)
+		media := promotedPostMedia{Type: postTypeImage}
+		if hasVideo {
+			// Both late URLs are minted here, video first, immediately before the one request
+			// that hands them to Reddit; validateImageURL is the shape check for either.
+			videoURL, verr := lateMediaURL(ctx, in.VideoURLSource, "video")
+			if verr != nil {
+				return nil, verr
 			}
-			lateURL = strings.TrimSpace(lateURL)
-			if err := validateImageURL(lateURL); err != nil {
-				return nil, err
+			thumbURL, terr := lateMediaURL(ctx, in.ThumbnailURLSource, "thumbnail")
+			if terr != nil {
+				return nil, terr
 			}
-			authorImageURL = lateURL
+			media = promotedPostMedia{Type: postTypeVideo, MediaURL: videoURL, ThumbnailURL: thumbURL}
+		} else {
+			if in.ImageURLSource != nil {
+				lateURL, lerr := in.ImageURLSource(ctx)
+				if lerr != nil {
+					return nil, fmt.Errorf("obtain the promoted-post image URL: %w", lerr)
+				}
+				lateURL = strings.TrimSpace(lateURL)
+				if err := validateImageURL(lateURL); err != nil {
+					return nil, err
+				}
+				authorImageURL = lateURL
+			}
+			media.MediaURL = authorImageURL
 		}
-		postID, err := c.createPromotedPost(ctx, accountID, in, postHeadline, postCTA, authorImageURL)
+		postID, err := c.createPromotedPost(ctx, accountID, in, postHeadline, postCTA, media)
 		if err != nil {
 			// A CALLER CANCELLATION is the only fatal authoring failure, and it is split by
 			// AMBIGUITY before it is acted on. Both halves of that sentence are load-bearing.
@@ -2150,7 +2188,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// idempotency makes that permanent.
 		} else {
 			validatedPostID = postID
-			steps = append(steps, fmt.Sprintf("Authored promoted post: %s (CTA: %s)", postID, postCTA))
+			if hasVideo {
+				steps = append(steps, fmt.Sprintf("Authored promoted video post: %s (CTA: %s)", postID, postCTA))
+			} else {
+				steps = append(steps, fmt.Sprintf("Authored promoted post: %s (CTA: %s)", postID, postCTA))
+			}
 		}
 	}
 
@@ -2703,19 +2745,33 @@ func (c *Client) ConversionPixelID() string { return c.account.ConversionPixelID
 // (an *apiError for a non-2xx, a transportError for an ambiguous/2xx-unparseable
 // outcome) and does not classify it. A 2xx response missing data.id is reported
 // as an error so the caller degrades rather than attaching an empty post id.
-func (c *Client) createPromotedPost(ctx context.Context, accountID string, in CampaignInput, headline, cta, imageURL string) (string, error) {
-	body := map[string]any{
-		"data": map[string]any{
-			"type":           "IMAGE",
-			"headline":       headline,
-			"allow_comments": false,
-			"content": []map[string]any{{
-				"media_url":       imageURL,
-				"call_to_action":  cta,
-				"destination_url": buildRedditUTMURL(in, 0),
-			}},
-		},
+//
+// A VIDEO post (#549, media.Type == postTypeVideo) is the same body with "type":"VIDEO", the
+// video's URL as content[0].media_url, and the top-level thumbnail_url the schema requires for
+// video posts:
+//
+//	{"data":{"type":"VIDEO","headline":..,"allow_comments":false,"thumbnail_url":..,
+//	         "content":[{"media_url":<video>,"call_to_action":..,"destination_url":..}]}}
+//
+// destination_url and call_to_action are sent on a video post too (the schema requires the
+// destination only for image and carousel posts, but a video ad without one would not drive
+// registrations). This shape is built from the published schema and has NOT been sent to a live
+// account: REDDIT_VIDEO_ENABLED keeps it off until a probe confirms it.
+func (c *Client) createPromotedPost(ctx context.Context, accountID string, in CampaignInput, headline, cta string, media promotedPostMedia) (string, error) {
+	data := map[string]any{
+		"type":           media.Type,
+		"headline":       headline,
+		"allow_comments": false,
+		"content": []map[string]any{{
+			"media_url":       media.MediaURL,
+			"call_to_action":  cta,
+			"destination_url": buildRedditUTMURL(in, 0),
+		}},
 	}
+	if media.Type == postTypeVideo {
+		data["thumbnail_url"] = media.ThumbnailURL
+	}
+	body := map[string]any{"data": data}
 	resp, err := c.requestNoThrottleRetry(ctx, http.MethodPost, "/profiles/"+accountID+"/posts", body)
 	if err != nil {
 		return "", err
@@ -2730,6 +2786,36 @@ func (c *Client) createPromotedPost(ctx context.Context, accountID string, in Ca
 		return "", &transportError{Method: http.MethodPost, Path: "/profiles/" + accountID + "/posts", Err: fmt.Errorf("post creation returned no id")}
 	}
 	return postID, nil
+}
+
+// Promoted-post types this client authors (components_schema_post.type).
+const (
+	postTypeImage = "IMAGE"
+	postTypeVideo = "VIDEO"
+)
+
+// promotedPostMedia is what an authored post shows: an IMAGE post's image URL, or a VIDEO post's
+// video URL plus the thumbnail URL Reddit requires for it (#549).
+type promotedPostMedia struct {
+	Type         string
+	MediaURL     string
+	ThumbnailURL string
+}
+
+// lateMediaURL obtains one late media URL (a VIDEO post's video or thumbnail, #549) and checks
+// its shape. Nothing has been created when it fails, so the caller returns (nil, err). The URL
+// is never quoted: validateImageURL redacts, and the source's own error is wrapped with a label
+// only.
+func lateMediaURL(ctx context.Context, src func(context.Context) (string, error), what string) (string, error) {
+	raw, err := src(ctx)
+	if err != nil {
+		return "", fmt.Errorf("obtain the promoted-post %s URL: %w", what, err)
+	}
+	raw = strings.TrimSpace(raw)
+	if err := validateImageURL(raw); err != nil {
+		return "", fmt.Errorf("promoted-post %s URL: %w", what, err)
+	}
+	return raw, nil
 }
 
 // Campaign run states for UpdateCampaignStatus. Reddit's Campaign object uses a

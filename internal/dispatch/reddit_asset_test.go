@@ -73,6 +73,9 @@ type redditAssetHarness struct {
 	calls    atomic.Int32
 	mu       sync.Mutex
 	mediaURL string
+	// thumbURL and postType are the authored post's thumbnail_url and type (#549 video posts).
+	thumbURL string
+	postType string
 	// postsFail makes the post create answer 400 with a body echoing media_url, the shape that
 	// would carry a signature into persisted steps.
 	postsFail bool
@@ -100,20 +103,23 @@ func (h *redditAssetHarness) dispatcher(t *testing.T) *RedditDispatcher {
 			body, _ := io.ReadAll(r.Body)
 			var req struct {
 				Data struct {
-					Content []struct {
+					Type         string `json:"type"`
+					ThumbnailURL string `json:"thumbnail_url"`
+					Content      []struct {
 						MediaURL string `json:"media_url"`
 					} `json:"content"`
 				} `json:"data"`
 			}
 			_ = json.Unmarshal(body, &req)
+			h.mu.Lock()
+			h.postType, h.thumbURL = req.Data.Type, req.Data.ThumbnailURL
 			if len(req.Data.Content) > 0 {
-				h.mu.Lock()
 				h.mediaURL = req.Data.Content[0].MediaURL
-				h.mu.Unlock()
 			}
+			h.mu.Unlock()
 			if h.postsFail {
 				w.WriteHeader(http.StatusBadRequest)
-				_ = json.NewEncoder(w).Encode(map[string]any{"error": "could not fetch media_url " + h.mediaURL})
+				_ = json.NewEncoder(w).Encode(map[string]any{"error": "could not fetch media_url " + h.mediaURL + " thumbnail " + h.thumbURL})
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t3_post"}})

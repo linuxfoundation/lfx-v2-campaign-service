@@ -17,6 +17,14 @@ import (
 // See the test below for what keeps the two copies honest.
 const snapshotAssetIDKey = "imageassetid"
 
+// snapshotVideoAssetIDKey and snapshotThumbnailAssetIDKey are postgres's second and third keys,
+// repeated for the same reason: a Reddit video post (#549) names its stored MP4 and its stored
+// thumbnail under them.
+const (
+	snapshotVideoAssetIDKey     = "videoassetid"
+	snapshotThumbnailAssetIDKey = "thumbnailassetid"
+)
+
 // TestPlatformConfigsNameTheirAssetUnderOneKey pins the assumption the campaign repo's
 // dangling-reference check is built on: every platform config that can reference a stored
 // creative asset marshals that reference under a key equal, ignoring case, to `imageAssetId`.
@@ -38,11 +46,14 @@ const snapshotAssetIDKey = "imageassetid"
 func TestPlatformConfigsNameTheirAssetUnderOneKey(t *testing.T) {
 	const assetID = "11111111-1111-4111-8111-111111111111"
 	for name, config := range map[string]any{
-		"reddit":    redditConfig{ImageAssetID: assetID},
-		"twitter":   twitterConfig{ImageAssetID: assetID},
-		"microsoft": microsoftConfig{ImageAssetID: assetID},
-		"meta":      metaConfig{Variants: []meta.AdVariant{{ImageAssetID: assetID}}},
-		"linkedin":  linkedinConfig{Variants: []linkedin.CreativeVariant{{ImageAssetID: assetID}}},
+		"reddit": redditConfig{ImageAssetID: assetID},
+		// A Reddit video post (#549) names its video and its thumbnail under the other two keys.
+		"reddit-video":     redditConfig{VideoAssetID: assetID},
+		"reddit-thumbnail": redditConfig{ThumbnailAssetID: assetID},
+		"twitter":          twitterConfig{ImageAssetID: assetID},
+		"microsoft":        microsoftConfig{ImageAssetID: assetID},
+		"meta":             metaConfig{Variants: []meta.AdVariant{{ImageAssetID: assetID}}},
+		"linkedin":         linkedinConfig{Variants: []linkedin.CreativeVariant{{ImageAssetID: assetID}}},
 		// EVERY Google slot, not one of them: they are separate fields on several structs,
 		// and one more slot declared as a bare []string would carry no key on its elements
 		// at all.
@@ -64,7 +75,8 @@ func TestPlatformConfigsNameTheirAssetUnderOneKey(t *testing.T) {
 			continue
 		}
 		for _, k := range keys {
-			if !strings.EqualFold(k, snapshotAssetIDKey) {
+			if !strings.EqualFold(k, snapshotAssetIDKey) && !strings.EqualFold(k, snapshotVideoAssetIDKey) &&
+				!strings.EqualFold(k, snapshotThumbnailAssetIDKey) {
 				t.Errorf("%s: asset id is marshalled under %q, which postgres.snapshotAssetIDs will not extract; "+
 					"either tag the field `json:\"imageAssetId\"` or widen snapshotAssetIDKey", name, k)
 			}

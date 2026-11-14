@@ -86,7 +86,8 @@ sig = base64url_nopad(HMAC-SHA256(key, "lfx-v2-campaign-service/creative-asset-u
 - **One generic 404**: decode failures and every service rejection reach the generated encoder's
   default arm and are rendered by the mount's formatter as a **bodyless 404 with identical
   headers** — feature off, malformed id or query, bad signature, expired, tampered field,
-  missing/foreign/archived asset, a stored type outside PNG/JPEG. The service returns a plain
+  missing/foreign/archived asset, a stored type the URL's slot kind does not serve (anything but
+  PNG/JPEG at an image URL, anything but MP4 at a video URL). The service returns a plain
   sentinel, not a Goa named error, precisely so no `goa-error` header can differ between causes.
   The only other status is a bodyless **503**, and only after a signature verified (store not
   yet bound during a cold start, a store error, or the asset-memory budget exhausted). No internal
@@ -103,6 +104,24 @@ sig = base64url_nopad(HMAC-SHA256(key, "lfx-v2-campaign-service/creative-asset-u
   closes the body. The Reddit dispatch itself reserves nothing: it holds a URL, not bytes, and
   the reserver's contract is to charge memory actually held.
 - **Logging**: asset id and expiry only — never the signature or the URL, on mint or serve.
+
+## Slot kind: image or video (#549)
+
+A URL is minted for one **slot kind** (`assetsign.Kind`):
+
+- **image** (the zero value, and every URL minted before #549): no extra parameter, signed under
+  the original label `lfx-v2-campaign-service/creative-asset-url/v1`. It serves only a stored
+  `image/png` or `image/jpeg`, so a stored video is the generic 404 at an image URL.
+- **video**: `&kind=video` in the query, signed under a separate label
+  (`.../creative-asset-url/video/v1`). It serves only a stored `video/mp4`. It is minted only for
+  the media of a Reddit VIDEO post ([Reddit Video Posts](reddit-video-posts.md)).
+
+The label, not a field in the message, carries the kind. The same tuple signs to unrelated MACs
+under the two labels, so adding, removing or changing `kind` fails verification before any
+database access. The route reads `kind` as an optional Goa `Enum("video")`, and any other value is
+a decode failure, which is the same 404. `Content-Type` is then `video/mp4`. Size and memory bounds
+are unchanged: a video is at most the 30 MiB per-asset ceiling and is reserved on the same
+`AssetReserver` before it is loaded.
 
 ## Configuration and exposure
 

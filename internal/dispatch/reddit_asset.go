@@ -16,6 +16,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/assetsign"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
 )
 
 // Reddit creatives from STORED assets (LFXV2-2665).
@@ -89,8 +90,9 @@ func (d *RedditDispatcher) checkRedditAssetChoice(cfg redditConfig) (string, err
 // PreflightCreate refuses, before the create job exists, a Reddit config that names a stored
 // asset the service cannot serve (the feature off, imageAssetId together with imageUrl or
 // postUrl, or a malformed id), whose bidding cannot be created as asked (redditBidPlan), whose
-// custom audience lists are mistyped, malformed or off on this deployment (#549), or whose
-// conversionEvent is refused (checkRedditConversionEvent). It
+// custom audience lists are mistyped, malformed or off on this deployment (#549), whose
+// conversionEvent is refused (checkRedditConversionEvent), or whose video post is gated off or
+// contradictory (checkRedditVideoChoice, #549 gap 5). It
 // never calls Reddit, so every other outcome is ErrPreflightNotApplicable. Whether the asset belongs to the brief cannot be checked here (the
 // pre-check is not given the brief); Dispatch checks it before any upstream call. A config that does
 // not decode is left to Dispatch, except a wrong-typed `bidding` (checkBiddingShape).
@@ -132,6 +134,11 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 	// unrelated mistyped field must not turn a gated or invalid exclusion list into an accepted
 	// job. checkRedditExclusionsShape above already refused a mistyped list, so the lists decoded.
 	if err := checkRedditTargetingExclusions(cfg); err != nil {
+		return err
+	}
+	// The video post's gate and config rules (#549) run on the best-effort decode too, so a gated
+	// or contradictory video config is the synchronous 400 even beside an unrelated broken field.
+	if _, _, err := d.checkRedditVideoChoice(cfg); err != nil {
 		return err
 	}
 	if decodeErr != nil {
@@ -229,4 +236,25 @@ func scrubErr(err error, signed string) error {
 		return err
 	}
 	return &scrubbedError{err: err, signed: signed}
+}
+
+// scrubRedditOutcome removes every minted signed URL (an image post's, or a video post's video
+// and thumbnail, #549) from what a create returns. Reddit may echo media_url or thumbnail_url in
+// an error body, which would carry a signature into the job error and the persisted
+// Steps/AdWarning. Classification is unaffected (scrubErr preserves errors.Is/As). Empty entries
+// (URLs never minted) are skipped.
+func scrubRedditOutcome(err error, result *reddit.CampaignResult, minted ...string) error {
+	for _, m := range minted {
+		if m == "" {
+			continue
+		}
+		err = scrubErr(err, m)
+		if result != nil {
+			result.AdWarning = scrubSignedURL(result.AdWarning, m)
+			for i := range result.Steps {
+				result.Steps[i] = scrubSignedURL(result.Steps[i], m)
+			}
+		}
+	}
+	return err
 }

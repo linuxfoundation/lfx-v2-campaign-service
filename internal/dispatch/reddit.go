@@ -64,7 +64,13 @@ type redditConfig struct {
 	// ImageURL (exactly one of the two; not with PostURL). The dispatch proves the asset
 	// belongs to the brief and hands Reddit a short-lived signed URL at which this service
 	// serves it (reddit_asset.go). Refused when the feature is not configured.
-	ImageAssetID      string `json:"imageAssetId"`
+	ImageAssetID string `json:"imageAssetId"`
+	// VideoAssetID and ThumbnailAssetID (#549 gap 5, behind REDDIT_VIDEO_ENABLED) name a stored
+	// video/mp4 and a stored PNG/JPEG of THIS brief, authored as a VIDEO post (reddit_video.go).
+	// Set together, and never with imageUrl, imageAssetId or postUrl. omitempty keeps an image or
+	// post-URL campaign's persisted snapshot exactly as before.
+	VideoAssetID      string `json:"videoAssetId,omitempty"`
+	ThumbnailAssetID  string `json:"thumbnailAssetId,omitempty"`
 	CallToAction      string `json:"callToAction"`
 	ConversionPixelID string `json:"conversionPixelId"`
 	// ConversionEvent is the pixel event a conversions campaign optimizes toward (#549); empty
@@ -312,8 +318,16 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	// ImageURLSource immediately before the post request that hands it to Reddit, so the
 	// account verification and any throttle wait in between cannot expire it. cfg itself is
 	// left untouched, so the persisted config snapshot records imageAssetId and never a URL.
-	var signedURL string
-	var imageURLSource func(context.Context) (string, error)
+	// signedURLs holds every URL minted for this create (the image, or a video post's video and
+	// thumbnail), each written by its source when the client calls it, so all are scrubbed.
+	var signedURL, signedVideoURL, signedThumbURL string
+	var imageURLSource, videoURLSource, thumbURLSource func(context.Context) (string, error)
+	// The video choice (#549) runs first: it refuses a video next to an image or a post, and its
+	// deployment gate must not depend on the image rules.
+	videoID, thumbID, err := d.checkRedditVideoChoice(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
 	assetID, err := d.checkRedditAssetChoice(cfg)
 	if err != nil {
 		// Fixed, caller-safe texts (domain.ErrCreateConfigInvalid's contract), raised before any
@@ -325,6 +339,15 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 			return nil, notCreated(err)
 		}
 		imageURLSource = d.lateAssetURL(brief, assetID, &signedURL)
+	}
+	if videoID != "" {
+		// Both assets are proven before any Reddit call; the URLs are minted late by the client,
+		// the video as a kind=video URL (video/mp4 only) and the thumbnail as an image URL.
+		if err := d.checkRedditVideoAssets(ctx, brief, videoID, thumbID); err != nil {
+			return nil, notCreated(err)
+		}
+		videoURLSource = d.lateAssetURLKind(assetsign.KindVideo, brief, videoID, &signedVideoURL)
+		thumbURLSource = d.lateAssetURLKind(assetsign.KindImage, brief, thumbID, &signedThumbURL)
 	}
 
 	// Community and interest resolution (#549 gaps 4 and 8), before anything is created and
@@ -367,6 +390,8 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		PostURL:            cfg.PostURL,
 		ImageURL:           cfg.ImageURL,
 		ImageURLSource:     imageURLSource,
+		VideoURLSource:     videoURLSource,
+		ThumbnailURLSource: thumbURLSource,
 		CallToAction:       cfg.CallToAction,
 		ConversionPixelID:  cfg.ConversionPixelID,
 		ConversionEvent:    cfg.ConversionEvent,
@@ -403,18 +428,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	//                       orphan as reconciliation-required, not a false success.
 	//   - (result, nil)   → success.
 	result, cerr := client.CreateCampaign(ctx, in)
-	if signedURL != "" {
-		// Reddit may echo media_url in an error body, which would carry the signature into the
-		// job error and the persisted Steps/AdWarning. Scrub it; classification is unaffected
-		// (scrubErr preserves errors.Is/As).
-		cerr = scrubErr(cerr, signedURL)
-		if result != nil {
-			result.AdWarning = scrubSignedURL(result.AdWarning, signedURL)
-			for i := range result.Steps {
-				result.Steps[i] = scrubSignedURL(result.Steps[i], signedURL)
-			}
-		}
-	}
+	cerr = scrubRedditOutcome(cerr, result, signedURL, signedVideoURL, signedThumbURL)
 	if cerr != nil {
 		if result == nil {
 			return nil, notCreated(fmt.Errorf("reddit campaign creation failed before any upstream create: %w", cerr))
@@ -1119,7 +1133,8 @@ func redditRunStatus(status string) (string, error) {
 // ordinary term, name, id or enum value passes through unchanged.
 //
 // Kept verbatim: Objective (refused by the client unless it names a known objective),
-// ImageAssetID (a stored asset key), numbers and dates.
+// ImageAssetID, VideoAssetID and ThumbnailAssetID (stored asset keys, validated as UUIDs before
+// the create), numbers and dates.
 // Bidding is kept verbatim too: resolveBidding refuses a strategy other than automatic or
 // manual before anything is sent, and bidAmount is a number
 // (TestConfigSnapshot_BiddingRoundTripsThroughTheValidator replays the stored copy).

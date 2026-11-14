@@ -44,9 +44,15 @@ const snapshotAssetIDKey = "imageassetid"
 // so a video an existing campaign names is guarded against deletion the same way an image is.
 const snapshotVideoAssetIDKey = "videoassetid"
 
+// snapshotThumbnailAssetIDKey is the third key, LOWERCASED: a Reddit video post's
+// redditConfig.thumbnailAssetId (#549), the stored image Reddit fetches as the post's thumbnail.
+// A Reddit video post's video itself is named under snapshotVideoAssetIDKey.
+const snapshotThumbnailAssetIDKey = "thumbnailassetid"
+
 // isSnapshotAssetIDKey reports whether k names a stored creative asset.
 func isSnapshotAssetIDKey(k string) bool {
-	return strings.EqualFold(k, snapshotAssetIDKey) || strings.EqualFold(k, snapshotVideoAssetIDKey)
+	return strings.EqualFold(k, snapshotAssetIDKey) || strings.EqualFold(k, snapshotVideoAssetIDKey) ||
+		strings.EqualFold(k, snapshotThumbnailAssetIDKey)
 }
 
 // snapshotAssetIDs returns the creative-asset ids a config snapshot names, in their canonical

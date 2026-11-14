@@ -336,3 +336,79 @@ func mustInt64(t *testing.T, s string) int64 {
 	}
 	return n
 }
+
+// saVideo is a stored MP4 (#549); the route never inspects the bytes, only the stored type.
+var saVideo = []byte("\x00\x00\x00\x18ftypisom-fake-mp4-bytes")
+
+const saVideoAsset = "88888888-7777-4888-9999-aaaaaaaaaaaa"
+
+func withVideo(s *fakeAssetStore, _ *countingBudget) {
+	s.assets[[3]string{saProject, saBrief, saVideoAsset}] = &model.CreativeAsset{ID: saVideoAsset, ProjectID: saProject, BriefID: saBrief, MimeType: model.MimeTypeMP4, Bytes: saVideo}
+}
+
+func (f *saFixture) mintKind(t *testing.T, kind assetsign.Kind, project, brief, asset string) string {
+	t.Helper()
+	raw, _, err := f.signer.MintKind(kind, project, brief, asset)
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	return f.localURL(t, raw)
+}
+
+// TestSignedAssetServesVideoOnlyAtAVideoURL pins the #549 slot rule: a kind=video URL serves a
+// stored video/mp4 with the same safe headers as an image; an IMAGE URL for the same MP4 is the
+// generic 404 (image slots keep refusing video); and a video URL for a PNG is the generic 404 too.
+func TestSignedAssetServesVideoOnlyAtAVideoURL(t *testing.T) {
+	f := newSignedAssetFixture(t, true, withVideo)
+
+	resp, body := do(t, http.MethodGet, f.mintKind(t, assetsign.KindVideo, saProject, saBrief, saVideoAsset))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("video URL status = %d, want 200", resp.StatusCode)
+	}
+	if string(body) != string(saVideo) {
+		t.Fatalf("body = %q, want the stored video bytes", body)
+	}
+	for k, v := range map[string]string{
+		"Content-Type": "video/mp4", "X-Content-Type-Options": "nosniff", "Content-Disposition": "inline",
+		"Cache-Control": "no-store", "Content-Length": strconv.Itoa(len(saVideo)),
+	} {
+		if got := resp.Header.Get(k); got != v {
+			t.Errorf("%s = %q, want %q", k, got, v)
+		}
+	}
+	waitReleased(t, f.budget)
+
+	for name, target := range map[string]string{
+		"image URL for a stored video": f.mint(t, saProject, saBrief, saVideoAsset),
+		"video URL for a stored image": f.mintKind(t, assetsign.KindVideo, saProject, saBrief, saAsset),
+	} {
+		resp, body := do(t, http.MethodGet, target)
+		if resp.StatusCode != http.StatusNotFound || len(body) != 0 {
+			t.Errorf("%s: status %d body %q, want bare 404", name, resp.StatusCode, body)
+		}
+	}
+	waitReleased(t, f.budget)
+}
+
+// TestSignedAssetKindCannotBeRelabelled proves the kind is signed: adding kind=video to an image
+// URL, stripping it from a video URL, or sending an unknown kind is the generic 404, and none of
+// them reads the store.
+func TestSignedAssetKindCannotBeRelabelled(t *testing.T) {
+	f := newSignedAssetFixture(t, true, withVideo)
+	img, _ := url.Parse(f.mint(t, saProject, saBrief, saVideoAsset))
+	vid, _ := url.Parse(f.mintKind(t, assetsign.KindVideo, saProject, saBrief, saVideoAsset))
+	iq, vq := img.Query(), vid.Query()
+	for name, target := range map[string]string{
+		"kind=video added to an image URL": f.srv.URL + img.Path + "?exp=" + iq.Get("exp") + "&kind=video&sig=" + iq.Get("sig"),
+		"kind stripped from a video URL":   f.srv.URL + vid.Path + "?exp=" + vq.Get("exp") + "&sig=" + vq.Get("sig"),
+		"unknown kind":                     f.srv.URL + vid.Path + "?exp=" + vq.Get("exp") + "&kind=image&sig=" + vq.Get("sig"),
+	} {
+		resp, body := do(t, http.MethodGet, target)
+		if resp.StatusCode != http.StatusNotFound || len(body) != 0 {
+			t.Errorf("%s: status %d body %q, want bare 404", name, resp.StatusCode, body)
+		}
+	}
+	if n := f.store.calls.Load(); n != 0 {
+		t.Fatalf("the store was read %d times for re-labelled URLs", n)
+	}
+}

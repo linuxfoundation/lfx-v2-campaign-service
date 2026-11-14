@@ -42,10 +42,10 @@ var SignedAssetUnavailableError = Type("signed-asset-unavailable-error", func() 
 // themselves stream as the raw response body (SkipResponseBodyEncodeDecode), never through
 // a JSON encoder.
 var SignedCreativeAssetResult = Type("signed-creative-asset-result", func() {
-	Attribute("content_type", String, "The asset's VERIFIED stored MIME type", func() {
-		Enum("image/png", "image/jpeg")
+	Attribute("content_type", String, "The asset's VERIFIED stored MIME type. video/mp4 only at a kind=video URL (#549).", func() {
+		Enum("image/png", "image/jpeg", "video/mp4")
 	})
-	Attribute("content_length", Int64, "Byte length of the image")
+	Attribute("content_length", Int64, "Byte length of the asset")
 	Attribute("cache_control", String, "Cache policy for the response")
 	Attribute("content_disposition", String, "Always inline")
 	Attribute("x_content_type_options", String, "Always nosniff")
@@ -62,7 +62,7 @@ var _ = Service("lfx-v2-campaign-service-signed-assets", func() {
 	Error("ServiceUnavailable", SignedAssetUnavailableError, "Asset memory budget exhausted")
 
 	Method("get-signed-creative-asset", func() {
-		Description("Serve the bytes of one stored creative asset named by a valid, unexpired signature over (project, brief, asset, expiry). Every rejection is the same 404.")
+		Description("Serve the bytes of one stored creative asset named by a valid, unexpired signature over (project, brief, asset, expiry) for one slot kind: an image URL serves PNG/JPEG only, a kind=video URL serves video/mp4 only. Every rejection is the same 404.")
 		Meta("swagger:generate", "false")
 		Payload(func() {
 			// Project ids in this service are canonical slugs, or (for historical rows) a
@@ -79,6 +79,12 @@ var _ = Service("lfx-v2-campaign-service-signed-assets", func() {
 			Attribute("sig", String, "Signature", func() {
 				Pattern(`^[A-Za-z0-9_-]{43}$`)
 			})
+			// The slot the URL was minted for (#549). Absent is an image URL (PNG/JPEG only,
+			// every URL minted before #549); "video" is a Reddit VIDEO post's media and serves
+			// video/mp4 only. It is bound into the signature, so it cannot be added or removed.
+			Attribute("kind", String, "Slot kind; absent for an image", func() {
+				Enum("video")
+			})
 			Required("project_id", "brief_id", "asset_id", "exp", "sig")
 		})
 		Result(SignedCreativeAssetResult)
@@ -87,6 +93,7 @@ var _ = Service("lfx-v2-campaign-service-signed-assets", func() {
 			HEAD("/_campaigns/creative-assets/{project_id}/{brief_id}/{asset_id}")
 			Param("exp")
 			Param("sig")
+			Param("kind")
 			SkipResponseBodyEncodeDecode()
 			Response(StatusOK, func() {
 				Header("content_type:Content-Type")

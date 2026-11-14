@@ -40,19 +40,21 @@ type Service interface {
 	// with an ftyp box of an MP4 brand, its top-level boxes must tile the file
 	// exactly, and it must carry moov and mdat boxes; it is stored with no width
 	// or height, and only a LinkedIn video variant
-	// (linkedInConfig.variants[].videoAssetId) consumes it — every image slot
-	// refuses a video asset at dispatch. Re-uploading identical bytes to the same
-	// brief returns the existing asset (idempotent). This does not touch any ad
-	// platform; the account-scoped Meta image_hash is resolved later, at campaign
-	// dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft
-	// Advertising campaign names one by microsoftConfig.imageAssetId, and at
-	// dispatch it is uploaded to the ad account's media library (an account-scoped
-	// MediaId) and attached to the campaign as an image ad extension; Microsoft
-	// accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit
-	// campaign can also reference the asset (redditConfig.imageAssetId), served to
-	// Reddit at a short-lived signed URL when that feature is configured. An X
-	// (Twitter) campaign may also reference the asset as the image of its authored
-	// tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is
+	// (linkedInConfig.variants[].videoAssetId) or a Reddit video post
+	// (redditConfig.videoAssetId, #549, behind REDDIT_VIDEO_ENABLED) consumes it —
+	// every image slot refuses a video asset at dispatch. Re-uploading identical
+	// bytes to the same brief returns the existing asset (idempotent). This does
+	// not touch any ad platform; the account-scoped Meta image_hash is resolved
+	// later, at campaign dispatch. Meta and Microsoft Advertising consume stored
+	// assets: a Microsoft Advertising campaign names one by
+	// microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad
+	// account's media library (an account-scoped MediaId) and attached to the
+	// campaign as an image ad extension; Microsoft accepts at most 76,800 bytes
+	// and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the
+	// asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed
+	// URL when that feature is configured. An X (Twitter) campaign may also
+	// reference the asset as the image of its authored tweet
+	// (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is
 	// likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig
 	// variant names one by imageAssetId, and at dispatch it is uploaded once
 	// through LinkedIn's Images API (an organization-owned image URN) and used as
@@ -119,19 +121,21 @@ type Service interface {
 	// supply imageUrl'): 400 with that message. A redditConfig.excludedSubreddits
 	// or excludedGeoTargets that breaks its rules, or is sent while
 	// REDDIT_TARGETING_EXCLUSIONS_ENABLED is off, is also a synchronous 400 (see
-	// the config attribute). So, while REDDIT_TARGETING_RESOLUTION_ENABLED is
-	// "true" (#549), is a redditConfig.subreddits entry Reddit's GET
-	// /targeting/communities does not list, or an interests entry that is neither
-	// a GET /targeting/interests id nor exactly one interest name: that check
-	// reads Reddit, fails open when the read cannot run, and is repeated at
-	// dispatch fail-closed, before anything is created; resolved creates send
-	// Reddit's community spelling and interest ids. So is a
-	// twitterConfig.geoTargets, languages, keywords or interestIds that breaks its
-	// rules, or is sent while TWITTER_CREATE_TARGETING_ENABLED is off (#564). So
-	// is a microsoftConfig.sitelinks or callouts list that breaks its rules, or is
-	// sent while MICROSOFT_AD_EXTENSIONS_ENABLED is off (#563). So is a
-	// microsoftConfig.negativeKeywords list that breaks its rules or is sent while
-	// MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is off (see the config
+	// the config attribute). So is a redditConfig.videoAssetId / thumbnailAssetId
+	// pair that breaks its rules or is sent while REDDIT_VIDEO_ENABLED is off
+	// (#549; see the config attribute). So, while
+	// REDDIT_TARGETING_RESOLUTION_ENABLED is "true" (#549), is a
+	// redditConfig.subreddits entry Reddit's GET /targeting/communities does not
+	// list, or an interests entry that is neither a GET /targeting/interests id
+	// nor exactly one interest name: that check reads Reddit, fails open when the
+	// read cannot run, and is repeated at dispatch fail-closed, before anything is
+	// created; resolved creates send Reddit's community spelling and interest ids.
+	// So is a twitterConfig.geoTargets, languages, keywords or interestIds that
+	// breaks its rules, or is sent while TWITTER_CREATE_TARGETING_ENABLED is off
+	// (#564). So is a microsoftConfig.sitelinks or callouts list that breaks its
+	// rules, or is sent while MICROSOFT_AD_EXTENSIONS_ENABLED is off (#563). So is
+	// a microsoftConfig.negativeKeywords list that breaks its rules or is sent
+	// while MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is off (see the config
 	// attribute). So is a microsoftConfig.headlines, descriptions, path1 or path2
 	// that breaks its rules or is sent while MICROSOFT_AD_COPY_ENABLED is off.
 	// GOOGLE ADS SHARED-ACCOUNT INPUTS: a googleAdsConfig that sets any input
@@ -1267,7 +1271,25 @@ type CampaignCreateInput struct {
 	// blank or invalid entry, an overlap, a list over its cap, a value that is not
 	// an array of strings (null reads as absent), or either list while the flag is
 	// off, is refused with 400 "invalid campaign config: redditConfig.<field>:
-	// ..." before any job exists. X TARGETING (#564): twitterConfig takes
+	// ..." before any job exists. REDDIT VIDEO (#549): redditConfig takes
+	// `videoAssetId` (a creative asset of this brief stored as video/mp4 through
+	// upload-creative-asset) and `thumbnailAssetId` (a stored PNG or JPEG of the
+	// same brief), set together and never with postUrl, imageUrl or imageAssetId.
+	// The create authors a promoted VIDEO post
+	// ({"type":"VIDEO","thumbnail_url":..,"content":[{"media_url":..,"call_to_action":..,"destination_url":..}]})
+	// before the campaign, Reddit fetching the video and the thumbnail from
+	// short-lived signed URLs (the video's URL serves only video/mp4, the
+	// thumbnail's only PNG/JPEG); the thumbnail is required because Reddit
+	// requires one for a video post and is not derived from the video. A refused
+	// post leaves the campaign and ad group with no ad (created_degraded), exactly
+	// as for an image post. OFF unless REDDIT_VIDEO_ENABLED is exactly "true" on
+	// the deployment (the post shape comes from Reddit's public OpenAPI document
+	// and has not been sent live). Either field while the flag is off, one without
+	// the other, a mix with another creative, a non-UUID id, the same id twice, or
+	// the fields while signed creative-asset URLs are not configured is refused
+	// with 400 "invalid campaign config: redditConfig: ..." before any job exists;
+	// an asset that is missing for the brief, empty, or of the wrong type fails
+	// the job before anything is created. X TARGETING (#564): twitterConfig takes
 	// `geoTargets` (ISO 3166-1 alpha-2 country codes, at most 50, uppercased and
 	// de-duplicated) and `languages` (X language values such as en, at most 20,
 	// lowercased and de-duplicated). Before anything is created each country is

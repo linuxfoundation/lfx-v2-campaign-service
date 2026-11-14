@@ -5468,7 +5468,25 @@ type CampaignCreateInputRequestBody struct {
 	// blank or invalid entry, an overlap, a list over its cap, a value that is not
 	// an array of strings (null reads as absent), or either list while the flag is
 	// off, is refused with 400 "invalid campaign config: redditConfig.<field>:
-	// ..." before any job exists. X TARGETING (#564): twitterConfig takes
+	// ..." before any job exists. REDDIT VIDEO (#549): redditConfig takes
+	// `videoAssetId` (a creative asset of this brief stored as video/mp4 through
+	// upload-creative-asset) and `thumbnailAssetId` (a stored PNG or JPEG of the
+	// same brief), set together and never with postUrl, imageUrl or imageAssetId.
+	// The create authors a promoted VIDEO post
+	// ({"type":"VIDEO","thumbnail_url":..,"content":[{"media_url":..,"call_to_action":..,"destination_url":..}]})
+	// before the campaign, Reddit fetching the video and the thumbnail from
+	// short-lived signed URLs (the video's URL serves only video/mp4, the
+	// thumbnail's only PNG/JPEG); the thumbnail is required because Reddit
+	// requires one for a video post and is not derived from the video. A refused
+	// post leaves the campaign and ad group with no ad (created_degraded), exactly
+	// as for an image post. OFF unless REDDIT_VIDEO_ENABLED is exactly "true" on
+	// the deployment (the post shape comes from Reddit's public OpenAPI document
+	// and has not been sent live). Either field while the flag is off, one without
+	// the other, a mix with another creative, a non-UUID id, the same id twice, or
+	// the fields while signed creative-asset URLs are not configured is refused
+	// with 400 "invalid campaign config: redditConfig: ..." before any job exists;
+	// an asset that is missing for the brief, empty, or of the wrong type fails
+	// the job before anything is created. X TARGETING (#564): twitterConfig takes
 	// `geoTargets` (ISO 3166-1 alpha-2 country codes, at most 50, uppercased and
 	// de-duplicated) and `languages` (X language values such as en, at most 20,
 	// lowercased and de-duplicated). Before anything is created each country is

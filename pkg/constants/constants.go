@@ -200,6 +200,19 @@ const (
 	// been exercised against a live account; the issue asks for a probe of the interests shape.
 	EnvRedditTargetingResolutionEnabled = "REDDIT_TARGETING_RESOLUTION_ENABLED"
 
+	// EnvRedditVideoEnabled opts a deployment IN to Reddit VIDEO posts (#549 gap 5):
+	// redditConfig.videoAssetId (a stored video/mp4) and redditConfig.thumbnailAssetId (a stored
+	// PNG/JPEG), authored as a VIDEO post whose video and thumbnail Reddit fetches from short-lived
+	// signed URLs. Only the exact value "true" enables it; unset or any other value fails closed,
+	// and a create naming either field is refused with a 400 before any job exists (and again at
+	// dispatch, before anything upstream).
+	//
+	// It names no account resource: it keeps an UNVERIFIED request shape (the legacy post body's
+	// VIDEO type, media_url and thumbnail_url, from Reddit's published v3 OpenAPI schema; no live
+	// create has sent it) off the shared ad account until a live probe confirms Reddit accepts the
+	// post and fetches an MP4 from the signed route. Turn it on per environment, in lfx-v2-argocd.
+	EnvRedditVideoEnabled = "REDDIT_VIDEO_ENABLED"
+
 	// EnvTwitterCreateTargetingEnabled opts a deployment IN to twitterConfig.geoTargets and
 	// twitterConfig.languages (#564): country and language targeting criteria added to the line
 	// item an X create makes. Only the exact value "true" enables them; unset or any other value

@@ -1029,3 +1029,16 @@ Not verified live: neither read has been exercised against a live account. Befor
 turned on, a probe should confirm the interests shape (that the ad group takes the listed ids,
 and whether the list paginates) and whether the communities `names` filter ignores case. Names
 are sent as the caller spelled them and matched ignoring case.
+
+## Video posts (`CampaignInput.VideoURLSource` / `ThumbnailURLSource`, #549 gap 5)
+
+When both sources are set, and `PostURL`, `ImageURL` and `ImageURLSource` are all empty, Step 1.5
+authors a **VIDEO** post instead of an IMAGE one. The endpoint is the same one
+(`createPromotedPost`, now taking a `promotedPostMedia`), with `"type":"VIDEO"`,
+`content[0].media_url` set to the video, and the top-level `thumbnail_url` that
+`components_schema_post` requires for video posts. Both URLs are obtained late (`lateMediaURL`,
+video first) immediately before the post, and each gets `validateImageURL`'s shape check. A missing
+source, a mix with a post URL or an image, a source error or a bad URL is `(nil, err)` before any
+mutating request. A post failure follows the image path's outcome table unchanged. The success
+step reads "Authored promoted video post". The dispatcher keeps it behind `REDDIT_VIDEO_ENABLED`:
+see [Reddit Video Posts](../architecture/reddit-video-posts.md).

@@ -45,6 +45,8 @@ var redditUngatedFields = map[string]bool{
 	"excludedSubreddits": true, "excludedGeoTargets": true,
 	// conversionEvent (#549) names a pixel event from Reddit's public optimization-goal enum.
 	"conversionEvent": true,
+	// The video post's assets (#549 gap 5) are stored assets of this brief, like imageAssetId.
+	"videoAssetId": true, "thumbnailAssetId": true,
 }
 
 // TestEveryRedditConfigFieldIsClassifiedForTheMarketingOpsGate fails when a redditConfig field is

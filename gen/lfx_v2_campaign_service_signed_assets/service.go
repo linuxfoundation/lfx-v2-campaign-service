@@ -17,8 +17,9 @@ import (
 // design: the signature is the authorization.
 type Service interface {
 	// Serve the bytes of one stored creative asset named by a valid, unexpired
-	// signature over (project, brief, asset, expiry). Every rejection is the same
-	// 404.
+	// signature over (project, brief, asset, expiry) for one slot kind: an image
+	// URL serves PNG/JPEG only, a kind=video URL serves video/mp4 only. Every
+	// rejection is the same 404.
 
 	// If body implements [io.WriterTo], that implementation will be used instead.
 	// Consider [goa.design/goa/v3/pkg.SkipResponseWriter] to adapt existing
@@ -56,6 +57,8 @@ type GetSignedCreativeAssetPayload struct {
 	Exp int64
 	// Signature
 	Sig string
+	// Slot kind; absent for an image
+	Kind *string
 }
 
 type SignedAssetNotFoundError struct {
@@ -76,9 +79,10 @@ type SignedAssetUnavailableError struct {
 // lfx-v2-campaign-service-signed-assets service get-signed-creative-asset
 // method.
 type SignedCreativeAssetResult struct {
-	// The asset's VERIFIED stored MIME type
+	// The asset's VERIFIED stored MIME type. video/mp4 only at a kind=video URL
+	// (#549).
 	ContentType string
-	// Byte length of the image
+	// Byte length of the asset
 	ContentLength int64
 	// Cache policy for the response
 	CacheControl string
