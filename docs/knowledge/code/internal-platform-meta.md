@@ -1093,6 +1093,25 @@ object on its own (`decodeMetaFrequencyCap`, sharing `decodeMetaConfigObject` wi
 best-effort one, which can leave a partly filled cap behind a type error. Not live-verified: the
 payload and the 1–90 bounds.
 
+`CampaignInput.LeadFormID` (`metaConfig.leadFormId`, gap 8, `lead_forms.go`) names an existing
+Instant Form of the connection's Page; the owner decided (2026-11-14) that LFX never creates a form
+or accepts the Page's lead terms. `NormalizeLeadForm` refuses it on any objective but leads and when
+it is not a numeric string of at most 20 digits; with it `CreateCampaign` swaps in
+`leadFormObjectiveParams` (OUTCOME_LEADS, LEAD_GENERATION, a `page_id` promoted object), adds
+`destination_type: ON_AD` to the ad set, and `withLeadForm` replaces every creative's
+`call_to_action.value` with `{"lead_gen_form_id": …}` (the link stays the UTM registration URL).
+`CheckLeadFormCallToAction` limits the button to LEARN_MORE, SIGN_UP, APPLY_NOW, SUBSCRIBE and
+DOWNLOAD. The effective goal is LEAD_GENERATION, so the existing bid check refuses a manual
+link-click cap after the account read, and `metaBidPlan` refuses it synchronously. After the
+account preflight, before any write, `checkLeadForm` reads `GET /{form}?fields=id,page,status`: a
+form of another Page or not ACTIVE is a refusal; a failed read or an answer that does not name the
+form and its Page is an error. Without a form, leads keeps the interim traffic mapping and reads
+nothing. The dispatcher gates it behind `META_LEAD_FORMS_ENABLED` (default off) in
+`PreflightCreate` and `Dispatch` and type-checks it with the `metaStringConfigKeys`. Not verified
+live: whether the connection's token may read the form node (it may need `pages_manage_ads` or
+`leads_retrieval`), the lead-ad CTA subset, the ON_AD ad set payload, and lead ads on the Audience
+Network placement.
+
 ## Audience targeting (`targeting.go`, #550)
 
 `CampaignInput.Targeting` (`metaConfig.targeting`) adds an age range, a gender, custom audiences to

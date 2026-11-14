@@ -404,6 +404,15 @@ openssl rand -base64 32
   anything else fails closed, and a create carrying the field is refused
   with a 400 before any job exists. The chart sets it to `"false"`; enable
   it per-environment in the ArgoCD overlay.
+- `META_LEAD_FORMS_ENABLED` (default unset, i.e. OFF) — opts a deployment
+  IN to `metaConfig.leadFormId` (#550): an existing Instant Form (created in
+  Ads Manager, with the Page's lead terms accepted) that turns the `leads`
+  objective into an `OUTCOME_LEADS` lead ad with the form on every creative.
+  The form is read before anything is created and must be an active form of
+  the connection's Page. Only the exact value `true` enables it; anything
+  else fails closed, and a create carrying the field is refused with a 400
+  before any job exists. The chart sets it to `"false"`; enable it
+  per-environment in the ArgoCD overlay.
 - `META_AUDIENCE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `metaConfig.targeting` (#550): `ageMin`/`ageMax`,
   `genders`, `customAudiences`, `excludedCustomAudiences` and
