@@ -360,6 +360,12 @@ type CampaignResult struct {
 	// associated with the campaign (#563 gap 13), set by the DISPATCHER after
 	// AttachCampaignStructuredSnippets; empty does not mean the campaign has none, as above.
 	StructuredSnippetAdExtensionIDs []string `json:"structuredSnippetAdExtensionIds,omitempty"`
+	// LogoMediaID / LogoAdExtensionID record the campaign logo extension (#563 gap 13), set by
+	// the DISPATCHER after AttachCampaignLogo, as the image ids are: MediaID is "" when nothing
+	// was uploaded (no logo requested, or the campaign already had one), and either may be set
+	// beside a degraded outcome so a partially-built extension can be found.
+	LogoMediaID       string `json:"logoMediaId,omitempty"`
+	LogoAdExtensionID string `json:"logoAdExtensionId,omitempty"`
 	// NegativeKeywords is the positional outcome of the create-time campaign negatives
 	// (microsoftConfig.negativeKeywords, #563), one entry per requested keyword in request
 	// order. Like the image ids it is set by the DISPATCHER after AddCampaignNegativeKeywords —

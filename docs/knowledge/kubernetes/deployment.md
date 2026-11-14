@@ -172,6 +172,10 @@ exists, and Dispatch refuses it again before any Microsoft call.
 on the same terms, defaulting to `"false"`: the `StructuredSnippetAdExtension` shape is from the v13
 reference and has not been sent live.
 
+`MICROSOFT_LOGO_EXTENSION_ENABLED` gates `microsoftConfig.logoAssetId` and `logoBusinessName` at
+create (#563) on the same terms, defaulting to `"false"`: the `Image1x1` upload and the
+`LogoAdExtension` shape are from the v13 reference and have not been sent live.
+
 `MICROSOFT_CONVERSION_GOALS_ENABLED` gates `microsoftConfig.conversionGoalIds`, the conversion
 bidding strategies (`bidding.strategy` `maxConversions` / `targetCpa`) and the conversion-goal
 picker read (#563 gap 7) on the same terms, defaulting to `"false"`: the `GetConversionGoalsByIds`

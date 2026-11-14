@@ -1495,8 +1495,35 @@ re-checked in Dispatch), attaches only to a confirmed campaign right after the s
 callouts, records `StructuredSnippetAdExtensionIDs`, and degrades the campaign on any shortfall.
 The snapshot reduces header and values as caller free text. Not verified live; not role-gated.
 
-The logo extension the issue lists with snippets is deferred: it needs Microsoft's logo image
-limits and a media upload distinct from the campaign image extension's, none of it verified.
+## Campaign logo extension (`logo_extension.go`, #563 gap 13)
+
+`microsoftConfig.logoAssetId` names a stored creative asset of the brief and `logoBusinessName` the
+`BusinessName` Microsoft requires beside it (both or neither). `AttachCampaignLogo` runs the image
+extension's sequence for a `LogoAdExtension`: one `AdExtensionsAssociations/Query` filtered to
+`LogoAdExtension` on the campaign (Microsoft allows one logo per level, so a campaign that has one
+gets nothing uploaded or added, with a step; a lookup that cannot answer adds nothing and is a
+definite failure), then `AddMedia` with one `Image` of `MediaType` `Image1x1` (the 1:1 sub type,
+minimum 128x128), `AddAdExtensions` with one `{Type "LogoAdExtension", BusinessLogo <media id>,
+BusinessName}` and `SetAdExtensionsAssociations` at `Campaign` level, each failure classified
+definite or UNCONFIRMED by `classifyImageStep`. No `DomainName` is sent. `ValidateLogo` holds the
+limits before any request: at most `MaxImageBytes` (76,800) decoded bytes, the upload path's
+102,400-base64-character `Image.Data` ceiling, which is tighter than the 5,120 KB the
+`LogoAdExtension` reference allows; PNG or JPEG only, header decoded and matched to the recorded
+MIME type (any other type, `video/mp4` included, is refused); width equal to height; 128-2048 px a
+side (2048 is Microsoft's maximum height); `ValidateLogoBusinessName` trims and allows 1-25
+characters with no control or format character.
+
+The dispatcher (`internal/dispatch/microsoft_logo_extension.go`) refuses a non-string value, either
+field while `MICROSOFT_LOGO_EXTENSION_ENABLED` is off, a non-UUID id, one field without the other
+and a bad business name as a synchronous 400 (`domain.WrapPreflightRefusal` over
+`ErrCreateConfigInvalid`), re-checked in Dispatch. `resolveMicrosoftLogo` then loads the asset
+like `resolveMicrosoftImage` (brief-scoped, priced on `byte_size`, charged to the shared
+`AssetReserver`) and validates it, so a missing or unusable asset fails the job before any
+Microsoft call. The logo is attached to a confirmed campaign after the structured snippets;
+`CampaignResult.LogoMediaID` / `LogoAdExtensionID` record the ids, and a shortfall marks the
+campaign `created_degraded` with a "NOT attached" or "UNCONFIRMED" step. The snapshot reduces the
+business name as caller free text and records the canonical asset id. Not role-gated (the image is
+uploaded new). Not verified live: that `BusinessLogo` takes an `AddMedia` id of an `Image1x1`.
 
 ## Create-time campaign bid strategy (`CampaignInput.BiddingScheme`, LFXV2-2665)
 

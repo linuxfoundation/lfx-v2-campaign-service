@@ -512,6 +512,15 @@ app:
     MICROSOFT_STRUCTURED_SNIPPETS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to microsoftConfig.logoAssetId / logoBusinessName (#563): a
+    # stored square PNG/JPEG creative asset uploaded as an Image1x1 media and attached to the
+    # confirmed campaign as a LogoAdExtension. Built from the v13 Campaign Management reference
+    # and not yet sent by a live create. The image is uploaded new and names no account
+    # resource. While off, a create naming either field is refused with a 400 before any job
+    # exists. Any value other than "true" is treated as off.
+    MICROSOFT_LOGO_EXTENSION_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to microsoftConfig.conversionGoalIds and the
     # conversion bidding strategies (bidding.strategy "maxConversions" and
     # "targetCpa") (#563 gap 7), and to the conversion-goal picker read
