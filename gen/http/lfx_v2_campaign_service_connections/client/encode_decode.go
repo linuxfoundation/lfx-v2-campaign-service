@@ -11001,6 +11001,208 @@ func DecodeListMicrosoftAdsRemarketingListsResponse(decoder func(*http.Response)
 	}
 }
 
+// BuildListMicrosoftAdsConversionGoalsRequest instantiates a HTTP request
+// object with method and path set to call the
+// "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-conversion-goals" endpoint
+func (c *Client) BuildListMicrosoftAdsConversionGoalsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.ListMicrosoftAdsConversionGoalsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", "*lfxv2campaignserviceconnections.ListMicrosoftAdsConversionGoalsPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ListMicrosoftAdsConversionGoalsLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeListMicrosoftAdsConversionGoalsRequest returns an encoder for requests
+// sent to the lfx-v2-campaign-service-connections
+// list-microsoft-ads-conversion-goals server.
+func EncodeListMicrosoftAdsConversionGoalsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.ListMicrosoftAdsConversionGoalsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", "*lfxv2campaignserviceconnections.ListMicrosoftAdsConversionGoalsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		return nil
+	}
+}
+
+// DecodeListMicrosoftAdsConversionGoalsResponse returns a decoder for
+// responses returned by the lfx-v2-campaign-service-connections
+// list-microsoft-ads-conversion-goals endpoint. restoreBody controls whether
+// the response body should be restored after having been read.
+// DecodeListMicrosoftAdsConversionGoalsResponse may return the following
+// errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeListMicrosoftAdsConversionGoalsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ListMicrosoftAdsConversionGoalsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", err)
+			}
+			err = ValidateListMicrosoftAdsConversionGoalsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", err)
+			}
+			res := NewListMicrosoftAdsConversionGoalsMicrosoftAdsConversionGoalsOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ListMicrosoftAdsConversionGoalsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", err)
+			}
+			err = ValidateListMicrosoftAdsConversionGoalsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", err)
+			}
+			return nil, NewListMicrosoftAdsConversionGoalsBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ListMicrosoftAdsConversionGoalsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", err)
+			}
+			err = ValidateListMicrosoftAdsConversionGoalsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", err)
+			}
+			return nil, NewListMicrosoftAdsConversionGoalsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ListMicrosoftAdsConversionGoalsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", err)
+			}
+			err = ValidateListMicrosoftAdsConversionGoalsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", err)
+			}
+			return nil, NewListMicrosoftAdsConversionGoalsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ListMicrosoftAdsConversionGoalsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", err)
+			}
+			err = ValidateListMicrosoftAdsConversionGoalsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", err)
+			}
+			return nil, NewListMicrosoftAdsConversionGoalsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ListMicrosoftAdsConversionGoalsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", err)
+			}
+			err = ValidateListMicrosoftAdsConversionGoalsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", err)
+			}
+			return nil, NewListMicrosoftAdsConversionGoalsPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ListMicrosoftAdsConversionGoalsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", err)
+			}
+			err = ValidateListMicrosoftAdsConversionGoalsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", err)
+			}
+			return nil, NewListMicrosoftAdsConversionGoalsUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildGetMetaAdsAudienceRequest instantiates a HTTP request object with
 // method and path set to call the "lfx-v2-campaign-service-connections"
 // service "get-meta-ads-audience" endpoint
@@ -17819,6 +18021,22 @@ func unmarshalMicrosoftAdsRemarketingListResponseBodyToLfxv2campaignserviceconne
 		Scope:              *v.Scope,
 		MembershipDuration: v.MembershipDuration,
 		SearchSize:         v.SearchSize,
+	}
+
+	return res
+}
+
+// unmarshalMicrosoftAdsConversionGoalResponseBodyToLfxv2campaignserviceconnectionsMicrosoftAdsConversionGoal
+// builds a value of type
+// *lfxv2campaignserviceconnections.MicrosoftAdsConversionGoal from a value of
+// type *MicrosoftAdsConversionGoalResponseBody.
+func unmarshalMicrosoftAdsConversionGoalResponseBodyToLfxv2campaignserviceconnectionsMicrosoftAdsConversionGoal(v *MicrosoftAdsConversionGoalResponseBody) *lfxv2campaignserviceconnections.MicrosoftAdsConversionGoal {
+	res := &lfxv2campaignserviceconnections.MicrosoftAdsConversionGoal{
+		ID:     *v.ID,
+		Name:   *v.Name,
+		Status: *v.Status,
+		Type:   *v.Type,
+		Scope:  *v.Scope,
 	}
 
 	return res

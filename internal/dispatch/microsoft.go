@@ -161,6 +161,12 @@ type microsoftConfig struct {
 	// 13, microsoft_structured_snippets.go), {header, values}, attached only to a confirmed
 	// campaign. Behind MICROSOFT_STRUCTURED_SNIPPETS_ENABLED; not role-gated.
 	StructuredSnippets []microsoftStructuredSnippetConfig `json:"structuredSnippets,omitempty"`
+	// ConversionGoalIDs are EXISTING conversion goals set as the new campaign's GoalIds (#563 gap
+	// 7, microsoft_conversion_goals.go), each verified before anything is created; they are what
+	// bidding.strategy "maxConversions" and "targetCpa" require. Behind
+	// MICROSOFT_CONVERSION_GOALS_ENABLED, and global_marketing_ops only
+	// (service.MicrosoftMarketingOpsInputs): the goals belong to the shared LF account.
+	ConversionGoalIDs []string `json:"conversionGoalIds,omitempty"`
 }
 
 // MicrosoftDispatcher creates Microsoft Advertising (Bing) campaigns for the orchestrator.
@@ -276,6 +282,10 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err := checkMicrosoftStructuredSnippetsShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	// And a wrong-typed conversionGoalIds (#563 gap 7).
+	if err := checkMicrosoftConversionGoalsShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg microsoftConfig
 	if err := unmarshalPlatformConfig(config, "microsoftConfig", &cfg); err != nil {
 		return nil, notCreated(err)
@@ -348,6 +358,12 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err := checkMicrosoftStructuredSnippets(cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// Conversion goals (#563 gap 7): gated and validated BEFORE any upstream call. The role check
+	// ran before the job existed (service.MicrosoftMarketingOpsInputs); the conversion strategies
+	// were checked with the bid plan above.
+	if err := checkMicrosoftConversionGoals(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -379,13 +395,17 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		Keywords:        microsoftKeywords(cfg.Keywords),
 		CpcBid:          plan.amount,
 		BiddingScheme:   microsoftBiddingScheme(plan),
-		GeoTargets:      cfg.GeoTargets,
-		StartDate:       cfg.StartDate,
-		EndDate:         cfg.EndDate,
-		Headlines:       cfg.Headlines,
-		Descriptions:    cfg.Descriptions,
-		Path1:           cfg.Path1,
-		Path2:           cfg.Path2,
+		// The conversion strategies' target CPA and the existing goals they bid toward (#563 gap
+		// 7), checked by microsoftBidPlan and checkMicrosoftConversionGoals above.
+		TargetCPA:         plan.targetCPA,
+		ConversionGoalIDs: cfg.ConversionGoalIDs,
+		GeoTargets:        cfg.GeoTargets,
+		StartDate:         cfg.StartDate,
+		EndDate:           cfg.EndDate,
+		Headlines:         cfg.Headlines,
+		Descriptions:      cfg.Descriptions,
+		Path1:             cfg.Path1,
+		Path2:             cfg.Path2,
 		// Create-time targeting (#563 gaps 5-6), validated above by checkMicrosoftCreateTargeting.
 		ExcludedGeoTargets: cfg.ExcludedGeoTargets,
 		ProximityTargets:   microsoftProximityTargets(cfg.ProximityTargets),
@@ -441,6 +461,14 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// created (one GetSharedEntities read), so an unknown id fails the job with nothing created.
 	if len(cfg.SharedNegativeKeywordListIDs) > 0 {
 		if err := client.CheckSharedNegativeKeywordLists(ctx, cfg.SharedNegativeKeywordListIDs); err != nil {
+			return nil, notCreated(err)
+		}
+	}
+	// And every conversion goal must exist on this account, usable, BEFORE anything is created
+	// (one GetConversionGoalsByIds read): LFX never creates a goal, so a miss fails the job with
+	// nothing created.
+	if len(cfg.ConversionGoalIDs) > 0 {
+		if err := client.CheckConversionGoals(ctx, cfg.ConversionGoalIDs); err != nil {
 			return nil, notCreated(err)
 		}
 	}
@@ -556,14 +584,18 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 	if err := checkMicrosoftStructuredSnippetsShape(config); err != nil {
 		return err
 	}
+	// And a wrong-typed conversionGoalIds (#563 gap 7).
+	if err := checkMicrosoftConversionGoalsShape(config); err != nil {
+		return err
+	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
 	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
 	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
 	// not decode is its zero value, which no plan rule reads as a refusal. The decode error itself
 	// stays "not applicable" — only bidding, the caller ad copy, sitelinks/callouts,
 	// negativeKeywords, the remarketing lists, the create-time targeting, the search network, the ad
-	// schedule, the bid adjustments, the shared negative keyword lists and the structured snippets
-	// are promised as synchronous 400s.
+	// schedule, the bid adjustments, the shared negative keyword lists, the structured snippets and
+	// the conversion goals are promised as synchronous 400s.
 	var cfg microsoftConfig
 	_ = unmarshalPlatformConfig(config, "microsoftConfig", &cfg)
 	if _, err := microsoftBidPlan(cfg); err != nil {
@@ -600,6 +632,9 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 	if err := checkMicrosoftStructuredSnippets(cfg); err != nil {
 		return err
 	}
+	if err := checkMicrosoftConversionGoals(cfg); err != nil {
+		return err
+	}
 	return domain.ErrPreflightNotApplicable
 }
 
@@ -618,6 +653,9 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 // (microsoft.ValidateMaxCPCBid), so a campaign this path creates can always be re-bid there.
 func microsoftBidPlan(cfg microsoftConfig) (bidPlan, error) {
 	const key = "microsoftConfig"
+	if cfg.Bidding != nil && (cfg.Bidding.Strategy == biddingStrategyMaxConversions || cfg.Bidding.Strategy == biddingStrategyTargetCpa) {
+		return microsoftConversionPlan(cfg)
+	}
 	if cfg.Bidding == nil && cfg.CpcBid != 0 {
 		amount := cfg.CpcBid
 		return microsoftManualPlan(key, &biddingConfig{Strategy: biddingStrategyManual, BidAmount: &amount}, "cpcBid")
@@ -667,6 +705,9 @@ func microsoftManualPlan(key string, b *biddingConfig, field string) (bidPlan, e
 
 // microsoftBiddingScheme maps a plan to the campaign BiddingScheme the client sends.
 func microsoftBiddingScheme(plan bidPlan) string {
+	if plan.conversions {
+		return microsoft.BidSchemeMaxConversions
+	}
 	if plan.manual() {
 		return microsoft.BidSchemeEnhancedCpc
 	}

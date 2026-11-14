@@ -105,3 +105,79 @@ func (s *ConnectionService) ListMicrosoftAdsRemarketingLists(ctx context.Context
 		ListCount: len(out),
 	}, nil
 }
+
+// MicrosoftConversionGoalReader is an OPTIONAL dispatcher capability: list the conversion goals on
+// the Microsoft Advertising account a create for the project uses (#563 gap 7). Type-asserted like
+// MicrosoftRemarketingListReader; a dispatcher without it yields ErrTargetingLookupUnsupported
+// (400). A successful call MUST return a non-nil result with a non-nil Goals slice; called is as
+// for MicrosoftRemarketingListReader.
+type MicrosoftConversionGoalReader interface {
+	ListMicrosoftConversionGoals(ctx context.Context, projectID string, platform model.Provider) (res *model.MicrosoftConversionGoals, called bool, err error)
+}
+
+const opListMicrosoftConversionGoals = "list_microsoft_conversion_goals"
+
+var microsoftAdsConversionGoalLookup = accountDiscovery{
+	provider:        model.ProviderMicrosoftAds,
+	displayName:     microsoftAdsAccountDiscovery.displayName,
+	notUsableRemedy: microsoftAdsAccountDiscovery.notUsableRemedy,
+	operation:       "conversion goal lookup",
+}
+
+// ReadMicrosoftConversionGoals lists the conversion goals on the Microsoft Advertising account a
+// create for the project uses, through the platform's dispatcher. A pure read; nothing is
+// persisted. Like ReadMicrosoftRemarketingLists it is not refused on a shared-tenancy platform:
+// the gateway admits only global_marketing_ops of the project to this route.
+func (o *Orchestrator) ReadMicrosoftConversionGoals(ctx context.Context, projectID string, platform model.Provider) (*model.MicrosoftConversionGoals, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrTargetingLookupUnsupported, platform)
+	}
+	r, ok := d.(MicrosoftConversionGoalReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrTargetingLookupUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	res, called, err := r.ListMicrosoftConversionGoals(callCtx, projectID, platform)
+	if called {
+		o.recordUpstream(ctx, platform, opListMicrosoftConversionGoals, start, err)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if res == nil || res.Goals == nil {
+		return nil, fmt.Errorf("%s conversion goal reader returned a nil result with no error", platform)
+	}
+	return res, nil
+}
+
+// ListMicrosoftAdsConversionGoals lists the conversion goals on the Microsoft Advertising account a
+// create for this project uses, for the conversionGoalIds picker (#563 gap 7).
+func (s *ConnectionService) ListMicrosoftAdsConversionGoals(ctx context.Context, p *conn.ListMicrosoftAdsConversionGoalsPayload) (*conn.MicrosoftAdsConversionGoals, error) {
+	if err := rejectSystemScope(p.ProjectID); err != nil {
+		return nil, err
+	}
+	_, _, orch, err := s.resolveBackendWithOrch(microsoftAdsConversionGoalLookup.label())
+	if err != nil {
+		return nil, err
+	}
+	res, rerr := orch.ReadMicrosoftConversionGoals(ctx, p.ProjectID, model.ProviderMicrosoftAds)
+	if rerr != nil {
+		return nil, s.classifyTargetingLookupError(ctx, p.ProjectID, microsoftAdsConversionGoalLookup, rerr)
+	}
+	rows := append([]model.MicrosoftConversionGoal(nil), res.Goals...)
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := strings.ToLower(rows[i].Name), strings.ToLower(rows[j].Name)
+		if a != b {
+			return a < b
+		}
+		return rows[i].ID < rows[j].ID
+	})
+	out := make([]*conn.MicrosoftAdsConversionGoal, 0, len(rows))
+	for _, g := range rows {
+		out = append(out, &conn.MicrosoftAdsConversionGoal{ID: g.ID, Name: g.Name, Status: g.Status, Type: g.Type, Scope: g.Scope})
+	}
+	return &conn.MicrosoftAdsConversionGoals{AccountID: res.AccountID, Goals: out, GoalCount: len(out)}, nil
+}

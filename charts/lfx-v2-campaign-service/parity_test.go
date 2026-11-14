@@ -129,6 +129,11 @@ const twitterCustomAudiencesPath = "/projects/:projectId/twitter-ads/custom-audi
 // marketing-ops-api only, and TestMicrosoftRemarketingListsIsAMarketingOpsRead pins that.
 const microsoftRemarketingListsPath = "/projects/:projectId/microsoft-ads/remarketing-lists"
 
+// microsoftConversionGoalsPath is the Microsoft conversion-goal picker (#563 gap 7). The goals
+// live on the same shared account, so it is ruled by marketing-ops-api only, and
+// TestMicrosoftConversionGoalsIsAMarketingOpsRead pins that.
+const microsoftConversionGoalsPath = "/projects/:projectId/microsoft-ads/conversion-goals"
+
 // linkedInAudiencesPath and linkedInConversionsPath are the LinkedIn picker reads (#552). They
 // read the account a LinkedIn create uses, the LF system account for every project without its
 // own connection, so they are ruled by marketing-ops-api only.
@@ -138,7 +143,7 @@ const (
 )
 
 // marketingOpsPaths is every path the marketing-ops-api rule must hold, in order, and nothing else.
-var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, redditCustomAudiencesPath, twitterCustomAudiencesPath, microsoftRemarketingListsPath, linkedInAudiencesPath, linkedInConversionsPath, metaCustomAudiencesPath}
+var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, redditCustomAudiencesPath, twitterCustomAudiencesPath, microsoftRemarketingListsPath, microsoftConversionGoalsPath, linkedInAudiencesPath, linkedInConversionsPath, metaCustomAudiencesPath}
 
 // ruleBlock isolates one rendered Heimdall rule (from its `- id: "<id>"` line up to
 // the next `- id:` or EOF) so path/authorizer extraction is scoped to a SINGLE rule.
@@ -300,6 +305,12 @@ func TestMicrosoftRemarketingListsIsAMarketingOpsRead(t *testing.T) {
 			t.Errorf("%s rule no longer matches %s, a campaign_manager read", projectAPIRuleID, sibling)
 		}
 	}
+}
+
+// TestMicrosoftConversionGoalsIsAMarketingOpsRead pins the same for the Microsoft conversion-goal
+// picker (#563 gap 7): every foundation's goals on the shared LF Microsoft Advertising account.
+func TestMicrosoftConversionGoalsIsAMarketingOpsRead(t *testing.T) {
+	assertMarketingOpsRead(t, microsoftConversionGoalsPath, "/projects/p1/microsoft-ads/conversion-goals")
 }
 
 // TestRedditCustomAudiencesIsAMarketingOpsRead pins the same for the Reddit custom-audience list
@@ -750,6 +761,8 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/microsoft-ads/campaign-ref/x", false},
 		{"/projects/p1/microsoft-ads/remarketing-lists", true},
 		{"/projects/p1/microsoft-ads/remarketing-lists/x", false},
+		{"/projects/p1/microsoft-ads/conversion-goals", true},
+		{"/projects/p1/microsoft-ads/conversion-goals/x", false},
 		// The Meta, Reddit, X and LinkedIn audience reads (LFXV2-2665).
 		{"/projects/p1/meta-ads/audience", true},
 		{"/projects/p1/meta-ads/audience/x", false},

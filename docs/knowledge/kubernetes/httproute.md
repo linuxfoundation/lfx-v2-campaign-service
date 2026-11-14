@@ -111,7 +111,8 @@ MUST have a matching rule in [ruleset.md](ruleset.md) — a routed request with 
 matching Heimdall rule is rejected. The RuleSet's `project-api` rule covers every
 routed project-nested family except `google-ads/conversion-actions`,
 `google-ads/audiences`, `google-ads/user-lists`, `reddit-ads/custom-audiences`,
-`twitter-ads/custom-audiences`, `microsoft-ads/remarketing-lists`, `linkedin-ads/audiences`,
+`twitter-ads/custom-audiences`, `microsoft-ads/remarketing-lists`, `microsoft-ads/conversion-goals`,
+`linkedin-ads/audiences`,
 `linkedin-ads/conversions` and `meta-ads/custom-audiences`, which its
 `marketing-ops-api` rule covers; its
 `campaigns-placeholder` rule covers the reserved prefixes, so chart↔route parity holds.
@@ -143,8 +144,9 @@ project; `TestGoogleAudiencesIsAMarketingOpsRead` and `TestUserListsIsAMarketing
 `TestMetaCustomAudiencesIsAMarketingOpsRead` pins `meta-ads/custom-audiences` (#550), and
 `TestTwitterCustomAudiencesIsAMarketingOpsRead` pins `twitter-ads/custom-audiences` (#564), and
 `TestMicrosoftRemarketingListsIsAMarketingOpsRead` pins `microsoft-ads/remarketing-lists` (#563;
-the route regex's `microsoft-ads/(keywords|audience|campaign-ref|remarketing-lists)` branch
-forwards it, base path only). A
+the route regex's `microsoft-ads/(keywords|audience|campaign-ref|remarketing-lists|conversion-goals)`
+branch forwards it, base path only), and `TestMicrosoftConversionGoalsIsAMarketingOpsRead` pins
+`microsoft-ads/conversion-goals` (#563 gap 7) through the same branch. A
 separate `TestProjectAPIRuleEnforcesCampaignManager` asserts
 the `project-api` rule has two `openfga_check` authorizers on relation `campaign_manager`, each
 paired with the correct object: `project:{{- .Outputs.project_slug_resolver_contextualizer.uid -}}`

@@ -267,7 +267,8 @@ func TwitterMarketingOpsInputs(config json.RawMessage) []string {
 // MicrosoftMarketingOpsInputs names, in config order, the microsoftConfig inputs this config
 // sets that name an EXISTING remarketing list on the connected Microsoft Advertising account
 // (#563 gap 4): audienceIds and excludedAudienceIds, and an existing shared negative keyword list
-// (#563 gap 9): sharedNegativeKeywordListIds. That account is the LF one every foundation shares,
+// (#563 gap 9): sharedNegativeKeywordListIds, and an existing conversion goal (#563 gap 7):
+// conversionGoalIds. That account is the LF one every foundation shares,
 // so only global_marketing_ops may send them. audienceBidAdjustment names no resource
 // and is not gated on its own.
 //
@@ -292,6 +293,7 @@ func MicrosoftMarketingOpsInputs(config json.RawMessage) []string {
 		AudienceIDs                  []string `json:"audienceIds"`
 		ExcludedAudienceIDs          []string `json:"excludedAudienceIds"`
 		SharedNegativeKeywordListIDs []string `json:"sharedNegativeKeywordListIds"`
+		ConversionGoalIDs            []string `json:"conversionGoalIds"`
 	}
 	_ = json.Unmarshal(raw, &cfg) // a partial decode is still inspected, as for Google
 	var set []string
@@ -303,6 +305,9 @@ func MicrosoftMarketingOpsInputs(config json.RawMessage) []string {
 	}
 	if len(cfg.SharedNegativeKeywordListIDs) > 0 {
 		set = append(set, "sharedNegativeKeywordListIds")
+	}
+	if len(cfg.ConversionGoalIDs) > 0 {
+		set = append(set, "conversionGoalIds")
 	}
 	return set
 }

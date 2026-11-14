@@ -2062,6 +2062,30 @@ func BuildListMicrosoftAdsRemarketingListsPayload(lfxV2CampaignServiceConnection
 	return v, nil
 }
 
+// BuildListMicrosoftAdsConversionGoalsPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-microsoft-ads-conversion-goals
+// endpoint from CLI flags.
+func BuildListMicrosoftAdsConversionGoalsPayload(lfxV2CampaignServiceConnectionsListMicrosoftAdsConversionGoalsProjectID *string, lfxV2CampaignServiceConnectionsListMicrosoftAdsConversionGoalsBearerToken *string) (*lfxv2campaignserviceconnections.ListMicrosoftAdsConversionGoalsPayload, error) {
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsListMicrosoftAdsConversionGoalsProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsListMicrosoftAdsConversionGoalsProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListMicrosoftAdsConversionGoalsBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsListMicrosoftAdsConversionGoalsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListMicrosoftAdsConversionGoalsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildGetMetaAdsAudiencePayload builds the payload for the
 // lfx-v2-campaign-service-connections get-meta-ads-audience endpoint from CLI
 // flags.
