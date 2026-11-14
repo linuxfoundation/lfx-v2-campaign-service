@@ -115,7 +115,9 @@ type Service interface {
 	// REDDIT_TARGETING_EXCLUSIONS_ENABLED is off, is also a synchronous 400 (see
 	// the config attribute). So is a redditConfig.placements, platforms or
 	// expandTargeting that breaks its rules, or is sent while
-	// REDDIT_PLACEMENT_TARGETING_ENABLED is off (#549). So, while
+	// REDDIT_PLACEMENT_TARGETING_ENABLED is off (#549). So is a
+	// redditConfig.budgetType that is not lifetime or daily, or is sent while
+	// REDDIT_DAILY_BUDGET_ENABLED is off (#549). So, while
 	// REDDIT_TARGETING_RESOLUTION_ENABLED is "true" (#549), is a
 	// redditConfig.subreddits entry Reddit's GET /targeting/communities does not
 	// list, or an interests entry that is neither a GET /targeting/interests id
@@ -1275,12 +1277,20 @@ type CampaignCreateInput struct {
 	// entry, a list that is not an array of strings or an expandTargeting that is
 	// not a boolean (null reads as absent), or any of the three set while the flag
 	// is off (expandTargeting: true included), is refused with 400 "invalid
-	// campaign config: redditConfig.<field>: ..." before any job exists. X
-	// TARGETING (#564): twitterConfig takes `geoTargets` (ISO 3166-1 alpha-2
-	// country codes, at most 50, uppercased and de-duplicated) and `languages` (X
-	// language values such as en, at most 20, lowercased and de-duplicated).
-	// Before anything is created each country is resolved with X's GET
-	// targeting_criteria/locations (location_type COUNTRIES, exactly one
+	// campaign config: redditConfig.<field>: ..." before any job exists. REDDIT
+	// DAILY BUDGET (#549): redditConfig.budgetType is the pacing of budgetUsd:
+	// "lifetime" (the default, goal_type LIFETIME_SPEND, as before) or "daily"
+	// (goal_type DAILY_SPEND, so budgetUsd is a per-day cap), case-insensitive;
+	// the campaign row records the same budget_type. It is accepted only while the
+	// deployment sets REDDIT_DAILY_BUDGET_ENABLED to "true". An unknown value, an
+	// explicit null, an empty or non-string value, a case variant of the key, or
+	// the field (either value) while the flag is off is refused synchronously with
+	// 400 "invalid campaign config: redditConfig.budgetType: ..." before any job
+	// exists. X TARGETING (#564): twitterConfig takes `geoTargets` (ISO 3166-1
+	// alpha-2 country codes, at most 50, uppercased and de-duplicated) and
+	// `languages` (X language values such as en, at most 20, lowercased and
+	// de-duplicated). Before anything is created each country is resolved with X's
+	// GET targeting_criteria/locations (location_type COUNTRIES, exactly one
 	// country-level entry required) and the languages are checked against GET
 	// targeting_criteria/languages; the new line item then gets one LOCATION or
 	// LANGUAGE criterion (operator EQ) per value, after the line item and before

@@ -381,8 +381,9 @@ field existed records no provenance at all and is treated as "unknown, proceed".
 `budget_update.go` backs `RedditDispatcher.WriteBudget` (see
 [internal/dispatch](internal-dispatch.md) for the guard order). The budget this service sets is
 the one `CreateCampaign` sets: `goal_value` on the **campaign**, in integer micro-units of the
-account currency, under `goal_type: "LIFETIME_SPEND"` with `is_campaign_budget_optimization:
-true`. The ad group carries no budget.
+account currency, under `goal_type: "LIFETIME_SPEND"` (or `"DAILY_SPEND"` for a create with
+`budgetType: "daily"`, #549 gap 9) with `is_campaign_budget_optimization: true`. The ad group
+carries no budget.
 
 - `BudgetMicros(amount)` — the create path's own bound (`redditMaxBudgetUSD`) and rounding
   (`toMicrodollars`), refusing an amount that rounds to zero. Refusals wrap
@@ -608,8 +609,8 @@ defect; five other defects were fixed:
   this repo and never run against a live account; an absent key reads as one page.
 - **goal_type.** `LIFETIME_SPEND` → `TotalBudget`, `DAILY_SPEND` → `DailyBudget` (mapped to
   `BudgetDay`), anything else or absent → neither, so pacing is reported unknown.
-  `LIFETIME_SPEND` is the literal this client's own create path sends; `DAILY_SPEND` is not
-  exercised anywhere else in this repo.
+  `LIFETIME_SPEND` is the literal this client's own create path sends by default; `DAILY_SPEND`
+  is sent only by a create with `budgetType: "daily"` (#549 gap 9, flag-gated, not yet sent live).
 - The stale comment that cited the superseded UNVERIFIED-CONTRACT banner on
   `GetCampaignMetrics` now says what is and is not verified: the reports operation is, the
   campaign-list operation is not.
@@ -964,6 +965,19 @@ left PAUSED with a partial result. Pinned by `TestCreateCampaign_RetryKeepsExclu
 The dispatcher keeps both behind `REDDIT_TARGETING_EXCLUSIONS_ENABLED` (default off): no live
 create has sent either field. What Reddit answers for an excluded community that does not exist
 is unknown, so it is not part of the communities-fallback match.
+
+## Daily budget at create (`budget_type.go`, #549 gap 9)
+
+`CampaignInput.BudgetType` chooses the campaign's `goal_type`: `""` or `"lifetime"` is
+`LIFETIME_SPEND`, the long-standing create, and `"daily"` is `DAILY_SPEND`, which makes `BudgetUSD`
+a per-day cap (`ResolveBudgetGoalType`, case-insensitive). `goal_value` is the same micro-unit
+amount either way. It is refused before any upstream call when it is neither, and the
+`Campaign created` step names the pacing. The dispatcher (`checkRedditBudgetType`) reads the raw
+key like `conversionEvent` (exact key, non-blank string, refused while
+`REDDIT_DAILY_BUDGET_ENABLED` is off, `"lifetime"` included) and records the row's `budget_type`
+by the same resolution, so the budget lever, settings readback and account monitor, which
+already map both goal types, compare against the right quantity. Off until a live create
+confirms Reddit accepts `DAILY_SPEND` on a budget-optimized campaign with an `end_time`.
 
 ## Placements, platforms and expansion (`placement_targeting.go`, #549 gap 7)
 

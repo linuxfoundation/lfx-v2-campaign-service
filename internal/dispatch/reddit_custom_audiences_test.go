@@ -47,6 +47,8 @@ var redditUngatedFields = map[string]bool{
 	"conversionEvent": true,
 	// Placements, platforms and expansion (#549 gap 7) are Reddit's fixed targeting enums.
 	"placements": true, "platforms": true, "expandTargeting": true,
+	// budgetType (#549 gap 9) is the pacing of the caller's own budget.
+	"budgetType": true,
 }
 
 // TestEveryRedditConfigFieldIsClassifiedForTheMarketingOpsGate fails when a redditConfig field is

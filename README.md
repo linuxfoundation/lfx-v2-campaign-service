@@ -284,6 +284,13 @@ openssl rand -base64 32
   `true` enables them; anything else fails closed, and a create naming any of
   them is refused with a 400 before any job exists. Not role-gated. No live
   create has sent a non-default value yet. The chart sets it to `"false"`.
+- `REDDIT_DAILY_BUDGET_ENABLED` (default unset, i.e. OFF) — opts a deployment
+  IN to `redditConfig.budgetType` (#549 gap 9): `"daily"` creates the campaign
+  with `goal_type` `DAILY_SPEND`, so `budgetUsd` is a per-day cap, and
+  `"lifetime"` keeps `LIFETIME_SPEND`. Only the exact value `true` enables
+  it; anything else fails closed, and a create that sets the field is
+  refused with a 400 before any job exists. Not role-gated. No live create
+  has sent `DAILY_SPEND` yet. The chart sets it to `"false"`.
 - `TWITTER_CREATE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `twitterConfig.geoTargets`, `languages`, `keywords` and
   `interestIds` (#564), country, language, broad keyword and interest

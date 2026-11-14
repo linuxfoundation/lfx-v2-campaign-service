@@ -448,12 +448,17 @@ type CampaignInput struct {
 	RegistrationURL string
 	HSToken         string
 	BudgetUSD       float64
-	StartDate       string // YYYY-MM-DD
-	EndDate         string // YYYY-MM-DD
-	GeoTargets      []string
-	Subreddits      []string
-	Interests       []string
-	Keywords        []string
+	// BudgetType is the pacing of BudgetUSD (#549 gap 9): "" or "lifetime" sends goal_type
+	// LIFETIME_SPEND, the create's long-standing behaviour; "daily" sends DAILY_SPEND, making
+	// BudgetUSD a per-day cap. Refused before any upstream call when it is neither
+	// (ResolveBudgetGoalType). The dispatcher admits it only behind REDDIT_DAILY_BUDGET_ENABLED.
+	BudgetType string
+	StartDate  string // YYYY-MM-DD
+	EndDate    string // YYYY-MM-DD
+	GeoTargets []string
+	Subreddits []string
+	Interests  []string
+	Keywords   []string
 	// ExcludedSubreddits and ExcludedGeoTargets are the ad group's excluded_communities and
 	// excluded_geolocations (#549), normalized and refused by NormalizeTargetingExclusions before
 	// any upstream call. Both are sent on EVERY ad-group attempt: the communities/interests retry
@@ -1737,6 +1742,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if budgetMicros <= 0 {
 		return nil, domain.PreflightRefusalf("invalid budget: %g USD rounds to zero micro-dollars; must round to at least one micro-dollar (>= 0.0000005 USD)", in.BudgetUSD)
 	}
+	// The budget's pacing (#549 gap 9), before any upstream call.
+	goalType, err := ResolveBudgetGoalType(in.BudgetType)
+	if err != nil {
+		return nil, domain.WrapPreflightRefusal(err)
+	}
+	pacing := "lifetime"
+	if goalType == GoalTypeDailySpend {
+		pacing = "daily"
+	}
 	// Parse for calendar validity (rejects e.g. 2026-02-31), not just format.
 	startDate, err := time.Parse("2006-01-02", in.StartDate)
 	if err != nil {
@@ -2187,7 +2201,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		"bid_strategy":                    bidStrategy,
 		"bid_type":                        objParams.bidType,
 		"optimization_goal":               optimizationGoal,
-		"goal_type":                       "LIFETIME_SPEND",
+		"goal_type":                       goalType,
 		"goal_value":                      budgetMicros,
 		"start_time":                      effectiveStart,
 		"end_time":                        campaignEndTime,
@@ -2252,7 +2266,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	// Use %g (not %.2f) so a sub-cent accepted budget isn't misreported as $0.00 —
 	// the step reflects the value actually sent, preserving its precision.
-	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, $%g lifetime)", campaignID, in.BudgetUSD))
+	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, $%g %s)", campaignID, in.BudgetUSD, pacing))
 
 	// campaignName / adGroupName were composed and length-validated up front (before
 	// the campaign POST). The ad-group name is deterministic so partialResult can

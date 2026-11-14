@@ -589,10 +589,20 @@ is left for manual creation in Reddit Ads Manager. **Budget is in USD** (a LIFET
 not daily).
 
 ```
-budgetUsd: number               — LIFETIME spend cap in USD. Must be finite and POSITIVE and
+budgetUsd: number               — LIFETIME spend cap in USD (a per-day cap with budgetType "daily").
+                                  Must be finite and POSITIVE and
                                   round to at least one micro-dollar; NaN/Inf/non-positive is
                                   rejected during dispatch (a pre-create job failure, since
                                   CreateCampaigns is async). Omitting it fails the platform job.
+budgetType?: string             — OPTIONAL pacing of budgetUsd (#549 gap 9): "lifetime" (the default,
+                                  goal_type LIFETIME_SPEND) | "daily" (goal_type DAILY_SPEND),
+                                  case-insensitive. The campaign row records the same budget_type.
+                                  Accepted only while REDDIT_DAILY_BUDGET_ENABLED is "true". An
+                                  unknown value, null, an empty or non-string value, a case variant
+                                  of the key, or the field (either value) with the flag off is a
+                                  synchronous **400** ("invalid campaign config:
+                                  redditConfig.budgetType: ..."), re-checked at dispatch before any
+                                  Reddit request. Not yet sent live.
 startDate: string               — YYYY-MM-DD (required, calendar-valid).
 endDate: string                 — YYYY-MM-DD (required, must be AFTER startDate).
 objective?: string              — awareness | traffic | conversions | video_views.

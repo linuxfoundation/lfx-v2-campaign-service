@@ -88,7 +88,8 @@ func (d *RedditDispatcher) checkRedditAssetChoice(cfg redditConfig) (string, err
 // postUrl, or a malformed id), whose bidding cannot be created as asked (redditBidPlan), whose
 // custom audience lists are mistyped, malformed or off on this deployment (#549), whose
 // conversionEvent is refused (checkRedditConversionEvent), or whose placements, platforms or
-// expandTargeting are refused (checkRedditPlacementTargeting, #549 gap 7). It
+// expandTargeting are refused (checkRedditPlacementTargeting, #549 gap 7), or whose budgetType is
+// refused (checkRedditBudgetType, #549 gap 9). It
 // never calls Reddit, so every other outcome is ErrPreflightNotApplicable. Whether the asset belongs to the brief cannot be checked here (the
 // pre-check is not given the brief); Dispatch checks it before any upstream call. A config that does
 // not decode is left to Dispatch, except a wrong-typed `bidding` (checkBiddingShape).
@@ -139,6 +140,11 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 	// Placements, platforms and expansion (#549 gap 7): gate and rules on the best-effort decode,
 	// like the exclusions; checkRedditPlacementShape above already refused a mistyped value.
 	if err := checkRedditPlacementTargeting(cfg); err != nil {
+		return err
+	}
+	// The budget's pacing (#549 gap 9), checked on the raw key like conversionEvent, so a wrong
+	// type is the synchronous 400 even when it made the decode fail.
+	if err := checkRedditBudgetType(config); err != nil {
 		return err
 	}
 	if decodeErr != nil {
