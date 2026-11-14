@@ -84,6 +84,12 @@ ad's button) and `metaConfig.conversionEvent` (the conversions objective's `cust
 Only exactly `"true"` enables each; off, a create carrying the field is refused with a 400 before
 any job exists. Neither names an account resource, so neither is behind `global_marketing_ops`.
 
+`META_OPTIMIZATION_GOAL_ENABLED` is the same kind of gate, defaulting to `"false"` (#550): it opts
+a cluster in to `metaConfig.optimizationGoal` (`LANDING_PAGE_VIEWS` instead of `LINK_CLICKS` on a
+traffic ad set). Only exactly `"true"` enables it; off, a create carrying the field is refused with
+a 400 before any job exists. It names no account resource, so it is not behind
+`global_marketing_ops`.
+
 `META_AUDIENCE_TARGETING_ENABLED` is the same kind of gate for Meta, defaulting to `"false"`
 (#550): it opts a cluster in to `metaConfig.targeting` (age, gender, custom audiences to include
 and exclude, and the Advantage+ audience flag on the ad set). Each custom audience is read and must

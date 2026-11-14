@@ -2937,6 +2937,15 @@ conversionEvent?: string        — OPTIONAL `promoted_object.custom_event_type`
                                   LEAD, SUBMIT_APPLICATION, SUBSCRIBE. On any other objective, or
                                   outside the list, a synchronous 400. Refused with a 400 unless
                                   META_CONVERSION_EVENT_ENABLED is exactly "true".
+optimizationGoal?: string       — OPTIONAL ad set `optimization_goal` for the `traffic`
+                                  objective (#550), case-insensitive: LINK_CLICKS (default — the
+                                  only goal before #550) or LANDING_PAGE_VIEWS (delivers to people
+                                  likely to load the page, not just click). On any other objective
+                                  (leads included, which runs as traffic only until instant forms
+                                  exist), or outside the list, a synchronous 400. With manual
+                                  `bidding` (a link-click bid cap) LANDING_PAGE_VIEWS is a
+                                  synchronous 400 too. Refused with a 400 unless
+                                  META_OPTIMIZATION_GOAL_ENABLED is exactly "true".
 targeting?: object              — OPTIONAL audience targeting on the ad set (#550). Refused
                                   with a 400 before any job exists unless the deployment sets
                                   META_AUDIENCE_TARGETING_ENABLED to exactly "true" (not yet

@@ -1066,6 +1066,22 @@ a 400 rather than absent. `CampaignResult.ConversionEvent` records the event on 
 was reused by name, as `BidApplied` is), which is what a conversions read must filter on. Not live-verified: whether every listed button is accepted with every
 objective.
 
+## Delivery options (`delivery_options.go`, #550)
+
+`CampaignInput.OptimizationGoal` (`metaConfig.optimizationGoal`, gap 11) replaces the traffic
+objective's fixed `optimization_goal` LINK_CLICKS (`NormalizeOptimizationGoal`: LINK_CLICKS or
+LANDING_PAGE_VIEWS, case-insensitive; empty keeps the objective's own goal). It is refused on any
+other objective — leads included, which runs as traffic only until instant forms exist — so a later
+real leads objective does not inherit a goal it cannot use. A manual bid is a link-click bid cap, so
+`CreateCampaign`'s bid check now reads the EFFECTIVE goal: a bid with LANDING_PAGE_VIEWS is refused
+after the account read and before any write, and the dispatcher's `metaBidPlan` refuses the pair
+synchronously. The bid lever already reads the live ad set's goal (`AdSetBid.CPCBidCap`), so a
+landing-page-views ad set is simply not bid-editable. Refusals wrap `domain.ErrCreateConfigInvalid`
+and are `domain.PreflightRefusal`s; the dispatcher gates the field behind
+`META_OPTIMIZATION_GOAL_ENABLED` (default off) in `PreflightCreate` and `Dispatch`, and type-checks
+it with the other `metaStringConfigKeys`. Not live-verified: the OUTCOME_TRAFFIC +
+LANDING_PAGE_VIEWS + billing_event IMPRESSIONS ad set.
+
 ## Audience targeting (`targeting.go`, #550)
 
 `CampaignInput.Targeting` (`metaConfig.targeting`) adds an age range, a gender, custom audiences to
