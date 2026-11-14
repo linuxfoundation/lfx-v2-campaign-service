@@ -11656,6 +11656,95 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/meta-ads/targeting-search:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: search-meta-targeting-options lfx-v2-campaign-service-connections
+            description: 'Search Meta''s detailed-targeting taxonomy by name, live from Meta''s Targeting Search (GET /search: type=adinterest for interest, type=adTargetingCategory&class=behaviors for behavior, type=adworkposition for work_position), for picking metaConfig.targeting.interests, behaviors and workPositions by name instead of by id (#550). Meta serves behaviors as one browse of the whole class, so a behavior search keeps the options whose name contains the query, ignoring case. The answer is Meta''s own taxonomy, the same for every token, and names nothing any ad account holds, so it is gated on campaign_manager of {project_id} like every other project read, and a project with no Meta connection of its own reads through the shared LF system credential, as a create would. No ad account need be selected. Answers are cached for up to an hour by type and query (behaviors by type), which serves a repeated identical search, not a new prefix. A throttle from Meta is not retried and answers 503. Off (400) unless the deployment sets META_TARGETING_SEARCH_ENABLED to "true". A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#search-meta-targeting-options
+            parameters:
+                - name: type
+                  in: query
+                  description: 'What to search: interest (metaConfig.targeting.interests), behavior (behaviors) or work_position (workPositions).'
+                  required: true
+                  type: string
+                  enum:
+                    - interest
+                    - behavior
+                    - work_position
+                - name: query
+                  in: query
+                  description: 'Text to match against option names: 2 to 100 characters, no control characters. The limits apply to the value as sent, and surrounding space is then trimmed, so the trimmed text must still be at least 2 characters. Every distinct interest or work_position query is a Meta call on a shared rate limit (only a repeated identical search is served from cache), so callers should debounce keystrokes rather than search on each one.'
+                  required: true
+                  type: string
+                  maxLength: 100
+                  minLength: 2
+                  pattern: ^\P{Cc}*[^\s\p{Cc}]\P{Cc}*$
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/MetaTargetingOptions'
+                        required:
+                            - type
+                            - options
+                            - option_count
+                "400":
+                    description: 'BadRequest: Bad request'
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: 'NotFound: Resource not found'
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/microsoft-ads/audience:
         get:
             tags:
@@ -22230,6 +22319,182 @@ definitions:
             - audiences
             - audience_count
             - truncated
+    MetaTargetingOption:
+        title: MetaTargetingOption
+        type: object
+        properties:
+            audience_size_lower_bound:
+                type: integer
+                description: Meta's estimated audience size, lower bound (interests and behaviors). Absent when Meta reported none.
+                example: 1200000
+                format: int64
+            audience_size_upper_bound:
+                type: integer
+                description: Meta's estimated audience size, upper bound (interests and behaviors). Absent when Meta reported none.
+                example: 1400000
+                format: int64
+            coverage:
+                type: integer
+                description: Meta's estimated audience size (work positions). Absent when Meta reported none.
+                example: 56000
+                format: int64
+            description:
+                type: string
+                description: Meta's description of the option (a work position's subtext). Absent when Meta sent none.
+                example: Aut et ipsum a dolores commodi.
+            id:
+                type: string
+                description: The option id, exactly what metaConfig.targeting.interests, behaviors or workPositions (per the type searched) takes
+                example: "6003107902433"
+            name:
+                type: string
+                description: Meta's display name for the option. Not an identifier.
+                example: Kubernetes
+            path:
+                type: array
+                items:
+                    type: string
+                    example: Delectus maxime totam.
+                description: Meta's category path for the option, outermost first. Absent when Meta sent none.
+                example:
+                    - Delectus maxime totam.
+                    - Quo cumque praesentium sit soluta sed.
+                    - Dolorem sit.
+                    - Minus et porro est.
+        example:
+            audience_size_lower_bound: 1200000
+            audience_size_upper_bound: 1400000
+            coverage: 56000
+            description: Aut et ipsum a dolores commodi.
+            id: "6003107902433"
+            name: Kubernetes
+            path:
+                - Delectus maxime totam.
+                - Quo cumque praesentium sit soluta sed.
+                - Dolorem sit.
+                - Minus et porro est.
+        required:
+            - id
+            - name
+    MetaTargetingOptions:
+        title: MetaTargetingOptions
+        type: object
+        properties:
+            option_count:
+                type: integer
+                description: How many options are in `options`
+                example: 1
+                format: int64
+            options:
+                type: array
+                items:
+                    $ref: '#/definitions/MetaTargetingOption'
+                description: 'The matches, de-duplicated by id: Meta''s relevance order for interest and work_position, Meta''s listing order for behavior. At most 50. Empty when nothing matches.'
+                example:
+                    - audience_size_lower_bound: 1200000
+                      audience_size_upper_bound: 1400000
+                      coverage: 56000
+                      description: Aut et ipsum a dolores commodi.
+                      id: "6003107902433"
+                      name: Kubernetes
+                      path:
+                        - Delectus maxime totam.
+                        - Quo cumque praesentium sit soluta sed.
+                        - Dolorem sit.
+                        - Minus et porro est.
+                    - audience_size_lower_bound: 1200000
+                      audience_size_upper_bound: 1400000
+                      coverage: 56000
+                      description: Aut et ipsum a dolores commodi.
+                      id: "6003107902433"
+                      name: Kubernetes
+                      path:
+                        - Delectus maxime totam.
+                        - Quo cumque praesentium sit soluta sed.
+                        - Dolorem sit.
+                        - Minus et porro est.
+                    - audience_size_lower_bound: 1200000
+                      audience_size_upper_bound: 1400000
+                      coverage: 56000
+                      description: Aut et ipsum a dolores commodi.
+                      id: "6003107902433"
+                      name: Kubernetes
+                      path:
+                        - Delectus maxime totam.
+                        - Quo cumque praesentium sit soluta sed.
+                        - Dolorem sit.
+                        - Minus et porro est.
+                    - audience_size_lower_bound: 1200000
+                      audience_size_upper_bound: 1400000
+                      coverage: 56000
+                      description: Aut et ipsum a dolores commodi.
+                      id: "6003107902433"
+                      name: Kubernetes
+                      path:
+                        - Delectus maxime totam.
+                        - Quo cumque praesentium sit soluta sed.
+                        - Dolorem sit.
+                        - Minus et porro est.
+            type:
+                type: string
+                description: The type searched, as requested
+                example: interest
+                enum:
+                    - interest
+                    - behavior
+                    - work_position
+        example:
+            option_count: 1
+            options:
+                - audience_size_lower_bound: 1200000
+                  audience_size_upper_bound: 1400000
+                  coverage: 56000
+                  description: Aut et ipsum a dolores commodi.
+                  id: "6003107902433"
+                  name: Kubernetes
+                  path:
+                    - Delectus maxime totam.
+                    - Quo cumque praesentium sit soluta sed.
+                    - Dolorem sit.
+                    - Minus et porro est.
+                - audience_size_lower_bound: 1200000
+                  audience_size_upper_bound: 1400000
+                  coverage: 56000
+                  description: Aut et ipsum a dolores commodi.
+                  id: "6003107902433"
+                  name: Kubernetes
+                  path:
+                    - Delectus maxime totam.
+                    - Quo cumque praesentium sit soluta sed.
+                    - Dolorem sit.
+                    - Minus et porro est.
+                - audience_size_lower_bound: 1200000
+                  audience_size_upper_bound: 1400000
+                  coverage: 56000
+                  description: Aut et ipsum a dolores commodi.
+                  id: "6003107902433"
+                  name: Kubernetes
+                  path:
+                    - Delectus maxime totam.
+                    - Quo cumque praesentium sit soluta sed.
+                    - Dolorem sit.
+                    - Minus et porro est.
+                - audience_size_lower_bound: 1200000
+                  audience_size_upper_bound: 1400000
+                  coverage: 56000
+                  description: Aut et ipsum a dolores commodi.
+                  id: "6003107902433"
+                  name: Kubernetes
+                  path:
+                    - Delectus maxime totam.
+                    - Quo cumque praesentium sit soluta sed.
+                    - Dolorem sit.
+                    - Minus et porro est.
+            type: interest
+        required:
+            - type
+            - options
+            - option_count
     MicrosoftAdsAccountMonitor:
         title: MicrosoftAdsAccountMonitor
         type: object

@@ -10399,6 +10399,210 @@ func DecodeListMetaCustomAudiencesResponse(decoder func(*http.Response) goahttp.
 	}
 }
 
+// BuildSearchMetaTargetingOptionsRequest instantiates a HTTP request object
+// with method and path set to call the "lfx-v2-campaign-service-connections"
+// service "search-meta-targeting-options" endpoint
+func (c *Client) BuildSearchMetaTargetingOptionsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.SearchMetaTargetingOptionsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "search-meta-targeting-options", "*lfxv2campaignserviceconnections.SearchMetaTargetingOptionsPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: SearchMetaTargetingOptionsLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "search-meta-targeting-options", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeSearchMetaTargetingOptionsRequest returns an encoder for requests sent
+// to the lfx-v2-campaign-service-connections search-meta-targeting-options
+// server.
+func EncodeSearchMetaTargetingOptionsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.SearchMetaTargetingOptionsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "search-meta-targeting-options", "*lfxv2campaignserviceconnections.SearchMetaTargetingOptionsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		values.Add("type", p.Type)
+		values.Add("query", p.Query)
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeSearchMetaTargetingOptionsResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// search-meta-targeting-options endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+// DecodeSearchMetaTargetingOptionsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeSearchMetaTargetingOptionsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "search-meta-targeting-options", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "search-meta-targeting-options", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body SearchMetaTargetingOptionsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "search-meta-targeting-options", err)
+			}
+			err = ValidateSearchMetaTargetingOptionsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "search-meta-targeting-options", err)
+			}
+			res := NewSearchMetaTargetingOptionsMetaTargetingOptionsOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body SearchMetaTargetingOptionsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "search-meta-targeting-options", err)
+			}
+			err = ValidateSearchMetaTargetingOptionsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "search-meta-targeting-options", err)
+			}
+			return nil, NewSearchMetaTargetingOptionsBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body SearchMetaTargetingOptionsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "search-meta-targeting-options", err)
+			}
+			err = ValidateSearchMetaTargetingOptionsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "search-meta-targeting-options", err)
+			}
+			return nil, NewSearchMetaTargetingOptionsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body SearchMetaTargetingOptionsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "search-meta-targeting-options", err)
+			}
+			err = ValidateSearchMetaTargetingOptionsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "search-meta-targeting-options", err)
+			}
+			return nil, NewSearchMetaTargetingOptionsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body SearchMetaTargetingOptionsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "search-meta-targeting-options", err)
+			}
+			err = ValidateSearchMetaTargetingOptionsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "search-meta-targeting-options", err)
+			}
+			return nil, NewSearchMetaTargetingOptionsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body SearchMetaTargetingOptionsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "search-meta-targeting-options", err)
+			}
+			err = ValidateSearchMetaTargetingOptionsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "search-meta-targeting-options", err)
+			}
+			return nil, NewSearchMetaTargetingOptionsPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body SearchMetaTargetingOptionsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "search-meta-targeting-options", err)
+			}
+			err = ValidateSearchMetaTargetingOptionsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "search-meta-targeting-options", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "search-meta-targeting-options", err)
+			}
+			return nil, NewSearchMetaTargetingOptionsUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "search-meta-targeting-options", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "search-meta-targeting-options", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildListRedditAdsCustomAudiencesRequest instantiates a HTTP request object
 // with method and path set to call the "lfx-v2-campaign-service-connections"
 // service "list-reddit-ads-custom-audiences" endpoint
@@ -17563,6 +17767,28 @@ func unmarshalMetaCustomAudienceResponseBodyToLfxv2campaignserviceconnectionsMet
 		Description:                v.Description,
 		ApproximateCountLowerBound: v.ApproximateCountLowerBound,
 		ApproximateCountUpperBound: v.ApproximateCountUpperBound,
+	}
+
+	return res
+}
+
+// unmarshalMetaTargetingOptionResponseBodyToLfxv2campaignserviceconnectionsMetaTargetingOption
+// builds a value of type *lfxv2campaignserviceconnections.MetaTargetingOption
+// from a value of type *MetaTargetingOptionResponseBody.
+func unmarshalMetaTargetingOptionResponseBodyToLfxv2campaignserviceconnectionsMetaTargetingOption(v *MetaTargetingOptionResponseBody) *lfxv2campaignserviceconnections.MetaTargetingOption {
+	res := &lfxv2campaignserviceconnections.MetaTargetingOption{
+		ID:                     *v.ID,
+		Name:                   *v.Name,
+		Description:            v.Description,
+		AudienceSizeLowerBound: v.AudienceSizeLowerBound,
+		AudienceSizeUpperBound: v.AudienceSizeUpperBound,
+		Coverage:               v.Coverage,
+	}
+	if v.Path != nil {
+		res.Path = make([]string, len(v.Path))
+		for i, val := range v.Path {
+			res.Path[i] = val
+		}
 	}
 
 	return res

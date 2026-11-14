@@ -36,6 +36,47 @@ var MetaCustomAudiences = Type("meta-custom-audiences", func() {
 	Required("account_id", "audiences", "audience_count", "truncated")
 })
 
+// metaTargetingSearchKinds are the kinds search-meta-targeting-options serves. Mirrors
+// meta.TargetingSearchKinds, which a service test pins.
+var metaTargetingSearchKinds = []any{"interest", "behavior", "work_position"}
+
+// metaTargetingQueryMin and metaTargetingQueryMax mirror meta.MinTargetingQueryLen and
+// meta.MaxTargetingQueryLen. Goa applies both to the raw parameter; the service applies them again
+// after trimming.
+const (
+	metaTargetingQueryMin = 2
+	metaTargetingQueryMax = 100
+)
+
+// metaTargetingQueryPattern requires a non-space character and refuses any control character
+// (Unicode category Cc), so the decoder refuses what meta.NormalizeTargetingQuery would.
+const metaTargetingQueryPattern = `^\P{Cc}*[^\s\p{Cc}]\P{Cc}*$`
+
+// MetaTargetingOption is one option of the targeting search.
+var MetaTargetingOption = Type("meta-targeting-option", func() {
+	Attribute("id", String, "The option id, exactly what metaConfig.targeting.interests, behaviors or workPositions (per the type searched) takes", func() {
+		Example("6003107902433")
+	})
+	Attribute("name", String, "Meta's display name for the option. Not an identifier.", func() { Example("Kubernetes") })
+	Attribute("path", ArrayOf(String), "Meta's category path for the option, outermost first. Absent when Meta sent none.")
+	Attribute("description", String, "Meta's description of the option (a work position's subtext). Absent when Meta sent none.")
+	Attribute("audience_size_lower_bound", Int64, "Meta's estimated audience size, lower bound (interests and behaviors). Absent when Meta reported none.", func() { Example(1200000) })
+	Attribute("audience_size_upper_bound", Int64, "Meta's estimated audience size, upper bound (interests and behaviors). Absent when Meta reported none.", func() { Example(1400000) })
+	Attribute("coverage", Int64, "Meta's estimated audience size (work positions). Absent when Meta reported none.", func() { Example(56000) })
+	Required("id", "name")
+})
+
+// MetaTargetingOptions is the targeting search read.
+var MetaTargetingOptions = Type("meta-targeting-options", func() {
+	Attribute("type", String, "The type searched, as requested", func() {
+		Enum(metaTargetingSearchKinds...)
+		Example("interest")
+	})
+	Attribute("options", ArrayOf(MetaTargetingOption), "The matches, de-duplicated by id: Meta's relevance order for interest and work_position, Meta's listing order for behavior. At most 50. Empty when nothing matches.")
+	Attribute("option_count", Int, "How many options are in `options`", func() { Example(1) })
+	Required("type", "options", "option_count")
+})
+
 // metaAdsLookupMethods declares the Meta create-form reads inside the connections service, beside
 // googleAdsLookupMethods, so they share its security scheme and error types.
 func metaAdsLookupMethods() {
@@ -72,6 +113,56 @@ func metaAdsLookupMethods() {
 			Header("bearer_token:Authorization")
 			connectionAuthErrorResponses()
 			Param("q")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("search-meta-targeting-options", func() {
+		Description("Search Meta's detailed-targeting taxonomy by name, live from Meta's Targeting Search " +
+			"(GET /search: type=adinterest for interest, type=adTargetingCategory&class=behaviors for behavior, " +
+			"type=adworkposition for work_position), for picking metaConfig.targeting.interests, behaviors and " +
+			"workPositions by name instead of by id (#550). Meta serves behaviors as one browse of the whole " +
+			"class, so a behavior search keeps the options whose name contains the query, ignoring case. The answer " +
+			"is Meta's own taxonomy, the same for every token, and names nothing any ad account holds, so it is gated " +
+			"on campaign_manager of {project_id} like every other project read, and a project with no Meta connection " +
+			"of its own reads through the shared LF system credential, as a create would. No ad account need be " +
+			"selected. Answers are cached for up to an hour by type and query (behaviors by type), which serves a " +
+			"repeated identical search, not a new prefix. A throttle from Meta is not retried and answers 503. Off " +
+			"(400) unless the deployment sets META_TARGETING_SEARCH_ENABLED to \"true\". A pure read: nothing is " +
+			"persisted.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("type", String, "What to search: interest (metaConfig.targeting.interests), behavior (behaviors) or work_position (workPositions).", func() {
+				Enum(metaTargetingSearchKinds...)
+				Example("interest")
+			})
+			Attribute("query", String, "Text to match against option names: 2 to 100 characters, no control "+
+				"characters. The limits apply to the value as sent, and surrounding space is then trimmed, so the "+
+				"trimmed text must still be at least 2 characters. Every distinct interest or work_position query "+
+				"is a Meta call on a shared rate limit (only a repeated identical search is served from cache), so "+
+				"callers should debounce keystrokes rather than search on each one.", func() {
+				MinLength(metaTargetingQueryMin)
+				MaxLength(metaTargetingQueryMax)
+				Pattern(metaTargetingQueryPattern)
+				Example("kubernetes")
+			})
+			Required("project_id", "type", "query")
+		})
+		Result(MetaTargetingOptions)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/meta-ads/targeting-search")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("type")
+			Param("query")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)

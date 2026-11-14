@@ -1990,6 +1990,63 @@ func BuildListMetaCustomAudiencesPayload(lfxV2CampaignServiceConnectionsListMeta
 	return v, nil
 }
 
+// BuildSearchMetaTargetingOptionsPayload builds the payload for the
+// lfx-v2-campaign-service-connections search-meta-targeting-options endpoint
+// from CLI flags.
+func BuildSearchMetaTargetingOptionsPayload(lfxV2CampaignServiceConnectionsSearchMetaTargetingOptionsProjectID *string, lfxV2CampaignServiceConnectionsSearchMetaTargetingOptionsType *string, lfxV2CampaignServiceConnectionsSearchMetaTargetingOptionsQuery *string, lfxV2CampaignServiceConnectionsSearchMetaTargetingOptionsBearerToken *string) (*lfxv2campaignserviceconnections.SearchMetaTargetingOptionsPayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsSearchMetaTargetingOptionsProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsSearchMetaTargetingOptionsProjectID
+	}
+	var type_ string
+	{
+		if lfxV2CampaignServiceConnectionsSearchMetaTargetingOptionsType == nil {
+			return nil, fmt.Errorf("missing required flag --type")
+		}
+		type_ = *lfxV2CampaignServiceConnectionsSearchMetaTargetingOptionsType
+		if !(type_ == "interest" || type_ == "behavior" || type_ == "work_position") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("type", type_, []any{"interest", "behavior", "work_position"}))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var query string
+	{
+		if lfxV2CampaignServiceConnectionsSearchMetaTargetingOptionsQuery == nil {
+			return nil, fmt.Errorf("missing required flag --query")
+		}
+		query = *lfxV2CampaignServiceConnectionsSearchMetaTargetingOptionsQuery
+		err = goa.MergeErrors(err, goa.ValidatePattern("query", query, "^\\P{Cc}*[^\\s\\p{Cc}]\\P{Cc}*$"))
+		if utf8.RuneCountInString(query) < 2 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("query", query, utf8.RuneCountInString(query), 2, true))
+		}
+		if utf8.RuneCountInString(query) > 100 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("query", query, utf8.RuneCountInString(query), 100, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsSearchMetaTargetingOptionsBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsSearchMetaTargetingOptionsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.SearchMetaTargetingOptionsPayload{}
+	v.ProjectID = projectID
+	v.Type = type_
+	v.Query = query
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildListRedditAdsCustomAudiencesPayload builds the payload for the
 // lfx-v2-campaign-service-connections list-reddit-ads-custom-audiences
 // endpoint from CLI flags.

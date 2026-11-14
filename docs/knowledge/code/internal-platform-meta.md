@@ -1254,6 +1254,26 @@ not behind `global_marketing_ops`. Not built: a city radius (Meta's default radi
 codes. Not verified live: the lookup's answer shape, whether Meta refuses (rather than merges) an
 overlap, and the settings readback, which still reports countries only.
 
+## Targeting search (`targeting_search.go`, #550 gap 7 picker read)
+
+`SearchTargeting(ctx, kind, query)` runs one Targeting Search for the metaConfig.targeting pickers:
+`interest` → `GET /search?type=adinterest&q=&limit=50`, `work_position` →
+`GET /search?type=adworkposition&q=&limit=50`, `behavior` →
+`GET /search?type=adTargetingCategory&class=behaviors` (Meta ignores `q` there: a browse of the class,
+filtered by name with `FilterTargetingOptions`; `SearchTargetingAll` returns it unfiltered for a
+caching caller). `NormalizeTargetingQuery` (2–100 characters after trimming, valid UTF-8, no control
+characters) is shared with the service layer. Rows keep a numeric id (`graphID`: string or number)
+and a non-blank name, drop a behavior row of another `type`, de-duplicate by id, read a negative size
+as absent and a work position's `subtext` as its description. The request is sent ONCE
+(`c.do(..., false)`), so a throttle is not retried. Every failure is a `targetingSearchError` whose
+message names only the kind and a fixed class (HTTP status and Graph code, throttle, unreadable
+answer, timeout), with the chain kept for classification and the query cut off every
+`APIError.Path`, `transportError.Path` and `url.Error.URL` in it (`scrubTargetingSearchError`). The
+dispatcher (`internal/dispatch/meta_targeting_search.go`) resolves like a create without needing an
+ad account and caches answers for an hour by kind and folded query (behaviors by kind alone) after
+resolution. Not verified live: every answer shape (the reference shows ids as integers, which
+`graphID` accepts).
+
 ## Ads under an ad set (`ads.go`, decision D7 first step)
 
 `ListAdSetAds(ctx, adSetID, campaignID, accountID, window)` is read-only: `GET /{ad_set}/ads`

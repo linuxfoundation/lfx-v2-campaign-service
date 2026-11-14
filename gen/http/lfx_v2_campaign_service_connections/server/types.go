@@ -905,6 +905,20 @@ type ListMetaCustomAudiencesResponseBody struct {
 	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
 }
 
+// SearchMetaTargetingOptionsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "search-meta-targeting-options" endpoint HTTP response body.
+type SearchMetaTargetingOptionsResponseBody struct {
+	// The type searched, as requested
+	Type string `form:"type" json:"type" xml:"type"`
+	// The matches, de-duplicated by id: Meta's relevance order for interest and
+	// work_position, Meta's listing order for behavior. At most 50. Empty when
+	// nothing matches.
+	Options []*MetaTargetingOptionResponseBody `form:"options" json:"options" xml:"options"`
+	// How many options are in `options`
+	OptionCount int `form:"option_count" json:"option_count" xml:"option_count"`
+}
+
 // ListRedditAdsCustomAudiencesResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-reddit-ads-custom-audiences" endpoint HTTP response body.
@@ -4607,6 +4621,72 @@ type ListMetaCustomAudiencesUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// SearchMetaTargetingOptionsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "search-meta-targeting-options" endpoint HTTP response body for the
+// "BadRequest" error.
+type SearchMetaTargetingOptionsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SearchMetaTargetingOptionsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "search-meta-targeting-options" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type SearchMetaTargetingOptionsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SearchMetaTargetingOptionsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "search-meta-targeting-options" endpoint HTTP response body for the
+// "InternalServerError" error.
+type SearchMetaTargetingOptionsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SearchMetaTargetingOptionsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "search-meta-targeting-options" endpoint HTTP response body for the
+// "NotFound" error.
+type SearchMetaTargetingOptionsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SearchMetaTargetingOptionsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "search-meta-targeting-options" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type SearchMetaTargetingOptionsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SearchMetaTargetingOptionsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "search-meta-targeting-options" endpoint HTTP response body for the
+// "Unauthorized" error.
+type SearchMetaTargetingOptionsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ListRedditAdsCustomAudiencesBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-reddit-ads-custom-audiences" endpoint HTTP response body for the
@@ -6942,6 +7022,31 @@ type MetaCustomAudienceResponseBody struct {
 	ApproximateCountUpperBound *int64 `form:"approximate_count_upper_bound,omitempty" json:"approximate_count_upper_bound,omitempty" xml:"approximate_count_upper_bound,omitempty"`
 }
 
+// MetaTargetingOptionResponseBody is used to define fields on response body
+// types.
+type MetaTargetingOptionResponseBody struct {
+	// The option id, exactly what metaConfig.targeting.interests, behaviors or
+	// workPositions (per the type searched) takes
+	ID string `form:"id" json:"id" xml:"id"`
+	// Meta's display name for the option. Not an identifier.
+	Name string `form:"name" json:"name" xml:"name"`
+	// Meta's category path for the option, outermost first. Absent when Meta sent
+	// none.
+	Path []string `form:"path,omitempty" json:"path,omitempty" xml:"path,omitempty"`
+	// Meta's description of the option (a work position's subtext). Absent when
+	// Meta sent none.
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Meta's estimated audience size, lower bound (interests and behaviors).
+	// Absent when Meta reported none.
+	AudienceSizeLowerBound *int64 `form:"audience_size_lower_bound,omitempty" json:"audience_size_lower_bound,omitempty" xml:"audience_size_lower_bound,omitempty"`
+	// Meta's estimated audience size, upper bound (interests and behaviors).
+	// Absent when Meta reported none.
+	AudienceSizeUpperBound *int64 `form:"audience_size_upper_bound,omitempty" json:"audience_size_upper_bound,omitempty" xml:"audience_size_upper_bound,omitempty"`
+	// Meta's estimated audience size (work positions). Absent when Meta reported
+	// none.
+	Coverage *int64 `form:"coverage,omitempty" json:"coverage,omitempty" xml:"coverage,omitempty"`
+}
+
 // RedditAdsCustomAudienceResponseBody is used to define fields on response
 // body types.
 type RedditAdsCustomAudienceResponseBody struct {
@@ -8653,6 +8758,29 @@ func NewListMetaCustomAudiencesResponseBody(res *lfxv2campaignserviceconnections
 		}
 	} else {
 		body.Audiences = []*MetaCustomAudienceResponseBody{}
+	}
+	return body
+}
+
+// NewSearchMetaTargetingOptionsResponseBody builds the HTTP response body from
+// the result of the "search-meta-targeting-options" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSearchMetaTargetingOptionsResponseBody(res *lfxv2campaignserviceconnections.MetaTargetingOptions) *SearchMetaTargetingOptionsResponseBody {
+	body := &SearchMetaTargetingOptionsResponseBody{
+		Type:        res.Type,
+		OptionCount: res.OptionCount,
+	}
+	if res.Options != nil {
+		body.Options = make([]*MetaTargetingOptionResponseBody, len(res.Options))
+		for i, val := range res.Options {
+			if val == nil {
+				body.Options[i] = nil
+				continue
+			}
+			body.Options[i] = marshalLfxv2campaignserviceconnectionsMetaTargetingOptionToMetaTargetingOptionResponseBody(val)
+		}
+	} else {
+		body.Options = []*MetaTargetingOptionResponseBody{}
 	}
 	return body
 }
@@ -13008,6 +13136,72 @@ func NewListMetaCustomAudiencesUnauthorizedResponseBody(res *lfxv2campaignservic
 	return body
 }
 
+// NewSearchMetaTargetingOptionsBadRequestResponseBody builds the HTTP response
+// body from the result of the "search-meta-targeting-options" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSearchMetaTargetingOptionsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *SearchMetaTargetingOptionsBadRequestResponseBody {
+	body := &SearchMetaTargetingOptionsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSearchMetaTargetingOptionsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "search-meta-targeting-options"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewSearchMetaTargetingOptionsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *SearchMetaTargetingOptionsServiceUnavailableResponseBody {
+	body := &SearchMetaTargetingOptionsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSearchMetaTargetingOptionsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "search-meta-targeting-options"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewSearchMetaTargetingOptionsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *SearchMetaTargetingOptionsInternalServerErrorResponseBody {
+	body := &SearchMetaTargetingOptionsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSearchMetaTargetingOptionsNotFoundResponseBody builds the HTTP response
+// body from the result of the "search-meta-targeting-options" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSearchMetaTargetingOptionsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SearchMetaTargetingOptionsNotFoundResponseBody {
+	body := &SearchMetaTargetingOptionsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSearchMetaTargetingOptionsPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "search-meta-targeting-options"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewSearchMetaTargetingOptionsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *SearchMetaTargetingOptionsPayloadTooLargeResponseBody {
+	body := &SearchMetaTargetingOptionsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSearchMetaTargetingOptionsUnauthorizedResponseBody builds the HTTP
+// response body from the result of the "search-meta-targeting-options"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewSearchMetaTargetingOptionsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *SearchMetaTargetingOptionsUnauthorizedResponseBody {
+	body := &SearchMetaTargetingOptionsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewListRedditAdsCustomAudiencesBadRequestResponseBody builds the HTTP
 // response body from the result of the "list-reddit-ads-custom-audiences"
 // endpoint of the "lfx-v2-campaign-service-connections" service.
@@ -15804,6 +15998,19 @@ func NewListMetaCustomAudiencesPayload(projectID string, q *string, bearerToken 
 	v := &lfxv2campaignserviceconnections.ListMetaCustomAudiencesPayload{}
 	v.ProjectID = projectID
 	v.Q = q
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewSearchMetaTargetingOptionsPayload builds a
+// lfx-v2-campaign-service-connections service search-meta-targeting-options
+// endpoint payload.
+func NewSearchMetaTargetingOptionsPayload(projectID string, type_ string, query string, bearerToken *string) *lfxv2campaignserviceconnections.SearchMetaTargetingOptionsPayload {
+	v := &lfxv2campaignserviceconnections.SearchMetaTargetingOptionsPayload{}
+	v.ProjectID = projectID
+	v.Type = type_
+	v.Query = query
 	v.BearerToken = bearerToken
 
 	return v

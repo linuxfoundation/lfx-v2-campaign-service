@@ -397,6 +397,12 @@ const (
 	// Same rules as EnvMetaLocaleTargetingEnabled. It names no account resource.
 	EnvMetaOSTargetingEnabled = "META_OS_TARGETING_ENABLED"
 
+	// EnvMetaTargetingSearchEnabled opts a deployment IN to search-meta-targeting-options (#550):
+	// the picker read over Meta's Targeting Search (interests, behaviors, work positions). Only the
+	// exact value "true" enables it; anything else answers the endpoint 400 before any credential
+	// is resolved. Off by default until the answer shapes are checked against a live token.
+	EnvMetaTargetingSearchEnabled = "META_TARGETING_SEARCH_ENABLED"
+
 	// EnvMetaLeadFormsEnabled opts a deployment IN to metaConfig.leadFormId (#550, gap 8): an
 	// existing Instant Form that turns the leads objective into an OUTCOME_LEADS lead ad. Only the
 	// exact value "true" enables it; anything else refuses the field with a 400 before any job

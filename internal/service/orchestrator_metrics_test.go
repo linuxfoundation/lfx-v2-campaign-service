@@ -430,6 +430,13 @@ func (d upstreamCapableDispatcher) ListMetaCustomAudiences(context.Context, stri
 	return &model.MetaCustomAudiences{Audiences: []model.MetaCustomAudience{}}, true, nil
 }
 
+func (d upstreamCapableDispatcher) SearchMetaTargeting(context.Context, string, model.Provider, model.MetaTargetingQuery) ([]model.MetaTargetingOption, bool, error) {
+	if d.err != nil {
+		return nil, true, d.err
+	}
+	return []model.MetaTargetingOption{}, true, nil
+}
+
 func (d upstreamCapableDispatcher) ListRedditCustomAudiences(context.Context, string, model.Provider) (*model.RedditCustomAudiences, bool, error) {
 	if d.err != nil {
 		return nil, true, d.err
@@ -716,6 +723,14 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opListMetaCustomAudiences,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ReadMetaCustomAudiences(ctx, "p1", platform)
+				return err
+			},
+		},
+		{
+			name: "search meta targeting",
+			op:   opSearchMetaTargeting,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadMetaTargeting(ctx, "p1", platform, model.MetaTargetingQuery{Kind: "interest", Query: "go"})
 				return err
 			},
 		},
