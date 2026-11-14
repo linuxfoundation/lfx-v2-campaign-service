@@ -220,6 +220,16 @@ const (
 	// the budget lever, settings readback and account monitor already read both goal types.
 	EnvRedditDailyBudgetEnabled = "REDDIT_DAILY_BUDGET_ENABLED"
 
+	// EnvRedditAdPerVariantEnabled opts a deployment IN to one ad per variant (#549 gap 6): a
+	// Reddit create that authors its post (redditConfig.imageUrl or imageAssetId, no postUrl) and
+	// carries two to five variants authors one promoted post and one ad per variant, instead of
+	// one ad from the first variant. Only the exact value "true" enables it; unset or any other
+	// value keeps the one-ad create. While on, such a create with more than five variants or a
+	// blank or over-long variant headline is refused with a 400 before any job exists. It names
+	// no account resource, so it is not role-gated. Default off because no live create has
+	// authored more than one post or put more than one ad in an ad group.
+	EnvRedditAdPerVariantEnabled = "REDDIT_AD_PER_VARIANT_ENABLED"
+
 	// EnvTwitterCreateTargetingEnabled opts a deployment IN to twitterConfig.geoTargets and
 	// twitterConfig.languages (#564): country and language targeting criteria added to the line
 	// item an X create makes. Only the exact value "true" enables them; unset or any other value

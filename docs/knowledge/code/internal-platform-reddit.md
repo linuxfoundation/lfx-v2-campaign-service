@@ -339,7 +339,9 @@ other caller strings through `sanitizeSnapshotText` (`redditSnapshotConfig`, see
 ## Campaign status toggle
 
 `UpdateCampaignAndChildrenStatus(ctx, campaignID, adGroupID, adID, status)` pauses/resumes a
-campaign AND cascades to its child ad group + ad, because the create path PAUSES all three
+campaign AND cascades to its child ad group + ad (it delegates to
+`UpdateCampaignTreeStatus(ctx, campaignID, adGroupID, adIDs, status)`, which takes every ad of a
+one-ad-per-variant create, #549 gap 6, and applies the same ordering to each), because the create path PAUSES all three
 entities — toggling only the campaign to ACTIVE would leave the ad group/ad PAUSED and the
 campaign would not serve. Each entity is set via `PATCH /ad_accounts/{accountID}/{entity}/{id}`
 with `{"data":{"configured_status": "ACTIVE"|"PAUSED"}}` — the same envelope + `configured_status`
@@ -545,8 +547,9 @@ connection.
 
 It implements `StatusToggler`: `resolveRedditClient` (shared with `Dispatch`, so a create
 and a toggle accept exactly the same connections) builds the client, then
-`client.UpdateCampaignAndChildrenStatus` PATCHes `configured_status` on the campaign AND its
-child ad group + ad (read from the persisted `CampaignResult`) — because the create path
+`client.UpdateCampaignTreeStatus` PATCHes `configured_status` on the campaign AND its
+child ad group + every ad (read from the persisted `CampaignResult` by `redditChildIDs`: `adIds`
+from a one-ad-per-variant create, #549 gap 6, else the one `adId`) — because the create path
 PAUSES all three, so toggling only the campaign would not serve.
 
 It also implements `BudgetWriter` (`reddit_budget.go`): the same credential resolution, with
@@ -965,6 +968,28 @@ left PAUSED with a partial result. Pinned by `TestCreateCampaign_RetryKeepsExclu
 The dispatcher keeps both behind `REDDIT_TARGETING_EXCLUSIONS_ENABLED` (default off): no live
 create has sent either field. What Reddit answers for an excluded community that does not exist
 is unknown, so it is not part of the communities-fallback match.
+
+## One ad per variant (`ad_variants.go`, #549 gap 6)
+
+With `CampaignInput.AdPerVariant` set, a create that AUTHORS its post (`ImageURL` or
+`ImageURLSource`, no `PostURL`) and has two or more `Variants` authors one post per variant (its
+headline, `destination_url` with `utm_content=variant-N`) before the campaign, then one ad per
+authored post in the single ad group (`click_url` with the same variant's UTM, name `<event> - Ad
+N`). `ValidateAdVariants` refuses, before any upstream call, more than `MaxAdVariants` (5) or a
+blank or over-300-character variant headline. Each variant's post and ad failure is classified with
+the promo outcome table and its step is prefixed `Variant N:`. A failed variant does not roll back
+the others: the result is a degraded success whose `AdWarning` and final `Variant ads:` step name
+the failed variants. A caller cancellation still stops the create with a partial result naming
+every post and ad already made. A late `ImageURLSource` is called once per post. The result
+carries `AdIDs` (every confirmed ad, variant order; `AdID` stays the first, so readers that know
+only `adId` still see a real ad) and `VariantAds` (`{variant, postId, adId, outcome}`); both are
+omitted on a one-ad create. No migration: they live in the campaign row's result blob, like
+Meta's per-variant `AdResult`s. `UpdateCampaignTreeStatus` cascades the status toggle over every
+ad. The monitor, metrics and settings reads are campaign-level, and the bid, keyword, negative
+keyword and budget levers address the single ad group or the campaign, so none of them reads an ad
+id; adoption records no ad ids. The dispatcher sets `AdPerVariant` only behind
+`REDDIT_AD_PER_VARIANT_ENABLED` (default off) until a live create confirms Reddit serves several
+ads from authored posts in one ad group.
 
 ## Daily budget at create (`budget_type.go`, #549 gap 9)
 

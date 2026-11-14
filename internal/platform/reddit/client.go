@@ -558,6 +558,13 @@ type CampaignInput struct {
 	Placements      []string
 	Platforms       []string
 	ExpandTargeting *bool
+	// AdPerVariant switches a create that AUTHORS its post (ImageURL or ImageURLSource, no
+	// PostURL) and carries two or more Variants to one post and one ad per variant (#549 gap 6,
+	// ad_variants.go): at most MaxAdVariants, each with a non-blank headline, checked with
+	// ValidateAdVariants before any upstream call. Off, or with fewer than two variants or an
+	// existing PostURL, the create makes one ad exactly as before. The dispatcher sets it only
+	// behind REDDIT_AD_PER_VARIANT_ENABLED.
+	AdPerVariant bool
 }
 
 // ManualCPCBidSupported reports whether a campaign with this objective can be created with a
@@ -606,8 +613,18 @@ type CampaignResult struct {
 	// BidApplied reports that THIS run created the campaign and ad group that carry the
 	// requested bidding (LFXV2-2665); the dispatcher records the strategy and starting bid only
 	// when it is true. Set only on the successful result.
-	BidApplied bool   `json:"bidApplied,omitempty"`
-	AdID       string `json:"adId,omitempty"`
+	BidApplied bool `json:"bidApplied,omitempty"`
+	// AdID is the create's ad: the only one on a one-ad create, and the FIRST created ad
+	// (lowest variant) on a one-ad-per-variant create, so a reader that knows only adId still
+	// finds a real ad.
+	AdID string `json:"adId,omitempty"`
+	// AdIDs lists every confirmed ad on a one-ad-per-variant create (#549 gap 6), in variant
+	// order; omitted on a one-ad create, whose only ad is AdID. The status toggle cascades over
+	// all of them (the dispatcher's redditChildIDs reads adIds, falling back to adId).
+	AdIDs []string `json:"adIds,omitempty"`
+	// VariantAds records each variant's post, ad and outcome class on a one-ad-per-variant
+	// create; omitted otherwise.
+	VariantAds []VariantAd `json:"variantAds,omitempty"`
 	// AdWarning is set (non-empty) whenever an ad was REQUESTED and the result does
 	// not carry a confirmed one. That covers three shortfalls:
 	//   - the ad POST failed, or returned a 2xx with no ad id;
@@ -1921,6 +1938,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return nil, domain.PreflightRefusalf("promoted-post headline is too long: %d characters (max %d)", n, maxRedditHeadlineRunes)
 		}
 	}
+	// One ad per variant (#549 gap 6): every variant's headline and the cap are checked here,
+	// before any upstream call, so a bad variant orphans nothing.
+	var variants *variantRun
+	if AdPerVariantApplies(in) {
+		headlines, err := ValidateAdVariants(in.Variants)
+		if err != nil {
+			return nil, err
+		}
+		variants = newVariantRun(headlines)
+	}
 
 	// Validate the account ID before any request path is built. It is
 	// concatenated into request paths ("/ad_accounts/<id>/...") before
@@ -2101,7 +2128,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// HTTP status, never the error body — a reflective Reddit validation error can
 	// echo the destination_url (which carries the caller's permitted secret-bearing
 	// query params), and persisting it in Steps would leak those.
-	if authorPost {
+	if variants != nil {
+		// One post per variant; the variant helper classifies each failure with the same
+		// outcome table and stops only for a caller cancellation.
+		if pr, err := c.authorVariantPosts(ctx, accountID, in, variants, postCTA, authorImageURL, &steps, campaignName); err != nil {
+			return pr, err
+		}
+	} else if authorPost {
 		// A late image URL is obtained HERE, immediately before the request that hands it to
 		// Reddit, so nothing above (account verification, a Retry-After wait) can spend its
 		// lifetime; the cached token is normally already valid by now. createPromotedPost can
@@ -2120,7 +2153,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			}
 			authorImageURL = lateURL
 		}
-		postID, err := c.createPromotedPost(ctx, accountID, in, postHeadline, postCTA, authorImageURL)
+		postID, err := c.createPromotedPost(ctx, accountID, in, 0, postHeadline, postCTA, authorImageURL)
 		if err != nil {
 			// A CALLER CANCELLATION is the only fatal authoring failure, and it is split by
 			// AMBIGUITY before it is acted on. Both halves of that sentence are load-bearing.
@@ -2246,6 +2279,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			AccountID:    c.account.AccountID,
 			RedditURL:    redditAdsManagerURL,
 			Steps:        steps,
+			VariantAds:   variants.snapshot(),
 		}, fmt.Errorf("reddit campaign creation UNCONFIRMED (a PAUSED campaign %q may exist): %w", campaignName, err)
 	}
 	campaignID := decodeID(campaignResp)
@@ -2262,6 +2296,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			AccountID:    c.account.AccountID,
 			RedditURL:    redditAdsManagerURL,
 			Steps:        steps,
+			VariantAds:   variants.snapshot(),
 		}, fmt.Errorf("reddit campaign creation succeeded but returned no campaign ID (a PAUSED campaign %q may exist)", campaignName)
 	}
 	// Use %g (not %.2f) so a sub-cent accepted budget isn't misreported as $0.00 —
@@ -2291,6 +2326,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			AccountID:    c.account.AccountID,
 			RedditURL:    redditAdsManagerURL,
 			Steps:        steps,
+			VariantAds:   variants.snapshot(),
 		}
 	}
 
@@ -2572,9 +2608,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		adWarning += campaignContextWarning
 	}
 
-	// A post id here came from EITHER a caller-supplied PostURL OR Step 1.5
-	// authoring an image post — both feed the same ad-creation path.
-	if validatedPostID != "" {
+	var adIDs []string
+	if variants != nil {
+		// One ad per authored variant post (#549 gap 6). A failed variant is recorded and the
+		// others are kept: no rollback, created_degraded via adWarning.
+		warn, pr, err := c.createVariantAds(ctx, accountID, adGroupID, in, variants, &steps, partialResult)
+		if err != nil {
+			pr.AdGroupName = adGroupName
+			return pr, err
+		}
+		adWarning = warn
+		adIDs = variants.adIDs()
+		adCount = len(adIDs)
+		if adCount > 0 {
+			adID = adIDs[0]
+		}
+	} else if validatedPostID != "" {
+		// A post id here came from EITHER a caller-supplied PostURL OR Step 1.5
+		// authoring an image post — both feed the same ad-creation path.
 		postID := validatedPostID
 		if in.PostURL != "" {
 			steps = append(steps, fmt.Sprintf("Extracted post ID: %s from %s", postID, redactURL(in.PostURL)))
@@ -2684,7 +2735,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		AdGroupID:    adGroupID,
 		AdCount:      adCount,
 		AdID:         adID,
+		AdIDs:        adIDs,
 		AdWarning:    adWarning,
+		VariantAds:   variants.snapshot(),
 		AccountID:    c.account.AccountID,
 		RedditURL:    redditAdsManagerURL,
 		Steps:        steps,
@@ -2727,7 +2780,8 @@ func (c *Client) ConversionPixelID() string { return c.account.ConversionPixelID
 //	    separate media-upload step and no LINK post type), so it must be a public
 //	    absolute http(s) image URL — validated by validateImageURL before this call.
 //	  - destination_url is the SAME UTM'd click URL the ad's click_url uses
-//	    (buildRedditUTMURL variant 0), so the post and ad agree on the destination.
+//	    (buildRedditUTMURL for variantIndex: 0 on a one-ad create, the variant's own index on
+//	    a one-ad-per-variant create), so the post and ad agree on the destination.
 //	  - call_to_action is Reddit's exact title-case label (resolved via redditCTAs).
 //
 // The caller runs this BEFORE the paid campaign create, so any error is safe to
@@ -2735,7 +2789,7 @@ func (c *Client) ConversionPixelID() string { return c.account.ConversionPixelID
 // (an *apiError for a non-2xx, a transportError for an ambiguous/2xx-unparseable
 // outcome) and does not classify it. A 2xx response missing data.id is reported
 // as an error so the caller degrades rather than attaching an empty post id.
-func (c *Client) createPromotedPost(ctx context.Context, accountID string, in CampaignInput, headline, cta, imageURL string) (string, error) {
+func (c *Client) createPromotedPost(ctx context.Context, accountID string, in CampaignInput, variantIndex int, headline, cta, imageURL string) (string, error) {
 	body := map[string]any{
 		"data": map[string]any{
 			"type":           "IMAGE",
@@ -2744,7 +2798,7 @@ func (c *Client) createPromotedPost(ctx context.Context, accountID string, in Ca
 			"content": []map[string]any{{
 				"media_url":       imageURL,
 				"call_to_action":  cta,
-				"destination_url": buildRedditUTMURL(in, 0),
+				"destination_url": buildRedditUTMURL(in, variantIndex),
 			}},
 		},
 	}
@@ -2809,13 +2863,29 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 // commits before a later child fails is a partialCascadeError (Unconfirmed); on the ACTIVATE
 // path a child failure BEFORE the campaign flip is a plain error (nothing is serving yet).
 func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID, adGroupID, adID, status string) error {
-	// Activating a campaign whose child ad group OR ad id is unknown cannot make the tree
-	// servable (the missing child stays PAUSED, or — for an absent ad id — the ad PATCH below
-	// is silently skipped), so refuse rather than PATCH only some nodes and let the caller
-	// persist a misleading "active". This mirrors RedditDispatcher.ToggleStatus's own guard so
-	// the exported low-level method is self-consistent for any direct caller, not just the
-	// dispatcher. Pausing is fine without children — pausing the parent already stops delivery.
-	if status == StatusActive && (strings.TrimSpace(adGroupID) == "" || strings.TrimSpace(adID) == "") {
+	return c.UpdateCampaignTreeStatus(ctx, campaignID, adGroupID, []string{adID}, status)
+}
+
+// UpdateCampaignTreeStatus is UpdateCampaignAndChildrenStatus over EVERY ad in the ad group: a
+// one-ad-per-variant create (#549 gap 6) records several ad ids, and a toggle that skipped any of
+// them would leave a variant PAUSED after an activate (or serving after the campaign is
+// re-activated elsewhere). Blank ids are dropped. The ordering rules are the same: ACTIVATE lifts
+// every ad, then the ad group, then the campaign LAST; PAUSE flips the campaign first, then the
+// ad group, then every ad, and a child failure after the campaign PATCH is a partialCascadeError.
+func (c *Client) UpdateCampaignTreeStatus(ctx context.Context, campaignID, adGroupID string, adIDs []string, status string) error {
+	var ads []string
+	for _, id := range adIDs {
+		if id = strings.TrimSpace(id); id != "" {
+			ads = append(ads, id)
+		}
+	}
+	// Activating a campaign whose child ad group OR ads are unknown cannot make the tree
+	// servable (the missing child stays PAUSED, or — with no ad id — no ad PATCH is sent at
+	// all), so refuse rather than PATCH only some nodes and let the caller persist a misleading
+	// "active". This mirrors RedditDispatcher.ToggleStatus's own guard so the exported low-level
+	// method is self-consistent for any direct caller, not just the dispatcher. Pausing is fine
+	// without children — pausing the parent already stops delivery.
+	if status == StatusActive && (strings.TrimSpace(adGroupID) == "" || len(ads) == 0) {
 		return fmt.Errorf("reddit: cannot activate campaign %s: its ad group and ad ids must both be known, so the tree cannot be made servable", campaignID)
 	}
 
@@ -2823,9 +2893,11 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 		// CHILDREN-FIRST, campaign LAST. Nothing is serving until the campaign gate flips at the
 		// end, so a child failure here (before the gate opens) is a plain error — the tree is
 		// still non-servable, safe to report as "not modified" and retry. The activate guard
-		// above guarantees both child ids are present.
-		if err := c.updateEntityStatus(ctx, "ads", strings.TrimSpace(adID), status); err != nil {
-			return err
+		// above guarantees the ad group id and at least one ad id are present.
+		for _, ad := range ads {
+			if err := c.updateEntityStatus(ctx, "ads", ad, status); err != nil {
+				return err
+			}
 		}
 		if err := c.updateEntityStatus(ctx, "ad_groups", strings.TrimSpace(adGroupID), status); err != nil {
 			return err
@@ -2851,8 +2923,8 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 			return &partialCascadeError{stage: "ad group", err: err}
 		}
 	}
-	if strings.TrimSpace(adID) != "" {
-		if err := c.updateEntityStatus(ctx, "ads", adID, status); err != nil {
+	for _, ad := range ads {
+		if err := c.updateEntityStatus(ctx, "ads", ad, status); err != nil {
 			return &partialCascadeError{stage: "ad", err: err}
 		}
 	}

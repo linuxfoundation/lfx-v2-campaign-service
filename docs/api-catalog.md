@@ -687,6 +687,21 @@ variants?: [{headline, body}]   — Ad copy variants. When no `postUrl`/`imageUr
                                   "ready" instruction per variant is emitted (headline + display UTM
                                   URL) for manual ad creation. On the author-a-post path the FIRST
                                   variant's headline is the authored post's headline.
+                                  ONE AD PER VARIANT (#549 gap 6): while REDDIT_AD_PER_VARIANT_ENABLED
+                                  is "true", an author-a-post create (`imageUrl` or `imageAssetId`, no
+                                  `postUrl`) with 2-5 variants authors one post per variant (its
+                                  headline, destination utm_content=variant-N) and one ad per post in
+                                  the single ad group. Every confirmed ad id is recorded in the
+                                  campaign row's result as `adIds` (variant order; `adId` stays the
+                                  first) plus `variantAds: [{variant, postId?, adId?, outcome}]`. A
+                                  variant whose post or ad fails does not roll back the others: the
+                                  campaign is `created_degraded` and a step names the failed
+                                  variant(s). More than 5 variants, or a blank or >300-character
+                                  variant headline, is a synchronous **400** "invalid campaign config:
+                                  redditConfig.variants...: ..." before any job exists, re-checked at
+                                  dispatch before any Reddit call. Pause/activate cascade over every
+                                  ad. With a `postUrl`, fewer than 2 variants, or the flag off, the
+                                  create makes one ad exactly as before. Not yet sent live.
 postUrl?: string                — OPTIONAL existing Reddit post to promote. Accepts a t3_ id, a
                                   reddit.com/comments/<id> URL, or a redd.it short link; validated
                                   against reddit.com/redd.it hosts. When set it TAKES PRECEDENCE and
