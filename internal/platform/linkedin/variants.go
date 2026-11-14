@@ -74,8 +74,9 @@ func normalizeDescription(description string) string {
 // ValidateVariantFields checks the optional per-variant fields #588 and #589 add: every
 // callToAction is a LinkedIn label, and no two variants carry the same name once normalized.
 // Two creatives of one campaign with one name cannot be told apart in Campaign Manager or in
-// reporting, so a repeat is refused rather than created. A variant without a name keeps the
-// "<event> | variant-N" default, which is unique by its index.
+// reporting, so a repeat is refused rather than created. It compares callers' names only, since
+// it runs before the event name is known; distinctCreativeNames, which has it, also catches a
+// caller's name that repeats another variant's "<event> | variant-N" default.
 func ValidateVariantFields(variants []CreativeVariant) error {
 	seen := make(map[string]int, len(variants))
 	for i, v := range variants {
@@ -86,6 +87,21 @@ func ValidateVariantFields(variants []CreativeVariant) error {
 		if name == "" {
 			continue
 		}
+		if first, dup := seen[name]; dup {
+			return fmt.Errorf("variant-%d name %s repeats variant-%d's; give each variant its own name", i+1, domain.CallerValue(name), first)
+		}
+		seen[name] = i + 1
+	}
+	return nil
+}
+
+// distinctCreativeNames refuses two variants whose creative names, as creativeName resolves them,
+// match: ValidateVariantFields' check plus a caller's name equal to an unnamed variant's
+// "<event> | variant-N" default, which only a check that knows the event name can see.
+func distinctCreativeNames(eventName string, variants []CreativeVariant) error {
+	seen := make(map[string]int, len(variants))
+	for i, v := range variants {
+		name := creativeName(eventName, i, v)
 		if first, dup := seen[name]; dup {
 			return fmt.Errorf("variant-%d name %s repeats variant-%d's; give each variant its own name", i+1, domain.CallerValue(name), first)
 		}

@@ -82,6 +82,8 @@ func TestCreateCampaign_RefusesBadVariantFieldsBeforeAnyPOST(t *testing.T) {
 	for _, variants := range [][]CreativeVariant{
 		{{IntroText: "join us", Headline: "KubeCon", CallToAction: "CLICK"}},
 		{{IntroText: "join us", Headline: "KubeCon", Name: "A"}, {IntroText: "join us", Headline: "KubeCon", Name: "A"}},
+		// A caller's name equal to the unnamed first variant's default name.
+		{{IntroText: "join us", Headline: "KubeCon"}, {IntroText: "join us", Headline: "KubeCon", Name: "KubeCon | variant-1"}},
 	} {
 		in := validCampaignInput()
 		in.Variants = variants

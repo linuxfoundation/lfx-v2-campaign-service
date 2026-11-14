@@ -2810,6 +2810,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err := ValidateVariantFields(in.Variants); err != nil {
 		return nil, domain.WrapPreflightRefusal(err)
 	}
+	if err := distinctCreativeNames(eventName, in.Variants); err != nil {
+		return nil, domain.WrapPreflightRefusal(err)
+	}
 
 	// Project is the campaign-name Project segment the data pipeline joins on for
 	// foundation attribution. Require the caller's canonical LFX slug rather than
