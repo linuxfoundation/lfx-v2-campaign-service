@@ -274,6 +274,11 @@ func ListMicrosoftAdsRemarketingListsLfxV2CampaignServiceConnectionsPath(project
 	return fmt.Sprintf("/projects/%v/microsoft-ads/remarketing-lists", projectID)
 }
 
+// ListMicrosoftAdsConversionGoalsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-microsoft-ads-conversion-goals HTTP endpoint.
+func ListMicrosoftAdsConversionGoalsLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/microsoft-ads/conversion-goals", projectID)
+}
+
 // GetMetaAdsAudienceLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service get-meta-ads-audience HTTP endpoint.
 func GetMetaAdsAudienceLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/meta-ads/audience", projectID)

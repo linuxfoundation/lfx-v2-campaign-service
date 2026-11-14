@@ -315,6 +315,17 @@ const (
 	// confirms it.
 	EnvMicrosoftStructuredSnippetsEnabled = "MICROSOFT_STRUCTURED_SNIPPETS_ENABLED"
 
+	// EnvMicrosoftConversionGoalsEnabled opts a deployment IN to microsoftConfig.conversionGoalIds
+	// and the conversion bidding strategies (bidding.strategy "maxConversions" and "targetCpa")
+	// (#563 gap 7): EXISTING conversion goals verified with one GetConversionGoalsByIds read before
+	// anything is created and set as the new campaign's GoalIds, and a MaxConversions bid strategy
+	// with an optional TargetCpa. Only the exact value "true" enables it; unset or any other value
+	// fails closed, and a create naming any of it is refused with a 400 before any job exists (and
+	// again at dispatch). The goals belong to the shared account, so conversionGoalIds also needs
+	// global_marketing_ops. It keeps an UNVERIFIED request shape (from the v13 reference) off the
+	// shared account until a live create confirms it.
+	EnvMicrosoftConversionGoalsEnabled = "MICROSOFT_CONVERSION_GOALS_ENABLED"
+
 	// EnvMicrosoftAdExtensionsEnabled opts a deployment IN to microsoftConfig.sitelinks and
 	// microsoftConfig.callouts (#563), created at create time as SitelinkAdExtension and
 	// CalloutAdExtension entries and associated with the new Search campaign. Only the exact value

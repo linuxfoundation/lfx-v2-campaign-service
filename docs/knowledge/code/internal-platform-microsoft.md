@@ -1755,3 +1755,44 @@ The dispatcher (`internal/dispatch/microsoft_bid_adjustments.go`) refuses a valu
 object of numbers, and any of the three while `MICROSOFT_BID_ADJUSTMENTS_ENABLED` is off. Not
 verified live. In particular it is unconfirmed whether Microsoft accepts an ADD of a device
 criterion on a new campaign; a refusal would stop the create, fail-closed. Not role-gated.
+
+## Conversion goals and conversion bidding at create (`conversion_goals.go`, #563 gap 7)
+
+`microsoftConfig.conversionGoalIds` names EXISTING conversion goals on the shared account; this
+service creates no UET tag and no goal (marketing ops owns both). `ValidateConversionGoalIDs`
+holds the pure rules: at most 20, each the canonical spelling of a positive int64, no repeat.
+
+`CheckConversionGoals` runs BEFORE anything is created, after the shared-list check: ONE
+`POST ConversionGoals/QueryByIds` (`GetConversionGoalsByIds`) with every id and
+`ConversionGoalTypes` set to every type, space-delimited (the monitor's precedent for a flags
+enum). `ConversionGoals` must be index-aligned with the request; a null entry (Microsoft's "not
+retrieved") or a goal reported `Paused` or `Deleted` is a `PreflightRefusal` naming the id. An
+answer that cannot be believed (no array, a different length, an entry naming another goal) is a
+plain error. Partial errors are not attributed: Microsoft documents that they do not follow the
+request order, and the null entry already refuses the id. Either way nothing is created.
+
+The ids are then sent as the new campaign's `GoalIds` (`msCampaign.GoalIds`). A campaign found by
+name keeps its goals (a warning step); only goals THIS RUN set are recorded as
+`CampaignResult.ConversionGoalIDs`.
+
+`microsoftConfig.bidding` gains `strategy` `"maxConversions"` and `"targetCpa"` (with
+`bidding.targetCpa`), resolved by the dispatcher's `microsoftConversionPlan` before the generic
+`resolveBidding` (which still refuses both strategies, and the `targetCpa` key, on every other
+platform; `checkBiddingShape` refuses the key outside `microsoftConfig`). Both are sent as
+`BidSchemeMaxConversions` (`{"Type":"MaxConversions","TargetCpa":…}`, no `MaxCpc`): Microsoft
+retired `TargetCpaBiddingScheme` for new campaigns and converts it to MaxConversions with the
+target. `validateBiddingScheme` refuses MaxConversions with a `CpcBid` or with no goal, and a
+target CPA under any other scheme. They are recorded as `automatic` bidding, so the bid lever
+answers 409, as for MaxClicks.
+
+`ListConversionGoals` is the picker read (`GET /projects/{project_id}/microsoft-ads/conversion-goals`,
+the same call with no ids): every goal on the account, or `ErrConversionGoalsMalformed` (503) for
+a null entry, an unusable or repeated id, more than 5,000 rows or any partial error.
+
+Not verified live, in particular `Campaign.GoalIds` (the reference describes it only as "A list of
+goal IDs") and the JSON spelling of the `ConversionGoalTypes` flags. Everything is behind
+`MICROSOFT_CONVERSION_GOALS_ENABLED` (default off; a 400 while off, re-checked in Dispatch; the
+picker answers 400). `conversionGoalIds` also needs `global_marketing_ops`
+(`service.MicrosoftMarketingOpsInputs`, pinned to the dispatcher by
+`TestMicrosoftSharedAccountInputDetectionAgreesWithTheCreateGate`), and the picker route is on the
+gateway's `marketing-ops-api` rule.

@@ -135,3 +135,71 @@ func TestReadMicrosoftRemarketingLists_RecordsOnlyCallsThatReachedMicrosoft(t *t
 		})
 	}
 }
+
+type mockMicrosoftGoalDispatcher struct {
+	res       *model.MicrosoftConversionGoals
+	err       error
+	notCalled bool
+	calls     int
+}
+
+func (m *mockMicrosoftGoalDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
+	return nil, nil
+}
+
+func (m *mockMicrosoftGoalDispatcher) ListMicrosoftConversionGoals(context.Context, string, model.Provider) (*model.MicrosoftConversionGoals, bool, error) {
+	m.calls++
+	return m.res, !m.notCalled, m.err
+}
+
+func TestListMicrosoftAdsConversionGoals_SortsAndMapsEveryField(t *testing.T) {
+	d := &mockMicrosoftGoalDispatcher{res: &model.MicrosoftConversionGoals{AccountID: "1234567", Goals: []model.MicrosoftConversionGoal{
+		{ID: "30", Name: "registration", Status: "Paused"},
+		{ID: "20", Name: "KubeCon purchase", Status: "Active", Type: "Event", Scope: "Customer"},
+		{ID: "10", Name: "Registration", Status: "Active"},
+	}}}
+	res, err := microsoftLookupService(d).ListMicrosoftAdsConversionGoals(context.Background(), &conn.ListMicrosoftAdsConversionGoalsPayload{ProjectID: "cncf"})
+	if err != nil {
+		t.Fatalf("ListMicrosoftAdsConversionGoals: %v", err)
+	}
+	if res.AccountID != "1234567" || res.GoalCount != 3 {
+		t.Fatalf("res = %+v", res)
+	}
+	var ids []string
+	for _, g := range res.Goals {
+		ids = append(ids, g.ID)
+	}
+	if fmt.Sprint(ids) != "[20 10 30]" {
+		t.Errorf("order = %v, want by name ignoring case, then id", ids)
+	}
+	b, _ := json.Marshal(res.Goals[0])
+	const want = `{"ID":"20","Name":"KubeCon purchase","Status":"Active","Type":"Event","Scope":"Customer"}`
+	if string(b) != want {
+		t.Errorf("row = %s\nwant  %s", b, want)
+	}
+}
+
+func TestListMicrosoftAdsConversionGoals_ErrorMapping(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		d    PlatformDispatcher
+		want string
+	}{
+		{"flag off", &mockMicrosoftGoalDispatcher{err: fmt.Errorf("disabled: %w", domain.ErrTargetingLookupUnsupported), notCalled: true}, "400"},
+		{"malformed upstream", &mockMicrosoftGoalDispatcher{err: errors.New("microsoft-ads conversion goal read could not be confirmed")}, "503"},
+		{"no capability", &mockLookupDispatcher{}, "400"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := microsoftLookupService(tc.d).ListMicrosoftAdsConversionGoals(context.Background(), &conn.ListMicrosoftAdsConversionGoalsPayload{ProjectID: "cncf"})
+			if errCode(err) != tc.want {
+				t.Fatalf("err = %T %v, want %s", err, err, tc.want)
+			}
+		})
+	}
+	for name, res := range map[string]*model.MicrosoftConversionGoals{"nil result": nil, "nil goals": {AccountID: "acc"}} {
+		o := &Orchestrator{dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderMicrosoftAds: &mockMicrosoftGoalDispatcher{res: res}}}
+		if _, err := o.ReadMicrosoftConversionGoals(context.Background(), "cncf", model.ProviderMicrosoftAds); err == nil {
+			t.Errorf("%s: must not be reported as an empty answer", name)
+		}
+	}
+}

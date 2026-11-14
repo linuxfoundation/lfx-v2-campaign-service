@@ -451,6 +451,13 @@ func (d upstreamCapableDispatcher) ListMicrosoftRemarketingLists(context.Context
 	return &model.MicrosoftRemarketingLists{Lists: []model.MicrosoftRemarketingList{}}, true, nil
 }
 
+func (d upstreamCapableDispatcher) ListMicrosoftConversionGoals(context.Context, string, model.Provider) (*model.MicrosoftConversionGoals, bool, error) {
+	if d.err != nil {
+		return nil, true, d.err
+	}
+	return &model.MicrosoftConversionGoals{Goals: []model.MicrosoftConversionGoal{}}, true, nil
+}
+
 func (d upstreamCapableDispatcher) SearchEmails(context.Context, string, model.Provider, string) ([]model.MarketingEmail, error) {
 	if d.err != nil {
 		return nil, d.err
@@ -739,6 +746,14 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opListMicrosoftRemarketingLists,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ReadMicrosoftRemarketingLists(ctx, "p1", platform)
+				return err
+			},
+		},
+		{
+			name: "list microsoft conversion goals",
+			op:   opListMicrosoftConversionGoals,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadMicrosoftConversionGoals(ctx, "p1", platform)
 				return err
 			},
 		},

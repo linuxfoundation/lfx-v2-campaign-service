@@ -69,6 +69,7 @@ type Endpoints struct {
 	ListRedditAdsCustomAudiences     goa.Endpoint
 	ListTwitterAdsCustomAudiences    goa.Endpoint
 	ListMicrosoftAdsRemarketingLists goa.Endpoint
+	ListMicrosoftAdsConversionGoals  goa.Endpoint
 	GetMetaAdsAudience               goa.Endpoint
 	GetTwitterAdsAudience            goa.Endpoint
 	GetLinkedinAdsAudience           goa.Endpoint
@@ -160,6 +161,7 @@ func NewEndpoints(s Service) *Endpoints {
 		ListRedditAdsCustomAudiences:     NewListRedditAdsCustomAudiencesEndpoint(s, a.JWTAuth),
 		ListTwitterAdsCustomAudiences:    NewListTwitterAdsCustomAudiencesEndpoint(s, a.JWTAuth),
 		ListMicrosoftAdsRemarketingLists: NewListMicrosoftAdsRemarketingListsEndpoint(s, a.JWTAuth),
+		ListMicrosoftAdsConversionGoals:  NewListMicrosoftAdsConversionGoalsEndpoint(s, a.JWTAuth),
 		GetMetaAdsAudience:               NewGetMetaAdsAudienceEndpoint(s, a.JWTAuth),
 		GetTwitterAdsAudience:            NewGetTwitterAdsAudienceEndpoint(s, a.JWTAuth),
 		GetLinkedinAdsAudience:           NewGetLinkedinAdsAudienceEndpoint(s, a.JWTAuth),
@@ -249,6 +251,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ListRedditAdsCustomAudiences = m(e.ListRedditAdsCustomAudiences)
 	e.ListTwitterAdsCustomAudiences = m(e.ListTwitterAdsCustomAudiences)
 	e.ListMicrosoftAdsRemarketingLists = m(e.ListMicrosoftAdsRemarketingLists)
+	e.ListMicrosoftAdsConversionGoals = m(e.ListMicrosoftAdsConversionGoals)
 	e.GetMetaAdsAudience = m(e.GetMetaAdsAudience)
 	e.GetTwitterAdsAudience = m(e.GetTwitterAdsAudience)
 	e.GetLinkedinAdsAudience = m(e.GetLinkedinAdsAudience)
@@ -1521,6 +1524,30 @@ func NewListMicrosoftAdsRemarketingListsEndpoint(s Service, authJWTFn security.A
 			return nil, err
 		}
 		return s.ListMicrosoftAdsRemarketingLists(ctx, p)
+	}
+}
+
+// NewListMicrosoftAdsConversionGoalsEndpoint returns an endpoint function that
+// calls the method "list-microsoft-ads-conversion-goals" of service
+// "lfx-v2-campaign-service-connections".
+func NewListMicrosoftAdsConversionGoalsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ListMicrosoftAdsConversionGoalsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ListMicrosoftAdsConversionGoals(ctx, p)
 	}
 }
 

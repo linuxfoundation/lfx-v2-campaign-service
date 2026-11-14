@@ -68,6 +68,7 @@ type Client struct {
 	ListRedditAdsCustomAudiencesEndpoint     goa.Endpoint
 	ListTwitterAdsCustomAudiencesEndpoint    goa.Endpoint
 	ListMicrosoftAdsRemarketingListsEndpoint goa.Endpoint
+	ListMicrosoftAdsConversionGoalsEndpoint  goa.Endpoint
 	GetMetaAdsAudienceEndpoint               goa.Endpoint
 	GetTwitterAdsAudienceEndpoint            goa.Endpoint
 	GetLinkedinAdsAudienceEndpoint           goa.Endpoint
@@ -102,7 +103,7 @@ type Client struct {
 
 // NewClient initializes a "lfx-v2-campaign-service-connections" service client
 // given the endpoints.
-func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds, createLinkedinAds, getLinkedinAds, updateLinkedinAds, deleteLinkedinAds, testLinkedinAds, setCredentialLinkedinAds, createMetaAds, getMetaAds, updateMetaAds, deleteMetaAds, testMetaAds, setCredentialMetaAds, createRedditAds, getRedditAds, updateRedditAds, deleteRedditAds, testRedditAds, setCredentialRedditAds, createTwitterAds, getTwitterAds, updateTwitterAds, deleteTwitterAds, testTwitterAds, setCredentialTwitterAds, createMicrosoftAds, getMicrosoftAds, updateMicrosoftAds, deleteMicrosoftAds, testMicrosoftAds, setCredentialMicrosoftAds, createHubspot, getHubspot, updateHubspot, deleteHubspot, testHubspot, setCredentialHubspot, listGoogleAdsAccounts, getGoogleAdsKeywords, getGoogleAdsAudience, suggestGoogleAdsGeoTargets, listGoogleAdsUserLists, listGoogleAdsConversionActions, listGoogleAdsAudiences, listMetaCustomAudiences, listRedditAdsCustomAudiences, listTwitterAdsCustomAudiences, listMicrosoftAdsRemarketingLists, getMetaAdsAudience, getTwitterAdsAudience, getLinkedinAdsAudience, listLinkedinAdsAudiences, listLinkedinAdsConversions, getMicrosoftAdsKeywords, getMicrosoftAdsAudience, getRedditAdsAudience, getRedditAdsKeywords, resolveGoogleAdsCampaign, resolveMicrosoftAdsCampaign, resolveMetaAdsCampaign, resolveRedditAdsCampaign, resolveTwitterAdsCampaign, resolveLinkedinAdsCampaign, listMetaAdsAccounts, listLinkedinAdsAccounts, listMicrosoftAdsAccounts, listTwitterAdsAccounts, listRedditAdsAccounts, listHubspotEmails, searchHubspotCampaigns, createHubspotCampaign, monitorGoogleAdsAccount, monitorLinkedinAdsAccount, monitorMetaAdsAccount, monitorRedditAdsAccount, monitorMicrosoftAdsAccount, monitorTwitterAdsAccount, monitorHubspotAccount goa.Endpoint) *Client {
+func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds, createLinkedinAds, getLinkedinAds, updateLinkedinAds, deleteLinkedinAds, testLinkedinAds, setCredentialLinkedinAds, createMetaAds, getMetaAds, updateMetaAds, deleteMetaAds, testMetaAds, setCredentialMetaAds, createRedditAds, getRedditAds, updateRedditAds, deleteRedditAds, testRedditAds, setCredentialRedditAds, createTwitterAds, getTwitterAds, updateTwitterAds, deleteTwitterAds, testTwitterAds, setCredentialTwitterAds, createMicrosoftAds, getMicrosoftAds, updateMicrosoftAds, deleteMicrosoftAds, testMicrosoftAds, setCredentialMicrosoftAds, createHubspot, getHubspot, updateHubspot, deleteHubspot, testHubspot, setCredentialHubspot, listGoogleAdsAccounts, getGoogleAdsKeywords, getGoogleAdsAudience, suggestGoogleAdsGeoTargets, listGoogleAdsUserLists, listGoogleAdsConversionActions, listGoogleAdsAudiences, listMetaCustomAudiences, listRedditAdsCustomAudiences, listTwitterAdsCustomAudiences, listMicrosoftAdsRemarketingLists, listMicrosoftAdsConversionGoals, getMetaAdsAudience, getTwitterAdsAudience, getLinkedinAdsAudience, listLinkedinAdsAudiences, listLinkedinAdsConversions, getMicrosoftAdsKeywords, getMicrosoftAdsAudience, getRedditAdsAudience, getRedditAdsKeywords, resolveGoogleAdsCampaign, resolveMicrosoftAdsCampaign, resolveMetaAdsCampaign, resolveRedditAdsCampaign, resolveTwitterAdsCampaign, resolveLinkedinAdsCampaign, listMetaAdsAccounts, listLinkedinAdsAccounts, listMicrosoftAdsAccounts, listTwitterAdsAccounts, listRedditAdsAccounts, listHubspotEmails, searchHubspotCampaigns, createHubspotCampaign, monitorGoogleAdsAccount, monitorLinkedinAdsAccount, monitorMetaAdsAccount, monitorRedditAdsAccount, monitorMicrosoftAdsAccount, monitorTwitterAdsAccount, monitorHubspotAccount goa.Endpoint) *Client {
 	return &Client{
 		CreateGoogleAdsEndpoint:                  createGoogleAds,
 		GetGoogleAdsEndpoint:                     getGoogleAds,
@@ -157,6 +158,7 @@ func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, 
 		ListRedditAdsCustomAudiencesEndpoint:     listRedditAdsCustomAudiences,
 		ListTwitterAdsCustomAudiencesEndpoint:    listTwitterAdsCustomAudiences,
 		ListMicrosoftAdsRemarketingListsEndpoint: listMicrosoftAdsRemarketingLists,
+		ListMicrosoftAdsConversionGoalsEndpoint:  listMicrosoftAdsConversionGoals,
 		GetMetaAdsAudienceEndpoint:               getMetaAdsAudience,
 		GetTwitterAdsAudienceEndpoint:            getTwitterAdsAudience,
 		GetLinkedinAdsAudienceEndpoint:           getLinkedinAdsAudience,
@@ -1157,6 +1159,26 @@ func (c *Client) ListMicrosoftAdsRemarketingLists(ctx context.Context, p *ListMi
 		return
 	}
 	return ires.(*MicrosoftAdsRemarketingLists), nil
+}
+
+// ListMicrosoftAdsConversionGoals calls the
+// "list-microsoft-ads-conversion-goals" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// ListMicrosoftAdsConversionGoals may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) ListMicrosoftAdsConversionGoals(ctx context.Context, p *ListMicrosoftAdsConversionGoalsPayload) (res *MicrosoftAdsConversionGoals, err error) {
+	var ires any
+	ires, err = c.ListMicrosoftAdsConversionGoalsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*MicrosoftAdsConversionGoals), nil
 }
 
 // GetMetaAdsAudience calls the "get-meta-ads-audience" endpoint of the

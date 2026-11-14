@@ -951,6 +951,19 @@ type ListMicrosoftAdsRemarketingListsResponseBody struct {
 	ListCount *int `form:"list_count,omitempty" json:"list_count,omitempty" xml:"list_count,omitempty"`
 }
 
+// ListMicrosoftAdsConversionGoalsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-conversion-goals" endpoint HTTP response body.
+type ListMicrosoftAdsConversionGoalsResponseBody struct {
+	// The Microsoft Advertising account the goals were read from: the account a
+	// Microsoft create for this project uses
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The account's conversion goals, sorted by name (ignoring case), then id
+	Goals []*MicrosoftAdsConversionGoalResponseBody `form:"goals,omitempty" json:"goals,omitempty" xml:"goals,omitempty"`
+	// How many goals are in `goals`
+	GoalCount *int `form:"goal_count,omitempty" json:"goal_count,omitempty" xml:"goal_count,omitempty"`
+}
+
 // GetMetaAdsAudienceResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body.
@@ -4818,6 +4831,72 @@ type ListMicrosoftAdsRemarketingListsUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListMicrosoftAdsConversionGoalsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-conversion-goals" endpoint HTTP response body for the
+// "BadRequest" error.
+type ListMicrosoftAdsConversionGoalsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMicrosoftAdsConversionGoalsServiceUnavailableResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-conversion-goals" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type ListMicrosoftAdsConversionGoalsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMicrosoftAdsConversionGoalsInternalServerErrorResponseBody is the type
+// of the "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-conversion-goals" endpoint HTTP response body for the
+// "InternalServerError" error.
+type ListMicrosoftAdsConversionGoalsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMicrosoftAdsConversionGoalsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-conversion-goals" endpoint HTTP response body for the
+// "NotFound" error.
+type ListMicrosoftAdsConversionGoalsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMicrosoftAdsConversionGoalsPayloadTooLargeResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-conversion-goals" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type ListMicrosoftAdsConversionGoalsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMicrosoftAdsConversionGoalsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-conversion-goals" endpoint HTTP response body for the
+// "Unauthorized" error.
+type ListMicrosoftAdsConversionGoalsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetMetaAdsAudienceBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -7081,6 +7160,23 @@ type MicrosoftAdsRemarketingListResponseBody struct {
 	// Microsoft's SearchSize: the list members reachable on Search. Absent when
 	// Microsoft sent none, which is not a size of 0.
 	SearchSize *int64 `form:"search_size,omitempty" json:"search_size,omitempty" xml:"search_size,omitempty"`
+}
+
+// MicrosoftAdsConversionGoalResponseBody is used to define fields on response
+// body types.
+type MicrosoftAdsConversionGoalResponseBody struct {
+	// The conversion goal id, in exactly the form
+	// microsoftConfig.conversionGoalIds accepts. Send it as-is.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// The goal's display name. Not an identifier; may be empty.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Microsoft's Status, verbatim (for example Active or Paused). A create
+	// refuses a Paused or Deleted goal.
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Microsoft's goal Type, verbatim (for example Url or Event); may be empty.
+	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
+	// Microsoft's Scope, verbatim (Account or Customer); may be empty.
+	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
 }
 
 // MetaAdsAudienceBucketResponseBody is used to define fields on response body
@@ -13055,6 +13151,100 @@ func NewListMicrosoftAdsRemarketingListsUnauthorized(body *ListMicrosoftAdsRemar
 	return v
 }
 
+// NewListMicrosoftAdsConversionGoalsMicrosoftAdsConversionGoalsOK builds a
+// "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-conversion-goals" endpoint result from a HTTP "OK"
+// response.
+func NewListMicrosoftAdsConversionGoalsMicrosoftAdsConversionGoalsOK(body *ListMicrosoftAdsConversionGoalsResponseBody) *lfxv2campaignserviceconnections.MicrosoftAdsConversionGoals {
+	v := &lfxv2campaignserviceconnections.MicrosoftAdsConversionGoals{
+		AccountID: *body.AccountID,
+		GoalCount: *body.GoalCount,
+	}
+	v.Goals = make([]*lfxv2campaignserviceconnections.MicrosoftAdsConversionGoal, len(body.Goals))
+	for i, val := range body.Goals {
+		if val == nil {
+			v.Goals[i] = nil
+			continue
+		}
+		v.Goals[i] = unmarshalMicrosoftAdsConversionGoalResponseBodyToLfxv2campaignserviceconnectionsMicrosoftAdsConversionGoal(val)
+	}
+
+	return v
+}
+
+// NewListMicrosoftAdsConversionGoalsBadRequest builds a
+// lfx-v2-campaign-service-connections service
+// list-microsoft-ads-conversion-goals endpoint BadRequest error.
+func NewListMicrosoftAdsConversionGoalsBadRequest(body *ListMicrosoftAdsConversionGoalsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMicrosoftAdsConversionGoalsServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service
+// list-microsoft-ads-conversion-goals endpoint ServiceUnavailable error.
+func NewListMicrosoftAdsConversionGoalsServiceUnavailable(body *ListMicrosoftAdsConversionGoalsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMicrosoftAdsConversionGoalsInternalServerError builds a
+// lfx-v2-campaign-service-connections service
+// list-microsoft-ads-conversion-goals endpoint InternalServerError error.
+func NewListMicrosoftAdsConversionGoalsInternalServerError(body *ListMicrosoftAdsConversionGoalsInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMicrosoftAdsConversionGoalsNotFound builds a
+// lfx-v2-campaign-service-connections service
+// list-microsoft-ads-conversion-goals endpoint NotFound error.
+func NewListMicrosoftAdsConversionGoalsNotFound(body *ListMicrosoftAdsConversionGoalsNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMicrosoftAdsConversionGoalsPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service
+// list-microsoft-ads-conversion-goals endpoint PayloadTooLarge error.
+func NewListMicrosoftAdsConversionGoalsPayloadTooLarge(body *ListMicrosoftAdsConversionGoalsPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMicrosoftAdsConversionGoalsUnauthorized builds a
+// lfx-v2-campaign-service-connections service
+// list-microsoft-ads-conversion-goals endpoint Unauthorized error.
+func NewListMicrosoftAdsConversionGoalsUnauthorized(body *ListMicrosoftAdsConversionGoalsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetMetaAdsAudienceMetaAdsAudienceOK builds a
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint result from a HTTP "OK" response.
@@ -17002,6 +17192,28 @@ func ValidateListMicrosoftAdsRemarketingListsResponseBody(body *ListMicrosoftAds
 	for _, e := range body.Lists {
 		if e != nil {
 			if err2 := validateMicrosoftAdsRemarketingListResponseBody(e, "body.lists[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateListMicrosoftAdsConversionGoalsResponseBody runs the validations
+// defined on ListMicrosoftAdsConversionGoalsResponseBody
+func ValidateListMicrosoftAdsConversionGoalsResponseBody(body *ListMicrosoftAdsConversionGoalsResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.Goals == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("goals", "body"))
+	}
+	if body.GoalCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("goal_count", "body"))
+	}
+	for _, e := range body.Goals {
+		if e != nil {
+			if err2 := validateMicrosoftAdsConversionGoalResponseBody(e, "body.goals[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -21984,6 +22196,82 @@ func ValidateListMicrosoftAdsRemarketingListsUnauthorizedResponseBody(body *List
 	return
 }
 
+// ValidateListMicrosoftAdsConversionGoalsBadRequestResponseBody runs the
+// validations defined on ListMicrosoftAdsConversionGoalsBadRequestResponseBody
+func ValidateListMicrosoftAdsConversionGoalsBadRequestResponseBody(body *ListMicrosoftAdsConversionGoalsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMicrosoftAdsConversionGoalsServiceUnavailableResponseBody runs
+// the validations defined on
+// ListMicrosoftAdsConversionGoalsServiceUnavailableResponseBody
+func ValidateListMicrosoftAdsConversionGoalsServiceUnavailableResponseBody(body *ListMicrosoftAdsConversionGoalsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMicrosoftAdsConversionGoalsInternalServerErrorResponseBody runs
+// the validations defined on
+// ListMicrosoftAdsConversionGoalsInternalServerErrorResponseBody
+func ValidateListMicrosoftAdsConversionGoalsInternalServerErrorResponseBody(body *ListMicrosoftAdsConversionGoalsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMicrosoftAdsConversionGoalsNotFoundResponseBody runs the
+// validations defined on ListMicrosoftAdsConversionGoalsNotFoundResponseBody
+func ValidateListMicrosoftAdsConversionGoalsNotFoundResponseBody(body *ListMicrosoftAdsConversionGoalsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMicrosoftAdsConversionGoalsPayloadTooLargeResponseBody runs the
+// validations defined on
+// ListMicrosoftAdsConversionGoalsPayloadTooLargeResponseBody
+func ValidateListMicrosoftAdsConversionGoalsPayloadTooLargeResponseBody(body *ListMicrosoftAdsConversionGoalsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMicrosoftAdsConversionGoalsUnauthorizedResponseBody runs the
+// validations defined on
+// ListMicrosoftAdsConversionGoalsUnauthorizedResponseBody
+func ValidateListMicrosoftAdsConversionGoalsUnauthorizedResponseBody(body *ListMicrosoftAdsConversionGoalsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetMetaAdsAudienceBadRequestResponseBody runs the validations
 // defined on GetMetaAdsAudienceBadRequestResponseBody
 func ValidateGetMetaAdsAudienceBadRequestResponseBody(body *GetMetaAdsAudienceBadRequestResponseBody) (err error) {
@@ -24935,6 +25223,55 @@ func validateMicrosoftAdsRemarketingListResponseBody(body *MicrosoftAdsRemarketi
 	}
 	if body.Description == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("description", path))
+	}
+	if body.Scope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("scope", path))
+	}
+	if body.ID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".id", *body.ID, "^[1-9][0-9]{0,18}$"))
+	}
+	return
+}
+
+// ValidateMicrosoftAdsConversionGoalResponseBody runs the validations defined
+// on microsoft-ads-conversion-goal
+func ValidateMicrosoftAdsConversionGoalResponseBody(body *MicrosoftAdsConversionGoalResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
+	}
+	if body.Scope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("scope", "body"))
+	}
+	if body.ID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.id", *body.ID, "^[1-9][0-9]{0,18}$"))
+	}
+	return
+}
+
+// validateMicrosoftAdsConversionGoalResponseBody checks
+// microsoft-ads-conversion-goal and reports errors using the path supplied by
+// its caller
+func validateMicrosoftAdsConversionGoalResponseBody(body *MicrosoftAdsConversionGoalResponseBody, path string) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", path))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", path))
+	}
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", path))
 	}
 	if body.Scope == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("scope", path))

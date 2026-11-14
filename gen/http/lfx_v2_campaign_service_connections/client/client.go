@@ -230,6 +230,10 @@ type Client struct {
 	// requests to the list-microsoft-ads-remarketing-lists endpoint.
 	ListMicrosoftAdsRemarketingListsDoer goahttp.Doer
 
+	// ListMicrosoftAdsConversionGoals Doer is the HTTP client used to make
+	// requests to the list-microsoft-ads-conversion-goals endpoint.
+	ListMicrosoftAdsConversionGoalsDoer goahttp.Doer
+
 	// GetMetaAdsAudience Doer is the HTTP client used to make requests to the
 	// get-meta-ads-audience endpoint.
 	GetMetaAdsAudienceDoer goahttp.Doer
@@ -424,6 +428,7 @@ func NewClient(
 		ListRedditAdsCustomAudiencesDoer:     doer,
 		ListTwitterAdsCustomAudiencesDoer:    doer,
 		ListMicrosoftAdsRemarketingListsDoer: doer,
+		ListMicrosoftAdsConversionGoalsDoer:  doer,
 		GetMetaAdsAudienceDoer:               doer,
 		GetTwitterAdsAudienceDoer:            doer,
 		GetLinkedinAdsAudienceDoer:           doer,
@@ -1739,6 +1744,31 @@ func (c *Client) ListMicrosoftAdsRemarketingLists() goa.Endpoint {
 		resp, err := c.ListMicrosoftAdsRemarketingListsDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-microsoft-ads-remarketing-lists", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ListMicrosoftAdsConversionGoals returns an endpoint that makes HTTP requests
+// to the lfx-v2-campaign-service-connections service
+// list-microsoft-ads-conversion-goals server.
+func (c *Client) ListMicrosoftAdsConversionGoals() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeListMicrosoftAdsConversionGoalsRequest(c.encoder)
+		decodeResponse = DecodeListMicrosoftAdsConversionGoalsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildListMicrosoftAdsConversionGoalsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ListMicrosoftAdsConversionGoalsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-microsoft-ads-conversion-goals", err)
 		}
 		return decodeResponse(resp)
 	}

@@ -179,7 +179,17 @@ type CampaignInput struct {
 	// default for a Search campaign, EnhancedCpc). See msBiddingScheme for why a manual bid is
 	// EnhancedCpc and not ManualCpc. MaxClicks with a CpcBid is refused before anything is sent:
 	// under it "you don't need to set ad group or keyword bids", so the bid would be ignored.
+	// BidSchemeMaxConversions (#563 gap 7) is the conversion-based strategy, sent with TargetCPA
+	// when that is non-zero; it needs ConversionGoalIDs, and a CpcBid is refused with it.
 	BiddingScheme string
+	// TargetCPA is the MaxConversions target cost per acquisition (#563 gap 7), in the account
+	// currency's major units; zero sends none. Only with BidSchemeMaxConversions.
+	TargetCPA float64
+	// ConversionGoalIDs are EXISTING conversion goals set as the new campaign's GoalIds (#563 gap
+	// 7, conversion_goals.go), checked by CheckConversionGoals before CreateCampaign is called.
+	// Applied only to a campaign this run creates; a campaign found by name keeps its goals and
+	// a warning step says so. Empty sends none, as before.
+	ConversionGoalIDs []string
 	// GeoTargets are ISO 3166-1 alpha-2 country codes the campaign should serve in
 	// (LFXV2-3279), attached as CAMPAIGN-level location criteria. Optional at this layer: an
 	// empty list creates the campaign with NO location criteria, which is what this client
@@ -299,6 +309,9 @@ type CampaignResult struct {
 	// BidAdjustmentCriterionIDs are the device, age and gender criteria THIS RUN attached (#563
 	// gap 8), in send order.
 	BidAdjustmentCriterionIDs []string `json:"bidAdjustmentCriterionIds,omitempty"`
+	// ConversionGoalIDs are the conversion goals THIS RUN set as the campaign's GoalIds (#563 gap
+	// 7). Empty on a campaign found by name, which keeps the goals it has.
+	ConversionGoalIDs []string `json:"conversionGoalIds,omitempty"`
 	// AlreadyExisted is true ONLY when this run created NOTHING — i.e. the campaign, the ad
 	// group, AND the ad were all matched as pre-existing (by name / by destination) and no
 	// create was issued at any level. If ANY level was created this run, it is false, even
@@ -372,6 +385,9 @@ type msCampaign struct {
 	// Languages is the campaign's ad languages (#563), omitted unless the caller sent
 	// microsoftConfig.languages; the ad group then carries no Language of its own.
 	Languages []string `json:"Languages,omitempty"`
+	// GoalIds are the existing conversion goals the campaign tracks and bids toward (#563 gap 7),
+	// omitted unless the caller sent microsoftConfig.conversionGoalIds.
+	GoalIds []json.Number `json:"GoalIds,omitempty"`
 }
 
 // msBiddingScheme is the campaign's BiddingScheme as the REST JSON names it: a polymorphic object
@@ -392,8 +408,15 @@ type msCampaign struct {
 // automatically sets your bids in real time to get as many clicks as possible within your budget."
 // It needs no conversion tracking, unlike MaxConversions, which this service's campaigns cannot
 // assume. https://learn.microsoft.com/en-us/advertising/campaign-management-service/maxclicksbiddingscheme
+//
+// MAXCONVERSIONS (#563 gap 7) is sent only when the caller names existing conversion goals, with
+// TargetCpa when a target CPA was asked for (TargetCpaBiddingScheme is retired for new campaigns
+// and Microsoft converts it to MaxConversions with the target anyway). MaxCpc is not sent: "not
+// supported for non-portfolio campaigns".
+// https://learn.microsoft.com/en-us/advertising/campaign-management-service/maxconversionsbiddingscheme
 type msBiddingScheme struct {
-	Type string `json:"Type"`
+	Type      string   `json:"Type"`
+	TargetCpa *float64 `json:"TargetCpa,omitempty"`
 }
 
 // BidSchemeMaxClicks is the automatic campaign bid strategy the create path sends.
@@ -401,8 +424,29 @@ const BidSchemeMaxClicks = "MaxClicks"
 
 // validateBiddingScheme checks the requested campaign scheme against the ad-group bid, before
 // anything is sent. "" keeps the pre-LFXV2-2665 body (no scheme, Microsoft's EnhancedCpc default).
-func validateBiddingScheme(scheme string, cpcBidSet bool) (*msBiddingScheme, error) {
+func validateBiddingScheme(scheme string, cpcBidSet bool, targetCPA float64, goals int) (*msBiddingScheme, error) {
+	if targetCPA != 0 && scheme != BidSchemeMaxConversions {
+		return nil, fmt.Errorf("microsoft-ads: a target CPA is sent only with the MaxConversions bid strategy")
+	}
 	switch scheme {
+	case BidSchemeMaxConversions:
+		if cpcBidSet {
+			return nil, fmt.Errorf("microsoft-ads: an ad group CpcBid cannot be combined with the MaxConversions bid strategy, which sets every bid")
+		}
+		if goals == 0 {
+			// Without a goal the strategy has nothing to optimize toward; the dispatcher refuses
+			// this first, and the client refuses it again rather than send it.
+			return nil, fmt.Errorf("microsoft-ads: the MaxConversions bid strategy needs at least one conversion goal")
+		}
+		if math.IsNaN(targetCPA) || math.IsInf(targetCPA, 0) || targetCPA < 0 {
+			return nil, fmt.Errorf("microsoft-ads: the target CPA must be a finite number greater than zero")
+		}
+		out := &msBiddingScheme{Type: BidSchemeMaxConversions}
+		if targetCPA > 0 {
+			t := targetCPA
+			out.TargetCpa = &t
+		}
+		return out, nil
 	case "":
 		return nil, nil
 	case BidSchemeEnhancedCpc:
@@ -693,9 +737,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, domain.WrapPreflightRefusal(fmt.Errorf("microsoft-ads campaign bid invalid: %w", err))
 	}
-	biddingScheme, err := validateBiddingScheme(in.BiddingScheme, cpcBidSet)
+	biddingScheme, err := validateBiddingScheme(in.BiddingScheme, cpcBidSet, in.TargetCPA, len(in.ConversionGoalIDs))
 	if err != nil {
 		return nil, domain.WrapPreflightRefusal(fmt.Errorf("microsoft-ads campaign bid strategy invalid: %w", err))
+	}
+	if err := ValidateConversionGoalIDs(in.ConversionGoalIDs); err != nil {
+		return nil, domain.PreflightRefusalf("invalid microsoftConfig.%s", err.Error())
+	}
+	var goalIDs []json.Number
+	for _, id := range in.ConversionGoalIDs {
+		goalIDs = append(goalIDs, json.Number(id))
 	}
 	// Geo codes are shape-checked here (pure, offline) and RESOLVED to numeric LocationIds
 	// below, before the first mutating call. Splitting the two is deliberate: this half needs
@@ -799,6 +850,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	var (
 		campaignID     string
 		alreadyExisted bool
+		appliedGoalIDs []string
 	)
 	if existingID != "" {
 		steps = append(steps, fmt.Sprintf("Campaign already exists by name: %s (not re-created)", existingID))
@@ -827,6 +879,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				TimeZone:      timeZone,
 				BiddingScheme: biddingScheme,
 				Languages:     extra.Languages,
+				GoalIds:       goalIDs,
 			}},
 		}
 		respBody, err := c.doRequest(ctx, http.MethodPost, "Campaigns", req, false)
@@ -874,9 +927,22 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		} else {
 			steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, Search, %.2f/day daily budget in account currency)", campaignID, in.Budget))
 			if biddingScheme != nil {
-				steps = append(steps, fmt.Sprintf("Campaign bid strategy: %s", biddingScheme.Type))
+				if biddingScheme.TargetCpa != nil {
+					steps = append(steps, fmt.Sprintf("Campaign bid strategy: %s (target CPA %s in the account currency)", biddingScheme.Type, strconv.FormatFloat(*biddingScheme.TargetCpa, 'f', -1, 64)))
+				} else {
+					steps = append(steps, fmt.Sprintf("Campaign bid strategy: %s", biddingScheme.Type))
+				}
+			}
+			if len(goalIDs) > 0 {
+				appliedGoalIDs = append([]string(nil), in.ConversionGoalIDs...)
+				steps = append(steps, fmt.Sprintf("Campaign conversion goals set: %s", strings.Join(in.ConversionGoalIDs, ", ")))
 			}
 		}
+	}
+	// A campaign found by name keeps the goals it has: GoalIds is set only on Add, and changing
+	// what a possibly live campaign tracks is not a retry's call.
+	if alreadyExisted && len(in.ConversionGoalIDs) > 0 {
+		steps = append(steps, fmt.Sprintf("Warning: conversion goals NOT applied to reused campaign %s; its existing goals are unchanged — verify them in Microsoft Advertising", campaignID))
 	}
 
 	// campaignPartial carries the campaign id + name (and accumulates ad-group/ad ids as
@@ -896,6 +962,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		r.RadiusCriterionIDs = radiusCriterionIDs
 		r.AdScheduleCriterionIDs = scheduleCriterionIDs
 		r.BidAdjustmentCriterionIDs = adjustmentCriterionIDs
+		r.ConversionGoalIDs = appliedGoalIDs
 		return r
 	}
 

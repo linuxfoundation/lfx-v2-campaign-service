@@ -571,6 +571,24 @@ type MicrosoftRemarketingLists struct {
 	Lists     []MicrosoftRemarketingList
 }
 
+// MicrosoftConversionGoal is one conversion goal on a Microsoft Advertising account (#563 gap 7),
+// for the microsoftConfig.conversionGoalIds picker. Status, Type and Scope are Microsoft's values
+// verbatim.
+type MicrosoftConversionGoal struct {
+	ID     string
+	Name   string
+	Status string
+	Type   string
+	Scope  string
+}
+
+// MicrosoftConversionGoals is the conversion-goal read on the account a Microsoft create for the
+// project uses. GetConversionGoalsByIds does not page, so the list is complete.
+type MicrosoftConversionGoals struct {
+	AccountID string
+	Goals     []MicrosoftConversionGoal
+}
+
 // KeywordAction is one requested keyword mutation on a live campaign.
 type KeywordAction struct {
 	AdGroupID   string
