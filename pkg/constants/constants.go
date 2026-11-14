@@ -202,8 +202,8 @@ const (
 
 	// EnvTwitterCreateTargetingEnabled opts a deployment IN to twitterConfig.geoTargets and
 	// twitterConfig.languages (#564): country and language targeting criteria added to the line
-	// item an X create makes (keywords, interestIds, conversationTopics and platforms joined later,
-	// #564 gaps 4, 8 and 9). Only the exact value "true" enables them; unset or any other value
+	// item an X create makes (keywords, interestIds, conversationTopics, platforms, devices,
+	// ageBucket and gender joined later, #564 gaps 4, 8 and 9). Only the exact value "true" enables them; unset or any other value
 	// fails closed, and a create naming either is refused with a 400 before any job exists (and
 	// again at dispatch, before anything upstream).
 	//

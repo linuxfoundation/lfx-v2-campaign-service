@@ -278,9 +278,10 @@ openssl rand -base64 32
   per-environment in the ArgoCD overlay once a live create confirms it.
 - `TWITTER_CREATE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `twitterConfig.geoTargets`, `languages`, `keywords`,
-  `interestIds`, `conversationTopics` and `platforms` (#564), country,
-  language, broad keyword, interest, conversation topic and device platform
-  targeting criteria added to the line item an X create makes. Only the
+  `interestIds`, `conversationTopics`, `platforms`, `devices`, `ageBucket`
+  and `gender` (#564), country, language, broad keyword, interest,
+  conversation topic, device platform, device, age and gender targeting
+  criteria added to the line item an X create makes. Only the
   exact value `true` enables them; anything else fails closed, and a create
   naming any of them is refused with a 400
   before any job exists. It names no account resource; it keeps a shape no

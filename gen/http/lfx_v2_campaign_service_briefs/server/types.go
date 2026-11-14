@@ -5616,18 +5616,27 @@ type CampaignCreateInputRequestBody struct {
 	// not the request's ad platforms; 1-32 letters or digits, lowercased, each
 	// listed by GET targeting_criteria/platforms before anything is created; at
 	// most 10), sent as PLATFORM criteria (operator EQ) after the conversation
-	// topics, with the same rules (#564 gap 9). All six are OFF unless
+	// topics, with the same rules (#564 gap 9), plus `devices` (X device values
+	// such as 1q for the iPhone 3GS; 1-32 letters or digits, lowercased, each
+	// listed by GET targeting_criteria/devices before anything is created; at most
+	// 60), sent as DEVICE criteria after the platforms, `ageBucket` (a string: one
+	// of X's AGE_BUCKET values such as AGE_18_TO_34 or AGE_OVER_25, uppercased; X
+	// allows a single age bucket per line item), sent as one AGE criterion, and
+	// `gender` (a string: MALE or FEMALE, case-insensitive), sent as one GENDER
+	// criterion with X's value 1 or 2; a blank ageBucket or gender is unset (every
+	// age, every gender) (#564 gap 9). All nine are OFF unless
 	// TWITTER_CREATE_TARGETING_ENABLED is exactly "true". A blank or malformed
-	// entry, a list over its cap, a value that is not an array of strings (null
-	// reads as absent), or any list while the flag is off, is refused with 400
-	// "invalid campaign config: twitterConfig.<field>: ..." before any job exists.
-	// X AUDIENCE EXPANSION (#564 gap 11): twitterConfig takes `audienceExpansion`
-	// (BROAD, DEFINED or EXPANDED, case-insensitive), sent as the new line item's
-	// audience_expansion; omitted or blank sends nothing (X applies no expansion),
-	// and a line item reused by name keeps its own. It is OFF unless
-	// TWITTER_AUDIENCE_EXPANSION_ENABLED is exactly "true"; a non-blank value
-	// while off, a value outside the set, or a non-string is refused with 400
-	// "invalid campaign config: twitterConfig..." before any job exists. X
+	// entry, a list over its cap, a value that is not an array of strings (or, for
+	// ageBucket and gender, not a string; null reads as absent), an age bucket or
+	// gender outside its set, or any of them while the flag is off, is refused
+	// with 400 "invalid campaign config: twitterConfig.<field>: ..." before any
+	// job exists. X AUDIENCE EXPANSION (#564 gap 11): twitterConfig takes
+	// `audienceExpansion` (BROAD, DEFINED or EXPANDED, case-insensitive), sent as
+	// the new line item's audience_expansion; omitted or blank sends nothing (X
+	// applies no expansion), and a line item reused by name keeps its own. It is
+	// OFF unless TWITTER_AUDIENCE_EXPANSION_ENABLED is exactly "true"; a non-blank
+	// value while off, a value outside the set, or a non-string is refused with
+	// 400 "invalid campaign config: twitterConfig..." before any job exists. X
 	// FOLLOWER LOOK-ALIKES (#564 gap 4c): twitterConfig takes
 	// `followerLookalikeUserIds` (numeric X user ids, 1-19 digits with no leading
 	// zero and within int64, trimmed and de-duplicated, at most 60), each sent as
@@ -5708,9 +5717,9 @@ type CampaignCreateInputRequestBody struct {
 	// on the new line item with operator EQ and NE. Each id is 1-32 letters or
 	// digits, sent exactly as given; at most 60 per list; no id twice and none in
 	// both lists. geoTargets, languages, keywords, interestIds,
-	// conversationTopics, platforms, customAudienceIds and
-	// excludedCustomAudienceIds together may name at most 60 criteria per create,
-	// since each is a separate X write paced at one per second inside the
+	// conversationTopics, platforms, devices, ageBucket, gender, customAudienceIds
+	// and excludedCustomAudienceIds together may name at most 60 criteria per
+	// create, since each is a separate X write paced at one per second inside the
 	// two-minute dispatch budget; more is refused with the same 400. Before
 	// anything is created every id is read with GET
 	// accounts/:account_id/custom_audiences and must be live and targetable; a

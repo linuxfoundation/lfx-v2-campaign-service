@@ -390,9 +390,10 @@ app:
       value: "false"
 
     # Opts this deployment IN to twitterConfig.geoTargets, languages, keywords,
-    # interestIds, conversationTopics and platforms (#564), sent at create time
-    # as LOCATION, LANGUAGE, BROAD_KEYWORD, INTEREST, CONVERSATION and PLATFORM
-    # targeting criteria on the new X line item.
+    # interestIds, conversationTopics, platforms, devices, ageBucket and gender
+    # (#564), sent at create time as LOCATION, LANGUAGE, BROAD_KEYWORD, INTEREST,
+    # CONVERSATION, PLATFORM, DEVICE, AGE and GENDER targeting criteria on the
+    # new X line item.
     # Default off: the
     # shape is built from X's published v12 reference and no live create has
     # sent it. It names no account resource; it keeps an unverified shape off

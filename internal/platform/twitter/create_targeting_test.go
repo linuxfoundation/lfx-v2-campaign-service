@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -30,6 +31,11 @@ type targetingFakeX struct {
 	conversationsPages []string
 	// platformsPages are the platform lookup's pages (#564 gap 9), served the same way.
 	platformsPages []string
+	// devicesPages are the device lookup's pages (#564 gap 9), served the same way.
+	devicesPages []string
+	// numericEcho makes a criterion echo spell an all-digit targeting_value as a bare JSON number,
+	// as X's recommendations example spells a GENDER value (#564 gap 9).
+	numericEcho bool
 	// lineItemQuery is the raw query of the line-item POST (#564 gap 11).
 	lineItemQuery string
 	// failCriterion makes the n-th criterion POST (1-based) answer failStatus.
@@ -114,6 +120,17 @@ func (f *targetingFakeX) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, _ = w.Write([]byte(f.platformsPages[i]))
+	case r.Method == http.MethodGet && p == "/12/targeting_criteria/devices":
+		f.lookups = append(f.lookups, "devices?"+r.URL.RawQuery)
+		i := 0
+		if c := q.Get("cursor"); c != "" {
+			_, _ = fmt.Sscanf(c, "p%d", &i)
+		}
+		if i >= len(f.devicesPages) {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(f.devicesPages[i]))
 	case r.Method == http.MethodGet && strings.HasSuffix(p, "/accounts/acc1/custom_audiences"):
 		f.lookups = append(f.lookups, "custom_audiences?"+r.URL.RawQuery)
 		if f.failAudiences {
@@ -167,8 +184,12 @@ func (f *targetingFakeX) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if q.Get("operator_type") == OperatorNE && !f.dropNEOperator {
 			op = `,"operator_type":"NE"`
 		}
-		_, _ = fmt.Fprintf(w, `{"data":{"id":"tc%d","line_item_id":%q,"targeting_type":%q,"targeting_value":%q%s,"deleted":false}}`,
-			f.criterion, q.Get("line_item_id"), q.Get("targeting_type"), q.Get("targeting_value"), op)
+		value := strconv.Quote(q.Get("targeting_value"))
+		if v := q.Get("targeting_value"); f.numericEcho && v != "" && strings.Trim(v, "0123456789") == "" {
+			value = v
+		}
+		_, _ = fmt.Fprintf(w, `{"data":{"id":"tc%d","line_item_id":%q,"targeting_type":%q,"targeting_value":%s%s,"deleted":false}}`,
+			f.criterion, q.Get("line_item_id"), q.Get("targeting_type"), value, op)
 	case strings.HasSuffix(p, "/campaigns"):
 		f.writes = append(f.writes, "POST campaigns")
 		_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))

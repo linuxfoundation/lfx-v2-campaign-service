@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -47,6 +48,8 @@ func twitterTargetingServer(t *testing.T) (*TwitterDispatcher, func() []string, 
 			_, _ = w.Write([]byte(`{"data":[{"name":"Kubernetes","conversation_type":"TECHNOLOGY","targeting_type":"CONVERSATION","targeting_value":"k8s"}],"next_cursor":null}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/12/targeting_criteria/platforms":
 			_, _ = w.Write([]byte(`{"data":[{"name":"iOS","targeting_type":"PLATFORM","targeting_value":"0"}],"next_cursor":null}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/12/targeting_criteria/devices":
+			_, _ = w.Write([]byte(`{"data":[{"name":"iPhone 3GS","manufacturer":"Apple","os_type":"iOS","targeting_type":"DEVICE","targeting_value":"1q"}],"next_cursor":null}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
 			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
 		case r.Method == http.MethodGet:
@@ -327,6 +330,60 @@ func TestTwitterCreateTargeting_Platforms(t *testing.T) {
 		t.Fatalf("Dispatch: %v", err)
 	}
 	if got := strings.Join(criteria(), ","); got != "CONVERSATION=k8s,PLATFORM=0" {
+		t.Fatalf("criteria = %q", got)
+	}
+}
+
+// Gap 9 (#564): devices, an age bucket and a gender sit behind the same flag, are refused
+// synchronously when malformed or mistyped, count toward the per-create cap, and reach the line
+// item as DEVICE, AGE and GENDER criteria after the platforms.
+func TestTwitterCreateTargeting_DevicesAgeGender(t *testing.T) {
+	t.Setenv(constants.EnvTwitterCreateTargetingEnabled, "")
+	d, criteria, calls := twitterTargetingServer(t)
+	for _, extra := range []string{`,"devices":["1q"]`, `,"ageBucket":"AGE_18_TO_34"`, `,"gender":"female"`} {
+		requireConfigInvalid(t, d.PreflightCreate(context.Background(), "cncf", model.ProviderTwitterAds, twitterTargetingCfg(extra)),
+			constants.EnvTwitterCreateTargetingEnabled)
+		_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds, twitterTargetingCfg(extra))
+		requirePreCreate(t, err)
+	}
+	if n := calls.Load(); n != 0 {
+		t.Fatalf("%d X calls with the flag off; want 0", n)
+	}
+	// A blank age bucket or gender is unset, so it needs no flag.
+	if err := d.PreflightCreate(context.Background(), "cncf", model.ProviderTwitterAds, twitterTargetingCfg(`,"ageBucket":" ","gender":""`)); !errors.Is(err, domain.ErrPreflightNotApplicable) {
+		t.Fatalf("blank ageBucket/gender with the flag off: %v", err)
+	}
+
+	t.Setenv(constants.EnvTwitterCreateTargetingEnabled, "true")
+	over := make([]string, twitter.MaxCreateTargetingCriteria-1)
+	for i := range over {
+		over[i] = fmt.Sprintf(`"kw%d"`, i)
+	}
+	for extra, want := range map[string]string{
+		`,"devices":"1q"`:              "twitterConfig.devices: must be an array of strings",
+		`,"devices":[""]`:              "twitterConfig.devices: entry 0 is blank",
+		`,"devices":["iPhone 3GS"]`:    "twitterConfig.devices: entry 0",
+		`,"ageBucket":["AGE_OVER_18"]`: "twitterConfig.ageBucket: must be a string",
+		`,"ageBucket":"AGE_18_TO_24"`:  "twitterConfig.ageBucket: \"AGE_18_TO_24\" must be one of X's age buckets",
+		`,"gender":1`:                  "twitterConfig.gender: must be a string",
+		`,"gender":"1"`:                "twitterConfig.gender: \"1\" must be MALE or FEMALE",
+		`,"keywords":[` + strings.Join(over, ",") + `],"ageBucket":"AGE_OVER_18","gender":"MALE"`: "together name 61 targeting criteria",
+	} {
+		err := d.PreflightCreate(context.Background(), "cncf", model.ProviderTwitterAds, twitterTargetingCfg(extra))
+		requireConfigInvalid(t, err, want)
+		// Re-checked at dispatch, before any X call.
+		before := calls.Load()
+		_, derr := d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds, twitterTargetingCfg(extra))
+		requirePreCreate(t, derr)
+		if n := calls.Load() - before; n != 0 {
+			t.Fatalf("%s: %d X calls on a refused config; want 0", extra, n)
+		}
+	}
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds,
+		twitterTargetingCfg(`,"platforms":["0"],"devices":["1Q"],"ageBucket":" age_over_25 ","gender":"Female"`)); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if got := strings.Join(criteria(), ","); got != "PLATFORM=0,DEVICE=1q,AGE=AGE_OVER_25,GENDER=2" {
 		t.Fatalf("criteria = %q", got)
 	}
 }
