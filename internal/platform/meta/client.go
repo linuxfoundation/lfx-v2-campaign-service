@@ -2857,6 +2857,12 @@ type CampaignInput struct {
 	// request, and every custom audience it names is read and must belong to the connected ad
 	// account before the first mutating call (checkCustomAudiences).
 	Targeting *AudienceTargeting
+	// OptimizationGoal is the ad set's optimization_goal for the traffic objective
+	// (metaConfig.optimizationGoal, #550): LINK_CLICKS or LANDING_PAGE_VIEWS
+	// (NormalizeOptimizationGoal), empty meaning the objective's own goal. Refused before any
+	// request on any other objective, outside the list, or with a manual bid cap (a link-click cap
+	// needs the LINK_CLICKS goal).
+	OptimizationGoal string
 	// ReconcileByName opts THIS call in to looking the campaign (and its ad set) up by
 	// name before creating, and reusing a PAUSED match instead of creating a second one.
 	//
@@ -3196,6 +3202,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, err
 	}
+	// The ad set's optimization goal: the objective's own unless metaConfig.optimizationGoal picks
+	// another one the objective accepts (#550, gap 11), checked here before any request.
+	optimizationGoal := objParams.OptimizationGoal
+	if g, gerr := NormalizeOptimizationGoal(objective, in.OptimizationGoal); gerr != nil {
+		return nil, gerr
+	} else if g != "" {
+		optimizationGoal = g
+	}
 
 	accountID := c.account.AccountID
 	label := c.account.Label
@@ -3382,8 +3396,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// not a whole number of minor units. Still before any mutating call.
 	var bidCapMinor int64
 	if in.BidCap != 0 {
-		if objParams.OptimizationGoal != OptimizationLinkClicks {
-			return nil, &bidAmountError{msg: fmt.Sprintf("manual bidding needs an objective that optimizes for link clicks (traffic or leads); %q optimizes for %s", objective, objParams.OptimizationGoal)}
+		if optimizationGoal != OptimizationLinkClicks {
+			return nil, &bidAmountError{msg: fmt.Sprintf("manual bidding needs an ad set that optimizes for link clicks (traffic or leads, without optimizationGoal %s); %q optimizes for %s", OptimizationLandingPageViews, objective, optimizationGoal)}
 		}
 		if bidCapMinor, err = CreateBidMinorUnits(in.BidCap, offset); err != nil {
 			return nil, err
@@ -3619,7 +3633,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		"campaign_id":       campaignID,
 		"status":            "PAUSED",
 		"billing_event":     "IMPRESSIONS",
-		"optimization_goal": objParams.OptimizationGoal,
+		"optimization_goal": optimizationGoal,
 		"bid_strategy":      "LOWEST_COST_WITHOUT_CAP",
 		"targeting":         targeting,
 		"start_time":        adSetStartTime(startDate, c.timeNow()),

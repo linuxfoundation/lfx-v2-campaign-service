@@ -390,6 +390,13 @@ openssl rand -base64 32
   fails closed, and a create carrying the field is refused with a 400 before
   any job exists. The chart sets both to `"false"`; enable them
   per-environment in the ArgoCD overlay.
+- `META_OPTIMIZATION_GOAL_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `metaConfig.optimizationGoal` (#550):
+  `LANDING_PAGE_VIEWS` instead of `LINK_CLICKS` as the traffic objective's
+  ad set optimization goal. Only the exact value `true` enables it;
+  anything else fails closed, and a create carrying the field is refused
+  with a 400 before any job exists. The chart sets it to `"false"`; enable
+  it per-environment in the ArgoCD overlay.
 - `META_AUDIENCE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `metaConfig.targeting` (#550): `ageMin`/`ageMax`,
   `genders`, `customAudiences`, `excludedCustomAudiences` and

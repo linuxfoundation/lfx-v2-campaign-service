@@ -83,6 +83,11 @@ type metaConfig struct {
 	// not "true" (metaTargetingEnabled); validated by meta.NormalizeAudienceTargeting. Null or absent
 	// targets as before.
 	Targeting *meta.AudienceTargeting `json:"targeting,omitempty"`
+	// OptimizationGoal is the traffic objective's ad set optimization goal (#550, gap 11),
+	// meta.NormalizeOptimizationGoal's allow-list (LINK_CLICKS, LANDING_PAGE_VIEWS); empty keeps the
+	// objective's own goal. Refused on any other objective, with manual bidding (metaBidPlan), and
+	// while META_OPTIMIZATION_GOAL_ENABLED is not "true".
+	OptimizationGoal string `json:"optimizationGoal"`
 }
 
 // metaCreativeOptionDisabled refuses a creative option this deployment has not opted in to. It
@@ -93,7 +98,8 @@ func metaCreativeOptionDisabled(field, env string) error {
 		domain.ErrCreateConfigInvalid, field, env, field, env))
 }
 
-// checkMetaCreativeOptions refuses a callToAction or conversionEvent the create cannot send (#550):
+// checkMetaCreativeOptions refuses a callToAction, conversionEvent or optimizationGoal the create
+// cannot send (#550):
 // either one while its deployment flag is off — read per call, and only the exact value "true"
 // enables it — and otherwise a value the client's allow-lists refuse. A blank value is absent.
 func checkMetaCreativeOptions(cfg metaConfig) error {
@@ -110,6 +116,14 @@ func checkMetaCreativeOptions(cfg metaConfig) error {
 			return metaCreativeOptionDisabled("conversionEvent", constants.EnvMetaConversionEventEnabled)
 		}
 		if _, err := meta.NormalizeConversionEvent(cfg.Objective, cfg.ConversionEvent); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(cfg.OptimizationGoal) != "" {
+		if os.Getenv(constants.EnvMetaOptimizationGoalEnabled) != "true" {
+			return metaCreativeOptionDisabled("optimizationGoal", constants.EnvMetaOptimizationGoalEnabled)
+		}
+		if _, err := meta.NormalizeOptimizationGoal(cfg.Objective, cfg.OptimizationGoal); err != nil {
 			return err
 		}
 	}
@@ -840,6 +854,8 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		// (#550). Gated above.
 		CallToAction:    cfg.CallToAction,
 		ConversionEvent: cfg.ConversionEvent,
+		// The traffic optimization goal as the caller sent it; the client normalizes it (#550). Gated above.
+		OptimizationGoal: cfg.OptimizationGoal,
 		// The audience targeting as the caller sent it; the client normalizes it (#550).
 		Targeting: cfg.Targeting,
 
@@ -1327,7 +1343,7 @@ func metaRunStatus(status string) (string, error) {
 // code passes through unchanged.
 //
 // Kept verbatim: Objective (refused by the client unless it names a known objective),
-// CallToAction and ConversionEvent (#550: refused unless allow-listed, so only their casing can
+// CallToAction, ConversionEvent and OptimizationGoal (#550: refused unless allow-listed, so only their casing can
 // differ from what was sent),
 // InstagramUserID (refused unless numeric), Variants[].ImageAssetID (a stored asset key),
 // numbers, flags and dates. ImageBytes and
@@ -1697,8 +1713,9 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 }
 
 // metaStringConfigKeys are the string fields checkMetaStringFieldShape type-checks: the publish identity,
-// and since #550 the call-to-action and conversion event, which would otherwise read as absent.
-var metaStringConfigKeys = []string{"instagramUserId", "dsaBeneficiary", "dsaPayor", "callToAction", "conversionEvent"}
+// and since #550 the call-to-action, conversion event and optimization goal, which would otherwise
+// read as absent.
+var metaStringConfigKeys = []string{"instagramUserId", "callToAction", "conversionEvent", "dsaBeneficiary", "dsaPayor", "optimizationGoal"}
 
 // decodeMetaTargeting decodes metaConfig.targeting on its own, so a wrong-typed block (or a
 // wrong-typed field in it) is a synchronous refusal rather than an absent block — PreflightCreate's
@@ -1811,6 +1828,10 @@ func metaBidPlan(cfg metaConfig) (bidPlan, error) {
 	}
 	if !meta.ManualBidSupported(cfg.Objective) {
 		return bidPlan{}, biddingInvalid(key, "manual bidding is a cost-per-link-click bid cap, which needs the traffic or leads objective; use automatic bidding for this objective")
+	}
+	// The cap is per LINK CLICK, so the ad set must optimize for link clicks too (#550, gap 11).
+	if strings.EqualFold(strings.TrimSpace(cfg.OptimizationGoal), meta.OptimizationLandingPageViews) {
+		return bidPlan{}, biddingInvalid(key, "manual bidding is a cost-per-link-click bid cap, which needs the LINK_CLICKS optimization goal; use automatic bidding with optimizationGoal %s", meta.OptimizationLandingPageViews)
 	}
 	if _, ok := exactScaled(plan.amount, 100); !ok {
 		return bidPlan{}, biddingInvalid(key, "bidAmount %s has more than two decimal places, which is not a whole minor unit of any ad account currency; it is refused rather than rounded", formatBid(plan.amount))
