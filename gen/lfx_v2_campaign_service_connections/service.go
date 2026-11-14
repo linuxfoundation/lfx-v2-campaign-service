@@ -243,6 +243,22 @@ type Service interface {
 	// {project_id} (the LF marketing team), not campaign_manager, which also
 	// admits a foundation's executive director. A pure read: nothing is persisted.
 	ListMetaCustomAudiences(context.Context, *ListMetaCustomAudiencesPayload) (res *MetaCustomAudiences, err error)
+	// Search Meta's detailed-targeting taxonomy by name, live from Meta's
+	// Targeting Search (GET /search: type=adinterest for interest,
+	// type=adTargetingCategory&class=behaviors for behavior, type=adworkposition
+	// for work_position), for picking metaConfig.targeting.interests, behaviors
+	// and workPositions by name instead of by id (#550). Meta serves behaviors as
+	// one browse of the whole class, so a behavior search keeps the options whose
+	// name contains the query, ignoring case. The answer is Meta's own taxonomy,
+	// the same for every token, and names nothing any ad account holds, so it is
+	// gated on campaign_manager of {project_id} like every other project read, and
+	// a project with no Meta connection of its own reads through the shared LF
+	// system credential, as a create would. No ad account need be selected.
+	// Answers are cached for up to an hour by type and query (behaviors by type),
+	// which serves a repeated identical search, not a new prefix. A throttle from
+	// Meta is not retried and answers 503. Off (400) unless the deployment sets
+	// META_TARGETING_SEARCH_ENABLED to "true". A pure read: nothing is persisted.
+	SearchMetaTargetingOptions(context.Context, *SearchMetaTargetingOptionsPayload) (res *MetaTargetingOptions, err error)
 	// List the custom audiences on the Reddit ad account a Reddit create for this
 	// project uses, live from Reddit Ads API v3 GET
 	// /ad_accounts/{ad_account_id}/custom_audiences, for picking
@@ -842,7 +858,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [82]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "list-google-ads-audiences", "list-meta-custom-audiences", "list-reddit-ads-custom-audiences", "list-twitter-ads-custom-audiences", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "list-linkedin-ads-audiences", "list-linkedin-ads-conversions", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
+var MethodNames = [83]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "list-google-ads-audiences", "list-meta-custom-audiences", "search-meta-targeting-options", "list-reddit-ads-custom-audiences", "list-twitter-ads-custom-audiences", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "list-linkedin-ads-audiences", "list-linkedin-ads-conversions", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -2476,6 +2492,43 @@ type MetaCustomAudiences struct {
 	Truncated bool
 }
 
+type MetaTargetingOption struct {
+	// The option id, exactly what metaConfig.targeting.interests, behaviors or
+	// workPositions (per the type searched) takes
+	ID string
+	// Meta's display name for the option. Not an identifier.
+	Name string
+	// Meta's category path for the option, outermost first. Absent when Meta sent
+	// none.
+	Path []string
+	// Meta's description of the option (a work position's subtext). Absent when
+	// Meta sent none.
+	Description *string
+	// Meta's estimated audience size, lower bound (interests and behaviors).
+	// Absent when Meta reported none.
+	AudienceSizeLowerBound *int64
+	// Meta's estimated audience size, upper bound (interests and behaviors).
+	// Absent when Meta reported none.
+	AudienceSizeUpperBound *int64
+	// Meta's estimated audience size (work positions). Absent when Meta reported
+	// none.
+	Coverage *int64
+}
+
+// MetaTargetingOptions is the result type of the
+// lfx-v2-campaign-service-connections service search-meta-targeting-options
+// method.
+type MetaTargetingOptions struct {
+	// The type searched, as requested
+	Type string
+	// The matches, de-duplicated by id: Meta's relevance order for interest and
+	// work_position, Meta's listing order for behavior. At most 50. Empty when
+	// nothing matches.
+	Options []*MetaTargetingOption
+	// How many options are in `options`
+	OptionCount int
+}
+
 // MicrosoftAdsAudience is the result type of the
 // lfx-v2-campaign-service-connections service get-microsoft-ads-audience
 // method.
@@ -3026,6 +3079,26 @@ type SearchHubspotCampaignsResult struct {
 	// namespace shared by everyone on that HubSpot portal. Narrow the search term
 	// instead.
 	Capped bool
+}
+
+// SearchMetaTargetingOptionsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service search-meta-targeting-options
+// method.
+type SearchMetaTargetingOptionsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// What to search: interest (metaConfig.targeting.interests), behavior
+	// (behaviors) or work_position (workPositions).
+	Type string
+	// Text to match against option names: 2 to 100 characters, no control
+	// characters. The limits apply to the value as sent, and surrounding space is
+	// then trimmed, so the trimmed text must still be at least 2 characters. Every
+	// distinct interest or work_position query is a Meta call on a shared rate
+	// limit (only a repeated identical search is served from cache), so callers
+	// should debounce keystrokes rather than search on each one.
+	Query string
 }
 
 // SetCredentialGoogleAdsPayload is the payload type of the

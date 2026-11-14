@@ -73,6 +73,9 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    `google-ads/conversion-actions`, `google-ads/audiences`, `google-ads/user-lists`,
    `reddit-ads/custom-audiences`, `twitter-ads/custom-audiences`, `linkedin-ads/audiences`,
    `linkedin-ads/conversions` and `meta-ads/custom-audiences`, ruled by `marketing-ops-api` below.
+   The Meta targeting search, `meta-ads/targeting-search` (#550), stays here: it answers Meta's own
+   taxonomy, the same for every token, and `TestMetaTargetingSearchIsACampaignManagerRead` pins it
+   to `project-api` and off `marketing-ops-api`.
 4. **`marketing-ops-api`** — `GET /projects/:projectId/google-ads/conversion-actions` (#458),
    `GET /projects/:projectId/google-ads/audiences` (#496),
    `GET /projects/:projectId/google-ads/user-lists`,

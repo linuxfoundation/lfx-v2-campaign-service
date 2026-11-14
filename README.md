@@ -476,6 +476,11 @@ openssl rand -base64 32
   formats and combination rule before any request. Same rules as
   `META_LOCALE_TARGETING_ENABLED`. The chart sets it to `"false"`; enable it
   per-environment in the ArgoCD overlay.
+- `META_TARGETING_SEARCH_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `GET /projects/{p}/meta-ads/targeting-search` (#550), the
+  campaign_manager picker read over Meta's Targeting Search (interests,
+  behaviors, work positions). While off it answers 400. The chart sets it to
+  `"false"`; enable it per-environment in the ArgoCD overlay.
 - `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.performanceMaxAudienceSignal`,
   one existing Google Ads Audience attached to a Performance Max asset

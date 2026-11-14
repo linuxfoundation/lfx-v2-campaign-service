@@ -13,6 +13,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -306,7 +307,11 @@ type MetaDispatcher struct {
 	// stores per-call state on the receiver. It is therefore immutable once built, which is a
 	// STRONGER property than the mutex-guarded safety Reddit and Microsoft rely on.
 	clients *clientCache
-	opts    []meta.Option
+	// targetingSearch caches Targeting Search answers (#550, meta_targeting_search.go), built on
+	// first use by searchCache.
+	targetingSearch     *metaTargetingCache
+	targetingSearchOnce sync.Once
+	opts                []meta.Option
 	// settingsNow is the settings readback's ReadAt clock; nil means the wall clock. A field only so
 	// tests can pin it.
 	settingsNow func() time.Time

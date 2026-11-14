@@ -86,7 +86,8 @@ spec:
     # linkedin-ads/conversions and meta-ads/custom-audiences (marketing-ops-api below). This is a
     # SINGLE rule covering every other routed family — connections, briefs, campaigns
     # (under a brief), jobs, the google-ads reads and create-form lookups,
-    # meta-ads, reddit-ads, twitter-ads and linkedin-ads audience, reddit-ads keywords, and hubspot UTM — because they share the exact same
+    # meta-ads, reddit-ads, twitter-ads and linkedin-ads audience, the meta-ads targeting-search
+    # read (#550), reddit-ads keywords, and hubspot UTM — because they share the exact same
     # authorization (D2:
     # campaign_manager on project:{projectId}, reads AND writes). Keeping them in one
     # rule preserves the chart↔route parity invariant (every heimdall-routed path has
@@ -266,6 +267,11 @@ spec:
           - path: /projects/:projectId/twitter-ads/campaign-ref
           # LinkedIn twin (LFXV2-2665), same read and permission.
           - path: /projects/:projectId/linkedin-ads/campaign-ref
+          # Meta targeting search (#550): Meta's own taxonomy (interests, behaviors, work
+          # positions), the same for every token and naming nothing any ad account holds, so
+          # campaign_manager like the Google geo-targets search, NOT marketing-ops-api with the
+          # meta-ads/custom-audiences picker, which lists resources on the shared LF account.
+          - path: /projects/:projectId/meta-ads/targeting-search
           # HubSpot UTM (portal-wide; projectId gates permission AND selects the
           # connection, hence which portal is visible). ** covers
           # /hubspot/utm and any deeper path; the bare /hubspot is kept explicitly.

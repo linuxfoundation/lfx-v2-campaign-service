@@ -70,6 +70,7 @@ type Server struct {
 	ListGoogleAdsConversionActions http.Handler
 	ListGoogleAdsAudiences         http.Handler
 	ListMetaCustomAudiences        http.Handler
+	SearchMetaTargetingOptions     http.Handler
 	ListRedditAdsCustomAudiences   http.Handler
 	ListTwitterAdsCustomAudiences  http.Handler
 	GetMetaAdsAudience             http.Handler
@@ -182,6 +183,7 @@ func New(
 			{"ListGoogleAdsConversionActions", "GET", "/projects/{project_id}/google-ads/conversion-actions"},
 			{"ListGoogleAdsAudiences", "GET", "/projects/{project_id}/google-ads/audiences"},
 			{"ListMetaCustomAudiences", "GET", "/projects/{project_id}/meta-ads/custom-audiences"},
+			{"SearchMetaTargetingOptions", "GET", "/projects/{project_id}/meta-ads/targeting-search"},
 			{"ListRedditAdsCustomAudiences", "GET", "/projects/{project_id}/reddit-ads/custom-audiences"},
 			{"ListTwitterAdsCustomAudiences", "GET", "/projects/{project_id}/twitter-ads/custom-audiences"},
 			{"GetMetaAdsAudience", "GET", "/projects/{project_id}/meta-ads/audience"},
@@ -265,6 +267,7 @@ func New(
 		ListGoogleAdsConversionActions: NewListGoogleAdsConversionActionsHandler(e.ListGoogleAdsConversionActions, mux, decoder, encoder, errhandler, formatter),
 		ListGoogleAdsAudiences:         NewListGoogleAdsAudiencesHandler(e.ListGoogleAdsAudiences, mux, decoder, encoder, errhandler, formatter),
 		ListMetaCustomAudiences:        NewListMetaCustomAudiencesHandler(e.ListMetaCustomAudiences, mux, decoder, encoder, errhandler, formatter),
+		SearchMetaTargetingOptions:     NewSearchMetaTargetingOptionsHandler(e.SearchMetaTargetingOptions, mux, decoder, encoder, errhandler, formatter),
 		ListRedditAdsCustomAudiences:   NewListRedditAdsCustomAudiencesHandler(e.ListRedditAdsCustomAudiences, mux, decoder, encoder, errhandler, formatter),
 		ListTwitterAdsCustomAudiences:  NewListTwitterAdsCustomAudiencesHandler(e.ListTwitterAdsCustomAudiences, mux, decoder, encoder, errhandler, formatter),
 		GetMetaAdsAudience:             NewGetMetaAdsAudienceHandler(e.GetMetaAdsAudience, mux, decoder, encoder, errhandler, formatter),
@@ -355,6 +358,7 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.ListGoogleAdsConversionActions = m(s.ListGoogleAdsConversionActions)
 	s.ListGoogleAdsAudiences = m(s.ListGoogleAdsAudiences)
 	s.ListMetaCustomAudiences = m(s.ListMetaCustomAudiences)
+	s.SearchMetaTargetingOptions = m(s.SearchMetaTargetingOptions)
 	s.ListRedditAdsCustomAudiences = m(s.ListRedditAdsCustomAudiences)
 	s.ListTwitterAdsCustomAudiences = m(s.ListTwitterAdsCustomAudiences)
 	s.GetMetaAdsAudience = m(s.GetMetaAdsAudience)
@@ -445,6 +449,7 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountListGoogleAdsConversionActionsHandler(mux, h.ListGoogleAdsConversionActions)
 	MountListGoogleAdsAudiencesHandler(mux, h.ListGoogleAdsAudiences)
 	MountListMetaCustomAudiencesHandler(mux, h.ListMetaCustomAudiences)
+	MountSearchMetaTargetingOptionsHandler(mux, h.SearchMetaTargetingOptions)
 	MountListRedditAdsCustomAudiencesHandler(mux, h.ListRedditAdsCustomAudiences)
 	MountListTwitterAdsCustomAudiencesHandler(mux, h.ListTwitterAdsCustomAudiences)
 	MountGetMetaAdsAudienceHandler(mux, h.GetMetaAdsAudience)
@@ -3180,6 +3185,61 @@ func NewListMetaCustomAudiencesHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "list-meta-custom-audiences")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountSearchMetaTargetingOptionsHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service
+// "search-meta-targeting-options" endpoint.
+func MountSearchMetaTargetingOptionsHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/meta-ads/targeting-search", f)
+}
+
+// NewSearchMetaTargetingOptionsHandler creates a HTTP handler which loads the
+// HTTP request and calls the "lfx-v2-campaign-service-connections" service
+// "search-meta-targeting-options" endpoint.
+func NewSearchMetaTargetingOptionsHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeSearchMetaTargetingOptionsRequest(mux, decoder)
+		encodeResponse = EncodeSearchMetaTargetingOptionsResponse(encoder)
+		encodeError    = EncodeSearchMetaTargetingOptionsError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "search-meta-targeting-options")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
 		payload, err := decodeRequest(r)
 		if err != nil {

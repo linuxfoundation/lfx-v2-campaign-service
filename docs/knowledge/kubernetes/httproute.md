@@ -140,7 +140,9 @@ by `marketing-ops-api` alone, on `global_marketing_ops`, and that no rule gates 
 project; `TestGoogleAudiencesIsAMarketingOpsRead` and `TestUserListsIsAMarketingOpsRead` pin
 `google-ads/audiences` and `google-ads/user-lists` the same way,
 `TestLinkedInPickersAreMarketingOpsReads` the two LinkedIn pickers (#552), and
-`TestMetaCustomAudiencesIsAMarketingOpsRead` pins `meta-ads/custom-audiences` (#550), and
+`TestMetaCustomAudiencesIsAMarketingOpsRead` pins `meta-ads/custom-audiences` (#550)
+(`TestMetaTargetingSearchIsACampaignManagerRead` pins its sibling `meta-ads/targeting-search` to
+`project-api`; the route regex carries both as `meta-ads/(custom-audiences|targeting-search)`), and
 `TestTwitterCustomAudiencesIsAMarketingOpsRead` pins `twitter-ads/custom-audiences` (#564). A
 separate `TestProjectAPIRuleEnforcesCampaignManager` asserts
 the `project-api` rule has two `openfga_check` authorizers on relation `campaign_manager`, each

@@ -109,6 +109,32 @@ const googleAudiencesPath = "/projects/:projectId/google-ads/audiences"
 // TestUserListsIsAMarketingOpsRead pins that.
 const userListsPath = "/projects/:projectId/google-ads/user-lists"
 
+// TestMetaTargetingSearchIsACampaignManagerRead pins the Meta targeting search (#550) to
+// project-api (campaign_manager): it answers Meta's own taxonomy, identical for every token, so
+// marketing-ops-api must not take it over from the foundation campaign managers who build Meta
+// campaigns.
+func TestMetaTargetingSearchIsACampaignManagerRead(t *testing.T) {
+	ruleset := helmTemplate(t, "templates/ruleset.yaml")
+	const path = "/projects/p1/meta-ads/targeting-search"
+	matched := false
+	for _, p := range rulePatterns(t, ruleset, projectAPIRuleID) {
+		if ruleMatcher(t, p).MatchString(path) {
+			matched = true
+		}
+	}
+	if !matched {
+		t.Errorf("%s rule must match %s", projectAPIRuleID, path)
+	}
+	for _, p := range rulePatterns(t, ruleset, marketingOpsRuleID) {
+		if ruleMatcher(t, p).MatchString(path) {
+			t.Errorf("%s rule pattern %s matches %s; the targeting search is a campaign_manager read", marketingOpsRuleID, p, path)
+		}
+	}
+	if !extractRouteRegex(t, helmTemplate(t, "templates/httproute.yaml")).MatchString(path) {
+		t.Errorf("the route regex does not forward %s", path)
+	}
+}
+
 // metaCustomAudiencesPath is the Meta custom-audience read (#550). It lists every foundation's
 // audiences on the shared Meta ad account, so it is ruled by marketing-ops-api only, and
 // TestMetaCustomAudiencesIsAMarketingOpsRead pins that.
@@ -716,6 +742,10 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/google-ads/audiences/x", false},
 		{"/projects/p1/meta-ads/custom-audiences", true},
 		{"/projects/p1/meta-ads/custom-audiences/x", false},
+		// The Meta targeting search (#550): a campaign_manager read at the base path only.
+		{"/projects/p1/meta-ads/targeting-search", true},
+		{"/projects/p1/meta-ads/targeting-search/x", false},
+		{"/projects/p1/linkedin-ads/targeting-search", false},
 		{"/projects/p1/twitter-ads/custom-audiences", true},
 		{"/projects/p1/twitter-ads/custom-audiences/x", false},
 		{"/projects/p1/google-ads/conversion-actions/x", false},

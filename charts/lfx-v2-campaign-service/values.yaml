@@ -628,6 +628,15 @@ app:
     META_OS_TARGETING_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to search-meta-targeting-options (#550): GET
+    # /projects/{p}/meta-ads/targeting-search, the picker read over Meta's
+    # Targeting Search (interests, behaviors, work positions). A campaign_manager
+    # read of Meta's own taxonomy, through the LF system credential for a project
+    # without its own connection. While off the endpoint answers 400. Any value
+    # other than "true" is treated as off.
+    META_TARGETING_SEARCH_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to googleAdsConfig.performanceMaxAudienceSignal
     # (#461): one existing Google Ads Audience attached to a Performance Max
     # asset group as a signal. A per-deployment opt-in, off by default, like
