@@ -203,9 +203,14 @@ window's days inside it. A campaign carrying BOTH (a lifetime total with a daily
 `linkedInConfig.dailyBudgetUsd` creates) is created with no `runSchedule.end`, and the lifetime
 branch reads a missing end as "the flight ends today" — so a week's window of a month-long
 campaign would be paced against the whole total and read as badly underspending. Such a row is
-therefore paced against the daily cap when it has no end, and against the smaller of the two
-expectations when it has one (`linkedinTotalExpected`, `linkedinDailyExpected`;
-`TestLinkedinPacingPct_LifetimeWithDailyCap`). A single-budget row paces as before.
+therefore paced against the daily cap when it has no end — capped at the total, because a $100
+total under a $20 cap stops once the $100 is gone and a week's window can never expect $140 — and
+against the smaller of the two expectations when it has one (`linkedinExpectedSpend`,
+`linkedinTotalExpected`, `linkedinDailyExpected`; `TestLinkedinPacingPct_LifetimeWithDailyCap`,
+`TestLinkedinExpectedSpend_CappedNoEndNeverExceedsTotal`). The metrics carry the window's spend,
+not the campaign's lifetime spend, so the cap is the whole total rather than what remains of it:
+a campaign that exhausted its total BEFORE the window still reads 0% against that total. A
+single-budget row paces as before.
 
 ## Currency
 

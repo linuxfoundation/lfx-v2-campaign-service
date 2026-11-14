@@ -1988,6 +1988,21 @@ var groupScheduleLocks = newKeyedLocks()
 // endMs, and reports whether it wrote. A group with no end, or one already ending on or after
 // endMs, is left alone, so the end never moves earlier through this call.
 //
+// DAILY-CAPPED LIFETIME CAMPAIGNS (#584) have no runSchedule.end of their own, so the group's end
+// is what stops them, and the group is shared by every campaign of the event. Two guards keep
+// such a campaign's flight ending at its own end date:
+//
+//   - capped (this create is one): a group with no end, or one ending after endMs, is refused
+//     with ErrCampaignGroupScheduleConflict rather than accepted as "covered" — the campaign would
+//     serve to the group's end. A group ending before endMs is widened to exactly endMs.
+//   - before the FIRST widening write, one adCampaigns search of the group
+//     (findUnboundedCappedCampaignInGroup) looks for a campaign carrying both budgets and no
+//     end; if there is one the widening is refused with ErrCampaignGroupScheduleConflict and
+//     nothing is written, because moving the group's end would move that campaign's. A search
+//     that fails is an error, also before any write.
+//
+// Both refusals before a write are PreflightRefusals (see ErrCampaignGroupScheduleConflict).
+//
 // CONCURRENCY. Every campaign of an event shares the group and different briefs dispatch
 // independently, so two creates can widen it at once; a write from a stale read could put back
 // a shorter end than a sibling just wrote. Within this process the read, write and verify run
@@ -2005,7 +2020,7 @@ var groupScheduleLocks = newKeyedLocks()
 // Fails closed: a read that cannot be trusted (non-2xx, a duplicate key, a body describing
 // another group) is an error, never "covered", because the caller answers "covered" with a
 // campaign create.
-func (c *Client) ensureCampaignGroupCoversEnd(ctx context.Context, accountID, groupID string, endMs int64) (bool, error) {
+func (c *Client) ensureCampaignGroupCoversEnd(ctx context.Context, accountID, groupID string, endMs int64, capped bool) (bool, error) {
 	path := fmt.Sprintf("adAccounts/%s/adCampaignGroups/%s", accountID, groupID)
 	release, err := groupScheduleLocks.acquire(ctx, c.baseURL+"\x00"+accountID+"\x00"+groupID)
 	if err != nil {
@@ -2021,11 +2036,27 @@ func (c *Client) ensureCampaignGroupCoversEnd(ctx context.Context, accountID, gr
 		if err != nil {
 			return wrote, err
 		}
+		// A capped campaign needs the group to end exactly at its end: later, or never, and it
+		// would serve past it. After a write of ours this can only be another writer's later end.
+		if capped && (end == nil || *end > endMs) {
+			return wrote, cappedGroupEndRefusal(wrote, groupID, end, endMs)
+		}
 		if end == nil || *end >= endMs {
 			return wrote, nil
 		}
 		if writes == groupScheduleAttempts {
 			return wrote, fmt.Errorf("campaign group %s still ends before this campaign after %d widening writes; another writer keeps shortening it, so no campaign is created", groupID, groupScheduleAttempts)
+		}
+		// Widening moves the end of every campaign in the group that has none of its own. Check
+		// once, before the first write; later rounds re-write the same end this check approved.
+		if writes == 0 {
+			holder, err := c.findUnboundedCappedCampaignInGroup(ctx, accountID, groupID)
+			if err != nil {
+				return false, fmt.Errorf("campaign group %s could not be checked for a daily-capped lifetime campaign before widening its end; nothing was changed: %w", groupID, err)
+			}
+			if holder != "" {
+				return false, cappedSiblingWidenRefusal(groupID, holder, end, endMs)
+			}
 		}
 		body := map[string]any{"patch": map[string]any{"runSchedule": map[string]any{
 			"$set": map[string]any{"end": endMs},
@@ -2166,10 +2197,14 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 	// A daily cap on a lifetime budget (#584) is LinkedIn's "Use a Daily Budget and a Total Budget
 	// with a Continuous Schedule" option: dailyBudget, totalBudget and runSchedule.start, with NO
 	// end (Create and Manage Campaigns, Lifetime Pacing; Campaign Manager likewise allows only a
-	// continuous schedule when both budgets are set, help answer a422101). The end is not lost:
-	// the campaign group this campaign sits in carries it (findOrCreateCampaignGroup and
-	// ensureCampaignGroupCoversEnd), and LinkedIn serves under the more restrictive of the group's
-	// and the campaign's schedules.
+	// continuous schedule when both budgets are set, help answer a422101). The end moves to the
+	// campaign group, and LinkedIn serves under the more restrictive of the group's and the
+	// campaign's schedules. The group is shared by the event's campaigns, so CreateCampaign only
+	// gets here with a group ending exactly at endMs — created by this call, or reused and ending
+	// there (widened to it if it ended earlier) — and ensureCampaignGroupCoversEnd refuses any
+	// later widening of a group holding this campaign. What it cannot stop is a hand edit of the
+	// group's end in Campaign Manager, or a widening racing this create's POST from another
+	// dispatch (see ensureCampaignGroupCoversEnd and LFXV2-2665).
 	if budget.dailyCapUSD > 0 {
 		body["dailyBudget"] = map[string]any{"amount": strconv.FormatFloat(budget.dailyCapUSD, 'f', 2, 64), "currencyCode": "USD"}
 		delete(runSchedule, "end")
@@ -2933,8 +2968,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// orphan the orchestrator refuses to retry ("reconciliation required"), when a plain retry,
 	// which re-reads the group, is exactly what recovers it. A widening write whose outcome is
 	// unknown is safe to repeat.
+	//
+	// A daily-capped lifetime campaign (#584) has no end of its own, so for it the reused group
+	// must end exactly at this campaign's end: a group ending later, or never, is refused before
+	// anything is created (ErrCampaignGroupScheduleConflict), and so is widening a group that
+	// already holds such a campaign. A group THIS call created carries endMs and needs no check.
 	if groupReused {
-		extended, err := c.ensureCampaignGroupCoversEnd(ctx, accountID, groupID, endMs)
+		extended, err := c.ensureCampaignGroupCoversEnd(ctx, accountID, groupID, endMs, budget.dailyCapUSD > 0)
+		if errors.Is(err, ErrCampaignGroupScheduleConflict) {
+			return nil, err
+		}
 		if err != nil {
 			return nil, fmt.Errorf("campaign group %q (%q) could not be confirmed to cover the campaign's end date; nothing was created, and a retry re-reads the group: %w", groupID, groupName, err)
 		}

@@ -1264,9 +1264,15 @@ type CampaignCreateInput struct {
 	// the campaign's totalBudget and `dailyBudgetUsd` as its dailyBudget, and
 	// LinkedIn stops delivery at whichever is reached first. Following LinkedIn's
 	// documented daily-plus-total option, such a campaign is created with a
-	// continuous schedule (runSchedule.start, no end); the campaign group still
-	// carries endDate, and LinkedIn serves under the more restrictive of the two
-	// schedules. Omitted, 0 or null keeps the single-budget create: `budgetUsd` as
+	// continuous schedule (runSchedule.start, no end); the end date moves to the
+	// campaign group, and LinkedIn serves under the more restrictive of the two
+	// schedules. The group is shared by the event's campaigns, so the job creates
+	// the capped campaign only when the group ends exactly at endDate (a group it
+	// created, or an existing one ending then, extended to it if earlier); an
+	// existing group ending later or never fails the job with nothing created (set
+	// the group's end in Campaign Manager, or drop dailyBudgetUsd), and a later
+	// create that would extend a group holding such a campaign fails with nothing
+	// changed. Omitted, 0 or null keeps the single-budget create: `budgetUsd` as
 	// totalBudget (lifetimeBudget true) or dailyBudget, with the end date on the
 	// campaign. Refused with a 400 before any job exists: dailyBudgetUsd without
 	// lifetimeBudget true, a non-number, a negative amount, a daily cap above

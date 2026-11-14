@@ -81,8 +81,8 @@ func moneyField(t *testing.T, body map[string]any, field string) string {
 // TestCreateCampaign_LifetimeWithDailyCapSendsBothBudgets pins #584's wire shape: a lifetime
 // budget with a daily cap is ONE campaign carrying totalBudget and dailyBudget, with a
 // runSchedule that has a start and no end — LinkedIn's documented "Daily Budget and a Total Budget
-// with a Continuous Schedule" option. The campaign GROUP still carries the end, which is what
-// keeps the flight bounded.
+// with a Continuous Schedule" option. The campaign GROUP carries the end; group_capped_test.go
+// pins the guards that keep the shared group ending exactly there.
 func TestCreateCampaign_LifetimeWithDailyCapSendsBothBudgets(t *testing.T) {
 	srv, bodies, _ := budgetCreateServer(t)
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))

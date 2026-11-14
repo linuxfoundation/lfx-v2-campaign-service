@@ -103,6 +103,15 @@ func EvaluateLinkedInMonitor(rows []model.AccountCampaignMetrics, days int, now 
 //
 // Deliberately UNROUNDED — see model.AccountMonitorRow.PacingPct.
 func linkedinPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) float64 {
+	if expected := linkedinExpectedSpend(m, days, now); expected > 0 {
+		return m.Spend / expected * 100
+	}
+	return 0
+}
+
+// linkedinExpectedSpend is what the campaign should have spent in the window, the denominator of
+// linkedinPacingPct; 0 when there is nothing to pace against.
+func linkedinExpectedSpend(m model.AccountCampaignMetrics, days int, now time.Time) float64 {
 	rangeStart := now.AddDate(0, 0, -(days - 1))
 	schedStart := parseMonitorDate(m.StartDate)
 	schedEnd := parseMonitorDate(m.EndDate)
@@ -111,12 +120,15 @@ func linkedinPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) 
 	// pairs those with a continuous schedule — no runSchedule.end. Without an end the lifetime
 	// branch below takes the flight as ending today, so a week's window of a month-long campaign
 	// would be paced against the WHOLE total and read as badly underspending. With no end the
-	// daily cap is the only figure that says what the window should have spent; with one, the
-	// campaign can spend no more than the smaller of the two expectations.
+	// daily cap says what the window could have spent, but never more than the total: a $100
+	// total under a $20 cap stops once the $100 is gone, so a week's window expects $100, not
+	// $140. The metrics carry the window's spend only, not the campaign's lifetime spend, so the
+	// cap is the whole total rather than what remains of it. With an end, the campaign can spend
+	// no more than the smaller of the two expectations.
 	var expected float64
 	switch {
 	case m.TotalBudget > 0 && m.BudgetDay > 0 && schedEnd.IsZero():
-		expected = linkedinDailyExpected(m, rangeStart, schedStart, schedEnd, now)
+		expected = math.Min(linkedinDailyExpected(m, rangeStart, schedStart, schedEnd, now), m.TotalBudget)
 	case m.TotalBudget > 0 && m.BudgetDay > 0:
 		expected = math.Min(linkedinTotalExpected(m, rangeStart, schedStart, schedEnd, now),
 			linkedinDailyExpected(m, rangeStart, schedStart, schedEnd, now))
@@ -125,10 +137,7 @@ func linkedinPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) 
 	case m.BudgetDay > 0:
 		expected = linkedinDailyExpected(m, rangeStart, schedStart, schedEnd, now)
 	}
-	if expected > 0 {
-		return m.Spend / expected * 100
-	}
-	return 0
+	return expected
 }
 
 // linkedinTotalExpected is the lifetime branch: the total spread evenly over the flight, times

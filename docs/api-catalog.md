@@ -1027,9 +1027,23 @@ The campaign POST then carries both fields and a schedule with no end:
 That is LinkedIn's documented "daily budget and a total budget with a continuous schedule" option
 (Create and Manage Campaigns, Lifetime Pacing; Campaign Manager likewise allows only a continuous
 schedule when both are set). LinkedIn stops the campaign at whichever limit is reached first. The
-flight stays bounded: the campaign GROUP is created with `endDate` (or extended to cover it), and
-LinkedIn serves under the more restrictive of the group's and the campaign's schedules. Without
-`dailyBudgetUsd` nothing changes: one budget field, and the campaign keeps `runSchedule.end`.
+end date moves to the campaign GROUP, and LinkedIn serves under the more restrictive of the group's
+and the campaign's schedules. The group is shared by every campaign of the event and project, so
+the job keeps the two ends equal rather than assuming it:
+
+- the capped campaign is created only when the group ends exactly at `endDate` — a group this
+  job created, or an existing one ending then (extended to it if it ended earlier). An existing
+  group that ends LATER, or never, fails the platform job with nothing created: set the group's
+  end in Campaign Manager, or drop `dailyBudgetUsd`;
+- any later create for the event that would extend the group's end first searches the group;
+  if it holds a capped campaign (both budgets, no end), that job fails with nothing changed or
+  created rather than extending the capped campaign's flight. A failed search fails the job the
+  same way.
+
+Both failures carry `invalid campaign config` and their own explanation in the job result. Not
+covered: someone extending the group's end in Campaign Manager, or another event create racing
+the capped campaign's own creation. Without `dailyBudgetUsd` nothing changes: one budget field,
+and the campaign keeps `runSchedule.end`.
 
 Refused with a synchronous `400 invalid campaign config: linkedInConfig…` before any job exists
 (and again, with nothing created, if the job runs): `dailyBudgetUsd` without `lifetimeBudget: true`

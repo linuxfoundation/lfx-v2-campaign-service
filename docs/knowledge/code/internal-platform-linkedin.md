@@ -440,9 +440,36 @@ each amount through `ValidateBudgetAmount` under its own minimum and then
 two-budget campaign is POSTed with `runSchedule.start` and **no end** — LinkedIn's "Daily Budget
 and a Total Budget with a Continuous Schedule" option (Create and Manage Campaigns, li-lms-2026-02,
 Lifetime Pacing; Campaign Manager allows only a continuous schedule with both, help answer
-a422101). The campaign group keeps the end, and LinkedIn serves under the more restrictive of the
-group's and campaign's schedules (Create and Manage Campaign Groups, "Budgeting and Run Schedule").
-`budget_create_test.go` asserts the wire bodies.
+a422101). The end moves to the campaign group, and LinkedIn serves under the more restrictive of
+the group's and campaign's schedules (Create and Manage Campaign Groups, "Budgeting and Run
+Schedule"). `budget_create_test.go` asserts the wire bodies.
+
+That group is SHARED by every campaign of the event and project (`"Events | <event> | <project>"`,
+a name the data pipeline parses, #587, so it is not made per campaign), and
+`ensureCampaignGroupCoversEnd` only ever widens its end. Two guards
+(`ErrCampaignGroupScheduleConflict`, `group_capped.go`) keep a capped campaign's flight ending at
+its own end date:
+
+- **A capped create** accepts the group only when it ends exactly at the campaign's end: a group
+  this call created (it carries `endMs`), or a reused one ending there — widened to it if it
+  ended earlier. A reused group ending LATER, or with NO end, is refused before the campaign POST.
+- **Any create that would widen the group** first runs one adCampaigns search filtered by the
+  group's URN (`findUnboundedCappedCampaignInGroup`); a campaign carrying both budgets and no
+  `runSchedule.end`, in any status but CANCELED/REMOVED/DELETED/PENDING_DELETION, refuses the
+  widening with no group write. The search fails closed (any read, identity, cursor or
+  group-filter doubt is an error, still before the write), and runs only when a write is about to
+  happen.
+
+Both refusals come before any write and are `domain.PreflightRefusal`s carrying
+`domain.ErrCreateConfigInvalid`: `CreateCampaign` returns `(nil, err)`, the dispatcher's
+`notCreated` releases the claim, and the job's per-platform error is the refusal's text (it
+names the group id, both instants and the remedy: set the group's end in Campaign Manager, drop
+`dailyBudgetUsd`, end this campaign by the group's end, or end/move the capped campaign). The one
+post-write case — another writer moving the group's end past a capped campaign's after this
+call's own widening write — is the same sentinel as a plain error. NOT guarded: a hand edit of the
+group's end in Campaign Manager, and a widening from another dispatch racing the capped
+campaign's POST (its search can run before the campaign exists; cross-dispatch serialization is
+LFXV2-2665's). `group_capped_test.go` pins both guards.
 
 **Every refusal it makes also wraps `ErrBudgetAmountInvalid`**, so a caller classifies the
 refusal without matching on its text; `BudgetAmountReason(err)` returns the refusal's sentence

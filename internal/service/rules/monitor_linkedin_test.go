@@ -51,10 +51,13 @@ func TestLinkedinPacingPct_LifetimeWithDailyCap(t *testing.T) {
 			want: 100,
 		},
 		{
-			// With no end the total spread over the days elapsed (100/14*6 ≈ 42.9) says nothing
-			// about the window, so the smaller expectation is NOT taken: the cap (120) is.
-			name: "both budgets, no end, small total: still the daily cap",
-			m:    model.AccountCampaignMetrics{TotalBudget: 100, BudgetDay: 20, StartDate: "2026-06-01", Spend: 120},
+			// A $100 total under a $50 cap, started on the window's first day, spent its whole
+			// total inside the window and stopped. The cap alone expects 50*6 = 300 and would
+			// read 33% (underspending); the campaign can never spend more than its total, so the
+			// expectation is 100 and it reads 100%. (The total spread over the days elapsed,
+			// 100/6*6, is not what binds: with no end the cap and the total are.)
+			name: "both budgets, no end, total reached in the window: capped at the total",
+			m:    model.AccountCampaignMetrics{TotalBudget: 100, BudgetDay: 50, StartDate: "2026-06-09", Spend: 100},
 			want: 100,
 		},
 		{
@@ -76,6 +79,24 @@ func TestLinkedinPacingPct_LifetimeWithDailyCap(t *testing.T) {
 				t.Fatalf("pacingPct = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestLinkedinExpectedSpend_CappedNoEndNeverExceedsTotal pins the expectation itself for a
+// campaign that reached its total before the window and stopped: window spend 0, so the
+// percentage is 0 whatever the denominator, but what it is measured against must be the $100 total
+// it could still have had, not the $20 cap times the window's 6 days ($120), which it can never
+// spend. Lifetime spend is not in the metrics, so the total, not the remainder, is the cap.
+func TestLinkedinExpectedSpend_CappedNoEndNeverExceedsTotal(t *testing.T) {
+	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	m := model.AccountCampaignMetrics{TotalBudget: 100, BudgetDay: 20, StartDate: "2026-06-01", Spend: 0}
+	if got := linkedinExpectedSpend(m, 7, now); got != 100 {
+		t.Fatalf("expected spend = %v, want the total 100 (not the cap's 20*6 = 120)", got)
+	}
+	// A total larger than the cap's window still leaves the cap binding.
+	m.TotalBudget = 1000
+	if got := linkedinExpectedSpend(m, 7, now); got != 120 {
+		t.Fatalf("expected spend = %v, want the cap's 120", got)
 	}
 }
 
