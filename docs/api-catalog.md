@@ -3007,7 +3007,7 @@ targeting?: object              — OPTIONAL audience targeting on the ad set (#
                                   be in both lists.
   advantageAudience?: boolean    — `targeting_automation.advantage_audience`. When any INCLUSION
                                   is set (an age other than 18/65, one gender, customAudiences,
-                                  interests)
+                                  interests, behaviors, workPositions)
                                   the flag is always sent, defaulting to 0 so the chosen
                                   targeting is a hard constraint (Meta v23+ errors on a
                                   non-default inclusion without it); otherwise it is sent only
@@ -3053,6 +3053,20 @@ targeting?: object              — OPTIONAL audience targeting on the ad set (#
                                   left unanswered or without a country fails the job with
                                   nothing created. Refused with a 400 unless
                                   META_REGION_TARGETING_ENABLED is exactly "true"; not gated by
+                                  global_marketing_ops.
+  behaviors?, workPositions?: string[] — numeric Meta detailed-targeting ids (the Targeting
+                                  Search `adTargetingCategory` class `behaviors` and the
+                                  `adworkposition` type), each list
+                                  de-duplicated, at most 25 → `behaviors` / `work_positions`
+                                  (`[{"id"}]`) in the SAME `flexible_spec` entry as interests, so
+                                  matching any one interest, behavior or work position qualifies.
+                                  INCLUSIONS: the advantageAudience rule above applies. Before
+                                  anything is created every id is checked in one
+                                  `GET /act_<id>/targetingvalidation?targeting_list=[{"type":
+                                  "behaviors"|"work_positions","id"}]`; an id Meta marks invalid,
+                                  or a read that fails, leaves an id unanswered or omits `valid`,
+                                  fails the job with nothing created. Refused with a 400 unless
+                                  META_BEHAVIOR_TARGETING_ENABLED is exactly "true"; not gated by
                                   global_marketing_ops.
                                   Every invalid value is a synchronous 400 ("invalid campaign
                                   config: metaConfig.targeting: …"). Before anything is created

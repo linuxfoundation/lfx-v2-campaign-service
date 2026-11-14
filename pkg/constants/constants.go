@@ -384,6 +384,13 @@ const (
 	// needs no global_marketing_ops.
 	EnvMetaInterestTargetingEnabled = "META_INTEREST_TARGETING_ENABLED"
 
+	// EnvMetaBehaviorTargetingEnabled opts a deployment IN to metaConfig.targeting.behaviors and
+	// metaConfig.targeting.workPositions (#550, gap 7): detailed targeting ids sent in the ad set's
+	// flexible_spec beside the interests. Same rules as EnvMetaLocaleTargetingEnabled. Each id is
+	// validated with Meta's ad account targeting validation read before anything is created. Both
+	// are Meta's own taxonomy, not account resources, so they need no global_marketing_ops.
+	EnvMetaBehaviorTargetingEnabled = "META_BEHAVIOR_TARGETING_ENABLED"
+
 	// EnvMetaLeadFormsEnabled opts a deployment IN to metaConfig.leadFormId (#550, gap 8): an
 	// existing Instant Form that turns the leads objective into an OUTCOME_LEADS lead ad. Only the
 	// exact value "true" enables it; anything else refuses the field with a 400 before any job

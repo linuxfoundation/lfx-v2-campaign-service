@@ -1206,9 +1206,23 @@ preflight and before the campaign create, `checkInterests` sends every id in one
 a refusal, and a failed read or an answer missing an id is an error, so a retired interest cannot
 orphan a campaign at the ad set. Its own flag, `META_INTEREST_TARGETING_ENABLED` (default off),
 gates it like the locale flag; interests are Meta's taxonomy, not an account resource, so they are
-not behind `global_marketing_ops`. Not built yet: behaviors and work positions, and the
-`/search?type=adinterest` picker read. Not verified live: the validation read's answer shape and the
+not behind `global_marketing_ops`. Not verified live: the validation read's answer shape and the
 `flexible_spec` payload.
+
+**Behaviors and work positions (gap 7, remainder, `detailed_targeting.go`).**
+`AudienceTargeting.Behaviors` and `.WorkPositions` (`metaConfig.targeting.behaviors` /
+`.workPositions`) are numeric detailed-targeting ids, de-duplicated, at most `MaxBehaviors` /
+`MaxWorkPositions` (25) each. `apply` puts them in the SAME `flexible_spec` entry as the interests
+(`behaviors` / `work_positions`, `[{"id": …}]`): Meta ANDs top-level entries and ORs the keys inside
+one, so any listed interest, behavior or work position qualifies. Both are inclusions. After the
+account preflight and before any write, `checkDetailedTargeting` sends every id in ONE
+`GET /act_<id>/targetingvalidation?targeting_list=[{"type":"behaviors"|"work_positions","id":…}]`
+(ids as JSON numbers, the reference's int64): a row with `valid` false is a refusal; a failed read,
+no `data`, an unanswered id or a row without `valid` is an error. Rows' ids decode from a string or
+a number (`graphID`). Its own flag, `META_BEHAVIOR_TARGETING_ENABLED` (default off), gates both like
+the locale flag; not behind `global_marketing_ops`. Not verified live: the reference documents the
+request's `targeting_list` but not the row fields (`id`, `valid` are inferred from the search page's
+validation example), and the `flexible_spec` keys.
 
 **Regions and cities (gap 13, `geo_targeting.go`).** `AudienceTargeting.Regions` and `.Cities`
 (`metaConfig.targeting.regions` / `.cities`) are numeric Meta geo-location keys, de-duplicated, at

@@ -63,6 +63,16 @@ type AudienceTargeting struct {
 	// Gated by its own deployment flag.
 	Regions []string `json:"regions"`
 	Cities  []string `json:"cities"`
+	// Behaviors and WorkPositions are numeric Meta detailed-targeting ids (the Targeting Search
+	// `adTargetingCategory` class `behaviors` and the `adworkposition` type list them), at most
+	// MaxBehaviors / MaxWorkPositions distinct (#550, gap 7). They join the interests in the SAME
+	// `flexible_spec` entry (`behaviors` / `work_positions`, each `[{"id": …}]`): Meta ORs the keys
+	// of one entry, so a person matching ANY listed interest, behavior or work position qualifies.
+	// Both are inclusions (see inclusion). Each id is checked in one ad account targeting validation
+	// read before anything is created (checkDetailedTargeting). Gated together by their own
+	// deployment flag.
+	Behaviors     []string `json:"behaviors"`
+	WorkPositions []string `json:"workPositions"`
 }
 
 const (
@@ -83,6 +93,11 @@ const (
 	// MaxInterests caps the interests list, for the same reason as MaxCustomAudiences: an event
 	// names a handful, and the validation read sends every id in one request URL.
 	MaxInterests = 25
+	// MaxBehaviors and MaxWorkPositions cap those lists, for the same reason as MaxInterests (Meta
+	// allows 200 work positions; an event names a handful, and the validation read sends every id
+	// in one request URL).
+	MaxBehaviors     = 25
+	MaxWorkPositions = 25
 )
 
 // metaGenderCodes maps the request's gender names to Meta's targeting codes.
@@ -97,13 +112,13 @@ func (t *AudienceTargeting) IsZero() bool {
 	return t == nil || (t.AgeMin == nil && t.AgeMax == nil && len(t.Genders) == 0 &&
 		len(t.CustomAudiences) == 0 && len(t.ExcludedCustomAudiences) == 0 && t.AdvantageAudience == nil &&
 		len(t.Locales) == 0 && len(t.DevicePlatforms) == 0 && len(t.Interests) == 0 &&
-		len(t.Regions) == 0 && len(t.Cities) == 0)
+		len(t.Regions) == 0 && len(t.Cities) == 0 && len(t.Behaviors) == 0 && len(t.WorkPositions) == 0)
 }
 
 // HasAudienceFields reports whether t sets any of the six fields META_AUDIENCE_TARGETING_ENABLED
 // gates — age, gender, the two custom audience lists, advantageAudience — as opposed to only the
-// later fields (locales, devicePlatforms, interests, regions, cities) that have their own deployment
-// flags.
+// later fields (locales, devicePlatforms, interests, regions, cities, behaviors, workPositions) that
+// have their own deployment flags.
 func (t *AudienceTargeting) HasAudienceFields() bool {
 	return t != nil && (t.AgeMin != nil || t.AgeMax != nil || len(t.Genders) > 0 ||
 		len(t.CustomAudiences) > 0 || len(t.ExcludedCustomAudiences) > 0 || t.AdvantageAudience != nil)
@@ -160,6 +175,12 @@ func NormalizeAudienceTargeting(t *AudienceTargeting) (*AudienceTargeting, error
 		return nil, err
 	}
 	if out.Interests, err = normalizeNumericIDs("interests", "Meta interest id", t.Interests, MaxInterests); err != nil {
+		return nil, err
+	}
+	if out.Behaviors, err = normalizeNumericIDs("behaviors", "Meta behavior id", t.Behaviors, MaxBehaviors); err != nil {
+		return nil, err
+	}
+	if out.WorkPositions, err = normalizeNumericIDs("workPositions", "Meta work position id", t.WorkPositions, MaxWorkPositions); err != nil {
 		return nil, err
 	}
 	if out.Regions, err = normalizeNumericIDs("regions", "Meta region key", t.Regions, MaxGeoKeys); err != nil {
@@ -263,7 +284,7 @@ func normalizeLocales(keys []int) ([]int, error) {
 }
 
 // inclusion reports whether t narrows WHO is reached — a non-default age, a single gender, an
-// included custom audience or a detailed-targeting interest. These are the fields Meta's v23.0 rule names: setting one without an
+// included custom audience or a detailed-targeting interest, behavior or work position. These are the fields Meta's v23.0 rule names: setting one without an
 // explicit targeting_automation.advantage_audience is an error on ad-set create. Exclusions are
 // not inclusions: they are a hard constraint either way.
 func (t *AudienceTargeting) inclusion() bool {
@@ -271,7 +292,9 @@ func (t *AudienceTargeting) inclusion() bool {
 		(t.AgeMax != nil && *t.AgeMax != MaxTargetAge) ||
 		len(t.Genders) == 1 ||
 		len(t.CustomAudiences) > 0 ||
-		len(t.Interests) > 0
+		len(t.Interests) > 0 ||
+		len(t.Behaviors) > 0 ||
+		len(t.WorkPositions) > 0
 }
 
 // apply adds t to an ad set's targeting spec. t must be NormalizeAudienceTargeting's output. The
@@ -300,8 +323,19 @@ func (t *AudienceTargeting) apply(targeting map[string]any) {
 	if len(t.Locales) > 0 {
 		targeting["locales"] = t.Locales
 	}
+	// Interests, behaviors and work positions share ONE flexible_spec entry, whose keys Meta ORs.
+	detailed := map[string]any{}
 	if len(t.Interests) > 0 {
-		targeting["flexible_spec"] = []map[string]any{{"interests": audienceRefs(t.Interests)}}
+		detailed["interests"] = audienceRefs(t.Interests)
+	}
+	if len(t.Behaviors) > 0 {
+		detailed["behaviors"] = audienceRefs(t.Behaviors)
+	}
+	if len(t.WorkPositions) > 0 {
+		detailed["work_positions"] = audienceRefs(t.WorkPositions)
+	}
+	if len(detailed) > 0 {
+		targeting["flexible_spec"] = []map[string]any{detailed}
 	}
 	if len(t.DevicePlatforms) == 1 {
 		targeting["device_platforms"] = t.DevicePlatforms
