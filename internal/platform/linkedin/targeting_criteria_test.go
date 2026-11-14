@@ -174,8 +174,8 @@ func TestCreateCampaign_ReusedCampaignWithTargetingStopsBeforeCreatives(t *testi
 				if err != nil {
 					t.Fatalf("profile reuse: %v", err)
 				}
-				if res.CampaignID != "777" || res.CreativeCount != 1 {
-					t.Fatalf("profile reuse: campaign %q, %d creatives; want 777 with its creative", res.CampaignID, res.CreativeCount)
+				if res.CampaignID != "777" || res.CreativeCount != 1 || res.TargetingNotApplied {
+					t.Fatalf("profile reuse: campaign %q, %d creatives, stop %v; want 777 with its creative and no stop", res.CampaignID, res.CreativeCount, res.TargetingNotApplied)
 				}
 				return
 			}
@@ -184,6 +184,9 @@ func TestCreateCampaign_ReusedCampaignWithTargetingStopsBeforeCreatives(t *testi
 			}
 			if res == nil || res.CampaignID != "777" || res.CampaignGroupID != "100" || res.CampaignName != name || res.CreativeCount != 0 {
 				t.Fatalf("partial = %+v; want campaign 777 in group 100 with no creative", res)
+			}
+			if !res.TargetingNotApplied {
+				t.Error("the stop's partial does not set TargetingNotApplied, so the dispatcher would record it created_degraded")
 			}
 			if !strings.Contains(strings.Join(res.Steps, "\n"), "Stopped before the creatives: campaign 777") {
 				t.Errorf("steps %v lack the stop step", res.Steps)
@@ -380,6 +383,88 @@ func TestValidateTargeting_EmployerAliasesCountOnce(t *testing.T) {
 				t.Errorf("employers kept %d values, want the first URN of each of %d ids:\n got %v\nwant %v", len(got), tc.n, got, want)
 			}
 		})
+	}
+}
+
+// TestTargetingEmployerExclusions_MeetTheEmployersRule pins the #557 review fix: on the targeting
+// path the config's employerExclusions pass cleanFacet's employers rule, as exclude.employers does,
+// before the include overlap check, the cap and the merge. A leading-zero id, which validFacets
+// alone accepted, is refused, including beside an included urn:li:organization:1111 whose string
+// id it would not have matched. What ValidateTargeting accepts is what buildCustomTargetingCriteria
+// merges onto the wire, aliases of one employer counted once and the first URN kept; the legacy
+// profile path still reads the list through validFacets alone and keeps the value.
+func TestTargetingEmployerExclusions_MeetTheEmployersRule(t *testing.T) {
+	skills := []map[string][]string{{"skills": {"urn:li:skill:1"}}}
+	cases := []struct {
+		name     string
+		in       *Targeting
+		excl     []string
+		want     string   // refusal substring; "" = accepted
+		wireExcl []string // accepted: the employers exclude.or carries
+	}{
+		{"leading zero", &Targeting{Include: skills}, []string{"urn:li:company:01111"}, "employerExclusions.employers value", nil},
+		{"leading zero beside the same included id", &Targeting{Include: []map[string][]string{{"employers": {"urn:li:organization:1111"}}}}, []string{"urn:li:company:01111"}, "employerExclusions.employers value", nil},
+		{"zero id", &Targeting{Include: skills}, []string{"urn:li:organization:0"}, "employerExclusions.employers value", nil},
+		{"wrong namespace", &Targeting{Include: skills}, []string{"urn:li:skill:1"}, "employerExclusions", nil},
+		{"included employer by its other alias", &Targeting{Include: []map[string][]string{{"employers": {"urn:li:organization:1111"}}}}, []string{"urn:li:company:1111"}, "is in employerExclusions", nil},
+		{"well formed", &Targeting{Include: skills}, []string{"urn:li:company:1111"}, "", []string{"urn:li:company:1111"}},
+		{"padded and blank entries", &Targeting{Include: skills}, []string{" urn:li:company:1111 ", ""}, "", []string{"urn:li:company:1111"}},
+		{"aliases count once, first kept", &Targeting{Include: skills}, []string{"urn:li:company:1111", "urn:li:organization:1111", "urn:li:organization:2222"}, "", []string{"urn:li:company:1111", "urn:li:organization:2222"}},
+		{"merged after exclude.employers", &Targeting{Include: skills, Exclude: map[string][]string{"employers": {"urn:li:organization:1111"}}}, []string{"urn:li:company:1111", "urn:li:company:3333"}, "", []string{"urn:li:organization:1111", "urn:li:company:3333"}},
+		{"none configured", &Targeting{Include: skills}, nil, "", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := ValidateTargeting(tc.in, tc.excl)
+			if tc.want != "" {
+				if err == nil || !errors.Is(err, ErrTargetingInvalid) || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("want a refusal containing %q, got %v", tc.want, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("refused: %v", err)
+			}
+			cfg := testConfig()
+			cfg.EmployerExclusions = tc.excl
+			c := NewClient(Credentials{AccessToken: "t"}, cfg)
+			crit, err := c.buildCustomTargetingCriteria(out, []string{"urn:li:geo:1"})
+			if err != nil {
+				t.Fatalf("build: %v", err)
+			}
+			b, _ := json.Marshal(crit)
+			var wire struct {
+				TargetingCriteria struct {
+					Exclude struct {
+						Or map[string][]string `json:"or"`
+					} `json:"exclude"`
+				} `json:"targetingCriteria"`
+			}
+			if err := json.Unmarshal(b, &wire); err != nil {
+				t.Fatal(err)
+			}
+			got := wire.TargetingCriteria.Exclude.Or["urn:li:adTargetingFacet:employers"]
+			if strings.Join(got, ",") != strings.Join(tc.wireExcl, ",") {
+				t.Errorf("wire employers = %v, want %v", got, tc.wireExcl)
+			}
+		})
+	}
+
+	// The builder reads the list through the same rule, so it cannot merge a value the check refused.
+	cfg := testConfig()
+	cfg.EmployerExclusions = []string{"urn:li:company:01111"}
+	c := NewClient(Credentials{AccessToken: "t"}, cfg)
+	if _, err := c.buildCustomTargetingCriteria(&Targeting{Include: skills}, nil); err == nil {
+		t.Error("buildCustomTargetingCriteria merged a leading-zero configured exclusion")
+	}
+
+	// The legacy profile path is unchanged: it still sends a leading-zero configured exclusion.
+	crit, err := c.buildTargetingCriteria("cloud-native", []string{"urn:li:geo:1"})
+	if err != nil {
+		t.Fatalf("profile build refused the legacy value: %v", err)
+	}
+	if b, _ := json.Marshal(crit); !strings.Contains(string(b), "urn:li:company:01111") {
+		t.Errorf("profile criteria lost the configured exclusion: %s", b)
 	}
 }
 

@@ -1515,8 +1515,9 @@ func linkedinSnapshotConfig(cfg linkedinConfig) linkedinConfig {
 // campaignFromLinkedIn maps the client result to the persistence model: upstream id,
 // name, result blob, the budget/schedule/ConfigSnapshot (via applyCampaignConfig), and
 // a status derived from what was confirmed created — one of `created`,
-// `created_degraded` (creative shortfall), `group_created` (group only), or
-// `unconfirmed` (neither id). requestedVariants is how many creatives the caller asked
+// `created_degraded` (creative shortfall), `pending` (a reused campaign the targeting stop
+// left for reconciliation, id kept), `group_created` (group only), or `unconfirmed`
+// (neither id). requestedVariants is how many creatives the caller asked
 // for, used to detect a creative shortfall.
 func campaignFromLinkedIn(ctx context.Context, r *linkedin.CampaignResult, requestedVariants int, cfg linkedinConfig) *model.Campaign {
 	c := &model.Campaign{
@@ -1547,6 +1548,17 @@ func campaignFromLinkedIn(ctx context.Context, r *linkedin.CampaignResult, reque
 			// status) but would not report those conversions. The steps name each id to
 			// associate in Campaign Manager.
 			c.Status = campaignStatusCreatedDegraded
+		}
+		if r.TargetingNotApplied {
+			// The client stopped on a campaign found by name because linkedInConfig.targeting is
+			// written only into a campaign this run creates (#552): the requested targeting was
+			// neither checked nor applied and no creative exists. created_degraded would be
+			// preserved AND reused by the orchestrator, so a repeated request would report success.
+			// This is the retained partial orphan instead: 'pending' with the campaign id kept for
+			// repair, which isReusableCampaign refuses, so a retry answers "reconciliation
+			// required". It is what Microsoft's equivalent stop (a 'created' row returned with an
+			// error) is flattened to; stamped here so the row says so without relying on that.
+			c.Status = model.CampaignStatusPending
 		}
 	case r.CampaignGroupID != "":
 		// The campaign GROUP was created but the CAMPAIGN failed/left-ambiguous with an

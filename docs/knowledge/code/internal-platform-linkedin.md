@@ -1041,6 +1041,22 @@ campaign and attaches creatives: its criteria derive from the service's own prof
 retry path predates #552. Pinned by
 `TestCreateCampaign_ReusedCampaignWithTargetingStopsBeforeCreatives`.
 
+That partial sets `CampaignResult.TargetingNotApplied`. A campaign id with no creative would
+otherwise read as `created_degraded` in the dispatcher, a status the orchestrator preserves and
+REUSES, so a repeated request would report success for targeting never applied. The dispatcher
+stamps the flagged partial `pending` instead (see internal-dispatch), keeping the campaign id for
+repair.
+
+On the targeting path the config's `employerExclusions` are read through
+`targetingEmployerExclusions`: `validFacets` (non-blank, trimmed, company or organization
+namespace) and then `cleanFacet`'s `employers` rule, so a configured exclusion meets the bar
+`exclude.employers` does. `validFacets` alone took any digits, so `urn:li:company:01111` passed
+and, compared by string id, escaped the overlap check beside an included
+`urn:li:organization:1111`. `ValidateTargeting` and `buildCustomTargetingCriteria` share the
+helper, so what is checked is what is merged. The profile path (`buildTargetingCriteria`,
+`validatePrerequisites`) still reads the list through `validFacets` alone, unchanged. Pinned by
+`TestTargetingEmployerExclusions_MeetTheEmployersRule`.
+
 `buildCustomTargetingCriteria` renders the geo clause first, then one `include.and` clause per
 entry with facet keys sorted (so the body is deterministic), and `exclude.or` from the caller's
 excludes plus the runtime config's `EmployerExclusions`. With `Targeting` set, the profile is not

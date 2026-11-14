@@ -325,6 +325,12 @@ type CampaignResult struct {
 	// A non-empty ConversionsFailed makes the dispatcher report the campaign created_degraded.
 	ConversionsAssociated []string `json:"conversionsAssociated,omitempty"`
 	ConversionsFailed     []string `json:"conversionsFailed,omitempty"`
+	// TargetingNotApplied marks the stop on a campaign found by name while linkedInConfig.targeting
+	// is set (#552): the campaign exists, but its criteria were neither checked nor written and no
+	// creative was added. The dispatcher records it as a retained partial (pending, campaign id
+	// kept), never created_degraded, which the orchestrator would reuse as complete. Set only on
+	// that path's partial, which is always returned with an error.
+	TargetingNotApplied bool `json:"targetingNotApplied,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -2982,10 +2988,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// A profile create (no targeting) keeps reusing the campaign as before: its criteria are
 	// derived from the service's own targeting profile rather than per-campaign caller input,
 	// and that retry path predates #552.
+	//
+	// The partial carries TargetingNotApplied so the dispatcher records it as pending rather than
+	// created_degraded: a campaign id with no creatives would otherwise read as a degraded success,
+	// which the orchestrator reuses, and a repeated request would report success for targeting that
+	// was never applied (#557 review).
 	if campaignReused && targeting != nil {
 		steps = append(steps, fmt.Sprintf("Stopped before the creatives: campaign %s was found by name (an earlier attempt or an operator made it), and linkedInConfig.targeting is applied only to a campaign this run creates; check its targeting in Campaign Manager and finish the campaign there", campaignID))
-		return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps),
-			fmt.Errorf("linkedin targeting NOT applied to reused campaign %s (linkedInConfig.targeting is set only on a campaign this run creates; no conversion, image, dark post or creative was added): verify the campaign's targeting in Campaign Manager", campaignID)
+		r := c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps)
+		r.TargetingNotApplied = true
+		return r, fmt.Errorf("linkedin targeting NOT applied to reused campaign %s (linkedInConfig.targeting is set only on a campaign this run creates; no conversion, image, dark post or creative was added): verify the campaign's targeting in Campaign Manager", campaignID)
 	}
 
 	// Conversions (#552) are associated as soon as the campaign exists, on a reused campaign too

@@ -1073,14 +1073,18 @@ is NOT given `targeting`: it is written only into a campaign the create makes, a
 campaign's existing criteria are not read back. With `targeting` set, such a create stops before
 any conversion, image, dark post or creative and fails with the campaign recorded for
 reconciliation (`linkedin targeting NOT applied to reused campaign <id>`); check its targeting in
-Campaign Manager and finish it there. A create without `targeting` reuses the campaign as before.
+Campaign Manager and finish it there. The campaign row is left `pending` with the campaign id (and
+`targetingNotApplied: true` in its result), so repeating the request does not report success: it
+answers `a prior dispatch left an incomplete campaign upstream; reconciliation required` without
+contacting LinkedIn. A create without `targeting` reuses the campaign as before.
 
 Refused with a synchronous `400 invalid campaign config: linkedInConfig.targeting: …` before any
 job exists: a `targeting` whose JSON shape is wrong (an unknown key such as a misspelled `exclude`, explicit `null`, `include` not an array of objects of string arrays, `exclude` not an object of string arrays); an unknown facet; a malformed or wrong-namespace value (ids are numeric, no leading
 zero); a blank or padded value; an empty clause, empty facet, no clause or more than 10; more than
 100 values in a facet (200 for `employers`, LinkedIn's caps); `groups` or `interfaceLocales` under
 `exclude`; a value both included and excluded; an included employer that is in
-`employerExclusions`, a malformed `employerExclusions` value, or more than 200 employers in
+`employerExclusions`, a malformed `employerExclusions` value (held to the `employers` rule, so
+numeric ids with no leading zero, like `exclude.employers`), or more than 200 employers in
 `exclude.employers` once `employerExclusions` is merged (employers compare by id, so
 `urn:li:company:<n>` and `urn:li:organization:<n>` are one employer); `staffCountRanges` both included and excluded;
 `titles` included with included `seniorities` or `jobFunctions`, and `employers` included with

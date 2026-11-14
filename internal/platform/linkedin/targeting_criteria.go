@@ -241,9 +241,9 @@ func ValidateTargeting(t *Targeting, employerExclusions []string) (*Targeting, e
 			}
 		}
 	}
-	configured, err := validFacets("employer-exclusions", employerExclusions)
+	configured, err := targetingEmployerExclusions(employerExclusions)
 	if err != nil {
-		return nil, targetingInvalid("employerExclusions: %v", err)
+		return nil, err
 	}
 	includedEmployers := make(map[string]struct{}, len(included["employers"]))
 	for _, v := range included["employers"] {
@@ -258,6 +258,26 @@ func ValidateTargeting(t *Targeting, employerExclusions []string) (*Targeting, e
 		return nil, targetingInvalid("exclude.employers with employerExclusions holds more than %d employers; LinkedIn allows at most %d", maxEmployerFacetValues, maxEmployerFacetValues)
 	}
 	return out, nil
+}
+
+// targetingEmployerExclusions is the config's employerExclusions as the targeting path uses them:
+// validFacets (non-blank, trimmed, company or organization namespace), then cleanFacet's
+// employers rule, so a configured exclusion meets the same bar as exclude.employers. Without the
+// second step urn:li:company:01111 passed (validFacets takes any digits) although exclude.employers
+// refuses it, and it slipped past the include overlap check, which compares ids as strings, beside
+// an included urn:li:organization:1111 (#557 review). cleanFacet also drops an alias of an employer
+// already listed, keeping the first URN. ValidateTargeting and buildCustomTargetingCriteria both
+// read the list through here, so what is checked is what is merged. The profile path keeps reading
+// it through validFacets alone, unchanged.
+func targetingEmployerExclusions(raw []string) ([]string, error) {
+	configured, err := validFacets("employer-exclusions", raw)
+	if err != nil {
+		return nil, targetingInvalid("employerExclusions: %v", err)
+	}
+	if len(configured) == 0 {
+		return nil, nil
+	}
+	return cleanFacet("employers", configured, "employerExclusions", true)
 }
 
 // employerKey is the id an employer URN names; company and organization URNs of one id are the
@@ -339,7 +359,7 @@ func facetURN(key string) string { return "urn:li:adTargetingFacet:" + key }
 // exclude.or from Exclude plus the runtime config's employer exclusions. The caller has already
 // run ValidateTargeting with the same employer exclusions.
 func (c *Client) buildCustomTargetingCriteria(t *Targeting, geoURNs []string) (map[string]any, error) {
-	employerExclusions, err := validFacets("employer-exclusions", c.cfg.EmployerExclusions)
+	employerExclusions, err := targetingEmployerExclusions(c.cfg.EmployerExclusions)
 	if err != nil {
 		return nil, err
 	}

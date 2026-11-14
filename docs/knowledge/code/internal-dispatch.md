@@ -5610,3 +5610,13 @@ and `Dispatch` (not-created refusal) both run, after `checkConversionsShape` ref
 are not JSON strings (encoding/json would decode a number to `""`); `Dispatch` keeps the de-duplicated copy for the
 client and the snapshot. `campaignFromLinkedIn` reports a result with `ConversionsFailed` as
 `created_degraded`.
+
+**LinkedIn reused-campaign targeting stop (#552).** A result with `TargetingNotApplied` (the
+client's stop on a campaign found by name while `linkedInConfig.targeting` is set) is stamped
+`pending` by `campaignFromLinkedIn`, campaign id kept, never `created_degraded`: the orchestrator
+preserves and reuses `created_degraded`, so a repeat would report success for targeting that was
+never applied, while `pending` with an id is the retained partial orphan `isReusableCampaign`
+refuses, so a repeat answers reconciliation required. It is the state Microsoft's equivalent stop
+(a `created` row returned with an error) is flattened to. Pinned by
+`TestLinkedIn_ReusedCampaignTargetingStopIsNotReusable` and, through two orchestrator starts,
+`TestOrchestrator_TargetingStopIsNotReusedOnRetry`.
