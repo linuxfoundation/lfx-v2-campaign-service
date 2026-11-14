@@ -218,32 +218,8 @@ type linkedinConfig struct {
 // would get the default three silently. Anything it cannot attribute to jobFunctions is left to
 // the ordinary decode.
 func checkJobFunctionsShape(config json.RawMessage) error {
-	var envelope map[string]json.RawMessage
-	if json.Unmarshal(config, &envelope) != nil {
-		return nil
-	}
-	var platformCfg map[string]json.RawMessage
-	if json.Unmarshal(envelope["linkedInConfig"], &platformCfg) != nil {
-		return nil
-	}
-	for k, raw := range platformCfg {
-		if !strings.EqualFold(k, "jobFunctions") {
-			continue
-		}
-		var entries []json.RawMessage
-		bad := isJSONNull(raw) || json.Unmarshal(raw, &entries) != nil
-		for _, e := range entries {
-			var str string
-			if bad || json.Unmarshal(e, &str) != nil {
-				bad = true
-				break
-			}
-		}
-		if bad {
-			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.jobFunctions must be an array of job function URN strings, e.g. [\"urn:li:function:8\"]", domain.ErrCreateConfigInvalid))
-		}
-	}
-	return nil
+	const msg = "linkedInConfig.jobFunctions must be an array of job function URN strings, e.g. [\"urn:li:function:8\"]"
+	return checkStringArrayShape(config, "jobFunctions", msg, msg)
 }
 
 // linkedinJobFunctions checks linkedInConfig.jobFunctions before any job or request: refused
@@ -362,6 +338,16 @@ func linkedinConversionsEnabled() bool {
 // pre-flight decode keeps going, so without this a caller sending [104012] would be told "" is
 // not an id. Anything it cannot attribute to `conversions` is left to the ordinary decode.
 func checkConversionsShape(config json.RawMessage) error {
+	return checkStringArrayShape(config, "conversions",
+		"linkedInConfig.conversions must be an array of conversion rule id strings, e.g. [\"104012\"]",
+		"linkedInConfig.conversions entries must be strings, e.g. [\"104012\"]")
+}
+
+// checkStringArrayShape refuses a linkedInConfig.<field> that is not a JSON array of strings,
+// with notArray for a null or non-array value and notString for a non-string entry, each as an
+// ErrCreateConfigInvalid pre-flight refusal. The key is matched case-insensitively, as
+// encoding/json does. Anything it cannot attribute to the field is left to the ordinary decode.
+func checkStringArrayShape(config json.RawMessage, field, notArray, notString string) error {
 	var envelope map[string]json.RawMessage
 	if json.Unmarshal(config, &envelope) != nil {
 		return nil
@@ -371,19 +357,19 @@ func checkConversionsShape(config json.RawMessage) error {
 		return nil
 	}
 	for k, raw := range platformCfg {
-		if !strings.EqualFold(k, "conversions") {
+		if !strings.EqualFold(k, field) {
 			continue
 		}
 		var entries []json.RawMessage
 		// An explicit null decodes to a nil slice without error, which would read as "omitted";
 		// it is refused instead, as a non-array is.
 		if isJSONNull(raw) || json.Unmarshal(raw, &entries) != nil {
-			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.conversions must be an array of conversion rule id strings, e.g. [\"104012\"]", domain.ErrCreateConfigInvalid))
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: %s", domain.ErrCreateConfigInvalid, notArray))
 		}
 		for _, e := range entries {
 			var str string
 			if json.Unmarshal(e, &str) != nil {
-				return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.conversions entries must be strings, e.g. [\"104012\"]", domain.ErrCreateConfigInvalid))
+				return domain.WrapPreflightRefusal(fmt.Errorf("%w: %s", domain.ErrCreateConfigInvalid, notString))
 			}
 		}
 	}

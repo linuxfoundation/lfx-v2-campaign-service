@@ -142,6 +142,46 @@ func TestCreateCampaign_InvalidTargetingRefusedBeforeAnyRequest(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_JobFunctionsRefusedBeforeAnyRequest pins the client's own #585 guards, which
+// back up the dispatcher's: jobFunctions sent with targeting, and a malformed jobFunctions on a
+// profile create, are both pre-flight refusals raised before LinkedIn is called.
+func TestCreateCampaign_JobFunctionsRefusedBeforeAnyRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		targeting *Targeting
+		jobFns    []string
+		want      string
+	}{
+		{"with targeting", &Targeting{Include: []map[string][]string{{"skills": {"urn:li:skill:1"}}}}, []string{"urn:li:function:4"}, "not read with targeting"},
+		{"wrong namespace", nil, []string{"urn:li:skill:4"}, "not urn:li:function:<id>"},
+		{"empty", nil, []string{}, "jobFunctions is empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { calls.Add(1) }))
+			defer srv.Close()
+			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+			in := CampaignInput{
+				EventName: "KubeCon", RegistrationURL: "https://events.example.org/kubecon",
+				BudgetUSD: 100, StartDate: "2099-01-01", EndDate: "2099-02-01",
+				GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+				Variants:         []CreativeVariant{{IntroText: "Join us — it's great", Headline: "KubeCon 2099"}},
+				Project:          "CNCF",
+				TargetingProfile: "cloud-native",
+				Targeting:        tc.targeting,
+				JobFunctions:     tc.jobFns,
+			}
+			_, err := c.CreateCampaign(context.Background(), in)
+			if _, pre := domain.AsPreflightRefusal(err); !errors.Is(err, ErrTargetingInvalid) || !pre || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want a pre-flight ErrTargetingInvalid containing %q, got %v", tc.want, err)
+			}
+			if n := calls.Load(); n != 0 {
+				t.Errorf("%d LinkedIn requests before the refusal", n)
+			}
+		})
+	}
+}
+
 func TestValidateTargeting(t *testing.T) {
 	inc := func(clauses ...map[string][]string) *Targeting { return &Targeting{Include: clauses} }
 	many := func(prefix string, n int) []string {
