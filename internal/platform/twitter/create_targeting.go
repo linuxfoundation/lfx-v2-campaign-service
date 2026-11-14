@@ -294,8 +294,8 @@ func CheckCreateCriteriaCount(n int) error {
 	if n <= MaxCreateTargetingCriteria {
 		return nil
 	}
-	return fmt.Errorf("%s, %s, %s, %s, %s, %s, %s and %s together name %d targeting criteria; at most %d are accepted per create, since each is a separate X write paced at one per second",
-		FieldGeoTargets, FieldLanguages, FieldKeywords, FieldInterestIDs, FieldConversationTopics, FieldPlatforms, FieldCustomAudienceIDs, FieldExcludedCustomAudienceIDs, n, MaxCreateTargetingCriteria)
+	return fmt.Errorf("%s, %s, %s, %s, %s, %s, %s, %s and %s together name %d targeting criteria; at most %d are accepted per create, since each is a separate X write paced at one per second",
+		FieldGeoTargets, FieldLanguages, FieldKeywords, FieldInterestIDs, FieldConversationTopics, FieldPlatforms, FieldFollowerLookalikeUserIDs, FieldCustomAudienceIDs, FieldExcludedCustomAudienceIDs, n, MaxCreateTargetingCriteria)
 }
 
 // createCriterion is one criterion the create path will POST.

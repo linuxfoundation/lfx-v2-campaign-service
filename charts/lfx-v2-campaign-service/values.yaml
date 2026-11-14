@@ -411,6 +411,14 @@ app:
     TWITTER_AUDIENCE_EXPANSION_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to twitterConfig.followerLookalikeUserIds (#564 gap 4c),
+    # SIMILAR_TO_FOLLOWERS_OF_USER criteria on the new X line item. Default off: no live
+    # create has sent it. X has no user lookup, so an id X refuses fails at its criterion
+    # POST and leaves a PAUSED partial for reconciliation. While off, a create setting it is
+    # refused with a 400 before any job exists. Any value other than "true" is treated as off.
+    TWITTER_FOLLOWER_LOOKALIKES_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to the positive keyword add lever on an existing X
     # campaign (#564 gap 12): POST .../keyword-targeting/additions, one
     # BROAD_KEYWORD criterion (operator_type EQ) per keyword on the line item this
