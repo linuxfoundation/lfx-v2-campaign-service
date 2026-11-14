@@ -207,6 +207,14 @@ type resolved struct {
 	label          string // the connection's friendly name (Connection.Label column)
 	providerConfig map[string]string
 	status         model.ConnectionStatus
+	// grants are the connection row's LinkedIn account grants (#581), attached from the row on
+	// every resolution rather than cached with the credential, so the set is always the one
+	// the row was read with. Empty for every other provider and every project-owned row.
+	grants []model.LinkedInAccountGrant
+	// grantAccount is set only on a copy grantScoped produced: the granted account this
+	// resolution addresses instead of the row's default. Anything cached per resolution (the
+	// LinkedIn client) must key on it, because one row now serves several accounts.
+	grantAccount string
 	// fromSystem records that these credentials came from the LF system fallback, not
 	// from a row the project owns. Defects found LATER — by an adapter's validator, not
 	// by resolveConn — are otherwise indistinguishable, and misattributing them sends a
@@ -351,8 +359,8 @@ func (s *credsSource) resolveExisting(ctx context.Context, projectID string, pro
 			// cases have different owners and only the row's own provenance separates them.
 			return nil, s.faultForCreator(ctx, provider, creationAccountID, err, sysErr)
 		}
-		if matchesAccount(sysRes.accountID, creationAccountID) {
-			return sysRes, nil
+		if onSys, ok := existingOnSystem(sysRes, creationAccountID); ok {
+			return onSys, nil
 		}
 		// The system row exists but did NOT create this campaign, and the project scope could
 		// not be resolved. Nothing here can address the campaign, so the project's error
@@ -410,8 +418,8 @@ func (s *credsSource) resolveExisting(ctx context.Context, projectID string, pro
 		// statement about reachability, not about provenance.
 		return res, nil
 	}
-	if matchesAccount(sysRes.accountID, creationAccountID) {
-		return sysRes, nil
+	if onSys, ok := existingOnSystem(sysRes, creationAccountID); ok {
+		return onSys, nil
 	}
 	// Neither account created this campaign — the project re-pointed its connection, which is
 	// exactly what the provenance guards exist to catch. Return the project resolution so the
@@ -494,6 +502,11 @@ func (s *credsSource) systemCreated(ctx context.Context, provider model.Provider
 		// Present but nameless (installed-but-unconfigured). It names no account, so it can
 		// be shown neither to own nor to disown this campaign.
 		return false, false
+	}
+	if _, granted := conn.LinkedInGrant(creationAccountID); granted {
+		// A campaign created in one of the row's granted accounts (#581) is the system row's
+		// as much as one created in its default account.
+		return true, true
 	}
 	return matchesAccount(conn.AccountID, creationAccountID), true
 }
@@ -798,7 +811,9 @@ func (s *credsSource) resolveConn(ctx context.Context, projectID string, conn *m
 	// poison nor read a project-owned entry.
 	key := cacheKeyFor(projectID, provider)
 	if cached, ok := s.cache.get(key, conn.ID, conn.Version); ok {
-		return cached.clone(), nil
+		out := cached.clone()
+		out.grants = conn.LinkedInGrants
+		return out, nil
 	}
 
 	// The branches below are tagged with domain.ErrConnectionNotUsable; the two above
@@ -842,7 +857,9 @@ func (s *credsSource) resolveConn(ctx context.Context, projectID string, conn *m
 	// THIS call resolved, not of the credential: handing several callers one pointer would
 	// let a fallback resolution's attribution appear on a project-owned one, and would be a
 	// write race between goroutines besides.
-	return shared.clone(), nil
+	out := shared.clone()
+	out.grants = conn.LinkedInGrants
+	return out, nil
 }
 
 // decryptConn performs the actual decrypt and builds the resolved value, storing it in the

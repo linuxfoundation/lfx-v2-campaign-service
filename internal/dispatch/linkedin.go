@@ -671,6 +671,12 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 // client in the same step that invalidates the credential; a stale client is a stale credential.
 func (d *LinkedInDispatcher) cachedLinkedInClient(projectID string, platform model.Provider, res *resolved, creds linkedinCreds, accountID string) *linkedin.Client {
 	key, connID, version := res.cacheIdentity(projectID, platform)
+	if res.grantAccount != "" {
+		// One system row now serves its default account and each granted one (#581), and the
+		// client's RuntimeConfig names exactly one: without the account in the key, a pause on a
+		// granted account would reuse the default account's client and address the wrong one.
+		key.projectID += "\x00grant:" + res.grantAccount
+	}
 	build := func() *linkedin.Client {
 		runtime := linkedin.RuntimeConfig{
 			DefaultAccountID: accountID,
