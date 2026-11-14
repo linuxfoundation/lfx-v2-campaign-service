@@ -335,6 +335,11 @@ func TestMigration000020_ScopesTheIndexToGoogleAds(t *testing.T) {
 // Empty is the resting state: TestMigrations_AllowedVersionGapsAreStillOpen fails on a stale
 // entry, so the merge that closes a gap cannot be green while its excuse survives.
 var allowedVersionGaps = map[int]string{
+	// 57 — OPEN (#581). 000057_creative_assets_video_mp4 is claimed by the unmerged branch
+	// feat/586-linkedin-video-ads (#586). This branch's 000058_linkedin_ads_account_grants sits
+	// above it, so this branch MUST NOT merge before #586's migration lands, or 000057 is skipped
+	// forever. If #586 is abandoned or renumbered, renumber 000058 down instead and drop this entry.
+	57: "000057 is claimed by feat/586-linkedin-video-ads (#586), which must merge first",
 	// 19 — REMOVED (LFXV2-3056). 000019_audience_actor_columns was claimed by PR #103
 	// (LFXV2-3055) while it was unmerged, and this entry excused the gap so this branch could
 	// stay green ahead of it. #103 has merged, so 000019 exists in the tree and the ordering
