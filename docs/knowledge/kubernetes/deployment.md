@@ -178,6 +178,10 @@ picker read (#563 gap 7) on the same terms, defaulting to `"false"`: the `GetCon
 pre-create read, `Campaign.GoalIds` and `MaxConversionsBiddingScheme` are from the v13 reference and
 have not been sent live. The picker route is on the gateway's `marketing-ops-api` rule.
 
+`MICROSOFT_AD_GROUPS_ENABLED` gates `microsoftConfig.adGroups` (#563 gap 12) on the same terms,
+defaulting to `"false"`: a create with several ad groups has not been exercised live. Each
+per-group field also stays behind its single-group flag.
+
 `TWITTER_METRICS_ENABLED` is the third gate of this kind, defaulting to `"false"`, and it
 covers BOTH X Ads features built on stats jobs (LFXV2-2665) — the ACCOUNT MONITOR and the
 AUDIENCE READ (`twitter-ads/audience`, `twitterAudienceEnabled` in

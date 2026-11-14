@@ -112,6 +112,15 @@ func (d *MicrosoftDispatcher) WriteBid(ctx context.Context, projectID string, pl
 	// Every guard has passed; this is the first and only mutating call, and its error MUST be
 	// classified — an unwrapped ambiguous failure would be answered "the campaign was not
 	// modified", a false claim about a money-moving write.
+	//
+	// A multi-ad-group create (#563 gap 12) bids every ad group it made at the same CpcBid, so the
+	// campaign's bid is changed on ALL of them, first group first. A failure after an earlier
+	// group changed is UNCONFIRMED: the campaign is left partly re-bid.
+	for _, g := range microsoftExtraAdGroups(campaign.Result) {
+		if !microsoftCampaignIDRE.MatchString(g.adGroupID) {
+			return fmt.Errorf("write microsoft campaign bid: the recorded ad group id %q is not a Microsoft ad group id: %w", g.adGroupID, domain.ErrBidUnwritable)
+		}
+	}
 	if err := client.UpdateAdGroupCpcBid(ctx, campaignID, adGroupID, bid.Amount); err != nil {
 		werr := fmt.Errorf("write microsoft campaign bid for campaign %s: %w", campaignID, err)
 		switch {
@@ -123,6 +132,11 @@ func (d *MicrosoftDispatcher) WriteBid(ctx context.Context, projectID string, pl
 			return microsoftBidAmountRejected(err)
 		}
 		return werr
+	}
+	for _, g := range microsoftExtraAdGroups(campaign.Result) {
+		if err := client.UpdateAdGroupCpcBid(ctx, campaignID, g.adGroupID, bid.Amount); err != nil {
+			return &unconfirmedBidWriteError{err: fmt.Errorf("write microsoft campaign bid for campaign %s: ad group %s was re-bid but ad group %s was not, so the campaign is partly re-bid: %w", campaignID, adGroupID, g.adGroupID, err)}
+		}
 	}
 	return nil
 }

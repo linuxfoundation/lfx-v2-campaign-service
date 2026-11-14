@@ -98,6 +98,9 @@ const (
 	// entityTypeCampaign is EntityNegativeKeyword.EntityType for a campaign-level negative
 	// ("The possible values are AdGroup and Campaign").
 	entityTypeCampaign = "Campaign"
+	// entityTypeAdGroup is EntityNegativeKeyword.EntityType for an ad-group-level negative
+	// (#563 gap 12, microsoftConfig.adGroups[].negativeKeywords).
+	entityTypeAdGroup = "AdGroup"
 )
 
 // Negative-keyword error codes, both spellings. 4335 is
@@ -779,8 +782,23 @@ type addNegativeKeywordsResponse struct {
 // but not about this item). An ENTITY-level error — the campaign itself refused — is a
 // whole-call DEFINITE failure: nothing was added to it.
 func (c *Client) AddCampaignNegativeKeywords(ctx context.Context, campaignID string, keywords []NegativeKeyword) ([]NegativeKeywordOutcome, error) {
-	if !canonicalPositiveID(campaignID) {
-		return nil, fmt.Errorf("microsoft-ads: campaign id %q is not a numeric id", truncate(campaignID, maxErrorBodyChars))
+	return c.addEntityNegativeKeywords(ctx, campaignID, entityTypeCampaign, keywords)
+}
+
+// AddAdGroupNegativeKeywords is AddCampaignNegativeKeywords for ONE ad group (EntityType
+// "AdGroup"), the create-time per-ad-group negatives of #563 gap 12; same rules and outcomes.
+func (c *Client) AddAdGroupNegativeKeywords(ctx context.Context, adGroupID string, keywords []NegativeKeyword) ([]NegativeKeywordOutcome, error) {
+	return c.addEntityNegativeKeywords(ctx, adGroupID, entityTypeAdGroup, keywords)
+}
+
+func (c *Client) addEntityNegativeKeywords(ctx context.Context, entityID, entityType string, keywords []NegativeKeyword) ([]NegativeKeywordOutcome, error) {
+	campaignID := entityID
+	if !canonicalPositiveID(entityID) {
+		what := "campaign"
+		if entityType == entityTypeAdGroup {
+			what = "ad group"
+		}
+		return nil, fmt.Errorf("microsoft-ads: %s id %q is not a numeric id", what, truncate(entityID, maxErrorBodyChars))
 	}
 	validated, err := ValidateNegativeKeywords(keywords)
 	if err != nil {
@@ -793,7 +811,7 @@ func (c *Client) AddCampaignNegativeKeywords(ctx context.Context, campaignID str
 	raw, err := c.doRequest(ctx, http.MethodPost, "EntityNegativeKeywords", addNegativeKeywordsRequest{
 		EntityNegativeKeywords: []msEntityNegativeKeyword{{
 			EntityId:         json.Number(campaignID),
-			EntityType:       entityTypeCampaign,
+			EntityType:       entityType,
 			NegativeKeywords: nks,
 		}},
 	}, false)

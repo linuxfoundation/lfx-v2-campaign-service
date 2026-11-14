@@ -1107,6 +1107,11 @@ func composeAdGroupName(in CampaignInput) string {
 	if s := sanitizeNamePart(in.NameSuffix); s != "" {
 		parts = append(parts, s)
 	}
+	// One of several ad groups (#563 gap 12) carries its own suffix last; the single ad group
+	// has none, so its name is unchanged.
+	if s := sanitizeNamePart(in.adGroupNameSuffix); s != "" {
+		parts = append(parts, s)
+	}
 	return strings.Join(parts, " | ")
 }
 

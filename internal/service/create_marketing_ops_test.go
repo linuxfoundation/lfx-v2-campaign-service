@@ -141,6 +141,8 @@ func TestMicrosoftMarketingOpsInputs(t *testing.T) {
 		{"conversion goals after the others", `{"microsoftConfig":{"conversionGoalIds":["5001"],"sharedNegativeKeywordListIds":["4001"]}}`, []string{"sharedNegativeKeywordListIds", "conversionGoalIds"}},
 		{"empty goal list does not count", `{"microsoftConfig":{"conversionGoalIds":[]}}`, nil},
 		{"bidding alone is not gated", `{"microsoftConfig":{"bidding":{"strategy":"maxConversions"}}}`, nil},
+		{"ad group lists", `{"microsoftConfig":{"adGroups":[{"nameSuffix":"A","keywords":[{"text":"k","matchType":"Exact"}]},{"nameSuffix":"B","excludedAudienceIds":["2"],"audienceIds":["1"]}]}}`, []string{"adGroups entry 2 audienceIds", "adGroups entry 2 excludedAudienceIds"}},
+		{"ad groups without lists", `{"microsoftConfig":{"adGroups":[{"nameSuffix":"A","audienceIds":[]}]}}`, nil},
 		{"inputs around a type error", `{"microsoftConfig":{"budget":"x","audienceIds":["1"]}}`, []string{"audienceIds"}},
 		{"envelope key is exact", `{"MicrosoftConfig":{"audienceIds":["1"]}}`, nil},
 		{"malformed envelope", `{`, nil},

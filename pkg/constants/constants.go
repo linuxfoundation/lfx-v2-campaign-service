@@ -326,6 +326,16 @@ const (
 	// shared account until a live create confirms it.
 	EnvMicrosoftConversionGoalsEnabled = "MICROSOFT_CONVERSION_GOALS_ENABLED"
 
+	// EnvMicrosoftAdGroupsEnabled opts a deployment IN to microsoftConfig.adGroups (#563 gap 12):
+	// up to five ad groups under one Microsoft campaign, each with its own name suffix, keywords,
+	// negative keywords, remarketing lists and ad copy. Only the exact value "true" enables it;
+	// unset or any other value fails closed, and a create naming it is refused with a 400 before
+	// any job exists (and again at dispatch). Each per-group field also stays behind its own
+	// single-group flag (ad copy, negatives, remarketing lists) and the lists behind
+	// global_marketing_ops. It keeps an UNVERIFIED multi-ad-group create off the shared account
+	// until a live create confirms it.
+	EnvMicrosoftAdGroupsEnabled = "MICROSOFT_AD_GROUPS_ENABLED"
+
 	// EnvMicrosoftAdExtensionsEnabled opts a deployment IN to microsoftConfig.sitelinks and
 	// microsoftConfig.callouts (#563), created at create time as SitelinkAdExtension and
 	// CalloutAdExtension entries and associated with the new Search campaign. Only the exact value

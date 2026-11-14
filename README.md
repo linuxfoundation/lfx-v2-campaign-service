@@ -405,6 +405,15 @@ openssl rand -base64 32
   The goals belong to the shared account, so `conversionGoalIds` also needs
   `global_marketing_ops`. The chart sets it to `"false"`
   (`app.environment.MICROSOFT_CONVERSION_GOALS_ENABLED.value`).
+- `MICROSOFT_AD_GROUPS_ENABLED` (default unset, i.e. OFF) — opts a deployment
+  IN to `microsoftConfig.adGroups` (#563 gap 12): up to five ad groups under
+  one Microsoft campaign, each with its own name suffix, keywords, negative
+  keywords, remarketing lists and ad copy. Each per-group field also stays
+  behind its single-group flag, and a group's remarketing lists need
+  `global_marketing_ops`. Only the exact value `true` enables it; anything else
+  fails closed, and a create naming it is refused with a 400 before any job
+  exists. The chart sets it to `"false"`
+  (`app.environment.MICROSOFT_AD_GROUPS_ENABLED.value`).
 - `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.demandGenAudience`, one
   existing Google Ads Audience on a Demand Gen ad group (#459). Only the

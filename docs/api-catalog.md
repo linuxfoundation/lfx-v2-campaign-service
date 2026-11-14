@@ -866,6 +866,45 @@ conversionGoalIds?: string[]    — EXISTING conversion goals the new campaign t
                                   any job exists. The goals belong to the shared LF account, so the
                                   field needs global_marketing_ops on the path project (403, or 503
                                   when the check cannot be made).
+adGroups?: object[]             — Up to 5 ad groups under the campaign instead of the single one
+                                  (#563 gap 12). Each: {nameSuffix, keywords, negativeKeywords?,
+                                  audienceIds?, excludedAudienceIds?, audienceBidAdjustment?,
+                                  headlines?, descriptions?, path1?, path2?}. nameSuffix is
+                                  required, 1-40 characters with a letter or digit, no control
+                                  character or "|", no leading/trailing space, unique ignoring
+                                  case; the ad group is named like the single one plus
+                                  " | <nameSuffix>". keywords: at least one. Every per-group field
+                                  has its single-group twin's rules AND flag: copy behind
+                                  MICROSOFT_AD_COPY_ENABLED; negativeKeywords behind
+                                  MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED, sent at the AD GROUP
+                                  level (EntityType AdGroup); lists behind
+                                  MICROSOFT_AUDIENCES_ENABLED and global_marketing_ops, checked
+                                  with one GetAudiencesByIds read per group before anything is
+                                  created, never written to a reused ad group. The single-group
+                                  keywords, headlines, descriptions, path1, path2, audienceIds,
+                                  excludedAudienceIds and audienceBidAdjustment are refused with
+                                  adGroups; every campaign-level field (budget, bidding, cpcBid,
+                                  dates, searchPartners, the campaign negativeKeywords, ...)
+                                  applies to every group. Groups are built in order. The FIRST
+                                  failing is today's failure (partial reported and retained); a
+                                  LATER one failing leaves the earlier ones, the rest are still
+                                  built, and the campaign is created_degraded with a step naming
+                                  each group not created (no rollback; a repeat does not retry
+                                  them). The result records adGroups [{nameSuffix, adGroupName,
+                                  adGroupId, adGroupReused?, adId, keywordIds, status
+                                  created|failed|not_attempted, error?, negativeKeywords?,
+                                  audiences?}]; the top-level adGroupId/adId/keywordIds are the
+                                  first group's. Pause/resume address every created group (resume
+                                  opens each group, with its live keywords, before the campaign;
+                                  pause closes the campaign first), PATCH .../bid re-bids every
+                                  created group (a failure after the first is UNCONFIRMED), and
+                                  keyword actions may name any created group, one per request. The
+                                  monitor and reports are campaign-level and unaffected. OFF unless
+                                  MICROSOFT_AD_GROUPS_ENABLED is exactly "true"; a wrong JSON type
+                                  (null reads as absent), a rule breach, or the list while the flag
+                                  is off is a synchronous 400 "invalid campaign config:
+                                  microsoftConfig.adGroups...". A group's audienceIds or
+                                  excludedAudienceIds need global_marketing_ops (403, or 503).
 ```
 budget: number                  — Whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…),
                                   applied as the campaign's DAILY budget. Must be a finite, POSITIVE

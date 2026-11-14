@@ -238,6 +238,14 @@ type CampaignInput struct {
 	// under the same fail-closed rules. Applied only to a campaign this run creates. Empty sends
 	// none, as before.
 	BidAdjustments BidAdjustments
+	// AdGroups (#563 gap 12, ad_groups.go) asks for up to MaxAdGroups ad groups, each with its
+	// own name suffix, keywords and ad copy; Keywords, Headlines, Descriptions, Path1 and Path2
+	// above are then unused (the dispatcher refuses them alongside AdGroups). Empty keeps the
+	// single ad group exactly as before.
+	AdGroups []AdGroupInput
+	// adGroupNameSuffix, set by createAdGroups on its per-group copy of the input, becomes the
+	// ad group name's last segment. Empty composes the single-group name unchanged.
+	adGroupNameSuffix string
 }
 
 // CampaignResult reports what CreateCampaign created (or found). The campaign NAME
@@ -312,6 +320,10 @@ type CampaignResult struct {
 	// ConversionGoalIDs are the conversion goals THIS RUN set as the campaign's GoalIds (#563 gap
 	// 7). Empty on a campaign found by name, which keeps the goals it has.
 	ConversionGoalIDs []string `json:"conversionGoalIds,omitempty"`
+	// AdGroups is every requested ad group's outcome, in request order, when the create asked for
+	// microsoftConfig.adGroups (#563 gap 12); omitted on the single-group path. The top-level
+	// AdGroupName/AdGroupID/AdID/KeywordIDs are its first entry's.
+	AdGroups []AdGroupResult `json:"adGroups,omitempty"`
 	// AlreadyExisted is true ONLY when this run created NOTHING — i.e. the campaign, the ad
 	// group, AND the ad were all matched as pre-existing (by name / by destination) and no
 	// create was issued at any level. If ANY level was created this run, it is false, even
@@ -662,6 +674,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, domain.WrapPreflightRefusal(fmt.Errorf("microsoft-ads campaign ad copy invalid: %w", err))
 	}
 	in.Path1, in.Path2 = path1, path2
+	var adGroups []validatedAdGroup
 	u, perr := url.Parse(finalURL)
 	if perr != nil {
 		return nil, fmt.Errorf("microsoft-ads could not parse the composed ad final URL to validate its display domain: %w", perr)
@@ -717,6 +730,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 					domain.CallerValue(authority), n, pathLimit)
 			}
 		}
+		// The requested ad groups (#563 gap 12): each group's keywords, copy and display paths are
+		// checked here too, before anything exists, against the same display domain.
+		groups, gerr := validateAdGroups(in, authority)
+		if gerr != nil {
+			return nil, domain.PreflightRefusalf("invalid microsoftConfig.%s", gerr.Error())
+		}
+		adGroups = groups
 	}
 	// Validate caller-supplied ad copy up front too (over-count / over-long headlines or
 	// descriptions), so a bad copy input fails cleanly before the campaign is created rather
@@ -1141,9 +1161,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// re-running validateKeywords/validateCpcBid inside the ad-group step would let the
 	// up-front check and the sent value drift apart, and the up-front check is the one that
 	// guarantees nothing is orphaned.
-	return c.createAdGroupAndAd(ctx, in, campaignID, alreadyExisted, &steps, campaignPartial,
-		targeting{keywords: keywords, cpcBid: cpcBid, cpcBidSet: cpcBidSet, flight: flightDates, campaignLanguages: len(extra.Languages) > 0,
-			network: adGroupNetwork(in.SearchPartners)})
+	tgt := targeting{keywords: keywords, cpcBid: cpcBid, cpcBidSet: cpcBidSet, flight: flightDates, campaignLanguages: len(extra.Languages) > 0,
+		network: adGroupNetwork(in.SearchPartners)}
+	if len(adGroups) > 0 {
+		// Several ad groups (#563 gap 12): each built as the single one is, in request order.
+		return c.createAdGroups(ctx, in, adGroups, campaignID, alreadyExisted, &steps, campaignPartial, tgt)
+	}
+	return c.createAdGroupAndAd(ctx, in, campaignID, alreadyExisted, &steps, campaignPartial, tgt)
 }
 
 // findCampaignByName returns the id of the campaign whose Name matches name, or "" if
