@@ -137,8 +137,10 @@ type Service interface {
 	// TWITTER_TWEET_VARIANTS_ENABLED is off (#564 gap 10). So is a
 	// twitterConfig.card that breaks its rules, or is sent while
 	// TWITTER_WEBSITE_CARD_ENABLED is off (#564 gap 6). So is a
-	// microsoftConfig.sitelinks or callouts list that breaks its rules, or is sent
-	// while MICROSOFT_AD_EXTENSIONS_ENABLED is off (#563). So is a
+	// twitterConfig.videoAssetId that breaks its rules, or is sent while
+	// TWITTER_VIDEO_ENABLED is off (#564 gap 7). So is a microsoftConfig.sitelinks
+	// or callouts list that breaks its rules, or is sent while
+	// MICROSOFT_AD_EXTENSIONS_ENABLED is off (#563). So is a
 	// microsoftConfig.negativeKeywords list that breaks its rules or is sent while
 	// MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is off (see the config
 	// attribute). So is a microsoftConfig.headlines, descriptions, path1 or path2
@@ -1423,17 +1425,40 @@ type CampaignCreateInput struct {
 	// no card. OFF unless TWITTER_WEBSITE_CARD_ENABLED is exactly "true"; a card
 	// while off, a rule breach or a wrong shape (null reads as absent) is refused
 	// with 400 "invalid campaign config: twitterConfig.card: ..." before any job
-	// exists. Not role-gated. X CUSTOM AUDIENCES (#564): twitterConfig takes
-	// `customAudienceIds` and `excludedCustomAudienceIds`, arrays of X custom
-	// audience ids (list-twitter-ads-custom-audiences offers them) to target and
-	// to exclude, sent as CUSTOM_AUDIENCE targeting criteria on the new line item
-	// with operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
-	// given; at most 60 per list; no id twice and none in both lists. geoTargets,
-	// languages, keywords, interestIds, conversationTopics, platforms,
-	// customAudienceIds and excludedCustomAudienceIds together may name at most 60
-	// criteria per create, since each is a separate X write paced at one per
-	// second inside the two-minute dispatch budget; more is refused with the same
-	// 400. Before anything is created every id is read with GET
+	// exists. Not role-gated. X VIDEO (#564 gap 7): twitterConfig takes
+	// `videoAssetId`, the id of an MP4 creative asset uploaded to this brief
+	// (upload-creative-asset, content_type video/mp4, at most 30 MiB), attached to
+	// the authored tweet(s) instead of an image, or used as the website card's
+	// media. It requires an authored tweet (tweetText or variants, never tweetId)
+	// and is never combined with imageAssetId. Before anything billable exists the
+	// video is uploaded through X's chunked media upload (initialize with
+	// media_category amplify_video and media_type video/mp4, one append per 4 MiB
+	// segment, finalize, then the STATUS command while X reports processing, at
+	// most 6 checks of at most 5 seconds each) and added to the ad account's Media
+	// Library under a name derived from its SHA-256, which a later create of the
+	// same bytes finds and reuses instead of uploading again; its media_key is
+	// then sent as media_keys on every authored tweet. A video that cannot be
+	// uploaded, is rejected during processing, or does not finish processing
+	// within that bound fails the job with nothing created. A create with a
+	// videoAssetId may name at most 30 targeting criteria in total (the upload and
+	// processing share the dispatch budget). An asset that does not exist for this
+	// brief, is over 30 MiB or is not video/mp4 fails the job before any X
+	// request. OFF unless TWITTER_VIDEO_ENABLED is exactly "true"; a videoAssetId
+	// while off, a malformed id, one beside imageAssetId or tweetId or without
+	// tweetText or variants, more than 30 criteria, or a non-string (null reads as
+	// absent) is refused with 400 "invalid campaign config: twitterConfig..."
+	// before any job exists. Not role-gated. X CUSTOM AUDIENCES (#564):
+	// twitterConfig takes `customAudienceIds` and `excludedCustomAudienceIds`,
+	// arrays of X custom audience ids (list-twitter-ads-custom-audiences offers
+	// them) to target and to exclude, sent as CUSTOM_AUDIENCE targeting criteria
+	// on the new line item with operator EQ and NE. Each id is 1-32 letters or
+	// digits, sent exactly as given; at most 60 per list; no id twice and none in
+	// both lists. geoTargets, languages, keywords, interestIds,
+	// conversationTopics, platforms, customAudienceIds and
+	// excludedCustomAudienceIds together may name at most 60 criteria per create,
+	// since each is a separate X write paced at one per second inside the
+	// two-minute dispatch budget; more is refused with the same 400. Before
+	// anything is created every id is read with GET
 	// accounts/:account_id/custom_audiences and must be live and targetable; a
 	// missing, deleted or non-targetable audience fails the job with nothing
 	// created. The exclusions are posted first of all the criteria and the

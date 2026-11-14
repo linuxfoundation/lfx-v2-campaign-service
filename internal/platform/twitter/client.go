@@ -3392,6 +3392,12 @@ type CampaignInput struct {
 	// tweet this create authors. It requires Image and an authored tweet (TweetText or
 	// TweetVariants, no TweetID). nil means no card, as before.
 	WebsiteCard *WebsiteCardInput
+	// Video, when non-nil, is attached to the AUTHORED tweet(s) instead of an image (#564 gap 7;
+	// video.go): uploaded as amplify_video and added to the Media Library before anything billable
+	// exists, then sent as media_keys (or as the website card's media). It requires an authored
+	// tweet (TweetText or TweetVariants, no TweetID), excludes Image, and limits the create's
+	// targeting criteria to MaxCreateTargetingCriteriaWithVideo.
+	Video *VideoInput
 }
 
 // manualMaxBidMicros encodes a create-time manual bid in micro-units, refusing (never rounding)
@@ -3430,9 +3436,9 @@ type CampaignResult struct {
 	// TweetID. Empty when TweetID was used, when no creative input was supplied
 	// at all, or when authoring did not confirm an id (see PromotedTweetWarning).
 	AuthoredTweetID string
-	// MediaKey is the Media Library media_key of the creative image attached to the authored
-	// tweet (Image), recorded so the persisted result names the library entry a later dispatch
-	// of the same bytes reuses. Empty when no image was requested.
+	// MediaKey is the Media Library media_key of the creative image (Image) or video (Video,
+	// #564 gap 7) attached to the authored tweet, recorded so the persisted result names the
+	// library entry a later dispatch of the same bytes reuses. Empty when neither was requested.
 	MediaKey        string
 	PromotedTweetID string
 	// PromotedTweets records every variant's outcome (#564 gap 10), in variant order, including
@@ -3696,6 +3702,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// no tweet will be authored — an explicit TweetID wins over TweetText, and an existing
 	// tweet's media cannot be changed — rather than dropped, because the campaign would then
 	// serve without the image the caller asked for.
+	// A creative video (#564 gap 7), the same way; an image and a video are never both attached.
+	if in.Video != nil {
+		if in.Image != nil {
+			return nil, domain.PreflightRefusalf("invalid creative video: a tweet carries an image or a video, not both; omit imageAssetId or videoAssetId")
+		}
+		if composedTweetText == "" && len(composedVariants) == 0 {
+			return nil, domain.PreflightRefusalf("invalid creative video: a video is attached only to an authored tweet, so it requires tweetText (or variants) and no tweetId")
+		}
+		if err := validateVideoInput(in.Video); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+	}
 	if in.Image != nil {
 		if composedTweetText == "" && len(composedVariants) == 0 {
 			return nil, domain.PreflightRefusalf("invalid creative image: an image is attached only to an authored tweet, so it requires tweetText (or variants) and no tweetId")
@@ -3716,8 +3734,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if composedTweetText == "" && len(composedVariants) == 0 {
 			return nil, domain.PreflightRefusalf("invalid twitterConfig.%s: a website card rides on an authored tweet, so it requires tweetText (or variants) and no tweetId", FieldWebsiteCard)
 		}
-		if in.Image == nil {
-			return nil, domain.PreflightRefusalf("invalid twitterConfig.%s: a website card needs media, so it requires imageAssetId", FieldWebsiteCard)
+		if in.Image == nil && in.Video == nil {
+			return nil, domain.PreflightRefusalf("invalid twitterConfig.%s: a website card needs media, so it requires imageAssetId or videoAssetId", FieldWebsiteCard)
 		}
 		dest, derr := buildTwitterCardUTMURL(in)
 		if derr != nil {
@@ -3767,9 +3785,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", lerr.Error())
 	}
 	// And all the criteria together must fit the paced-write budget (MaxCreateTargetingCriteria).
-	if cerr := CheckCreateCriteriaCount(len(geoTargets) + len(languages) + len(keywords) + len(interestIDs) + len(topics) + len(platforms) + len(lookalikes) + len(in.CustomAudienceIDs) + len(in.ExcludedCustomAudienceIDs)); cerr != nil {
+	nCriteria := len(geoTargets) + len(languages) + len(keywords) + len(interestIDs) + len(topics) + len(platforms) + len(lookalikes) + len(in.CustomAudienceIDs) + len(in.ExcludedCustomAudienceIDs)
+	if cerr := CheckCreateCriteriaCount(nCriteria); cerr != nil {
 		// Fixed text and counts only: operator-safe.
 		return nil, domain.PreflightRefusalf("invalid twitterConfig: %s", cerr.Error())
+	}
+	// A video's upload and processing need room in the same budget (#564 gap 7).
+	if in.Video != nil {
+		if cerr := CheckCreateCriteriaCountWithVideo(nCriteria); cerr != nil {
+			return nil, domain.PreflightRefusalf("invalid twitterConfig: %s", cerr.Error())
+		}
 	}
 
 	// Validate required account config before any mutating call. account_id and
@@ -3849,6 +3874,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	var mediaKey string
 	if in.Image != nil {
 		key, err := c.ensureImageMedia(ctx, in.Image, &steps)
+		if err != nil {
+			return nil, err
+		}
+		mediaKey = key
+	}
+	// Step 1b': the creative video (#564 gap 7), the same way and with the same (nil, err) contract:
+	// uploaded as amplify_video and processed (bounded) before the campaign POST.
+	if in.Video != nil {
+		key, err := c.ensureMedia(ctx, in.Video.Bytes, in.Video.MIME, videoMedia, &steps)
 		if err != nil {
 			return nil, err
 		}

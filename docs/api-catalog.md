@@ -3364,6 +3364,30 @@ card?: {headline: string}        — Website card (#564 gap 6). `headline` (the 
                                   is a synchronous 400 naming the flag. A rule breach or a wrong
                                   shape (null reads as absent) is a synchronous 400 `invalid campaign
                                   config: twitterConfig.card: …`. Not role-gated. Not verified live.
+videoAssetId?: string            — Video creative (#564 gap 7): the id of an MP4 creative asset of
+                                  THIS brief (upload-creative-asset, `content_type` `video/mp4`, at
+                                  most 30 MiB). Attached to the authored tweet(s) instead of an
+                                  image (`media_keys`), or used as the website card's `MEDIA`.
+                                  Requires an authored tweet (`tweetText` or `variants`, never
+                                  `tweetId`); never with `imageAssetId`. Before anything billable:
+                                  X API v2 chunked upload — `POST /2/media/upload/initialize`
+                                  `{"media_type":"video/mp4","total_bytes":N,"media_category":
+                                  "amplify_video"}`, one `…/{id}/append` per 4 MiB segment,
+                                  `…/{id}/finalize`, then `GET /2/media/upload?command=STATUS` while
+                                  `processing_info` is pending (at most 6 checks, each wait at most
+                                  5 s) — and the media_key added to the Media Library under its
+                                  SHA-256 name (`media_type=VIDEO`), found and reused by a later
+                                  create of the same bytes (no second upload). A failed upload,
+                                  `processing_info.state` `failed`, or processing not finished
+                                  within the bound fails the job with NOTHING created (no campaign,
+                                  no tweet). A create with a video may name at most 30 targeting
+                                  criteria in total. An asset missing for this brief, over 30 MiB or
+                                  not `video/mp4` fails the job before any X request (and the image
+                                  slots refuse a video). OFF unless TWITTER_VIDEO_ENABLED is exactly
+                                  "true" — while off, a synchronous 400 naming the flag; a malformed
+                                  id, one beside `imageAssetId`/`tweetId` or without an authored
+                                  tweet, more than 30 criteria, or a non-string (null reads as
+                                  absent) is a synchronous 400. Not role-gated. Not verified live.
 customAudienceIds?: string[]     — X custom audiences to TARGET (#564 gap 3), ids from
                                   GET .../twitter-ads/custom-audiences (e.g. `1nmth`). Sent as
                                   `CUSTOM_AUDIENCE` / `EQ` criteria on the new line item, after

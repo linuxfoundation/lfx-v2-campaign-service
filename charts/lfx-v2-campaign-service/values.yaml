@@ -435,6 +435,14 @@ app:
     TWITTER_WEBSITE_CARD_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to twitterConfig.videoAssetId (#564 gap 7): a stored MP4 uploaded
+    # as amplify_video and attached to the authored tweet(s). Default off: no live create has
+    # uploaded one. Blocker before enabling: measure X's processing time for a 20-30 MiB MP4
+    # against the 30 s STATUS bound inside the two-minute provider call. While off, a create
+    # setting it is refused with a 400 before any job exists. Any value other than "true" is off.
+    TWITTER_VIDEO_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to the positive keyword add lever on an existing X
     # campaign (#564 gap 12): POST .../keyword-targeting/additions, one
     # BROAD_KEYWORD criterion (operator_type EQ) per keyword on the line item this

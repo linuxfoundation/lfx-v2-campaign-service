@@ -320,6 +320,14 @@ openssl rand -base64 32
   `true` enables it; anything else fails closed, and a create setting it is
   refused with a 400 before any job exists. The chart sets it to `"false"`
   (`app.environment.TWITTER_WEBSITE_CARD_ENABLED.value`).
+- `TWITTER_VIDEO_ENABLED` (default unset, i.e. OFF) — opts a deployment IN to
+  `twitterConfig.videoAssetId` (#564 gap 7): a stored MP4 uploaded as
+  `amplify_video` (chunked initialize/append/finalize, then STATUS polled for at
+  most 30 s) and attached to the tweet(s) an X create authors. Only the exact
+  value `true` enables it; anything else fails closed, and a create setting it
+  is refused with a 400 before any job exists. Before enabling, measure X's
+  processing time for a 20-30 MiB MP4 against the 30 s bound. The chart sets it
+  to `"false"` (`app.environment.TWITTER_VIDEO_ENABLED.value`).
 - `TWITTER_KEYWORD_ADD_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to the positive keyword add lever on an existing X campaign
   (#564 gap 12): `POST .../campaigns/{campaign_id}/keyword-targeting/additions`

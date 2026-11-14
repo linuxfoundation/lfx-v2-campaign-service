@@ -60,6 +60,13 @@ type mediaFakeX struct {
 	cardBody     string
 	cardStatus   int
 	cardResponse string
+
+	// wantCategory is the media_category initialize must carry ("" = tweet_image); initMediaType
+	// and lookupQuery record the last initialize's media_type and media library lookup's query
+	// (#564 gap 7).
+	wantCategory  string
+	initMediaType string
+	lookupQuery   string
 }
 
 func newMediaFakeX() *mediaFakeX {
@@ -107,9 +114,14 @@ func (f *mediaFakeX) handler(t *testing.T) http.HandlerFunc {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Errorf("initialize body is not JSON: %v", err)
 			}
-			if body["media_category"] != "tweet_image" {
-				t.Errorf("initialize must send media_category=tweet_image, got %v", body["media_category"])
+			want := f.wantCategory
+			if want == "" {
+				want = "tweet_image"
 			}
+			if body["media_category"] != want {
+				t.Errorf("initialize must send media_category=%s, got %v", want, body["media_category"])
+			}
+			f.initMediaType, _ = body["media_type"].(string)
 			if f.initStatus != 0 {
 				w.WriteHeader(f.initStatus)
 				_, _ = w.Write([]byte(`{"title":"SECRET-UPSTREAM-DETAIL"}`))
@@ -148,13 +160,14 @@ func (f *mediaFakeX) handler(t *testing.T) http.HandlerFunc {
 			_, _ = w.Write([]byte(f.statusBody))
 		case r.Method == http.MethodGet && strings.HasSuffix(p, "/media_library"):
 			f.hit("lookup")
+			f.lookupQuery = r.URL.RawQuery
 			if f.lookupBody != "" {
 				_, _ = w.Write([]byte(f.lookupBody))
 				return
 			}
 			q := r.URL.Query().Get("q")
 			if key, ok := f.library[q]; ok {
-				_, _ = fmt.Fprintf(w, `{"data":[{"name":%q,"media_key":%q,"media_type":"IMAGE","deleted":false}],"next_cursor":null}`, q, key)
+				_, _ = fmt.Fprintf(w, `{"data":[{"name":%q,"media_key":%q,"media_type":%q,"deleted":false}],"next_cursor":null}`, q, key, r.URL.Query().Get("media_type"))
 				return
 			}
 			_, _ = w.Write([]byte(`{"data":[],"next_cursor":null}`))
