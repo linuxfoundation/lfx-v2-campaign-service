@@ -1480,7 +1480,8 @@ var MetaAd = Type("meta-ad", func() {
 	Attribute("clicks", Int64, "Clicks over the window.", func() { Example(21) })
 	Attribute("cost_micros", Int64, "Spend over the window in micro-units of `currency`.", func() { Example(6170000) })
 	Attribute("ctr", Float64, "clicks/impressions, 0 when impressions is 0.", func() { Example(0.0228) })
-	Required("id", "listed", "impressions", "clicks", "cost_micros", "ctr")
+	Attribute("deliberately_paused", Boolean, "true when this is an ad of the campaign's recorded ad set and the campaign row holds a DELIBERATE pause of it made through toggle-meta-ad-status (#550): resuming the campaign (toggle-campaign-status ACTIVE) leaves this ad PAUSED, and only resuming it through toggle-meta-ad-status clears this. It is this service's record, not Meta's — `status` is what Meta reports. The same caveats as list-meta-ad-sets `deliberately_paused` apply after an UNCONFIRMED 503.", func() { Example(false) })
+	Required("id", "listed", "impressions", "clicks", "cost_micros", "ctr", "deliberately_paused")
 })
 
 // MetaAds is the live ad read for one ad set of a Meta campaign.
@@ -1509,6 +1510,7 @@ var MetaAds = Type("meta-ads", func() {
 				"status": "ACTIVE", "effective_status": "ACTIVE",
 				"creative_id": "120210000000000777", "creative_name": "KubeCon NA — Image A",
 				"impressions": 920, "clicks": 21, "cost_micros": 6170000, "ctr": 0.0228,
+				"deliberately_paused": false,
 			},
 		},
 		"ad_count": 1,
@@ -1530,6 +1532,24 @@ var MetaAdSetStatusChange = Type("meta-ad-set-status-change", func() {
 	})
 	Attribute("etag", String, "ETag header value: the campaign row's version after this call. It CHANGES when the call records or clears the deliberate pause of the campaign's recorded ad set (a PAUSE of it, or a confirmed resume of it while paused on record); otherwise it is UNCHANGED — the ad set's status itself is not stored on the campaign row.")
 	Required("campaign_id", "ad_set_id", "requested_status", "outcome")
+})
+
+// MetaAdStatusChange is the outcome of toggle-meta-ad-status (#550).
+var MetaAdStatusChange = Type("meta-ad-status-change", func() {
+	Attribute("campaign_id", String, "Campaign UUID", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("ad_set_id", String, "The ad set the ad was proven to belong to", func() { Example("120210000000000888") })
+	Attribute("ad_id", String, "The ad whose status was addressed", func() { Example("120210000000000999") })
+	Attribute("requested_status", String, "The status requested", func() {
+		Enum("ACTIVE", "PAUSED")
+		Example("PAUSED")
+	})
+	Attribute("previous_status", String, "The configured status the pre-write read observed.", func() { Example("ACTIVE") })
+	Attribute("outcome", String, "APPLIED — Meta confirmed the change. ALREADY_IN_STATE — the pre-write read showed the ad already at the requested status, so NOTHING WAS SENT. (A write whose outcome is unknown is never a 200: it is a 503 saying the change is unconfirmed.)", func() {
+		Enum("APPLIED", "ALREADY_IN_STATE")
+		Example("APPLIED")
+	})
+	Attribute("etag", String, "ETag header value: the campaign row's version after this call. It CHANGES when the call records or clears the deliberate pause of an ad of the campaign's recorded ad set; otherwise it is UNCHANGED — the ad's status itself is not stored on the campaign row.")
+	Required("campaign_id", "ad_set_id", "ad_id", "requested_status", "outcome")
 })
 
 // EmailCopySection is one ordered block of AI-generated email copy. Replaces a single flat
@@ -2422,7 +2442,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("toggle-campaign-status", func() {
-		Description("Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist the new status. Unlike update-campaign (which only writes the DB row), this dispatches the status change to the platform and updates the row only after the platform confirms. Support is per-platform: a campaign whose platform has no status-toggle dispatcher wired returns 400. Reddit, LinkedIn, Meta, X, Google Ads and Microsoft Ads are wired; HubSpot is not, because an email send has no run state to pause. ONE EXCEPTION to the persist: pausing a campaign in 'created_degraded' pauses it upstream and returns 200 with the status and ETag UNCHANGED. 'created_degraded' records that the campaign's wiring was never verified, and this schema has one status column, so writing 'paused' would spend the reconciliation marker to record a run state the platform already holds authoritatively. Resuming such a campaign is refused outright (409). ADOPTED campaigns (campaign `adopted: true`) can be paused but not resumed here: a resume is refused 409 with reason=campaign_adopted, distinct from the reason-less 409 for a campaign that is not fully provisioned, and the campaign is resumed in the ad platform's own UI. Read the pause's effect from the ad platform, not from this row. META: ACTIVE cascades to the campaign's recorded ad set and its ads, EXCEPT that a recorded ad set deliberately paused through toggle-meta-ad-set-status (list-meta-ad-sets `deliberately_paused`) is left PAUSED — its ads and the campaign are still activated. That record is this service's, not Meta's, so the held ad set is READ first (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and nothing is written unless Meta reports it PAUSED (or DELETED/ARCHIVED, which cannot serve): an ad set Meta reports ACTIVE is 409 (pause it, or resume it to clear the record, through toggle-meta-ad-set-status first), and an unreadable one is 503 with the campaign not modified.")
+		Description("Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist the new status. Unlike update-campaign (which only writes the DB row), this dispatches the status change to the platform and updates the row only after the platform confirms. Support is per-platform: a campaign whose platform has no status-toggle dispatcher wired returns 400. Reddit, LinkedIn, Meta, X, Google Ads and Microsoft Ads are wired; HubSpot is not, because an email send has no run state to pause. ONE EXCEPTION to the persist: pausing a campaign in 'created_degraded' pauses it upstream and returns 200 with the status and ETag UNCHANGED. 'created_degraded' records that the campaign's wiring was never verified, and this schema has one status column, so writing 'paused' would spend the reconciliation marker to record a run state the platform already holds authoritatively. Resuming such a campaign is refused outright (409). ADOPTED campaigns (campaign `adopted: true`) can be paused but not resumed here: a resume is refused 409 with reason=campaign_adopted, distinct from the reason-less 409 for a campaign that is not fully provisioned, and the campaign is resumed in the ad platform's own UI. Read the pause's effect from the ad platform, not from this row. META: ACTIVE cascades to the campaign's recorded ad set and its ads, EXCEPT that a recorded ad set deliberately paused through toggle-meta-ad-set-status (list-meta-ad-sets `deliberately_paused`) is left PAUSED — its ads and the campaign are still activated. That record is this service's, not Meta's, so the held ad set is READ first (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and nothing is written unless Meta reports it PAUSED (or DELETED/ARCHIVED, which cannot serve): an ad set Meta reports ACTIVE is 409 (pause it, or resume it to clear the record, through toggle-meta-ad-set-status first), and an unreadable one is 503 with the campaign not modified. Likewise every ad deliberately paused through toggle-meta-ad-status (list-meta-ads `deliberately_paused`) is left PAUSED while its siblings, the ad set and the campaign are activated; each held ad is READ first (GET /{ad_id}?fields=id,adset_id,campaign_id,account_id,status), an ad Meta reports ACTIVE is 409 (pause it, or resume it to clear the record, through toggle-meta-ad-status first), and an unreadable one is 503 with the campaign not modified.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -2961,7 +2981,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("list-meta-ads", func() {
-		Description("Read the ADS under ONE ad set of a Meta campaign live (decision D7, first step): each ad's name, configured and effective status and creative, with its impressions, clicks, spend and CTR over the window. STRICTLY READ-ONLY — the platform is only read and nothing is persisted; there is no per-ad pause or edit. " +
+		Description("Read the ADS under ONE ad set of a Meta campaign live (decision D7, first step): each ad's name, configured and effective status and creative, with its impressions, clicks, spend and CTR over the window. STRICTLY READ-ONLY — the platform is only read and nothing is persisted; an ad is paused or resumed with toggle-meta-ad-status, and `deliberately_paused` reports that lever's record. " +
 			"Before anything is read the campaign must record which ad account it was created under and that account must be the connection's (409 otherwise); a campaign with no platform campaign id is 409; any platform but Meta is 400; `ad_set_id` is validated before any connection work (400). " +
 			"Upstream: GET /{ad_set_id}?fields=id,campaign_id,account_id,status, which must report THIS campaign under THAT account (409 otherwise — the ad set does not belong to this campaign), then GET /{ad_set_id}/ads (bounded cursor paging; past the cap `truncated` is true), GET /act_{id}?fields=currency, and ONE level=ad Insights read on the ad account filtered to this ad set (bounded cursor paging, all or nothing). Every page is checked as raw bytes before it is decoded (a duplicated key, malformed UTF-8 or an unpaired surrogate escape refuses the read), every ad must report THIS ad set, THIS campaign and the connection's ad account, every Insights row must name this ad set and campaign and the account's currency, and an explicit null counter is refused while an absent one is 0. " +
 			"**404 when the campaign row does not exist or the project has no Meta connection** — never because of anything Meta answers: Meta's 100/33 is a 503 like every other unverifiable upstream answer.")
@@ -3020,6 +3040,48 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
 		HTTP(func() {
 			POST("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets/{ad_set_id}/status")
+			Header("bearer_token:Authorization")
+			Header("if_match:If-Match")
+			Response(StatusOK, func() { Header("etag:ETag") })
+			briefErrorResponses()
+			Response("PreconditionFailed", StatusPreconditionFailed)
+			Response("PreconditionRequired", StatusPreconditionRequired)
+		})
+	})
+
+	Method("toggle-meta-ad-status", func() {
+		Description("Pause or resume ONE ad of one ad set of a Meta campaign (#550). The per-ad sibling of toggle-meta-ad-set-status, with its guards, outcomes and failures: If-Match carries the campaign row's ETag (428 when missing, 412 when stale) and the campaign's write lock is held for the call. " +
+			"Refused with 400 before anything else unless the deployment sets META_AD_PAUSE_ENABLED to exactly \"true\" (off by default until the cascade and the record are verified against a live account). `ad_set_id` and `ad_id` are validated before any connection work (400). The campaign must record its ad account and that account must be the connection's (409), and the ad is then READ (GET /{ad_id}?fields=id,adset_id,campaign_id,account_id,status) and must report `ad_set_id`, THIS campaign and THAT account (409 otherwise) — all before anything is written. ACTIVE is allowed ONLY on an ad of the ad set this service created for the campaign (409 otherwise — the campaign resume never activates any other ad), and on an ADOPTED campaign it is refused exactly as the campaign toggle refuses it; PAUSED is allowed on any of the campaign's ads. An ad Meta reports DELETED or ARCHIVED is 409. " +
+			"When the read shows the requested status already, NOTHING is sent and the outcome is ALREADY_IN_STATE. Otherwise ONE POST /{ad_id} {status} is sent, never retried: 200 APPLIED when Meta confirms it; a failed pre-write read, a write never sent or one Meta definitely refused is 503 saying nothing was changed; a write whose outcome is unknown is 503 saying the change is UNCONFIRMED — read the ads before retrying — and the campaign's write lock is held for a cooldown. No Meta connection is 404; an unusable connection or one with no ad account is 409; a problem with the LF system connection, stored-credential decryption or this service itself is 500. " +
+			"A DELIBERATE PAUSE OF AN AD OF THE RECORDED AD SET SURVIVES A CAMPAIGN PAUSE/RESUME: it is recorded on the campaign row (before the pause is sent, withdrawn if Meta definitely refused it), toggle-campaign-status ACTIVE then leaves that ad PAUSED, and only a CONFIRMED resume here (APPLIED or ALREADY_IN_STATE) clears the record — exactly the ad-set lever's record rules, including the ETag and re-read advice after any error. list-meta-ads reports it as `deliberately_paused`. Pausing an ad of any other ad set, or anything on an ADOPTED campaign, records nothing, since the campaign cascade never re-activates it. Any platform but Meta is 400.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			// Both ids are interpolated into Graph paths, so each Pattern is the transport's half of
+			// the path-injection guard meta.ValidateAdSetID / meta.ValidateAdID repeat
+			// (TestMetaAdIDPattern_MatchesPlatformValidator).
+			Attribute("ad_set_id", String, "The Meta ad set id: digits, no leading zero, at most 32.", func() {
+				Pattern(`^[1-9][0-9]*$`)
+				MaxLength(32)
+				Example("120210000000000888")
+			})
+			Attribute("ad_id", String, "The Meta ad id: digits, no leading zero, at most 32.", func() {
+				Pattern(`^[1-9][0-9]*$`)
+				MaxLength(32)
+				Example("120210000000000999")
+			})
+			ifMatchAttr()
+			Attribute("status", String, "Desired ad status, in Meta's vocabulary", func() { Enum("ACTIVE", "PAUSED") })
+			Required("project_id", "brief_id", "campaign_id", "ad_set_id", "ad_id", "status")
+		})
+		Result(MetaAdStatusChange)
+		commonBriefErrors()
+		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
+		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
+		HTTP(func() {
+			POST("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets/{ad_set_id}/ads/{ad_id}/status")
 			Header("bearer_token:Authorization")
 			Header("if_match:If-Match")
 			Response(StatusOK, func() { Header("etag:ETag") })

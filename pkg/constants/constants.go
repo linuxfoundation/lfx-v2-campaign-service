@@ -404,6 +404,13 @@ const (
 	// refuses the field with a 400 before any job exists. It names no account resource.
 	EnvMetaAdScheduleEnabled = "META_AD_SCHEDULE_ENABLED"
 
+	// EnvMetaAdPauseEnabled opts a deployment IN to toggle-meta-ad-status (#550, gap 14): the
+	// per-ad pause/resume lever. Only the exact value "true" enables it; anything else answers the
+	// endpoint 400 before the campaign is even read. The campaign resume honours a per-ad
+	// deliberate-pause record whatever this flag says, so turning it off never re-activates an ad
+	// an operator paused.
+	EnvMetaAdPauseEnabled = "META_AD_PAUSE_ENABLED"
+
 	// EnvGoogleAdsPMaxAudienceSignalEnabled opts a deployment IN to
 	// googleAdsConfig.performanceMaxAudienceSignal (#461): one existing Google Ads Audience
 	// attached to a Performance Max asset group as a signal. Only the exact value "true"

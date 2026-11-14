@@ -48,7 +48,7 @@ spec:
     # denied, or worse). Only briefs/jobs/hubspot carry `**` in the RuleSet, so
     # only they get the free `(/.*)?` tail here — which is also what routes every
     # per-campaign path below a brief, including the Meta ad-set read and pause/resume
-    # (campaigns/{id}/meta-ad-sets[/{adSetId}/status|/{adSetId}/ads], LFXV2-2665), with no branch of its own. The connection-* family is ruled
+    # (campaigns/{id}/meta-ad-sets[/{adSetId}/status|/{adSetId}/ads[/{adId}/status]], LFXV2-2665, #550), with no branch of its own. The connection-* family is ruled
     # for exactly the base, /test, and /set-credential sub-paths;
     # google-ads/keywords|audience|audiences|campaign-ref|geo-targets|user-lists|conversion-actions,
     # microsoft-ads/keywords|audience|campaign-ref,

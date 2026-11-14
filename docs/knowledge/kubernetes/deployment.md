@@ -94,6 +94,10 @@ a 400 before any job exists. It names no account resource, so it is not behind
 `metaConfig.frequencyCap` (an impressions-per-person cap on the awareness ad set). Only exactly
 `"true"` enables it; off, a create carrying the field is refused with a 400 before any job exists.
 
+`META_AD_PAUSE_ENABLED` defaults to `"false"` (#550) and opts a cluster in to
+`toggle-meta-ad-status`, the per-ad pause/resume lever; off, that endpoint is a 400. A campaign
+resume honours a per-ad deliberate-pause record whatever the flag says.
+
 `META_AD_SCHEDULE_ENABLED` is the same kind of gate, defaulting to `"false"` (#550), for
 `metaConfig.adSchedule` (days and whole hours in the ad account's time zone, lifetime budgets
 only). Only exactly `"true"` enables it; off, a create carrying the field is refused with a 400

@@ -1304,7 +1304,7 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 // create can still be paused); ACTIVATE with no ad set id is REJECTED, since a campaign with no
 // ad set cannot serve.
 func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID, adSetID, status string) error {
-	return c.updateCampaignTree(ctx, campaignID, adSetID, status, false)
+	return c.updateCampaignTree(ctx, campaignID, adSetID, status, false, nil)
 }
 
 // ActivateCampaignHoldingAdSet is the ACTIVATE cascade of UpdateCampaignAndChildrenStatus with
@@ -1315,12 +1315,27 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 // is the full cascade's — ids validated before any request, discovery before any mutation, the
 // zero-ads refusal, and the same definite/Unconfirmed classification.
 func (c *Client) ActivateCampaignHoldingAdSet(ctx context.Context, campaignID, adSetID string) error {
-	return c.updateCampaignTree(ctx, campaignID, adSetID, StatusActive, true)
+	return c.updateCampaignTree(ctx, campaignID, adSetID, StatusActive, true, nil)
 }
 
-// updateCampaignTree is the shared body of the two cascades. holdAdSet leaves the ad set's own
-// status untouched on ACTIVATE; it is never set on PAUSE.
-func (c *Client) updateCampaignTree(ctx context.Context, campaignID, adSetID, status string, holdAdSet bool) error {
+// ActivateCampaignHolding is the ACTIVATE cascade with both holds (#550, gap 14): holdAdSet leaves
+// the ad set's own status untouched (ActivateCampaignHoldingAdSet), and every discovered ad whose
+// id is in heldAdIDs — an ad an operator paused through the per-ad lever, still on record — is NOT
+// posted, so it stays PAUSED while its siblings, the ad set (unless held) and the campaign are
+// activated. An empty heldAdIDs and a false holdAdSet is exactly UpdateCampaignAndChildrenStatus's
+// ACTIVATE. Every other rule is the full cascade's.
+func (c *Client) ActivateCampaignHolding(ctx context.Context, campaignID, adSetID string, holdAdSet bool, heldAdIDs []string) error {
+	held := make(map[string]bool, len(heldAdIDs))
+	for _, id := range heldAdIDs {
+		held[id] = true
+	}
+	return c.updateCampaignTree(ctx, campaignID, adSetID, StatusActive, holdAdSet, held)
+}
+
+// updateCampaignTree is the shared body of the cascades. holdAdSet leaves the ad set's own status
+// untouched on ACTIVATE, and heldAds names ads it leaves untouched on ACTIVATE; neither is set on
+// PAUSE.
+func (c *Client) updateCampaignTree(ctx context.Context, campaignID, adSetID, status string, holdAdSet bool, heldAds map[string]bool) error {
 	if status == StatusActive && strings.TrimSpace(adSetID) == "" {
 		return fmt.Errorf("meta: cannot activate campaign %s: no ad set id is known, so the tree cannot be made servable", campaignID)
 	}
@@ -1336,7 +1351,7 @@ func (c *Client) updateCampaignTree(ctx context.Context, campaignID, adSetID, st
 	}
 	if status == StatusActive {
 		// Children first (still gated by the paused campaign), campaign last.
-		if err := c.updateAdSetAndAds(ctx, adSetID, status, false, holdAdSet); err != nil {
+		if err := c.updateAdSetAndAds(ctx, adSetID, status, false, holdAdSet, heldAds); err != nil {
 			return err
 		}
 		if err := c.UpdateCampaignStatus(ctx, campaignID, status); err != nil {
@@ -1348,7 +1363,7 @@ func (c *Client) updateCampaignTree(ctx context.Context, campaignID, adSetID, st
 	if err := c.UpdateCampaignStatus(ctx, campaignID, status); err != nil {
 		return err
 	}
-	return c.updateAdSetAndAds(ctx, adSetID, status, true, false)
+	return c.updateAdSetAndAds(ctx, adSetID, status, true, false, nil)
 }
 
 // updateAdSetAndAds POSTs the status to the ad set and each discovered ad. mutatedBefore says
@@ -1357,7 +1372,8 @@ func (c *Client) updateCampaignTree(ctx context.Context, campaignID, adSetID, st
 // failure is a CLEAN error (nothing serving yet); an ambiguous failure (5xx/transport) is
 // Unconfirmed. When true, any failure is Unconfirmed. An empty adSetID is a no-op. holdAdSet
 // skips the ad set's own POST (its ads are still updated) — see ActivateCampaignHoldingAdSet.
-func (c *Client) updateAdSetAndAds(ctx context.Context, adSetID, status string, mutatedBefore, holdAdSet bool) error {
+// heldAds skips each named ad's POST on ACTIVATE (#550, gap 14) — see ActivateCampaignHolding.
+func (c *Client) updateAdSetAndAds(ctx context.Context, adSetID, status string, mutatedBefore, holdAdSet bool, heldAds map[string]bool) error {
 	if adSetID == "" {
 		return nil
 	}
@@ -1401,6 +1417,11 @@ func (c *Client) updateAdSetAndAds(ctx context.Context, adSetID, status string, 
 	// flip") holds. Once the FIRST ad POST may have committed, subsequent failures are partial
 	// applications (mutatedBefore=true).
 	for _, adID := range adIDs {
+		// An ad an operator deliberately paused stays PAUSED on ACTIVATE (#550, gap 14): only what
+		// this cascade (or the create) paused is switched back on.
+		if status == StatusActive && heldAds[adID] {
+			continue
+		}
 		if err := c.doRequest(ctx, http.MethodPost, "/"+adID, map[string]any{"status": status}, nil); err != nil {
 			return classifyCascadeErr("ad", err, mutatedBefore)
 		}

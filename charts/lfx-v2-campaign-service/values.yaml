@@ -534,6 +534,16 @@ app:
     META_AD_SCHEDULE_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to toggle-meta-ad-status (#550): the per-ad
+    # pause/resume lever under meta-ad-sets/{adSetId}/ads/{adId}/status. Off, the
+    # endpoint answers 400. A campaign resume honours a per-ad deliberate-pause
+    # record whatever this says, so turning it off never re-activates an ad an
+    # operator paused. Set exactly "true" in lfx-v2-argocd once the cascade and
+    # the record are verified against a live ad account. Any value other than
+    # "true" is treated as off.
+    META_AD_PAUSE_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to metaConfig.leadFormId (#550): an existing
     # Instant Form that turns the leads objective into an OUTCOME_LEADS lead ad
     # (LEAD_GENERATION ad set, the form on every creative). The form is read

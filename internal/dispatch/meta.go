@@ -1061,13 +1061,20 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	// on record in the row (LFXV2-2665, product decision 2026-10-13), survives a campaign
 	// pause/resume: ACTIVATE then flips the ads and the campaign but leaves the ad set PAUSED.
 	// Only resuming the ad set through that lever clears the record. A PAUSE cascades as always.
+	// Deliberate per-ad pauses made through toggle-meta-ad-status (#550, gap 14) survive a campaign
+	// resume the same way: ACTIVATE leaves each held ad PAUSED, after reading Meta to prove it is.
 	var uerr error
-	if metaStatus == meta.StatusActive && model.MetaAdSetHeldPaused(campaign.Result, adSetID) {
+	holdAdSet := metaStatus == meta.StatusActive && model.MetaAdSetHeldPaused(campaign.Result, adSetID)
+	var heldAds []string
+	if metaStatus == meta.StatusActive {
+		heldAds = model.MetaUserPausedAdIDs(campaign.Result)
+	}
+	if holdAdSet || len(heldAds) > 0 {
 		// The record is the row's, not Meta's: an UNCONFIRMED pause that never applied, or an ad
-		// set re-activated in Ads Manager, leaves it over an ACTIVE ad set, and holding activation
-		// would then switch on the ads and the campaign over a serving ad set. So Meta is READ
-		// first, before anything is written (fail closed).
-		// The account the held ad set must be reported under: the connection's selection, or —
+		// set or ad re-activated in Ads Manager, leaves it over an ACTIVE object, and holding
+		// activation would then switch on the rest over a serving one. So Meta is READ first,
+		// before anything is written (fail closed).
+		// The account the held objects must be reported under: the connection's selection, or —
 		// when that selection was cleared after the pause — the account the campaign was CREATED
 		// under, exactly as the toggle itself supports a cleared selection (verifyMetaAccountMatch
 		// above already proved the two agree whenever both are present).
@@ -1075,12 +1082,21 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 		if heldAccount == "" {
 			heldAccount = metaCreationAccountID(campaign)
 		}
-		if herr := verifyMetaHeldAdSetPaused(ctx, client, campaign, adSetID, heldAccount); herr != nil {
+		if holdAdSet {
+			if herr := verifyMetaHeldAdSetPaused(ctx, client, campaign, adSetID, heldAccount); herr != nil {
+				return herr
+			}
+			slog.InfoContext(ctx, "meta campaign activate leaves its deliberately paused ad set paused",
+				"platform_campaign_id", campaign.PlatformCampaignID, "ad_set_id", adSetID)
+		}
+		if herr := verifyMetaHeldAdsPaused(ctx, client, campaign, adSetID, heldAccount, heldAds); herr != nil {
 			return herr
 		}
-		slog.InfoContext(ctx, "meta campaign activate leaves its deliberately paused ad set paused",
-			"platform_campaign_id", campaign.PlatformCampaignID, "ad_set_id", adSetID)
-		uerr = client.ActivateCampaignHoldingAdSet(ctx, campaign.PlatformCampaignID, adSetID)
+		if len(heldAds) > 0 {
+			slog.InfoContext(ctx, "meta campaign activate leaves its deliberately paused ads paused",
+				"platform_campaign_id", campaign.PlatformCampaignID, "ad_set_id", adSetID, "held_ads", len(heldAds))
+		}
+		uerr = client.ActivateCampaignHolding(ctx, campaign.PlatformCampaignID, adSetID, holdAdSet, heldAds)
 	} else {
 		uerr = client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adSetID, metaStatus)
 	}

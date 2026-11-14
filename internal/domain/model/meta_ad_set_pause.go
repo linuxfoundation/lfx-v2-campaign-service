@@ -26,9 +26,14 @@ import (
 //     no other ad-set notion (the reasoning dispatch.metaAdSetID records for the ad set id).
 //     A re-dispatch writes a fresh Result, and with it a fresh ad set, so the flag cannot
 //     outlive the ad set it describes.
+//   - MetaResultUserPausedAdsKey is not a CampaignResult field either (#550, gap 14). It lists the
+//     ads of the recorded ad set an operator DELIBERATELY paused through toggle-meta-ad-status: a
+//     campaign ACTIVATE leaves each of them PAUSED instead of cascading ACTIVE onto it. Written,
+//     withdrawn and cleared only by the per-ad lever, under exactly the ad-set record's rules.
 const (
 	MetaResultAdSetIDKey         = "AdSetID"
 	MetaResultUserPausedAdSetKey = "UserPausedAdSetID"
+	MetaResultUserPausedAdsKey   = "UserPausedAdIDs"
 )
 
 // ErrMetaResultNotObject is returned by WithMetaUserPausedAdSet when the stored Result is not a
@@ -41,6 +46,7 @@ var ErrMetaResultNotObject = errors.New("the campaign's result blob is not a JSO
 type metaPauseView struct {
 	AdSetID           string
 	UserPausedAdSetID string
+	UserPausedAdIDs   []string
 }
 
 func decodeMetaPauseView(result json.RawMessage) metaPauseView {
@@ -92,6 +98,70 @@ func WithMetaUserPausedAdSet(result json.RawMessage, adSetID string) (json.RawMe
 			return nil, err
 		}
 		fields[MetaResultUserPausedAdSetKey] = raw
+	}
+	return json.Marshal(fields)
+}
+
+// MetaUserPausedAdIDs is the list of ads a deliberate per-ad pause is on record for (#550, gap 14),
+// in record order, or nil.
+func MetaUserPausedAdIDs(result json.RawMessage) []string {
+	return decodeMetaPauseView(result).UserPausedAdIDs
+}
+
+// MetaAdHeldPaused reports whether a deliberate pause of adID is on record.
+func MetaAdHeldPaused(result json.RawMessage, adID string) bool {
+	if adID == "" {
+		return false
+	}
+	for _, id := range MetaUserPausedAdIDs(result) {
+		if id == adID {
+			return true
+		}
+	}
+	return false
+}
+
+// WithMetaUserPausedAd returns result with adID added to (paused) or removed from (!paused) the
+// per-ad deliberate-pause record. The list keeps its order, holds each id once, and is removed
+// entirely when it becomes empty; every other key is preserved verbatim, as in
+// WithMetaUserPausedAdSet.
+func WithMetaUserPausedAd(result json.RawMessage, adID string, paused bool) (json.RawMessage, error) {
+	fields := map[string]json.RawMessage{}
+	if len(result) > 0 {
+		if err := json.Unmarshal(result, &fields); err != nil || fields == nil {
+			return nil, ErrMetaResultNotObject
+		}
+	}
+	var ids []string
+	for k, raw := range fields {
+		if strings.EqualFold(k, MetaResultUserPausedAdsKey) {
+			// The readers match case-insensitively and encoding/json keeps the LAST variant, so
+			// every variant is folded into the one list rather than any being left behind.
+			var got []string
+			if json.Unmarshal(raw, &got) == nil {
+				ids = append(ids, got...)
+			}
+			delete(fields, k)
+		}
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if id == "" || seen[id] || (!paused && id == adID) {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	if paused && adID != "" && !seen[adID] {
+		out = append(out, adID)
+	}
+	if len(out) > 0 {
+		raw, err := json.Marshal(out)
+		if err != nil {
+			return nil, err
+		}
+		fields[MetaResultUserPausedAdsKey] = raw
 	}
 	return json.Marshal(fields)
 }

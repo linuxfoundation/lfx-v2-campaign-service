@@ -597,6 +597,14 @@ func (d upstreamCapableDispatcher) ToggleMetaAdSetStatus(context.Context, string
 	return &model.MetaAdSetStatusResult{Outcome: model.MetaAdSetApplied}, nil
 }
 
+// ToggleMetaAdStatus implements the per-ad lever (#550) for the ad-set toggle's reason.
+func (d upstreamCapableDispatcher) ToggleMetaAdStatus(context.Context, string, model.Provider, *model.Campaign, string, string, string, MetaAdSetBeforeWrite) (*model.MetaAdStatusResult, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.MetaAdStatusResult{Outcome: model.MetaAdSetApplied}, nil
+}
+
 func (d upstreamCapableDispatcher) VerifyAccountOrg(context.Context, string, model.Provider) error {
 	return d.err
 }
@@ -806,6 +814,15 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opToggleMetaAdSetStatus,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ToggleMetaAdSetStatus(ctx, "p1", platform, campaign, "888", model.MetaAdSetStatusPaused, nil)
+				return err
+			},
+		},
+		{
+			// The per-ad sibling (#550): a mutation of a live ad's delivery.
+			name: "toggle meta ad status",
+			op:   opToggleMetaAdStatus,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ToggleMetaAdStatus(ctx, "p1", platform, campaign, "888", "999", model.MetaAdSetStatusPaused, nil)
 				return err
 			},
 		},
