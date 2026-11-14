@@ -1026,7 +1026,20 @@ deliberately stricter until a live probe shows LinkedIn accepts it.
 `exclude.employers` — well formed, within the 200-employer cap, and not naming an included
 employer — because the build merges them after the campaign group exists, and a rule the merge
 could break must be refused before it. Employers compare by id (`trailingID`), so a company and
-an organization URN of one id are one employer.
+an organization URN of one id are one employer — `cleanFacet` de-duplicates `employers` by that id
+too, keeping the first URN, so the per-list 200 cap counts the identities the merge and the wire
+count, not their spellings.
+
+A campaign `createSponsoredCampaign` REUSES by name is not given `Targeting` — it reaches only the
+body of a campaign this run creates, and the found campaign's `targetingCriteria` are not read
+back. So with `Targeting` set, `CreateCampaign` stops right after the campaign is ensured, before
+conversions, images, dark posts and creatives, and returns a partial result (group, campaign id
+and name, no creative) with a `targeting NOT applied to reused campaign` error for reconciliation,
+the conservative choice Microsoft makes for its create-time-only targeting
+(`internal/platform/microsoft/campaign.go`). A profile create (no `Targeting`) still reuses the
+campaign and attaches creatives: its criteria derive from the service's own profile, and that
+retry path predates #552. Pinned by
+`TestCreateCampaign_ReusedCampaignWithTargetingStopsBeforeCreatives`.
 
 `buildCustomTargetingCriteria` renders the geo clause first, then one `include.and` clause per
 entry with facet keys sorted (so the body is deterministic), and `exclude.or` from the caller's

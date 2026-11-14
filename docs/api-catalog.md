@@ -1064,7 +1064,16 @@ is targeted exactly as before (profile skills/groups, fixed job functions and se
 
 Each key becomes `urn:li:adTargetingFacet:<key>`. Set, `targeting` REPLACES `targetingProfile`
 (which is then not read) and the fixed job functions and seniority exclusions; the config's
-`employerExclusions` are still merged into `exclude.employers`. Duplicates in a list are dropped.
+`employerExclusions` are still merged into `exclude.employers`. Duplicates in a list are dropped;
+in `employers` a `urn:li:company:<n>` and a `urn:li:organization:<n>` of one id are one employer,
+so the first URN of each id is kept and the 200 cap counts employers, not spellings.
+
+A campaign found by name in the event's campaign group (an earlier attempt's, or a hand-made one)
+is NOT given `targeting`: it is written only into a campaign the create makes, and the found
+campaign's existing criteria are not read back. With `targeting` set, such a create stops before
+any conversion, image, dark post or creative and fails with the campaign recorded for
+reconciliation (`linkedin targeting NOT applied to reused campaign <id>`); check its targeting in
+Campaign Manager and finish it there. A create without `targeting` reuses the campaign as before.
 
 Refused with a synchronous `400 invalid campaign config: linkedInConfig.targeting: …` before any
 job exists: a `targeting` whose JSON shape is wrong (an unknown key such as a misspelled `exclude`, explicit `null`, `include` not an array of objects of string arrays, `exclude` not an object of string arrays); an unknown facet; a malformed or wrong-namespace value (ids are numeric, no leading

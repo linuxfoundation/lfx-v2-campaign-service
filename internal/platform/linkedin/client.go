@@ -2970,6 +2970,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Warning: bid NOT applied to reused campaign %s; its existing bidding is unchanged — verify its bidding in Campaign Manager", campaignID))
 	}
 
+	// Caller targeting (#552) is written only into the body of a campaign THIS RUN creates. A
+	// campaign found by name keeps whatever targetingCriteria it has: an earlier attempt's, or
+	// an operator's edit, and nothing here reads it back to compare. Attaching creatives to it
+	// could serve them without the requested matched audiences or registrant exclusions while
+	// the row records the requested targeting, and rewriting a possibly-serving campaign's
+	// audience is not a retry's call. So the create stops here, before the conversions, images,
+	// dark posts and creatives, and returns the campaign for reconciliation — the conservative
+	// choice internal/platform/microsoft/campaign.go makes for its create-time-only targeting.
+	//
+	// A profile create (no targeting) keeps reusing the campaign as before: its criteria are
+	// derived from the service's own targeting profile rather than per-campaign caller input,
+	// and that retry path predates #552.
+	if campaignReused && targeting != nil {
+		steps = append(steps, fmt.Sprintf("Stopped before the creatives: campaign %s was found by name (an earlier attempt or an operator made it), and linkedInConfig.targeting is applied only to a campaign this run creates; check its targeting in Campaign Manager and finish the campaign there", campaignID))
+		return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps),
+			fmt.Errorf("linkedin targeting NOT applied to reused campaign %s (linkedInConfig.targeting is set only on a campaign this run creates; no conversion, image, dark post or creative was added): verify the campaign's targeting in Campaign Manager", campaignID)
+	}
+
 	// Conversions (#552) are associated as soon as the campaign exists, on a reused campaign too
 	// (the PUT is idempotent). withConversions records the split on every result from here on;
 	// a failure does not stop the create (see associateConversions).
