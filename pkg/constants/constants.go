@@ -250,6 +250,14 @@ const (
 	// refuses fails at its criterion POST and leaves a PAUSED partial for reconciliation.
 	EnvTwitterFollowerLookalikesEnabled = "TWITTER_FOLLOWER_LOOKALIKES_ENABLED"
 
+	// EnvTwitterTweetVariantsEnabled opts a deployment IN to twitterConfig.variants (#564 gap 10):
+	// one authored, promoted tweet per variant (at most 5) on the line item an X create makes. Only
+	// the exact value "true" enables it; unset or any other value fails closed, and a create setting
+	// it is refused with a 400 before any job exists (and again at dispatch). It names no account
+	// resource; it keeps several tweet publishes per create off the shared ad account until a live
+	// create confirms them.
+	EnvTwitterTweetVariantsEnabled = "TWITTER_TWEET_VARIANTS_ENABLED"
+
 	// EnvTwitterKeywordAddEnabled opts a deployment IN to the positive keyword add lever on an
 	// existing X campaign (#564 gap 12): POST .../keyword-targeting/additions, one BROAD_KEYWORD
 	// targeting criterion (operator_type EQ) per keyword on the line item this service created.

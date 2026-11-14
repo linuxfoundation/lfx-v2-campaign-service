@@ -419,6 +419,14 @@ app:
     TWITTER_FOLLOWER_LOOKALIKES_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to twitterConfig.variants (#564 gap 10): one authored,
+    # promoted tweet per variant (at most 5) on the new X line item. Default off: no live
+    # create has published several tweets. A variant failing after another was published
+    # leaves the row created_degraded (no rollback). While off, a create setting it is refused
+    # with a 400 before any job exists. Any value other than "true" is treated as off.
+    TWITTER_TWEET_VARIANTS_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to the positive keyword add lever on an existing X
     # campaign (#564 gap 12): POST .../keyword-targeting/additions, one
     # BROAD_KEYWORD criterion (operator_type EQ) per keyword on the line item this

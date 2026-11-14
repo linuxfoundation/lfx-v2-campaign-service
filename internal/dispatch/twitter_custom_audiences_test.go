@@ -48,6 +48,8 @@ var twitterUngatedFields = map[string]bool{
 	"audienceExpansion": true,
 	// #564 gap 4c: a public X user id names no account resource.
 	"followerLookalikeUserIds": true,
+	// #564 gap 10: tweet copy names no account resource.
+	"variants": true,
 }
 
 // TestEveryTwitterConfigFieldIsClassifiedForTheMarketingOpsGate fails when a twitterConfig field

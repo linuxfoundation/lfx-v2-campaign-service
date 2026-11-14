@@ -127,6 +127,8 @@ type Service interface {
 	// while TWITTER_AUDIENCE_EXPANSION_ENABLED is off (#564 gap 11). So is a
 	// twitterConfig.followerLookalikeUserIds that breaks its rules, or is sent
 	// while TWITTER_FOLLOWER_LOOKALIKES_ENABLED is off (#564 gap 4c). So is a
+	// twitterConfig.variants list that breaks its rules, or is sent while
+	// TWITTER_TWEET_VARIANTS_ENABLED is off (#564 gap 10). So is a
 	// microsoftConfig.sitelinks or callouts list that breaks its rules, or is sent
 	// while MICROSOFT_AD_EXTENSIONS_ENABLED is off (#563). So is a
 	// microsoftConfig.negativeKeywords list that breaks its rules or is sent while
@@ -1375,7 +1377,28 @@ type CampaignCreateInput struct {
 	// while off, a malformed id, a list over its cap, or a value that is not an
 	// array of strings (null reads as absent) is refused with 400 "invalid
 	// campaign config: twitterConfig.followerLookalikeUserIds: ..." before any job
-	// exists. Not role-gated. X CUSTOM AUDIENCES (#564): twitterConfig takes
+	// exists. Not role-gated. X TWEET VARIANTS (#564 gap 10): twitterConfig takes
+	// `variants`, [{"tweetText": string}] (1-5 entries, each trimmed and
+	// non-blank, no two the same ignoring case, tweetText the only key), and never
+	// with tweetId or a top-level tweetText. Each variant is authored as its own
+	// nullcast tweet (the same composition, length and credential-screen rules as
+	// tweetText, its destination tagged utm_content=variant-N) and promoted on the
+	// one line item, in order, each authored then promoted before the next;
+	// imageAssetId, when set, is attached to every variant. Every promoted tweet
+	// is recorded in the campaign result as PromotedTweets ([{Variant, TweetID,
+	// Authored, PromotedTweetID, Warning}]); PromotedTweetID and AuthoredTweetID
+	// repeat the first. A variant that fails (authoring refused or UNCONFIRMED,
+	// promotion refused, UNCONFIRMED or reported duplicate) does not stop the
+	// others and nothing is rolled back, since a published tweet cannot be
+	// unpublished: the row is created_degraded with a step naming the failed
+	// variants. On a line item reused by name, no variant is authored when its
+	// promoted tweets cannot be read or their count differs from the variants;
+	// exactly as many are reused. Pause, resume, budget, bid and keyword levers
+	// act on the campaign and line item, so they govern every variant at once. OFF
+	// unless TWITTER_TWEET_VARIANTS_ENABLED is exactly "true"; a non-empty list
+	// while off, a rule breach or a wrong shape (null reads as absent) is refused
+	// with 400 "invalid campaign config: twitterConfig.variants: ..." before any
+	// job exists. Not role-gated. X CUSTOM AUDIENCES (#564): twitterConfig takes
 	// `customAudienceIds` and `excludedCustomAudienceIds`, arrays of X custom
 	// audience ids (list-twitter-ads-custom-audiences offers them) to target and
 	// to exclude, sent as CUSTOM_AUDIENCE targeting criteria on the new line item

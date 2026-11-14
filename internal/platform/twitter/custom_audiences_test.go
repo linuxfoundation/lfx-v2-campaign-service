@@ -381,12 +381,14 @@ const createOverheadWrites = 10
 // sized for: every paced write of a create at the cap must finish with at least a third of the
 // dispatch budget left for the unpaced reads (account, lookups, custom audience check).
 func TestCreateTargetingCriteriaFitTheDispatchBudget(t *testing.T) {
-	paced := time.Duration(MaxCreateTargetingCriteria+createOverheadWrites) * writeDelay
+	// Tweet variants (#564 gap 10): each variant past the first adds a tweet and its promotion.
+	variantWrites := 2 * (MaxTweetVariants - 1)
+	paced := time.Duration(MaxCreateTargetingCriteria+createOverheadWrites+variantWrites) * writeDelay
 	if paced > dispatchBudgetMirror*2/3 {
-		t.Fatalf("%d criteria + %d other writes at %v each take %v, more than two thirds of the %v dispatch budget",
-			MaxCreateTargetingCriteria, createOverheadWrites, writeDelay, paced, dispatchBudgetMirror)
+		t.Fatalf("%d criteria + %d other writes + %d variant writes at %v each take %v, more than two thirds of the %v dispatch budget",
+			MaxCreateTargetingCriteria, createOverheadWrites, variantWrites, writeDelay, paced, dispatchBudgetMirror)
 	}
-	if MaxGeoTargets > MaxCreateTargetingCriteria || MaxLanguages > MaxCreateTargetingCriteria || MaxCustomAudienceIDs > MaxCreateTargetingCriteria {
+	if MaxGeoTargets > MaxCreateTargetingCriteria || MaxLanguages > MaxCreateTargetingCriteria || MaxCustomAudienceIDs > MaxCreateTargetingCriteria || MaxCreateFollowerLookalikes > MaxCreateTargetingCriteria {
 		t.Fatal("a per-list cap exceeds the per-create criteria cap")
 	}
 }
