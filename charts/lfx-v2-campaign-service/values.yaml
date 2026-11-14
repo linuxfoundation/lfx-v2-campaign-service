@@ -402,6 +402,15 @@ app:
     TWITTER_CREATE_TARGETING_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to twitterConfig.audienceExpansion (#564 gap 11),
+    # sent as audience_expansion (BROAD, DEFINED or EXPANDED) on the new X line
+    # item. Default off: built from X's published v12 reference and no live
+    # create has sent it. It names no account resource. While off, a create
+    # setting it is refused with a 400 before any job exists. Any value other
+    # than "true" is treated as off.
+    TWITTER_AUDIENCE_EXPANSION_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to X custom audiences (#564): the create inputs
     # twitterConfig.customAudienceIds / excludedCustomAudienceIds (CUSTOM_AUDIENCE
     # targeting criteria, EQ and NE, on the new line item) and the picker read

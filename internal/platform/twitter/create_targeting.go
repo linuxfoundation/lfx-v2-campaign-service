@@ -187,6 +187,25 @@ func NormalizePlatforms(platforms []string) ([]string, error) {
 		"must be an X platform value (1-32 letters or digits, from GET targeting_criteria/platforms)")
 }
 
+// FieldAudienceExpansion is the gap 11 twitterConfig key (#564).
+const FieldAudienceExpansion = "audienceExpansion"
+
+// audienceExpansionValues are X's documented audience_expansion values for a line item (POST
+// accounts/:account_id/line_items, v12): "Used to expand the reach of campaigns by targeting users
+// similar to those already targeted", with no expansion applied by default.
+var audienceExpansionValues = map[string]bool{"BROAD": true, "DEFINED": true, "EXPANDED": true}
+
+// NormalizeAudienceExpansion applies the gap 11 rule (#564): the value is trimmed and upper-cased
+// and must be BROAD, DEFINED or EXPANDED; empty (or all-whitespace) means no expansion, X's
+// default. Pure, so the dispatcher's synchronous preflight and CreateCampaign apply the same rule.
+func NormalizeAudienceExpansion(v string) (string, error) {
+	n := strings.ToUpper(strings.TrimSpace(v))
+	if n == "" || audienceExpansionValues[n] {
+		return n, nil
+	}
+	return "", &TargetingError{Field: FieldAudienceExpansion, Msg: fmt.Sprintf("%s must be BROAD, DEFINED or EXPANDED", domain.CallerValue(v))}
+}
+
 // TargetingError is a refusal of one create-time targeting list; Field is the twitterConfig key.
 type TargetingError struct {
 	Field string

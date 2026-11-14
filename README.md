@@ -288,6 +288,14 @@ openssl rand -base64 32
   `"false"` (`app.environment.TWITTER_CREATE_TARGETING_ENABLED.value`);
   enable it per-environment in the ArgoCD overlay once a live create
   confirms it.
+- `TWITTER_AUDIENCE_EXPANSION_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `twitterConfig.audienceExpansion` (#564 gap 11): the line
+  item an X create makes is sent with `audience_expansion` `BROAD`, `DEFINED`
+  or `EXPANDED`. Only the exact value `true` enables it; anything else fails
+  closed, and a create setting it is refused with a 400 before any job
+  exists. It names no account resource; it keeps a line-item parameter no
+  live create has sent off the shared ad account. The chart sets it to
+  `"false"` (`app.environment.TWITTER_AUDIENCE_EXPANSION_ENABLED.value`).
 - `META_CONVERSIONS_METRICS_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to conversions in the Meta metrics read (#550): for a
   campaign this service created with the conversions objective, the Insights

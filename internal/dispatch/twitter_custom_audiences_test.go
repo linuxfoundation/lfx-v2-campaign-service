@@ -44,6 +44,8 @@ var twitterUngatedFields = map[string]bool{
 	"conversationTopics": true,
 	// #564 gap 9: X's public device platform values name no account resource.
 	"platforms": true,
+	// #564 gap 11: a line-item setting from X's closed set names no account resource.
+	"audienceExpansion": true,
 }
 
 // TestEveryTwitterConfigFieldIsClassifiedForTheMarketingOpsGate fails when a twitterConfig field

@@ -30,6 +30,8 @@ type targetingFakeX struct {
 	conversationsPages []string
 	// platformsPages are the platform lookup's pages (#564 gap 9), served the same way.
 	platformsPages []string
+	// lineItemQuery is the raw query of the line-item POST (#564 gap 11).
+	lineItemQuery string
 	// failCriterion makes the n-th criterion POST (1-based) answer failStatus.
 	failCriterion int
 	failStatus    int
@@ -172,6 +174,7 @@ func (f *targetingFakeX) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
 	case strings.HasSuffix(p, "/line_items"):
 		f.writes = append(f.writes, "POST line_items")
+		f.lineItemQuery = r.URL.RawQuery
 		_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
 	case strings.HasSuffix(p, "/promoted_tweets"):
 		f.writes = append(f.writes, "POST promoted_tweets")
