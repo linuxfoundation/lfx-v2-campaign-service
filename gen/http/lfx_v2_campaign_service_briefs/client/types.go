@@ -5468,18 +5468,31 @@ type CampaignCreateInputRequestBody struct {
 	// blank or invalid entry, an overlap, a list over its cap, a value that is not
 	// an array of strings (null reads as absent), or either list while the flag is
 	// off, is refused with 400 "invalid campaign config: redditConfig.<field>:
-	// ..." before any job exists. X TARGETING (#564): twitterConfig takes
-	// `geoTargets` (ISO 3166-1 alpha-2 country codes, at most 50, uppercased and
-	// de-duplicated) and `languages` (X language values such as en, at most 20,
-	// lowercased and de-duplicated). Before anything is created each country is
-	// resolved with X's GET targeting_criteria/locations (location_type COUNTRIES,
-	// exactly one country-level entry required) and the languages are checked
-	// against GET targeting_criteria/languages; the new line item then gets one
-	// LOCATION or LANGUAGE criterion (operator EQ) per value, after the line item
-	// and before the promoted tweet. A value X does not offer, or a lookup that
-	// cannot be read, fails the job with nothing created; a criterion that fails
-	// stops the create before any tweet, with the PAUSED campaign and line item
-	// reported. Such a partial create is retained: repeating the request answers
+	// ..." before any job exists. REDDIT PLACEMENTS (#549): redditConfig takes
+	// `placements` (FEED, COMMENTS_PAGE), `platforms` (DESKTOP, MOBILE_NATIVE,
+	// MOBILE_WEB) and `expandTargeting` (boolean), sent as the ad group's
+	// targeting.locations, targeting.platforms and targeting.expand_targeting on
+	// every ad-group attempt. Values are case-insensitive, de-duplicated and sent
+	// upper-case in that fixed order. Omitted (or an empty list) keeps the
+	// long-standing default: both placements, platforms ALL, expansion true; ALL
+	// is not an accepted entry. All three are OFF unless
+	// REDDIT_PLACEMENT_TARGETING_ENABLED is exactly "true". A blank or unknown
+	// entry, a list that is not an array of strings or an expandTargeting that is
+	// not a boolean (null reads as absent), or any of the three set while the flag
+	// is off (expandTargeting: true included), is refused with 400 "invalid
+	// campaign config: redditConfig.<field>: ..." before any job exists. X
+	// TARGETING (#564): twitterConfig takes `geoTargets` (ISO 3166-1 alpha-2
+	// country codes, at most 50, uppercased and de-duplicated) and `languages` (X
+	// language values such as en, at most 20, lowercased and de-duplicated).
+	// Before anything is created each country is resolved with X's GET
+	// targeting_criteria/locations (location_type COUNTRIES, exactly one
+	// country-level entry required) and the languages are checked against GET
+	// targeting_criteria/languages; the new line item then gets one LOCATION or
+	// LANGUAGE criterion (operator EQ) per value, after the line item and before
+	// the promoted tweet. A value X does not offer, or a lookup that cannot be
+	// read, fails the job with nothing created; a criterion that fails stops the
+	// create before any tweet, with the PAUSED campaign and line item reported.
+	// Such a partial create is retained: repeating the request answers
 	// reconciliation required rather than re-dispatching, so an operator completes
 	// the targeting in X Ads Manager. When a create does find its line item by
 	// name, it changes that line item's targeting only if X reports it PAUSED,

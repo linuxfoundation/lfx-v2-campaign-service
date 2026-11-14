@@ -276,6 +276,14 @@ openssl rand -base64 32
   off the shared ad account. The chart sets it to `"false"`
   (`app.environment.REDDIT_TARGETING_EXCLUSIONS_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once a live create confirms it.
+- `REDDIT_PLACEMENT_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `redditConfig.placements`, `platforms` and
+  `expandTargeting` (#549 gap 7), sent at create time as the ad group's
+  `targeting.locations`, `platforms` and `expand_targeting` in place of the
+  fixed `FEED` + `COMMENTS_PAGE`, `ALL` and `true`. Only the exact value
+  `true` enables them; anything else fails closed, and a create naming any of
+  them is refused with a 400 before any job exists. Not role-gated. No live
+  create has sent a non-default value yet. The chart sets it to `"false"`.
 - `TWITTER_CREATE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `twitterConfig.geoTargets`, `languages`, `keywords` and
   `interestIds` (#564), country, language, broad keyword and interest

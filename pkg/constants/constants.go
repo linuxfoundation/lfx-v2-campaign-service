@@ -200,6 +200,17 @@ const (
 	// been exercised against a live account; the issue asks for a probe of the interests shape.
 	EnvRedditTargetingResolutionEnabled = "REDDIT_TARGETING_RESOLUTION_ENABLED"
 
+	// EnvRedditPlacementTargetingEnabled opts a deployment IN to redditConfig.placements,
+	// redditConfig.platforms and redditConfig.expandTargeting (#549 gap 7), sent at create time as
+	// the ad group's targeting.locations, targeting.platforms and targeting.expand_targeting in
+	// place of the fixed FEED + COMMENTS_PAGE, ALL and true. Only the exact value "true" enables
+	// them; unset or any other value fails closed, and a create naming any of the three is refused
+	// with a 400 before any job exists (and again at dispatch, before anything upstream). It names
+	// no account resource, so it is not role-gated. Default off because no live create has sent a
+	// value other than the fixed defaults; the platform values come from the gap review's reading
+	// of Reddit's published v3 schema. Turn it on per environment, in lfx-v2-argocd.
+	EnvRedditPlacementTargetingEnabled = "REDDIT_PLACEMENT_TARGETING_ENABLED"
+
 	// EnvTwitterCreateTargetingEnabled opts a deployment IN to twitterConfig.geoTargets and
 	// twitterConfig.languages (#564): country and language targeting criteria added to the line
 	// item an X create makes. Only the exact value "true" enables them; unset or any other value

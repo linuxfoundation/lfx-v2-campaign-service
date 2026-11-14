@@ -389,6 +389,16 @@ app:
     REDDIT_TARGETING_RESOLUTION_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to redditConfig.placements, platforms and
+    # expandTargeting (#549 gap 7), sent at create time as the ad group's
+    # targeting.locations, platforms and expand_targeting instead of the fixed
+    # FEED + COMMENTS_PAGE, ALL and true. Default off: no live create has sent
+    # a non-default value. Not role-gated: it names no account resource. While
+    # off, a create naming any of the three is refused with a 400 before any
+    # job exists. Any value other than "true" is treated as off.
+    REDDIT_PLACEMENT_TARGETING_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to twitterConfig.geoTargets, languages, keywords
     # and interestIds (#564), sent at create time as LOCATION, LANGUAGE,
     # BROAD_KEYWORD and INTEREST targeting criteria on the new X line item.
