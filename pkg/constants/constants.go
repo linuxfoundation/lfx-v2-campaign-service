@@ -384,6 +384,13 @@ const (
 	// needs no global_marketing_ops.
 	EnvMetaInterestTargetingEnabled = "META_INTEREST_TARGETING_ENABLED"
 
+	// EnvMetaLeadFormsEnabled opts a deployment IN to metaConfig.leadFormId (#550, gap 8): an
+	// existing Instant Form that turns the leads objective into an OUTCOME_LEADS lead ad. Only the
+	// exact value "true" enables it; anything else refuses the field with a 400 before any job
+	// exists. Default off until a live probe confirms the payload. The form belongs to the
+	// connection's Page, which the create already uses, so it needs no global_marketing_ops.
+	EnvMetaLeadFormsEnabled = "META_LEAD_FORMS_ENABLED"
+
 	// EnvGoogleAdsPMaxAudienceSignalEnabled opts a deployment IN to
 	// googleAdsConfig.performanceMaxAudienceSignal (#461): one existing Google Ads Audience
 	// attached to a Performance Max asset group as a signal. Only the exact value "true"

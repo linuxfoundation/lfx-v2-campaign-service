@@ -524,6 +524,17 @@ app:
     META_FREQUENCY_CAP_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to metaConfig.leadFormId (#550): an existing
+    # Instant Form that turns the leads objective into an OUTCOME_LEADS lead ad
+    # (LEAD_GENERATION ad set, the form on every creative). The form is read
+    # before anything is created and must be an active form of the connection's
+    # Page; this service never creates a form or accepts lead terms. Off by
+    # default until the payload is verified against a live ad account; set
+    # exactly "true" in lfx-v2-argocd. Any value other than "true" is treated as
+    # off.
+    META_LEAD_FORMS_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to metaConfig.targeting (#550): age, gender,
     # custom audiences to include and exclude, and the Advantage+ audience
     # flag on the Meta ad set. A per-deployment opt-in, off by default, because

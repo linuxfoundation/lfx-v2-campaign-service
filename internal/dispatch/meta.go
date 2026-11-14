@@ -93,6 +93,13 @@ type metaConfig struct {
 	// meta.NormalizeFrequencyCap's rules. Refused on any other objective and while
 	// META_FREQUENCY_CAP_ENABLED is not "true". Null or absent sends nothing.
 	FrequencyCap *meta.FrequencyCap `json:"frequencyCap,omitempty"`
+	// LeadFormID is an existing Instant Form of the connection's Page (#550, gap 8). With the leads
+	// objective it makes the campaign a real lead ad (OUTCOME_LEADS, the form on every creative);
+	// empty keeps leads' interim traffic mapping. Refused on any other objective, with manual
+	// bidding (metaBidPlan), with a button a form cannot carry, and while META_LEAD_FORMS_ENABLED is
+	// not "true". meta.NormalizeLeadForm checks the id shape; the client reads the form before the
+	// first write.
+	LeadFormID string `json:"leadFormId"`
 }
 
 // metaCreativeOptionDisabled refuses a creative option this deployment has not opted in to. It
@@ -103,7 +110,7 @@ func metaCreativeOptionDisabled(field, env string) error {
 		domain.ErrCreateConfigInvalid, field, env, field, env))
 }
 
-// checkMetaCreativeOptions refuses a callToAction, conversionEvent or optimizationGoal the create
+// checkMetaCreativeOptions refuses a callToAction, conversionEvent, optimizationGoal or leadFormId the create
 // cannot send (#550):
 // either one while its deployment flag is off — read per call, and only the exact value "true"
 // enables it — and otherwise a value the client's allow-lists refuse. A blank value is absent.
@@ -129,6 +136,17 @@ func checkMetaCreativeOptions(cfg metaConfig) error {
 			return metaCreativeOptionDisabled("optimizationGoal", constants.EnvMetaOptimizationGoalEnabled)
 		}
 		if _, err := meta.NormalizeOptimizationGoal(cfg.Objective, cfg.OptimizationGoal); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(cfg.LeadFormID) != "" {
+		if os.Getenv(constants.EnvMetaLeadFormsEnabled) != "true" {
+			return metaCreativeOptionDisabled("leadFormId", constants.EnvMetaLeadFormsEnabled)
+		}
+		if _, err := meta.NormalizeLeadForm(cfg.Objective, cfg.LeadFormID); err != nil {
+			return err
+		}
+		if err := meta.CheckLeadFormCallToAction(cfg.CallToAction); err != nil {
 			return err
 		}
 	}
@@ -906,6 +924,8 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		OptimizationGoal: cfg.OptimizationGoal,
 		// The awareness frequency cap; the client checks it again (#550). Gated above.
 		FrequencyCap: cfg.FrequencyCap,
+		// The Instant Form as the caller sent it; the client checks it again and reads it (#550). Gated above.
+		LeadFormID: cfg.LeadFormID,
 		// The audience targeting as the caller sent it; the client normalizes it (#550).
 		Targeting: cfg.Targeting,
 
@@ -1772,9 +1792,9 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 }
 
 // metaStringConfigKeys are the string fields checkMetaStringFieldShape type-checks: the publish identity,
-// and since #550 the call-to-action, conversion event and optimization goal, which would otherwise
+// and since #550 the call-to-action, conversion event, optimization goal and lead form, which would otherwise
 // read as absent.
-var metaStringConfigKeys = []string{"instagramUserId", "callToAction", "conversionEvent", "dsaBeneficiary", "dsaPayor", "optimizationGoal"}
+var metaStringConfigKeys = []string{"instagramUserId", "callToAction", "conversionEvent", "dsaBeneficiary", "dsaPayor", "optimizationGoal", "leadFormId"}
 
 // decodeMetaTargeting decodes metaConfig.targeting on its own, so a wrong-typed block (or a
 // wrong-typed field in it) is a synchronous refusal rather than an absent block — PreflightCreate's
@@ -1900,6 +1920,10 @@ func metaBidPlan(cfg metaConfig) (bidPlan, error) {
 	}
 	if !meta.ManualBidSupported(cfg.Objective) {
 		return bidPlan{}, biddingInvalid(key, "manual bidding is a cost-per-link-click bid cap, which needs the traffic or leads objective; use automatic bidding for this objective")
+	}
+	// An instant-form lead ad set optimizes for LEAD_GENERATION, not link clicks (#550, gap 8).
+	if strings.TrimSpace(cfg.LeadFormID) != "" {
+		return bidPlan{}, biddingInvalid(key, "manual bidding is a cost-per-link-click bid cap, which an Instant Form lead ad (leadFormId) cannot carry; use automatic bidding")
 	}
 	// The cap is per LINK CLICK, so the ad set must optimize for link clicks too (#550, gap 11).
 	if strings.EqualFold(strings.TrimSpace(cfg.OptimizationGoal), meta.OptimizationLandingPageViews) {

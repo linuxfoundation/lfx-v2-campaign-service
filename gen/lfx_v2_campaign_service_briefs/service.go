@@ -163,13 +163,18 @@ type Service interface {
 	// the field while META_OPTIMIZATION_GOAL_ENABLED is not "true", is a
 	// synchronous 400. So is a metaConfig.frequencyCap on an objective other than
 	// awareness, with maxImpressions or intervalDays outside 1-90, or while
-	// META_FREQUENCY_CAP_ENABLED is not "true". REDDIT SHARED-ACCOUNT INPUTS
-	// (#549): a redditConfig that sets customAudienceIds or
-	// excludedCustomAudienceIds (any non-empty list) on a create that selects
-	// reddit-ads requires global_marketing_ops on this project in the same single
-	// check, with the same 403 and 503; the custom audiences belong to the LF
-	// Reddit ad account every foundation shares. X SHARED-ACCOUNT INPUTS (#564):
-	// likewise a twitterConfig that sets customAudienceIds or
+	// META_FREQUENCY_CAP_ENABLED is not "true". So is a metaConfig.leadFormId (an
+	// existing Instant Form, #550) on an objective other than leads, that is not a
+	// numeric id, with manual bidding, with a callToAction a form cannot carry, or
+	// while META_LEAD_FORMS_ENABLED is not "true"; with leads it makes an
+	// OUTCOME_LEADS lead ad, and the form is read before anything is created
+	// (another Page's or an inactive form fails the job with nothing created).
+	// REDDIT SHARED-ACCOUNT INPUTS (#549): a redditConfig that sets
+	// customAudienceIds or excludedCustomAudienceIds (any non-empty list) on a
+	// create that selects reddit-ads requires global_marketing_ops on this project
+	// in the same single check, with the same 403 and 503; the custom audiences
+	// belong to the LF Reddit ad account every foundation shares. X SHARED-ACCOUNT
+	// INPUTS (#564): likewise a twitterConfig that sets customAudienceIds or
 	// excludedCustomAudienceIds (any non-empty list) on a create that selects
 	// twitter-ads requires global_marketing_ops on this project in the same single
 	// check; those audiences belong to the LF X ad account. MICROSOFT

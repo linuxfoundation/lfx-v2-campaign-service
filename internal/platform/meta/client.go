@@ -159,9 +159,9 @@ var objectiveParams = map[string]ObjectiveParams{
 	// flow does not supply — it would create the campaign then fail at the ad set,
 	// orphaning a paid resource.
 	//
-	// Full LEAD_GENERATION / instant-form (or OUTCOME_LEADS + pixel) parity with the
-	// shared TS contract is INTENTIONALLY OUT OF SCOPE for this PR and tracked as a
-	// follow-up (LFXV2-2665).
+	// A caller that names an existing Instant Form (metaConfig.leadFormId, #550 gap 8)
+	// gets the real lead ad instead: leadFormObjectiveParams (lead_forms.go) replaces
+	// this entry for that create. Without a form this interim mapping still applies.
 	"leads": {
 		CampaignObjective:  "OUTCOME_TRAFFIC",
 		OptimizationGoal:   "LINK_CLICKS",
@@ -2793,8 +2793,8 @@ type CampaignInput struct {
 	// Objective is one of awareness|traffic|engagement|leads|conversions. Empty
 	// defaults to "traffic". "leads" runs an interim website-traffic campaign
 	// (OUTCOME_TRAFFIC optimizing for LINK_CLICKS to the registration URL); it does
-	// not build an on-Facebook instant lead form. Full LEAD_GENERATION / instant-
-	// form parity (and status-toggling + analytics) are deferred to LFXV2-2665.
+	// not build an on-Facebook instant lead form; with LeadFormID it attaches an
+	// existing one instead (OUTCOME_LEADS, #550 gap 8).
 	Objective  string
 	GeoTargets []string
 	// Budget is the budget amount in whole units of the ad ACCOUNT's currency.
@@ -2863,6 +2863,14 @@ type CampaignInput struct {
 	// request on any other objective, outside the list, or with a manual bid cap (a link-click cap
 	// needs the LINK_CLICKS goal).
 	OptimizationGoal string
+	// LeadFormID is an existing Instant Form of the connection's Page (metaConfig.leadFormId, #550
+	// gap 8), created in Ads Manager with the Page's lead terms already accepted; this service never
+	// creates a form or accepts terms. Only with the leads objective: the campaign is then
+	// OUTCOME_LEADS, the ad set a LEAD_GENERATION ad set with destination ON_AD, and every creative's
+	// button opens the form. Empty keeps leads' interim website-traffic mapping. The id shape is
+	// checked before any request (NormalizeLeadForm) and the form is read before the first write
+	// (checkLeadForm).
+	LeadFormID string
 	// FrequencyCap is the awareness ad set's impressions-per-person cap (metaConfig.frequencyCap,
 	// #550), sent as frequency_control_specs. Nil sends nothing. Refused before any request on any
 	// other objective or with a value outside 1..90 (NormalizeFrequencyCap).
@@ -3190,6 +3198,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, domain.WrapPreflightRefusal(err)
 	}
+	// An existing Instant Form (#550, gap 8) turns the leads objective into a real lead ad:
+	// OUTCOME_LEADS, a LEAD_GENERATION ad set on the Page, and the form on every creative. Without
+	// one, leads keeps its interim website-traffic mapping. Checked before any request; the form
+	// itself is read after the account preflight (checkLeadForm).
+	if in.LeadFormID, err = NormalizeLeadForm(objective, in.LeadFormID); err != nil {
+		return nil, err
+	}
+	if in.LeadFormID != "" {
+		objParams = leadFormObjectiveParams
+		promotedObject = map[string]any{"page_id": c.account.PageID}
+		if err := CheckLeadFormCallToAction(in.CallToAction); err != nil {
+			return nil, err
+		}
+	}
 	// The call-to-action button and the conversion event (#550), both checked here with the rest
 	// of the deterministic inputs, before any request.
 	if in.CallToAction, err = NormalizeCallToAction(in.CallToAction); err != nil {
@@ -3364,6 +3386,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	// Every interest is validated the same way (#550, gap 7).
 	if err := c.checkInterests(ctx, audience); err != nil {
+		return nil, err
+	}
+	// The Instant Form is read the same way (#550, gap 8): it must be an ACTIVE form of this Page.
+	if err := c.checkLeadForm(ctx, in.LeadFormID); err != nil {
 		return nil, err
 	}
 
@@ -3656,6 +3682,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	if promotedObject != nil {
 		adSetBody["promoted_object"] = promotedObject
+	}
+	// An instant-form lead ad opens the form on the ad itself (#550, gap 8).
+	if in.LeadFormID != "" {
+		adSetBody["destination_type"] = DestinationOnAd
 	}
 	// The awareness frequency cap (#550, gap 18), checked with the deterministic inputs above.
 	if in.FrequencyCap != nil {
@@ -4506,6 +4536,11 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 	creativeBody := map[string]any{
 		"name":              fmt.Sprintf("%s - Variant %d", in.EventName, i+1),
 		"object_story_spec": objectStorySpec(c.account.PageID, utmURL, variant, imageHash, in.CallToAction),
+	}
+	// An instant-form lead ad's button opens the form (#550, gap 8): Meta's Lead Ads guide puts
+	// lead_gen_form_id in link_data.call_to_action.value in place of the click link.
+	if in.LeadFormID != "" {
+		withLeadForm(creativeBody["object_story_spec"].(map[string]any), in.LeadFormID)
 	}
 	// Bind the Instagram identity so an ad set requesting an Instagram placement (the
 	// default includes Instagram Feed) is publishable. Without it Meta flags "Please add

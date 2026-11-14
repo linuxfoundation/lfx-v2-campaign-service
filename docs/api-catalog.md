@@ -525,7 +525,7 @@ be changed later; `automatic` is refused there (409) until an operator switches 
 | Platform | automatic (default) | manual | extra manual rules |
 | --- | --- | --- | --- |
 | Microsoft | campaign `BiddingScheme` `MaxClicks`, ad group without `CpcBid` | campaign `BiddingScheme` `EnhancedCpc`, ad group `CpcBid` = bid (Microsoft silently converts `ManualCpc` to `EnhancedCpc` on Search campaigns) | 0.01–1,000 (the bid lever's bounds); at most two decimals (a zero-decimal account currency is Microsoft's to judge — the currency is not known before dispatch) |
-| Meta | ad set `LOWEST_COST_WITHOUT_CAP`, `billing_event` `IMPRESSIONS` (unchanged) | ad set `LOWEST_COST_WITH_BID_CAP`, `billing_event` `LINK_CLICKS`, `bid_amount` in minor units | objective `traffic` or `leads` only; at most two decimals; a whole minor unit of the account currency (checked against the currency Meta reports, at dispatch, before anything is created); a DAILY budget of at least 5 × the bid (Meta's Ad Set reference: "Clicks/Actions: 5x the bid_amount"), compared in the account currency's ENCODED minor units at dispatch, before anything is created (in JPY a 4.6 budget encodes to 5 and satisfies 5 × 1) |
+| Meta | ad set `LOWEST_COST_WITHOUT_CAP`, `billing_event` `IMPRESSIONS` (unchanged) | ad set `LOWEST_COST_WITH_BID_CAP`, `billing_event` `LINK_CLICKS`, `bid_amount` in minor units | objective `traffic` or `leads` (without `leadFormId`) only; at most two decimals; a whole minor unit of the account currency (checked against the currency Meta reports, at dispatch, before anything is created); a DAILY budget of at least 5 × the bid (Meta's Ad Set reference: "Clicks/Actions: 5x the bid_amount"), compared in the account currency's ENCODED minor units at dispatch, before anything is created (in JPY a 4.6 budget encodes to 5 and satisfies 5 × 1) |
 | Reddit | campaign and ad group `BIDLESS` (unchanged) | campaign and ad group `MANUAL_BIDDING`, `bid_type` `CPC`, ad group `bid_value` in micro-units | objective `traffic` only (the default, `conversions`, bids CPM) |
 | X | line item `bid_strategy` `AUTO` (unchanged), named `… \| AUTO` | line item `bid_strategy` `MAX`, `pay_by` `LINK_CLICK`, `bid_amount_local_micro`, named `… \| MAX` | the bid may not exceed the daily `budgetAmount` (X: a line item's bid "should not exceed daily_budget_amount_local_micro … of the parent campaign"), compared in micro-units |
 | LinkedIn | `objectiveType` `WEBSITE_VISIT`, `optimizationTargetType` `MAX_CLICK`, `costType` `CPM`, no `unitCost`; name segment `Traffic` | `objectiveType` `WEBSITE_CONVERSION`, `costType` `CPC`, `optimizationTargetType` `NONE`, `unitCost` = bid (USD); name segment `Conversions` | whole cents; the OBJECTIVE follows the strategy (see below) |
@@ -2860,10 +2860,11 @@ endDate: string                 — YYYY-MM-DD. Must be STRICTLY AFTER startDate
                                   platform job pre-create, not a synchronous 4xx.)
 objective?: string              — awareness | traffic | engagement | leads | conversions.
                                   Omitted or blank → defaults to `traffic`.
-                                  NOTE: `leads` is INTERIM — it runs a website-traffic campaign
-                                  (OUTCOME_TRAFFIC optimizing for LINK_CLICKS to the registration
-                                  URL); it does NOT create an on-Facebook instant lead form. Full
-                                  LEAD_GENERATION parity is deferred (LFXV2-2665).
+                                  NOTE: `leads` WITHOUT `leadFormId` is INTERIM — it runs a
+                                  website-traffic campaign (OUTCOME_TRAFFIC optimizing for
+                                  LINK_CLICKS to the registration URL). With `leadFormId` (below)
+                                  it is a real Instant Form lead ad (OUTCOME_LEADS). This service
+                                  never creates a form.
 geoTargets?: string[]           — ISO country codes, e.g. ['US', 'JP']. Optional: omitted or an
                                   empty list defaults to ['US']. Supplied entries are uppercased,
                                   trimmed, and filtered to valid ISO-2 codes; if entries were
@@ -2941,8 +2942,8 @@ optimizationGoal?: string       — OPTIONAL ad set `optimization_goal` for the 
                                   objective (#550), case-insensitive: LINK_CLICKS (default — the
                                   only goal before #550) or LANDING_PAGE_VIEWS (delivers to people
                                   likely to load the page, not just click). On any other objective
-                                  (leads included, which runs as traffic only until instant forms
-                                  exist), or outside the list, a synchronous 400. With manual
+                                  (leads included, with or without `leadFormId`), or outside the
+                                  list, a synchronous 400. With manual
                                   `bidding` (a link-click bid cap) LANDING_PAGE_VIEWS is a
                                   synchronous 400 too. Refused with a 400 unless
                                   META_OPTIMIZATION_GOAL_ENABLED is exactly "true".
@@ -2955,6 +2956,26 @@ frequencyCap?:                  — OPTIONAL impressions-per-person cap on the a
                                   missing or out-of-range field, or a non-object is a synchronous
                                   400. Refused with a 400 unless META_FREQUENCY_CAP_ENABLED is
                                   exactly "true". null/absent → no cap.
+leadFormId?: string             — OPTIONAL existing Meta Instant Form id (#550), for the `leads`
+                                  objective only. The form is created in Meta Ads Manager on the
+                                  connection's Page, with the Page's lead terms already accepted;
+                                  this service never creates a form or accepts terms. With it the
+                                  campaign is `objective: OUTCOME_LEADS`, the ad set
+                                  `optimization_goal: LEAD_GENERATION`, `billing_event:
+                                  IMPRESSIONS`, `destination_type: ON_AD`, `promoted_object:
+                                  {"page_id"}`, and every creative's
+                                  `link_data.call_to_action.value` is `{"lead_gen_form_id"}`
+                                  (the link stays the tracked registration URL). Refused with a
+                                  synchronous 400 on any other objective, when not a numeric
+                                  string of at most 20 digits, with manual `bidding` (a
+                                  link-click cap), with a `callToAction` a form cannot carry
+                                  (only LEARN_MORE, SIGN_UP, APPLY_NOW, SUBSCRIBE, DOWNLOAD), with
+                                  a non-string type, and unless META_LEAD_FORMS_ENABLED is
+                                  exactly "true". Before anything is created the form is read
+                                  (`GET /{form}?fields=id,page,status`): a form of another Page
+                                  or not ACTIVE, a read that fails, or an answer without the form
+                                  and its Page fails the job with nothing created. Not gated by
+                                  global_marketing_ops (the connection's own Page).
 targeting?: object              — OPTIONAL audience targeting on the ad set (#550). Refused
                                   with a 400 before any job exists unless the deployment sets
                                   META_AUDIENCE_TARGETING_ENABLED to exactly "true" (not yet

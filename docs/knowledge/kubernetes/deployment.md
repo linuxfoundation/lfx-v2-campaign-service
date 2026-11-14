@@ -94,6 +94,12 @@ a 400 before any job exists. It names no account resource, so it is not behind
 `metaConfig.frequencyCap` (an impressions-per-person cap on the awareness ad set). Only exactly
 `"true"` enables it; off, a create carrying the field is refused with a 400 before any job exists.
 
+`META_LEAD_FORMS_ENABLED` is the same kind of gate, defaulting to `"false"` (#550), for
+`metaConfig.leadFormId` (an existing Instant Form that makes the `leads` objective an
+`OUTCOME_LEADS` lead ad). The form is read and must be an active form of the connection's Page
+before anything is created. It names a resource of the Page the create already uses, so it is not
+behind `global_marketing_ops`.
+
 `META_AUDIENCE_TARGETING_ENABLED` is the same kind of gate for Meta, defaulting to `"false"`
 (#550): it opts a cluster in to `metaConfig.targeting` (age, gender, custom audiences to include
 and exclude, and the Advantage+ audience flag on the ad set). Each custom audience is read and must
