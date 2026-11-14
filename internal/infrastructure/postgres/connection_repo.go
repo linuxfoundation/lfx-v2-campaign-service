@@ -78,7 +78,106 @@ func (r *ConnectionRepo) Get(ctx context.Context, projectID string, provider mod
 		}
 		return nil, fmt.Errorf("get connection: %w", err)
 	}
+	if provider == model.ProviderLinkedInAds {
+		grants, gerr := r.loadLinkedInGrants(ctx, c.ID)
+		if gerr != nil {
+			return nil, fmt.Errorf("get connection: %w", gerr)
+		}
+		c.LinkedInGrants = grants
+	}
 	return c, nil
+}
+
+// loadLinkedInGrants reads the account grants (#581) for one LinkedIn connection row, ordered by
+// account id so two reads of one set compare equal.
+//
+// A second statement rather than a column of Get's SELECT: Get, Create and Update share
+// scanConnection's fixed column list, and grants are read by Get alone. The two reads are not one
+// snapshot, but the only interleaving is a replace committing between them, which bumps the row's
+// version in the same transaction: the caller then holds the NEWER grant set beside the older
+// version, and the next read sees the new version and rebuilds anything cached on it. A grant set
+// can never be read OLDER than the row it is attached to.
+func (r *ConnectionRepo) loadLinkedInGrants(ctx context.Context, connectionID string) ([]model.LinkedInAccountGrant, error) {
+	rows, err := r.db.Query(ctx,
+		"SELECT account_id, org_id, COALESCE(label, '') FROM linkedin_ads_account_grants "+
+			"WHERE connection_id = $1::uuid ORDER BY account_id", connectionID)
+	if err != nil {
+		return nil, fmt.Errorf("load linkedin account grants: %w", err)
+	}
+	defer rows.Close()
+	var grants []model.LinkedInAccountGrant
+	for rows.Next() {
+		var g model.LinkedInAccountGrant
+		if err := rows.Scan(&g.AccountID, &g.OrgID, &g.Label); err != nil {
+			return nil, fmt.Errorf("scan linkedin account grant: %w", err)
+		}
+		grants = append(grants, g)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("load linkedin account grants: %w", err)
+	}
+	return grants, nil
+}
+
+var _ domain.LinkedInGrantWriter = (*ConnectionRepo)(nil)
+
+// ReplaceLinkedInAccountGrants implements domain.LinkedInGrantWriter: one transaction that bumps
+// the live LinkedIn row's version (gated on expectedVersion), deletes its grants and inserts
+// grants. The version bump comes FIRST so the row lock it takes serialises concurrent installers
+// before either touches the grant table; the loser's gated UPDATE matches no row and the whole
+// transaction rolls back with nothing written.
+func (r *ConnectionRepo) ReplaceLinkedInAccountGrants(ctx context.Context, projectID string, grants []model.LinkedInAccountGrant, by *model.Actor, expectedVersion int64) (*model.Connection, error) {
+	updatedBy, err := marshalActor(by)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("replace linkedin account grants: begin: %w", err)
+	}
+	// Rollback after Commit is a no-op; on every early return it releases the row lock.
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	provider := model.ProviderLinkedInAds
+	//nolint:gosec // table and column names come from a fixed internal allowlist, not user input.
+	q := fmt.Sprintf(
+		"UPDATE %s SET updated_by = $1, version = version + 1, updated_at = now() "+
+			"WHERE project_id = $2 AND version = $3 AND status <> 'deleted' RETURNING %s",
+		provider.Table(), strings.Join(connectionSelectCols(provider), ", "),
+	)
+	updated, err := scanConnection(tx.QueryRow(ctx, q, updatedBy, projectID, expectedVersion), provider, provider.ConfigKeys())
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("replace linkedin account grants: %w", err)
+		}
+		// Missing vs stale, read outside the rolled-back transaction as update does.
+		_, gerr := r.Get(ctx, projectID, provider)
+		switch {
+		case errors.Is(gerr, domain.ErrNotFound):
+			return nil, domain.ErrNotFound
+		case gerr != nil:
+			return nil, gerr
+		default:
+			return nil, domain.ErrPreconditionFailed
+		}
+	}
+	if _, err := tx.Exec(ctx, "DELETE FROM linkedin_ads_account_grants WHERE connection_id = $1::uuid", updated.ID); err != nil {
+		return nil, fmt.Errorf("replace linkedin account grants: delete: %w", err)
+	}
+	for _, g := range grants {
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO linkedin_ads_account_grants (connection_id, account_id, org_id, label) VALUES ($1::uuid, $2, $3, $4)",
+			updated.ID, g.AccountID, g.OrgID, nullStr(g.Label)); err != nil {
+			return nil, fmt.Errorf("replace linkedin account grants: insert account %s: %w", g.AccountID, err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("replace linkedin account grants: commit: %w", err)
+	}
+	if len(grants) > 0 {
+		updated.LinkedInGrants = append([]model.LinkedInAccountGrant(nil), grants...)
+	}
+	return updated, nil
 }
 
 // Disconnected reports whether the project once had a connection for this provider and

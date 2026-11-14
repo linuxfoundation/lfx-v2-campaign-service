@@ -564,6 +564,25 @@ leaving headroom over reusing a number a sibling branch might renumber into.
     `TestLiveMigration000056RetriesADeadlock` and
     `TestLiveListCampaignsForBriefExcludesAnotherProject`.
 
+- `000058` — `linkedin_ads_account_grants` (#581). (`000057` is taken by
+  `feat/586-linkedin-video-ads`.) A new typed table: the operator-installed allow-list of extra
+  `(account_id, org_id, label)` pairs the LF SYSTEM LinkedIn row may address besides its own
+  `account_id`/`org_id`. `PRIMARY KEY (connection_id, account_id)`, so one account has one org per
+  connection; both ids `CHECK`ed numeric; `label` at most 200 chars. `connection_id` references
+  `linkedin_ads_connections (id) ON DELETE CASCADE` (hard delete only: a soft-deleted row keeps its
+  grants, inert, because grants are loaded by the LIVE row's id). Add-only, so a rolling deploy
+  cannot break on it; the down drops the table, after which campaigns created in a granted
+  account answer the account-mismatch refusal until the grant is re-installed.
+  - `ConnectionRepo.Get` loads the grants for LinkedIn rows only (`loadLinkedInGrants`, a second
+    statement ordered by account id) into `model.Connection.LinkedInGrants`.
+  - `ConnectionRepo.ReplaceLinkedInAccountGrants` (`domain.LinkedInGrantWriter`, a port separate
+    from `ConnectionWriter` because only the installer writes grants) is one transaction: a
+    version-gated `UPDATE` that bumps the row's version first (its row lock serialises installers),
+    then delete + insert. A stale version is `ErrPreconditionFailed` with nothing written; the bump
+    invalidates any credential/client cached on the old version.
+  - Pinned by `TestLinkedInGrantsReplaceIsVersionGatedAndReadBack` (under `dbtest/`) and
+    `TestLiveMigrationsGoDownAndUpAgain`.
+
 ## Terminal-job retention (`JobRepo.PruneTerminalJobs`)
 
 `campaign_jobs` is append-only — nothing else in the service deletes a row — so it

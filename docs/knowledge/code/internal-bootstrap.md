@@ -234,4 +234,31 @@ half: `SetCredential` is not version-gated, so two simultaneous rotations could 
 account beside the other's credential with nothing detecting it. Now the second writer loses the
 version check and the command says nothing was written and to rerun, which is true and actionable.
 
+## LinkedIn account grants (#581)
+
+`InstallLinkedInGrants` writes the LF system LinkedIn row's account grants
+(`linkedin_ads_account_grants`, migration 000058): the extra `(ad account, organization)` pairs the
+system row may address. The grant list, not every account the token reaches, is the boundary, and
+a campaign in a granted account is always authored by the grant's org.
+
+```sh
+# grants only: no credential is read from stdin
+campaign-service bootstrap-system-account -provider linkedin-ads -grants-only \
+  -linkedin-grant 509430019:208777:"LF Events" -linkedin-grant 500928401:12893459:CNCF
+# remove every grant
+campaign-service bootstrap-system-account -provider linkedin-ads -grants-only -clear-linkedin-grants
+# rotate the credential and set grants in one run (grants are verified with the NEW token)
+campaign-service bootstrap-system-account -provider linkedin-ads -linkedin-grant 500928401:12893459:CNCF < creds.json
+```
+
+- The set is declarative: what a run names is the whole list afterwards.
+- Every grant is validated (numeric ids, label at most 200 chars with no control characters, no
+  account twice, no grant naming the row's own account) and then verified with LinkedIn
+  (`dispatch.VerifyLinkedInGrant`, the connection test's `VerifyAccountOrgReference`) using the
+  row's own decrypted credential. Any failure, an inconclusive verdict included, writes nothing.
+- The row must already exist; grants never create one. The write is one version-gated
+  transaction, so a concurrent install loses and is told to rerun.
+- `-grants-only` refuses `-account-id`, `-clear-account-id` and `-config`, which only a credential
+  run writes. The grant flags are refused on any provider but `linkedin-ads`.
+
 See [internal/bootstrap](../../../internal/bootstrap).

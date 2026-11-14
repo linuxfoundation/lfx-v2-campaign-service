@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/bootstrap"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/dispatch"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/crypto"
@@ -23,7 +25,9 @@ import (
 const (
 	// bootstrapSystemAccountCmd installs the LF-owned credentials unconnected projects fall
 	// back to: `campaign-service bootstrap-system-account -provider google-ads
-	// [-account-id 8666746580] [-config login_customer_id=999] < creds.json`. A subcommand of
+	// [-account-id 8666746580] [-config login_customer_id=999] < creds.json`. LinkedIn's row also
+	// takes account grants (#581): `-provider linkedin-ads -grants-only -linkedin-grant
+	// 500928401:12893459:CNCF` edits them without a credential. A subcommand of
 	// the SERVING binary because ko publishes only cmd/campaign-service — a separate binary
 	// would have no published artifact for the deployment Job to run.
 	bootstrapSystemAccountCmd = "bootstrap-system-account"
@@ -132,6 +136,10 @@ func runSysacctBootstrap(args []string) error {
 	accountID := fs.String("account-id", "", "ad account id. On a FIRST install, omitting it is allowed for two different reasons: a paid-ads provider with account DISCOVERY whose create path names the missing choice can finish the row later, and the EMAIL channel has no ad account to select at all (nothing in the HubSpot adapter reads it). Every other paid-ads provider is refused, since nothing could finish the row. On a rotation it means KEEP the id already on the row — use -clear-account-id to remove one")
 	clearAccountID := fs.Bool("clear-account-id", false, "drop the account selection from an existing row, returning it to the credentials-first state; for a paid-ads provider with account discovery, or for the email channel, which never needed one — never combined with -account-id")
 	configKV := fs.String("config", "", "non-secret provider config as key=value pairs, e.g. org_id=123. Keys not mentioned keep their current value; `key=` with no value clears that column")
+	var grantFlags grantList
+	fs.Var(&grantFlags, "linkedin-grant", "linkedin-ads only, repeatable: an extra ad account the LF system row may address, as account:org[:label] (bare LinkedIn numbers; #581). The set named is the WHOLE grant list afterwards; each pairing is verified with LinkedIn before anything is written")
+	clearGrants := fs.Bool("clear-linkedin-grants", false, "linkedin-ads only: remove every account grant from the system row; never combined with -linkedin-grant")
+	grantsOnly := fs.Bool("grants-only", false, "linkedin-ads only: change the account grants on the EXISTING system row without reading or rotating a credential (nothing is read from stdin)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -160,6 +168,10 @@ func runSysacctBootstrap(args []string) error {
 	if err != nil {
 		return err
 	}
+	grants, err := planGrantInstall(model.Provider(*provider), grantFlags, *clearGrants, *grantsOnly, *accountID != "" || *clearAccountID || cfg != nil)
+	if err != nil {
+		return err
+	}
 	// The SERVER's resolver, not os.Getenv: in-cluster DATABASE_URL is unset.
 	dsn, err := config.ResolveDatabaseURL()
 	if err != nil {
@@ -170,15 +182,20 @@ func runSysacctBootstrap(args []string) error {
 	}
 
 	// Read the credential BEFORE opening the database: a malformed document is the likeliest
-	// failure. One byte past the limit so an oversize is detected, not truncated.
-	credsJSON, err := io.ReadAll(io.LimitReader(os.Stdin, maxCredentialBytes+1))
-	switch {
-	case err != nil:
-		return fmt.Errorf("read credentials from stdin: %w", err)
-	case len(credsJSON) > maxCredentialBytes:
-		return fmt.Errorf("credentials exceed %d bytes; check that stdin is the credential document", maxCredentialBytes)
-	case len(credsJSON) == 0:
-		return fmt.Errorf("no credentials on stdin; pipe the provider's credential json in")
+	// failure. One byte past the limit so an oversize is detected, not truncated. A grants-only
+	// run reads nothing: grants are not secrets, and re-piping a token just to edit them would
+	// put the token in front of the operator for no reason.
+	var credsJSON []byte
+	if !*grantsOnly {
+		credsJSON, err = io.ReadAll(io.LimitReader(os.Stdin, maxCredentialBytes+1))
+		switch {
+		case err != nil:
+			return fmt.Errorf("read credentials from stdin: %w", err)
+		case len(credsJSON) > maxCredentialBytes:
+			return fmt.Errorf("credentials exceed %d bytes; check that stdin is the credential document", maxCredentialBytes)
+		case len(credsJSON) == 0:
+			return fmt.Errorf("no credentials on stdin; pipe the provider's credential json in")
+		}
 	}
 
 	enc, err := crypto.NewAESGCMFromBase64(os.Getenv(constants.EnvCredentialEncryptionKey))
@@ -195,11 +212,66 @@ func runSysacctBootstrap(args []string) error {
 	}
 	defer pool.Close()
 
-	if err := bootstrap.InstallSystemCredentials(ctx, postgres.NewConnectionRepo(pool), enc,
-		model.Provider(*provider), *accountID, *clearAccountID, cfg, credsJSON); err != nil {
-		return err
+	repo := postgres.NewConnectionRepo(pool)
+	if !*grantsOnly {
+		if err := bootstrap.InstallSystemCredentials(ctx, repo, enc,
+			model.Provider(*provider), *accountID, *clearAccountID, cfg, credsJSON); err != nil {
+			return err
+		}
+		// Never echo the credential: what needs confirming is which provider now has an account.
+		fmt.Printf("system account credentials installed for %s\n", *provider)
 	}
-	// Never echo the credential: what needs confirming is which provider now has an account.
-	fmt.Printf("system account credentials installed for %s\n", *provider)
+	if len(grants) > 0 || *clearGrants {
+		// After the credential, so a run that rotates the token and names grants verifies the
+		// grants with the NEW token. Not one transaction with it: a grant failure leaves the
+		// rotated credential in place and says so, and rerunning with -grants-only finishes.
+		if err := bootstrap.InstallLinkedInGrants(ctx, repo, repo, enc, linkedInGrantVerifier, grants, *clearGrants); err != nil {
+			if !*grantsOnly {
+				return fmt.Errorf("credentials were installed, but the grants were not (rerun with -grants-only): %w", err)
+			}
+			return err
+		}
+		fmt.Printf("linkedin account grants on the system row: %d\n", len(grants))
+	}
 	return nil
+}
+
+// linkedInGrantVerifier verifies each grant against LinkedIn with the system row's own token.
+var linkedInGrantVerifier bootstrap.LinkedInGrantVerifier = func(ctx context.Context, plaintext []byte, accountID, orgID string) error {
+	return dispatch.VerifyLinkedInGrant(ctx, plaintext, accountID, orgID)
+}
+
+// grantList collects the repeatable -linkedin-grant flag.
+type grantList []string
+
+func (g *grantList) String() string { return strings.Join(*g, ",") }
+
+func (g *grantList) Set(v string) error {
+	*g = append(*g, v)
+	return nil
+}
+
+// planGrantInstall checks the grant flags against each other and the provider before anything
+// is read or opened, and parses each -linkedin-grant. rowFlags reports whether the run also asks
+// to change the row itself (-account-id, -clear-account-id, -config), which a grants-only run
+// cannot do: it writes no credential, and InstallSystemCredentials is the only writer of those.
+func planGrantInstall(provider model.Provider, raw []string, clear, grantsOnly, rowFlags bool) ([]model.LinkedInAccountGrant, error) {
+	if (len(raw) > 0 || clear || grantsOnly) && provider != model.ProviderLinkedInAds {
+		return nil, fmt.Errorf("-linkedin-grant, -clear-linkedin-grants and -grants-only apply to -provider %s only", model.ProviderLinkedInAds)
+	}
+	if grantsOnly && len(raw) == 0 && !clear {
+		return nil, errors.New("-grants-only needs -linkedin-grant or -clear-linkedin-grants")
+	}
+	if grantsOnly && rowFlags {
+		return nil, errors.New("-grants-only changes grants alone; -account-id, -clear-account-id and -config need a credential run")
+	}
+	grants := make([]model.LinkedInAccountGrant, 0, len(raw))
+	for _, v := range raw {
+		g, err := bootstrap.ParseLinkedInGrant(v)
+		if err != nil {
+			return nil, err
+		}
+		grants = append(grants, g)
+	}
+	return grants, nil
 }
