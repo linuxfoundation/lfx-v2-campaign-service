@@ -362,6 +362,14 @@ const (
 	// A locale names no account resource, so it needs no global_marketing_ops.
 	EnvMetaLocaleTargetingEnabled = "META_LOCALE_TARGETING_ENABLED"
 
+	// EnvMetaDeviceTargetingEnabled opts a deployment IN to metaConfig.targeting.devicePlatforms
+	// (#550, gap 15): mobile or desktop only, sent as the ad set's targeting `device_platforms`.
+	// Same rules as EnvMetaLocaleTargetingEnabled: only the exact value "true" enables it, a create
+	// carrying the list while it is off is a 400 before any job exists, a block that sets only
+	// device platforms (or locales) needs no EnvMetaAudienceTargetingEnabled, and it names no
+	// account resource.
+	EnvMetaDeviceTargetingEnabled = "META_DEVICE_TARGETING_ENABLED"
+
 	// EnvGoogleAdsPMaxAudienceSignalEnabled opts a deployment IN to
 	// googleAdsConfig.performanceMaxAudienceSignal (#461): one existing Google Ads Audience
 	// attached to a Performance Max asset group as a signal. Only the exact value "true"

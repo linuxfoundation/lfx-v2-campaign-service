@@ -1136,6 +1136,16 @@ only locales does not need `META_AUDIENCE_TARGETING_ENABLED`, which still gates 
 fields (`HasAudienceFields`) and an empty block. Locales name no account resource, so they are not
 behind `global_marketing_ops`. Not verified live: the `locales` payload.
 
+**Devices (gap 15).** `AudienceTargeting.DevicePlatforms` (`metaConfig.targeting.devicePlatforms`)
+is a subset of `mobile` and `desktop`, lower-cased and de-duplicated; one device is sent as
+`targeting.device_platforms`, both or none is Meta's default and sends nothing. A device is a
+placement control, not an inclusion, so it sends no Advantage+ flag. `CheckDevicePlacements`
+refuses desktop-only with the Audience Network placement (mobile apps only), in the client after
+normalizing and in `checkMetaTargeting`; other device/placement pairs are left to Meta until a probe.
+Its own flag, `META_DEVICE_TARGETING_ENABLED` (default off), gates it exactly as
+`META_LOCALE_TARGETING_ENABLED` gates locales. Not verified live: the payload, and whether Meta
+refuses desktop-only with the Instagram, Stories or Reels placements.
+
 ## Ads under an ad set (`ads.go`, decision D7 first step)
 
 `ListAdSetAds(ctx, adSetID, campaignID, accountID, window)` is read-only: `GET /{ad_set}/ads`

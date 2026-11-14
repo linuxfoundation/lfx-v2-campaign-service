@@ -416,6 +416,11 @@ openssl rand -base64 32
   refused with a 400 before any job exists. A targeting block that sets only
   `locales` does not need `META_AUDIENCE_TARGETING_ENABLED`. The chart sets
   it to `"false"`; enable it per-environment in the ArgoCD overlay.
+- `META_DEVICE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `metaConfig.targeting.devicePlatforms` (#550), `mobile`
+  or `desktop` only, sent as the ad set's `targeting.device_platforms`.
+  Same rules as `META_LOCALE_TARGETING_ENABLED`. The chart sets it to
+  `"false"`; enable it per-environment in the ArgoCD overlay.
 - `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.performanceMaxAudienceSignal`,
   one existing Google Ads Audience attached to a Performance Max asset

@@ -103,6 +103,10 @@ enables it; off, a create carrying the list is refused with a 400 before any job
 targeting block that sets only `locales` does not need `META_AUDIENCE_TARGETING_ENABLED`. It names
 no account resource, so it is not behind `global_marketing_ops`.
 
+`META_DEVICE_TARGETING_ENABLED` is the same kind of gate, defaulting to `"false"` (#550), for
+`metaConfig.targeting.devicePlatforms` (mobile or desktop only), with the same rules as
+`META_LOCALE_TARGETING_ENABLED`.
+
 `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is the same kind of gate, defaulting to `"false"`
 (#461): it opts a cluster in to `googleAdsConfig.performanceMaxAudienceSignal`, one existing
 Google Ads Audience attached to a Performance Max asset group as a signal. Like the Demand Gen
