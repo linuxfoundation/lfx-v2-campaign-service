@@ -294,7 +294,7 @@ func TestValidateDemandGenVideoCreative_ProbedEdgesAreAccepted(t *testing.T) {
 	}
 }
 
-// The call-to-action allowlist is exactly the set a validateOnly adGroupAds:mutate probe
+// The call-to-action allowlist is exactly the set a validateOnly googleAds:mutate probe
 // accepted on a Demand Gen video ad on 2026-11-14 (#604, v23, account 8666746580): every
 // value sent was accepted, so none is dropped and the six new ones are added.
 func TestDemandGenVideoCallToActions_AreTheProbedSet(t *testing.T) {

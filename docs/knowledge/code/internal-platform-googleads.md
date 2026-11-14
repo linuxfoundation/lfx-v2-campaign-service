@@ -2549,7 +2549,7 @@ the same answer the Video and Performance Max creatives give). Headlines are 1-5
 (the probe accepted 90 for both); the business name is required at 25. The call to action is
 limited to `demandGenVideoCallToActions`: SIGN_UP, LEARN_MORE, BOOK_NOW, VISIT_SITE,
 WATCH_NOW, APPLY_NOW, CONTACT_US, DOWNLOAD, GET_QUOTE, SUBSCRIBE and SHOP_NOW, exactly the
-values a validateOnly `adGroupAds:mutate` probe accepted on 2026-11-14 (#604, v23, account
+values a validateOnly `googleAds:mutate` probe accepted on 2026-11-14 (#604, v23, account
 8666746580; see `log/2026-11-14-604-google-video-cta-probe.md`). The field is a
 CallToActionType enum, not free text like Display's and Demand Gen image's
 `callToActionText` (#575): Google accepted the lower-case enum names too ("sign_up"), but

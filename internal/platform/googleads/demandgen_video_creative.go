@@ -73,7 +73,7 @@ const (
 )
 
 // demandGenVideoCallToActions is the CallToActionType values DemandGenVideoCreative
-// accepts: exactly the values a validateOnly adGroupAds:mutate probe on 2026-11-14 (#604,
+// accepts: exactly the values a validateOnly googleAds:mutate probe on 2026-11-14 (#604,
 // v23, account 8666746580) accepted on a Demand Gen video ad. The first five were also
 // accepted on 2026-11-03. The list is deliberately the probed set rather than Google's whole
 // enum: names that look plausible are not all values (REGISTER and GET_STARTED got 400
