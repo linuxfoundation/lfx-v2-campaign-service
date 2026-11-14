@@ -211,6 +211,15 @@ const (
 	// of Reddit's published v3 schema. Turn it on per environment, in lfx-v2-argocd.
 	EnvRedditPlacementTargetingEnabled = "REDDIT_PLACEMENT_TARGETING_ENABLED"
 
+	// EnvRedditDailyBudgetEnabled opts a deployment IN to redditConfig.budgetType (#549 gap 9):
+	// "daily" creates the campaign with goal_type DAILY_SPEND, so budgetUsd is a per-day cap, and
+	// "lifetime" keeps LIFETIME_SPEND. Only the exact value "true" enables it; unset or any other
+	// value fails closed, and a create that sets the field (either value) is refused with a 400
+	// before any job exists. It names no account resource, so it is not role-gated. Default off
+	// because no live create has sent DAILY_SPEND on a budget-optimized campaign with an end_time;
+	// the budget lever, settings readback and account monitor already read both goal types.
+	EnvRedditDailyBudgetEnabled = "REDDIT_DAILY_BUDGET_ENABLED"
+
 	// EnvTwitterCreateTargetingEnabled opts a deployment IN to twitterConfig.geoTargets and
 	// twitterConfig.languages (#564): country and language targeting criteria added to the line
 	// item an X create makes. Only the exact value "true" enables them; unset or any other value

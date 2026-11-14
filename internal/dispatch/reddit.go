@@ -40,7 +40,12 @@ type redditCreds struct {
 // The brief supplies event identity (name/slug/project/registration URL); this
 // supplies the Reddit-specific campaign shape.
 type redditConfig struct {
-	BudgetUSD  float64  `json:"budgetUsd"`
+	BudgetUSD float64 `json:"budgetUsd"`
+	// BudgetType is the pacing of BudgetUSD (#549 gap 9): "lifetime" (the default) or "daily".
+	// Gated by REDDIT_DAILY_BUDGET_ENABLED and validated by checkRedditBudgetType
+	// (reddit_budget_type.go). omitempty: an omitted type stays ABSENT in the persisted
+	// ConfigSnapshot, so a snapshot replays through the gate exactly as the request did.
+	BudgetType string   `json:"budgetType,omitempty"`
 	StartDate  string   `json:"startDate"` // YYYY-MM-DD
 	EndDate    string   `json:"endDate"`   // YYYY-MM-DD
 	Objective  string   `json:"objective"` // awareness|traffic|conversions|video_views
@@ -264,6 +269,10 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		if cerr := checkRedditConversionEvent(config, cfg); cerr != nil {
 			return nil, notCreated(cerr)
 		}
+		// Likewise a wrong-typed budgetType (#549 gap 9).
+		if berr := checkRedditBudgetType(config); berr != nil {
+			return nil, notCreated(berr)
+		}
 		return nil, notCreated(err)
 	}
 	// The bidding choice, validated before any upstream call (PreflightCreate normally refused a
@@ -289,6 +298,10 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	// Placements, platforms and expansion (#549 gap 7): the same, for any path that skipped
 	// PreflightCreate.
 	if err := checkRedditPlacementTargeting(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// The budget's pacing (#549 gap 9): the same, for any path that skipped PreflightCreate.
+	if err := checkRedditBudgetType(config); err != nil {
 		return nil, notCreated(err)
 	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
@@ -371,6 +384,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		// the canonical LFX slug, not free text.
 		Project:            brief.ProjectID,
 		BudgetUSD:          cfg.BudgetUSD,
+		BudgetType:         cfg.BudgetType,
 		StartDate:          cfg.StartDate,
 		EndDate:            cfg.EndDate,
 		Objective:          cfg.Objective,
@@ -1181,12 +1195,14 @@ func campaignFromReddit(ctx context.Context, r *reddit.CampaignResult, cfg reddi
 		CampaignName:       r.CampaignName,
 		Status:             campaignStatusCreated,
 	}
-	// Persist the budget/schedule/config the caller supplied. The Reddit client always
-	// creates campaigns with goal_type LIFETIME_SPEND (client.go) — budgetUsd is a
-	// LIFETIME spend cap, not a daily one — so the persisted budget_type is lifetime.
-	// ConfigSnapshot captures the validated config for reconciliation, with its caller
-	// URLs and free text redacted — see redditSnapshotConfig.
-	applyCampaignConfig(ctx, c, cfg.BudgetUSD, true, cfg.StartDate, cfg.EndDate, redditSnapshotConfig(cfg))
+	// Persist the budget/schedule/config the caller supplied. The Reddit client creates
+	// campaigns with goal_type LIFETIME_SPEND (client.go) — budgetUsd is a LIFETIME spend cap —
+	// unless budgetType is "daily" (#549 gap 9), which sends DAILY_SPEND, so the persisted
+	// budget_type follows the same resolution. ConfigSnapshot captures the validated config for
+	// reconciliation, with its caller URLs and free text redacted — see redditSnapshotConfig.
+	goalType, _ := reddit.ResolveBudgetGoalType(cfg.BudgetType) // validated before the create
+	lifetime := goalType != reddit.GoalTypeDailySpend
+	applyCampaignConfig(ctx, c, cfg.BudgetUSD, lifetime, cfg.StartDate, cfg.EndDate, redditSnapshotConfig(cfg))
 	if raw, err := json.Marshal(r); err == nil {
 		c.Result = raw
 	}

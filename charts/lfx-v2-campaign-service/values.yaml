@@ -399,6 +399,15 @@ app:
     REDDIT_PLACEMENT_TARGETING_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to redditConfig.budgetType (#549 gap 9): "daily"
+    # creates the campaign with goal_type DAILY_SPEND (budgetUsd is a per-day
+    # cap) instead of LIFETIME_SPEND. Default off: no live create has sent
+    # DAILY_SPEND on a budget-optimized campaign. Not role-gated. While off, a
+    # create that sets the field (either value) is refused with a 400 before
+    # any job exists. Any value other than "true" is treated as off.
+    REDDIT_DAILY_BUDGET_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to twitterConfig.geoTargets, languages, keywords
     # and interestIds (#564), sent at create time as LOCATION, LANGUAGE,
     # BROAD_KEYWORD and INTEREST targeting criteria on the new X line item.

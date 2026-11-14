@@ -34,8 +34,9 @@ const monitorReportConcurrency = 5
 const monitorMaxPages = 50
 
 // Reddit's campaign goal_type values this read knows how to pace. LIFETIME_SPEND is the
-// literal this client's own create path sends (client.go), so it is the one value proven to
-// exist on campaigns this service creates; DAILY_SPEND is Reddit's per-day counterpart. Any
+// literal this client's own create path sends by default (client.go), so it is the one value
+// proven to exist on campaigns this service creates; DAILY_SPEND is Reddit's per-day counterpart,
+// which the create sends only for budgetType "daily" (#549 gap 9, flag-gated, unproven live). Any
 // other value (or none) means this read cannot tell what goal_value is a budget FOR, so the
 // row carries neither budget and is reported as pacing-unknown rather than paced against a
 // guess. Named for the monitor so they cannot collide with any write-path constant.
