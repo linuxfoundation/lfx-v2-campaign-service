@@ -374,6 +374,15 @@ openssl rand -base64 32
   account, so the gateway admits only `global_marketing_ops` to the route. The
   chart sets it to `"false"`
   (`app.environment.MICROSOFT_REMARKETING_LISTS_ENABLED.value`).
+- `MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `microsoftConfig.sharedNegativeKeywordListIds` (#563):
+  existing account-level negative keyword lists, verified by a
+  `GetSharedEntities` read before anything is created and associated with the
+  confirmed campaign. Only the exact value `true` enables it; anything else
+  fails closed, and a create naming it is refused with a 400 before any job
+  exists. The lists belong to the shared account, so the field also needs
+  `global_marketing_ops`. The chart sets it to `"false"`
+  (`app.environment.MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED.value`).
 - `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.demandGenAudience`, one
   existing Google Ads Audience on a Demand Gen ad group (#459). Only the

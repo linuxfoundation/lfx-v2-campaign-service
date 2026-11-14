@@ -296,6 +296,16 @@ const (
 	// it.
 	EnvMicrosoftRemarketingListsEnabled = "MICROSOFT_REMARKETING_LISTS_ENABLED"
 
+	// EnvMicrosoftSharedNegativeListsEnabled opts a deployment IN to
+	// microsoftConfig.sharedNegativeKeywordListIds (#563 gap 9): existing account-level negative
+	// keyword lists, verified by a GetSharedEntities read before anything is created and associated
+	// with the confirmed campaign (SetSharedEntityAssociations). Only the exact value "true" enables
+	// it; unset or any other value fails closed, and a create naming it is refused with a 400
+	// before any job exists (and again at dispatch). The lists belong to the shared LF account, so
+	// they also need global_marketing_ops; the flag keeps an UNVERIFIED request shape (from the v13
+	// reference) off the shared account until a live create confirms it.
+	EnvMicrosoftSharedNegativeListsEnabled = "MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED"
+
 	// EnvMicrosoftAdExtensionsEnabled opts a deployment IN to microsoftConfig.sitelinks and
 	// microsoftConfig.callouts (#563), created at create time as SitelinkAdExtension and
 	// CalloutAdExtension entries and associated with the new Search campaign. Only the exact value
