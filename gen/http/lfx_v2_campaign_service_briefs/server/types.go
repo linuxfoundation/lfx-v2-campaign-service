@@ -5504,7 +5504,14 @@ type CampaignCreateInputRequestBody struct {
 	// entry, a list over its cap, a value that is not an array of strings (null
 	// reads as absent), or any list while the flag is off, is refused with 400
 	// "invalid campaign config: twitterConfig.<field>: ..." before any job exists.
-	// X CUSTOM AUDIENCES (#564): twitterConfig takes `customAudienceIds` and
+	// X AUDIENCE EXPANSION (#564 gap 11): twitterConfig takes `audienceExpansion`
+	// (BROAD, DEFINED or EXPANDED, case-insensitive), sent as the new line item's
+	// audience_expansion; omitted or blank sends nothing (X applies no expansion),
+	// and a line item reused by name keeps its own. It is OFF unless
+	// TWITTER_AUDIENCE_EXPANSION_ENABLED is exactly "true"; a non-blank value
+	// while off, a value outside the set, or a non-string is refused with 400
+	// "invalid campaign config: twitterConfig..." before any job exists. X CUSTOM
+	// AUDIENCES (#564): twitterConfig takes `customAudienceIds` and
 	// `excludedCustomAudienceIds`, arrays of X custom audience ids
 	// (list-twitter-ads-custom-audiences offers them) to target and to exclude,
 	// sent as CUSTOM_AUDIENCE targeting criteria on the new line item with

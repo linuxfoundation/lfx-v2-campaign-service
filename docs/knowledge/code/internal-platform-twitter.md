@@ -1728,3 +1728,16 @@ sends X's spelling. Same default-off `TWITTER_CREATE_TARGETING_ENABLED` flag; no
 verified live. Devices (`DEVICE`), age (`AGE`) and gender (`GENDER`) from gap 9 are not built: X's
 reference names their targeting types but this bundle has no source for the age-bucket or gender
 values, so they wait for a live probe.
+
+## Create-time audience expansion (`CampaignInput.AudienceExpansion`, #564 gap 11)
+
+`twitterConfig.audienceExpansion` (`BROAD`, `DEFINED` or `EXPANDED`; `NormalizeAudienceExpansion`
+trims and upper-cases it) is sent as `audience_expansion` on the line-item POST, a documented
+optional v12 parameter ("expand the reach of campaigns by targeting users similar to those already
+targeted"; X applies none by default). Empty sends nothing, so the create is unchanged. Only a line
+item this call creates carries it: a line item reused by name keeps its own expansion, and a
+warning step says so (the row is already `created_degraded` for any reuse). A value outside the set
+is a refusal before any request. The dispatcher gates it on its own default-off flag,
+`TWITTER_AUDIENCE_EXPANSION_ENABLED` (`internal/dispatch/twitter_audience_expansion.go`), with a
+synchronous 400 for the flag, a bad value or a non-string. X's echo is not checked for the value:
+the line-item POST is confirmed by its id, as before. Not verified live.

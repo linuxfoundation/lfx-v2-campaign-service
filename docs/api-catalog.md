@@ -3284,6 +3284,18 @@ platforms?: string[]             — Device platform targeting (#564 gap 9): X p
                                   the line item serves on every platform, as before. The same flag,
                                   criterion path, failure and reuse rules and synchronous 400s as
                                   `conversationTopics`. Not role-gated.
+audienceExpansion?: string       — Line-item audience expansion (#564 gap 11): `BROAD`, `DEFINED`
+                                  or `EXPANDED` (trimmed, case-insensitive), sent as the new line
+                                  item's `audience_expansion` on `POST accounts/:id/line_items`
+                                  ("expand the reach of campaigns by targeting users similar to
+                                  those already targeted"). Omitted or blank, nothing is sent and X
+                                  applies no expansion, as before. A line item reused by name keeps
+                                  its own expansion, and a warning step says so. OFF unless
+                                  TWITTER_AUDIENCE_EXPANSION_ENABLED is exactly "true" — while off, a
+                                  non-blank value is a synchronous 400 naming the flag. A value
+                                  outside the set, or one that is not a string (null reads as
+                                  absent), is a synchronous 400 `invalid campaign config:
+                                  twitterConfig.audienceExpansion: …`. Not role-gated.
 customAudienceIds?: string[]     — X custom audiences to TARGET (#564 gap 3), ids from
                                   GET .../twitter-ads/custom-audiences (e.g. `1nmth`). Sent as
                                   `CUSTOM_AUDIENCE` / `EQ` criteria on the new line item, after

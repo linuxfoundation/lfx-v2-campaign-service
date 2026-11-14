@@ -227,6 +227,18 @@ const (
 	// (service.TwitterMarketingOpsInputs) and the read sits in the gateway's marketing-ops-api rule.
 	EnvTwitterCustomAudiencesEnabled = "TWITTER_CUSTOM_AUDIENCES_ENABLED"
 
+	// EnvTwitterAudienceExpansionEnabled opts a deployment IN to twitterConfig.audienceExpansion
+	// (#564 gap 11): the line item an X create makes is sent with audience_expansion BROAD, DEFINED
+	// or EXPANDED. Only the exact value "true" enables it; unset or any other value fails closed,
+	// and a create setting it is refused with a 400 before any job exists (and again at dispatch,
+	// before anything upstream).
+	//
+	// It names no account resource: it keeps an UNVERIFIED line-item parameter (from X's published
+	// v12 reference; no live create has sent it) off the shared ad account until a live create
+	// confirms X accepts it on a WEBSITE_CLICKS line item. Turn it on per environment, in
+	// lfx-v2-argocd.
+	EnvTwitterAudienceExpansionEnabled = "TWITTER_AUDIENCE_EXPANSION_ENABLED"
+
 	// EnvMetaConversionsMetricsEnabled opts a deployment IN to conversions in the Meta metrics read
 	// (#550 gap 6): for a campaign whose create result records a conversion event (the
 	// conversions objective, #559), the Insights read also requests `actions` and reports the

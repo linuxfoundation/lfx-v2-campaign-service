@@ -82,6 +82,10 @@ type twitterConfig struct {
 	// device platforms (#564 gap 9), behind the same TWITTER_CREATE_TARGETING_ENABLED flag. These
 	// are X's device platforms (iOS, Android, desktop), not the request's ad platforms.
 	Platforms []string `json:"platforms,omitempty"`
+	// AudienceExpansion (BROAD, DEFINED or EXPANDED) is sent as the new line item's
+	// audience_expansion (#564 gap 11, twitter_audience_expansion.go). Behind
+	// TWITTER_AUDIENCE_EXPANSION_ENABLED; omitted, X applies no expansion, as before.
+	AudienceExpansion string `json:"audienceExpansion,omitempty"`
 	// CustomAudienceIDs and ExcludedCustomAudienceIDs are X custom audience ids to target and to
 	// exclude on the new line item (#564 gap 3, twitter_custom_audiences.go). Behind
 	// TWITTER_CUSTOM_AUDIENCES_ENABLED, and global_marketing_ops only
@@ -128,6 +132,10 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 	if err := checkTwitterCustomAudienceShape(config); err != nil {
 		return err
 	}
+	// And a mistyped audienceExpansion (#564 gap 11).
+	if err := checkTwitterAudienceExpansionShape(config); err != nil {
+		return err
+	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
 	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
 	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
@@ -146,6 +154,9 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 		return err
 	}
 	if err := checkTwitterCreateCriteriaCount(tgt, cfg); err != nil {
+		return err
+	}
+	if _, err := checkTwitterAudienceExpansion(cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -294,6 +305,9 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if err := checkTwitterCustomAudienceShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	if err := checkTwitterAudienceExpansionShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg twitterConfig
 	if err := unmarshalPlatformConfig(config, "twitterConfig", &cfg); err != nil {
 		return nil, notCreated(err)
@@ -319,6 +333,11 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		return nil, notCreated(err)
 	}
 	if err := checkTwitterCreateCriteriaCount(tgt, cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// And the audience expansion gate and rule (#564 gap 11), for the same reason.
+	audienceExpansion, err := checkTwitterAudienceExpansion(cfg)
+	if err != nil {
 		return nil, notCreated(err)
 	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
@@ -439,6 +458,8 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 
 		ConversationTopics: tgt.topics,
 		Platforms:          tgt.platforms,
+
+		AudienceExpansion: audienceExpansion,
 
 		CustomAudienceIDs:         cfg.CustomAudienceIDs,
 		ExcludedCustomAudienceIDs: cfg.ExcludedCustomAudienceIDs,

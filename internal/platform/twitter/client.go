@@ -3346,6 +3346,11 @@ type CampaignInput struct {
 	// checked by NormalizePlatforms; each must be listed by GET targeting_criteria/platforms before
 	// anything is created. Empty means no platform criterion: every platform, as before.
 	Platforms []string
+	// AudienceExpansion (#564 gap 11) is sent as the line item's audience_expansion (BROAD,
+	// DEFINED or EXPANDED, checked by NormalizeAudienceExpansion before any request). Empty sends
+	// nothing: X applies no expansion, as before. Only a line item THIS call creates carries it; a
+	// reused one keeps its own, and a step says so.
+	AudienceExpansion string
 }
 
 // manualMaxBidMicros encodes a create-time manual bid in micro-units, refusing (never rounding)
@@ -3650,6 +3655,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if oerr != nil {
 		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", oerr.Error())
 	}
+	// Audience expansion (#564 gap 11): a closed set, checked before any request.
+	audienceExpansion, xerr := NormalizeAudienceExpansion(in.AudienceExpansion)
+	if xerr != nil {
+		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", xerr.Error())
+	}
 	// Platforms (#564 gap 9), the same way.
 	platforms, perr := NormalizePlatforms(in.Platforms)
 	if perr != nil {
@@ -3893,6 +3903,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Reusing existing line item: %s", lineItemID))
 		steps = append(steps, fmt.Sprintf("Warning: reused existing line item %s by name; its entity_status/flight dates were NOT reset to the requested PAUSED/%s–%s — it may already be ENABLED and serving; verify in X Ads Manager", lineItemID, in.StartDate, in.EndDate))
 		steps = append(steps, fmt.Sprintf("Warning: bid NOT applied to reused line item %s; its existing bidding is unchanged — verify its bid strategy in X Ads Manager", lineItemID))
+		if audienceExpansion != "" {
+			steps = append(steps, fmt.Sprintf("Warning: audience expansion %s NOT applied to reused line item %s; its existing audience expansion is unchanged — verify it in X Ads Manager", audienceExpansion, lineItemID))
+		}
 	} else {
 		// X Ads v12 line_items: params go on the query string; start_time and
 		// end_time are REQUIRED; bid_strategy=AUTO selects automatic bidding
@@ -3919,6 +3932,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			lineItemParams["bid_strategy"] = BidStrategyMax
 			lineItemParams["pay_by"] = PayByLinkClick
 			lineItemParams["bid_amount_local_micro"] = strconv.FormatInt(maxBidMicros, 10)
+		}
+		// Audience expansion (#564 gap 11), a documented optional line-item parameter; omitted,
+		// X applies none.
+		if audienceExpansion != "" {
+			lineItemParams["audience_expansion"] = audienceExpansion
 		}
 		if err := c.pace(ctx); err != nil {
 			return partialResult(), fmt.Errorf("x line item creation aborted (%s): %w", campaignStatus(), err)
@@ -3947,6 +3965,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			steps = append(steps, fmt.Sprintf("Line item created: %s (PAUSED, ALL_ON_TWITTER, MAX bid %s per link click)", lineItemID, strconv.FormatFloat(in.MaxBid, 'f', -1, 64)))
 		} else {
 			steps = append(steps, fmt.Sprintf("Line item created: %s (PAUSED, ALL_ON_TWITTER, AUTO bid)", lineItemID))
+		}
+		if audienceExpansion != "" {
+			steps = append(steps, fmt.Sprintf("Line item %s sent with audience expansion %s", lineItemID, audienceExpansion))
 		}
 	}
 
