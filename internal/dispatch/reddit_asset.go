@@ -41,9 +41,12 @@ import (
 const errRedditStoredAssetsDisabled = "stored creative assets are not enabled for Reddit; supply imageUrl"
 
 // redditAssetSizer is the one creative-asset read the Reddit dispatch needs: prove the asset
-// exists for THIS brief (and that the brief is still active), without loading its bytes.
+// exists for THIS brief (and that the brief is still active), has bytes, and is an image —
+// without loading its bytes. GetAssetMetadata is the port's bytes-free row read (one query, the
+// same scope as GetAsset), so the size AND the mime type come back together; GetAssetSize alone
+// would leave a video/mp4 asset indistinguishable from an image until Reddit fetched the URL.
 type redditAssetSizer interface {
-	GetAssetSize(ctx context.Context, projectID, briefID, assetID string) (int64, error)
+	GetAssetMetadata(ctx context.Context, projectID, briefID, assetID string) (*model.CreativeAsset, error)
 }
 
 // SetCreativeAssetURLs binds the stored-asset path: the store used to prove ownership and the
@@ -148,21 +151,27 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 
 // checkRedditAsset proves, before any Reddit call, everything about a referenced stored asset
 // that minting its URL later depends on: the store is bound, the asset exists FOR THIS BRIEF
-// under an active brief and has bytes, and the ids can be carried in a signed URL. Every
+// under an active brief, has bytes and is not a video, and the ids can be carried in a signed URL. Every
 // failure is pre-create: the caller wraps it in notCreated so the claim is released.
 func (d *RedditDispatcher) checkRedditAsset(ctx context.Context, brief *model.CampaignBrief, assetID string) error {
 	if d.assets == nil {
 		return domain.PreflightRefusalf("reddit config references creative asset %s but the creative-asset store is not configured", assetID)
 	}
-	size, err := d.assets.GetAssetSize(ctx, brief.ProjectID, brief.ID, assetID)
+	meta, err := d.assets.GetAssetMetadata(ctx, brief.ProjectID, brief.ID, assetID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			return domain.PreflightRefusalf("reddit config references creative asset %s, which does not exist for this brief", assetID)
 		}
-		return fmt.Errorf("reddit: size creative asset %s: %w", assetID, err)
+		return fmt.Errorf("reddit: read creative asset %s: %w", assetID, err)
 	}
-	if size <= 0 {
+	if meta == nil || meta.ByteSize <= 0 {
 		return domain.PreflightRefusalf("reddit config references creative asset %s, which has no stored image bytes", assetID)
+	}
+	// A video would pass every check above, and the signed route would then refuse to serve it
+	// as an image only when Reddit fetched it at promoted-post time — after the campaign and ad
+	// group already exist, leaving a partial campaign. Refuse it here, before any Reddit request.
+	if meta.MimeType == model.MimeTypeMP4 {
+		return domain.PreflightRefusalf("creative asset %s is a video, not an image; redditConfig.imageAssetId accepts PNG or JPEG", assetID)
 	}
 	if err := assetsign.ValidateIDs(brief.ProjectID, brief.ID, assetID); err != nil {
 		return fmt.Errorf("reddit: creative asset %s cannot be served at a signed URL: %w", assetID, err)

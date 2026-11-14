@@ -9,15 +9,18 @@ import (
 )
 
 // Creative-asset MIME types. These mirror the CHECK constraint on
-// creative_assets.mime_type (migration 000028), and the upload contract's Enum will
-// mirror them a third time when that endpoint lands. All must move together: each is
-// the same PNG/JPEG allow-list enforced at a different layer (contract decode, handler
-// validation, database).
+// creative_assets.mime_type (migrations 000028 and 000057) and the upload contract's Enum.
+// All must move together: each is the same allow-list enforced at a different layer
+// (contract decode, handler validation, database).
 const (
 	// MimeTypePNG is the verified content type of a PNG upload.
 	MimeTypePNG = "image/png"
 	// MimeTypeJPEG is the verified content type of a JPEG upload.
 	MimeTypeJPEG = "image/jpeg"
+	// MimeTypeMP4 is the verified content type of an MP4 video upload (#586). Only a LinkedIn
+	// video variant (linkedInConfig.variants[].videoAssetId) consumes it; every image consumer
+	// refuses an asset of this type.
+	MimeTypeMP4 = "video/mp4"
 )
 
 // Per-brief creative-asset quota. Both ceilings apply, and neither is redundant: a count

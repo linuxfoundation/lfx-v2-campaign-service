@@ -40,8 +40,8 @@ type UploadCreativeAssetRequestBody struct {
 	// Declared MIME type of the uploaded bytes. The bytes are re-sniffed
 	// server-side and must match; the stored mime_type is the verified one.
 	ContentType *string `form:"content_type,omitempty" json:"content_type,omitempty" xml:"content_type,omitempty"`
-	// The image, base64-encoded (RFC 4648 standard alphabet, padded). Decoded
-	// server-side; the decoded image must not exceed 30 MiB.
+	// The image or video, base64-encoded (RFC 4648 standard alphabet, padded).
+	// Decoded server-side; the decoded file must not exceed 30 MiB.
 	Bytes *string `form:"bytes,omitempty" json:"bytes,omitempty" xml:"bytes,omitempty"`
 }
 
@@ -491,8 +491,8 @@ type UploadCreativeAssetOKResponseBody struct {
 	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
 	// Parent brief
 	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
-	// Stored image MIME type, as verified from the bytes (not merely the declared
-	// header)
+	// Stored MIME type, as verified from the bytes (not merely the declared
+	// header). video/mp4 since #586.
 	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
 	// Size of the stored image in bytes
 	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
@@ -543,8 +543,8 @@ type GetCreativeAssetResponseBody struct {
 	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
 	// Parent brief
 	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
-	// Stored image MIME type, as verified from the bytes (not merely the declared
-	// header)
+	// Stored MIME type, as verified from the bytes (not merely the declared
+	// header). video/mp4 since #586.
 	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
 	// Size of the stored image in bytes
 	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
@@ -4785,8 +4785,8 @@ type CreativeAssetResponseBody struct {
 	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
 	// Parent brief
 	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
-	// Stored image MIME type, as verified from the bytes (not merely the declared
-	// header)
+	// Stored MIME type, as verified from the bytes (not merely the declared
+	// header). video/mp4 since #586.
 	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
 	// Size of the stored image in bytes
 	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
@@ -10982,8 +10982,8 @@ func ValidateUploadCreativeAssetRequestBody(body *UploadCreativeAssetRequestBody
 		err = goa.MergeErrors(err, goa.MissingFieldError("bytes", "body"))
 	}
 	if body.ContentType != nil {
-		if !(*body.ContentType == "image/png" || *body.ContentType == "image/jpeg") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.content_type", *body.ContentType, []any{"image/png", "image/jpeg"}))
+		if !(*body.ContentType == "image/png" || *body.ContentType == "image/jpeg" || *body.ContentType == "video/mp4") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.content_type", *body.ContentType, []any{"image/png", "image/jpeg", "video/mp4"}))
 		}
 	}
 	if body.Bytes != nil {
