@@ -5604,3 +5604,13 @@ and `Dispatch` (not-created refusal) both run, after `checkConversionsShape` ref
 are not JSON strings (encoding/json would decode a number to `""`); `Dispatch` keeps the de-duplicated copy for the
 client and the snapshot. `campaignFromLinkedIn` reports a result with `ConversionsFailed` as
 `created_degraded`.
+
+**Video assets in image slots (#586 asset store, brought forward for #550).** The creative-asset
+store admits `video/mp4` (migration `000057`), so every image consumer (`meta.go`,
+`microsoft_creative.go`, `twitter_creative.go`, `googleads_creative_assets.go`, `reddit_asset.go`)
+refuses a `model.MimeTypeMP4` asset before any request. Reddit holds no bytes, so its port
+(`redditAssetSizer`) is the bytes-free `GetAssetMetadata` rather than `GetAssetSize`:
+`checkRedditAsset` gets size and mime type from one query and refuses a video before the campaign
+and ad group exist. Pinned by the `video asset in the image slot` case of
+`TestRedditAsset_RefusedBeforeAnyUpstreamCall`, the Microsoft pre-create refusal table and the
+`video asset named as an image` case of `TestMeta_DispatchBadAssetRefusesBeforeAnySpend`.

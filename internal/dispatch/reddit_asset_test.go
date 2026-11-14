@@ -30,17 +30,26 @@ const (
 	raAsset = "66666666-7777-4888-9999-aaaaaaaaaaaa"
 )
 
+// fakeAssetSizer serves the bytes-free metadata read the Reddit dispatch makes. An asset absent
+// from mimes is a PNG, so the existing cases keep describing an image.
 type fakeAssetSizer struct {
 	sizes map[[3]string]int64
+	mimes map[[3]string]string
 	calls atomic.Int32
 }
 
-func (f *fakeAssetSizer) GetAssetSize(_ context.Context, p, b, a string) (int64, error) {
+func (f *fakeAssetSizer) GetAssetMetadata(_ context.Context, p, b, a string) (*model.CreativeAsset, error) {
 	f.calls.Add(1)
-	if n, ok := f.sizes[[3]string{p, b, a}]; ok {
-		return n, nil
+	key := [3]string{p, b, a}
+	n, ok := f.sizes[key]
+	if !ok {
+		return nil, domain.ErrNotFound
 	}
-	return 0, domain.ErrNotFound
+	mime := model.MimeTypePNG
+	if m, ok := f.mimes[key]; ok {
+		mime = m
+	}
+	return &model.CreativeAsset{ID: a, ProjectID: p, BriefID: b, MimeType: mime, ByteSize: n}, nil
 }
 
 func assetBrief() *model.CampaignBrief {
@@ -212,6 +221,13 @@ func TestRedditAsset_NeitherKeepsTheNoImagePath(t *testing.T) {
 func TestRedditAsset_RefusedBeforeAnyUpstreamCall(t *testing.T) {
 	foreign := &fakeAssetSizer{sizes: map[[3]string]int64{{"cncf", "99999999-2222-4333-8444-555555555555", raAsset}: 1024}}
 	empty := &fakeAssetSizer{sizes: map[[3]string]int64{{"cncf", raBrief, raAsset}: 0}}
+	// A stored MP4 (#586): it has bytes and belongs to this brief, so only its mime type can
+	// refuse it — and must, because the signed route serves PNG/JPEG only and Reddit would fetch
+	// a 404 after the campaign and ad group already exist.
+	video := &fakeAssetSizer{
+		sizes: map[[3]string]int64{{"cncf", raBrief, raAsset}: 20 << 20},
+		mimes: map[[3]string]string{{"cncf", raBrief, raAsset}: model.MimeTypeMP4},
+	}
 	cases := []struct {
 		name    string
 		sizer   *fakeAssetSizer
@@ -226,6 +242,7 @@ func TestRedditAsset_RefusedBeforeAnyUpstreamCall(t *testing.T) {
 		{"foreign asset", foreign, true, `,"imageAssetId":"` + raAsset + `"`, "does not exist for this brief"},
 		{"missing asset", &fakeAssetSizer{}, true, `,"imageAssetId":"` + raAsset + `"`, "does not exist for this brief"},
 		{"asset without bytes", empty, true, `,"imageAssetId":"` + raAsset + `"`, "no stored image bytes"},
+		{"video asset in the image slot", video, true, `,"imageAssetId":"` + raAsset + `"`, "is a video, not an image; redditConfig.imageAssetId accepts PNG or JPEG"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

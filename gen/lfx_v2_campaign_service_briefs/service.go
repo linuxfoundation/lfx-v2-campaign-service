@@ -33,20 +33,26 @@ type Service interface {
 	// Fetch an event page and extract its details, for pre-filling a brief. Does
 	// not create anything.
 	FetchEventURL(context.Context, *FetchEventURLPayload) (res *EventDetails, err error)
-	// Upload an image asset for a brief so a Meta ad creative can reference it by
-	// id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored,
-	// then the asset id is returned. Re-uploading identical bytes to the same
-	// brief returns the existing asset (idempotent). This does not touch any ad
-	// platform; the account-scoped Meta image_hash is resolved later, at campaign
-	// dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft
-	// Advertising campaign names one by microsoftConfig.imageAssetId, and at
-	// dispatch it is uploaded to the ad account's media library (an account-scoped
-	// MediaId) and attached to the campaign as an image ad extension; Microsoft
-	// accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit
-	// campaign can also reference the asset (redditConfig.imageAssetId), served to
-	// Reddit at a short-lived signed URL when that feature is configured. An X
-	// (Twitter) campaign may also reference the asset as the image of its authored
-	// tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is
+	// Upload an image or MP4 video asset for a brief so an ad creative can
+	// reference it by id. Synchronous: the image is validated (PNG/JPEG, size
+	// limit) and stored, then the asset id is returned. An MP4 (content_type
+	// video/mp4, #586) is checked structurally rather than decoded: it must open
+	// with an ftyp box of an MP4 brand, its top-level boxes must tile the file
+	// exactly, and it must carry moov and mdat boxes; it is stored with no width
+	// or height, and only a video slot (a variant's videoAssetId) consumes it —
+	// every image slot refuses a video asset at dispatch. Re-uploading identical
+	// bytes to the same brief returns the existing asset (idempotent). This does
+	// not touch any ad platform; the account-scoped Meta image_hash is resolved
+	// later, at campaign dispatch. Meta and Microsoft Advertising consume stored
+	// assets: a Microsoft Advertising campaign names one by
+	// microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad
+	// account's media library (an account-scoped MediaId) and attached to the
+	// campaign as an image ad extension; Microsoft accepts at most 76,800 bytes
+	// and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the
+	// asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed
+	// URL when that feature is configured. An X (Twitter) campaign may also
+	// reference the asset as the image of its authored tweet
+	// (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is
 	// likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig
 	// variant names one by imageAssetId, and at dispatch it is uploaded once
 	// through LinkedIn's Images API (an organization-owned image URN) and used as
@@ -1790,8 +1796,8 @@ type CreativeAsset struct {
 	ProjectID string
 	// Parent brief
 	BriefID string
-	// Stored image MIME type, as verified from the bytes (not merely the declared
-	// header)
+	// Stored MIME type, as verified from the bytes (not merely the declared
+	// header). video/mp4 since #586.
 	MimeType string
 	// Size of the stored image in bytes
 	ByteSize int64
@@ -3051,8 +3057,8 @@ type UploadCreativeAssetPayload struct {
 	// Declared MIME type of the uploaded bytes. The bytes are re-sniffed
 	// server-side and must match; the stored mime_type is the verified one.
 	ContentType string
-	// The image, base64-encoded (RFC 4648 standard alphabet, padded). Decoded
-	// server-side; the decoded image must not exceed 30 MiB.
+	// The image or video, base64-encoded (RFC 4648 standard alphabet, padded).
+	// Decoded server-side; the decoded file must not exceed 30 MiB.
 	Bytes string
 }
 

@@ -2043,6 +2043,15 @@ func TestMeta_DispatchBadAssetRefusesBeforeAnySpend(t *testing.T) {
 			wantMsg:  "no stored image bytes",
 		},
 		{
+			// A stored MP4 (#586) named in the image slot is refused before anything exists:
+			// uploading it to /adimages would fail only after the campaign and ad set did.
+			name:     "video asset named as an image",
+			assets:   &fakeCreativeAssets{asset: &model.CreativeAsset{Bytes: []byte("....ftypisom"), MimeType: model.MimeTypeMP4}},
+			bindRepo: true,
+			variant:  `"imageAssetId":"` + validUUID + `"`,
+			wantMsg:  "is a video, not an image",
+		},
+		{
 			// The SIZE read is the first repository call now (it prices the asset so the
 			// aggregate reservation can be taken before the blob is resident), so a repo-level
 			// failure surfaces from there rather than from the byte read. Both arms refuse
