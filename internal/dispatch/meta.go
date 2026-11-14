@@ -516,6 +516,9 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		if len(asset.Bytes) == 0 {
 			return nil, func() {}, domain.PreflightRefusalf("meta variant %d references creative asset %s, which has no stored image bytes", i+1, assetID)
 		}
+		if asset.MimeType == model.MimeTypeMP4 {
+			return nil, func() {}, domain.PreflightRefusalf("meta variant %d references creative asset %s, which is a video, not an image", i+1, assetID)
+		}
 		byID[assetID] = asset.Bytes
 		mimeByID[assetID] = asset.MimeType
 		out[i].ImageBytes = asset.Bytes

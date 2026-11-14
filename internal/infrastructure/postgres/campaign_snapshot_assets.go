@@ -39,6 +39,16 @@ import (
 // PascalCase `ImageAssetID` under `variants`.
 const snapshotAssetIDKey = "imageassetid"
 
+// snapshotVideoAssetIDKey is the second key, LOWERCASED, a snapshot names a stored asset under:
+// a LinkedIn video variant's videoAssetId (#586). It is matched exactly like snapshotAssetIDKey,
+// so a video an existing campaign names is guarded against deletion the same way an image is.
+const snapshotVideoAssetIDKey = "videoassetid"
+
+// isSnapshotAssetIDKey reports whether k names a stored creative asset.
+func isSnapshotAssetIDKey(k string) bool {
+	return strings.EqualFold(k, snapshotAssetIDKey) || strings.EqualFold(k, snapshotVideoAssetIDKey)
+}
+
 // snapshotAssetIDs returns the creative-asset ids a config snapshot names, in their canonical
 // uuid spelling. An absent, empty or null snapshot names none, which is not an error.
 //
@@ -85,7 +95,7 @@ func collectSnapshotAssetIDs(v any, out map[string]struct{}) {
 				collectSnapshotAssetIDs(val, out)
 				continue
 			}
-			if !strings.EqualFold(k, snapshotAssetIDKey) {
+			if !isSnapshotAssetIDKey(k) {
 				continue
 			}
 			if id, err := uuid.Parse(strings.TrimSpace(s)); err == nil {

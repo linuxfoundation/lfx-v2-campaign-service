@@ -1656,8 +1656,8 @@ var CreativeAsset = Type("creative-asset", func() {
 	Attribute("id", String, "Creative asset UUID", func() { Format(FormatUUID) })
 	Attribute("project_id", String, "Owning project")
 	Attribute("brief_id", String, "Parent brief")
-	Attribute("mime_type", String, "Stored image MIME type, as verified from the bytes (not merely the declared header)", func() {
-		Enum("image/png", "image/jpeg")
+	Attribute("mime_type", String, "Stored MIME type, as verified from the bytes (not merely the declared header). video/mp4 since #586.", func() {
+		Enum("image/png", "image/jpeg", "video/mp4")
 	})
 	Attribute("byte_size", Int64, "Size of the stored image in bytes")
 	Attribute("checksum", String, "Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a brief")
@@ -1984,7 +1984,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("upload-creative-asset", func() {
-		Description("Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account's media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig variant names one by imageAssetId, and at dispatch it is uploaded once through LinkedIn's Images API (an organization-owned image URN) and used as that dark post's article thumbnail; LinkedIn accepts at most 5,000,000 bytes and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or 360x640 to 2430x4320 (vertical) pixels. A brief's library is bounded by a per-brief quota on both count and total stored bytes; an upload that would exceed either is refused with 409 and reason creative_asset_quota_exceeded, and list-creative-assets publishes the ceilings and the current totals so a client can see the headroom before it uploads. A re-upload of identical bytes is idempotent and is NOT judged against the quota, since it stores nothing. An archived brief returns 404, matching every other access to a brief's children.")
+		Description("Upload an image or MP4 video asset for a brief so an ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. An MP4 (content_type video/mp4, #586) is checked structurally rather than decoded: it must open with an ftyp box of an MP4 brand, its top-level boxes must tile the file exactly, and it must carry moov and mdat boxes; it is stored with no width or height, and only a LinkedIn video variant (linkedInConfig.variants[].videoAssetId) consumes it — every image slot refuses a video asset at dispatch. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account's media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig variant names one by imageAssetId, and at dispatch it is uploaded once through LinkedIn's Images API (an organization-owned image URN) and used as that dark post's article thumbnail; LinkedIn accepts at most 5,000,000 bytes and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or 360x640 to 2430x4320 (vertical) pixels. A brief's library is bounded by a per-brief quota on both count and total stored bytes; an upload that would exceed either is refused with 409 and reason creative_asset_quota_exceeded, and list-creative-assets publishes the ceilings and the current totals so a client can see the headroom before it uploads. A re-upload of identical bytes is idempotent and is NOT judged against the quota, since it stores nothing. An archived brief returns 404, matching every other access to a brief's children.")
 		Payload(func() {
 			bearerToken()
 			// Permissive project identifier (UUID or slug), matching the other brief
@@ -1995,7 +1995,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			projectIDAttr()
 			briefIDAttr()
 			Attribute("content_type", String, "Declared MIME type of the uploaded bytes. The bytes are re-sniffed server-side and must match; the stored mime_type is the verified one.", func() {
-				Enum("image/png", "image/jpeg")
+				Enum("image/png", "image/jpeg", "video/mp4")
 			})
 			// The image rides in the JSON body as a base64 STRING, declared as one rather
 			// than as a Goa Bytes attribute. This is the transport choice: Goa-native, no
@@ -2009,7 +2009,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// separate constraint on a separate quantity, enforced after decoding by the
 			// handler (maxCreativeStoredBytes) and by a table CHECK on byte_size
 			// (migration 000029).
-			Attribute("bytes", String, "The image, base64-encoded (RFC 4648 standard alphabet, padded). Decoded server-side; the decoded image must not exceed 30 MiB.", func() {
+			Attribute("bytes", String, "The image or video, base64-encoded (RFC 4648 standard alphabet, padded). Decoded server-side; the decoded file must not exceed 30 MiB.", func() {
 				// STRING, not Bytes, and the reason is that the published contract must
 				// describe the wire truthfully.
 				//
