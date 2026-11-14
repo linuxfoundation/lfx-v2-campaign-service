@@ -5490,18 +5490,23 @@ type CampaignCreateInputRequestBody struct {
 	// `interestIds` (X interest ids, 1-19 digits, each listed by GET
 	// targeting_criteria/interests, which is walked to its end before anything is
 	// created; at most 60), sent as BROAD_KEYWORD and INTEREST criteria (operator
-	// EQ) after the languages, with the same failure and reuse rules (#564 gap 4).
-	// All four are OFF unless TWITTER_CREATE_TARGETING_ENABLED is exactly "true".
-	// A blank or malformed entry, a list over its cap, a value that is not an
-	// array of strings (null reads as absent), or any list while the flag is off,
-	// is refused with 400 "invalid campaign config: twitterConfig.<field>: ..."
-	// before any job exists. X CUSTOM AUDIENCES (#564): twitterConfig takes
-	// `customAudienceIds` and `excludedCustomAudienceIds`, arrays of X custom
-	// audience ids (list-twitter-ads-custom-audiences offers them) to target and
-	// to exclude, sent as CUSTOM_AUDIENCE targeting criteria on the new line item
-	// with operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
+	// EQ) after the languages, with the same failure and reuse rules (#564 gap 4),
+	// and `conversationTopics` (X conversation topic values, 1-32 letters or
+	// digits, lowercased, each listed by GET targeting_criteria/conversations,
+	// which is walked to its end before anything is created; at most 60), sent as
+	// CONVERSATION criteria (operator EQ) after the interests, with the same rules
+	// (#564 gap 8). All five are OFF unless TWITTER_CREATE_TARGETING_ENABLED is
+	// exactly "true". A blank or malformed entry, a list over its cap, a value
+	// that is not an array of strings (null reads as absent), or any list while
+	// the flag is off, is refused with 400 "invalid campaign config:
+	// twitterConfig.<field>: ..." before any job exists. X CUSTOM AUDIENCES
+	// (#564): twitterConfig takes `customAudienceIds` and
+	// `excludedCustomAudienceIds`, arrays of X custom audience ids
+	// (list-twitter-ads-custom-audiences offers them) to target and to exclude,
+	// sent as CUSTOM_AUDIENCE targeting criteria on the new line item with
+	// operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
 	// given; at most 60 per list; no id twice and none in both lists. geoTargets,
-	// languages, keywords, interestIds, customAudienceIds and
+	// languages, keywords, interestIds, conversationTopics, customAudienceIds and
 	// excludedCustomAudienceIds together may name at most 60 criteria per create,
 	// since each is a separate X write paced at one per second inside the
 	// two-minute dispatch budget; more is refused with the same 400. Before

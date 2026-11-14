@@ -277,9 +277,10 @@ openssl rand -base64 32
   (`app.environment.REDDIT_TARGETING_EXCLUSIONS_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once a live create confirms it.
 - `TWITTER_CREATE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
-  deployment IN to `twitterConfig.geoTargets`, `languages`, `keywords` and
-  `interestIds` (#564), country, language, broad keyword and interest
-  targeting criteria added to the line item an X create makes. Only the
+  deployment IN to `twitterConfig.geoTargets`, `languages`, `keywords`,
+  `interestIds` and `conversationTopics` (#564), country, language, broad
+  keyword, interest and conversation topic targeting criteria added to the
+  line item an X create makes. Only the
   exact value `true` enables them; anything else fails closed, and a create
   naming any of them is refused with a 400
   before any job exists. It names no account resource; it keeps a shape no
