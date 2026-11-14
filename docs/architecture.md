@@ -528,12 +528,13 @@ Each platform has a different tenancy model. Most platforms use a single shared 
 
 | Platform | Foundation | Account |
 |----------|-----------|---------|
-| LinkedIn Ads | TLF | Account 538170226, Org 208777 |
+| LinkedIn Ads | TLF (the prod LF system row) | Account 538170226 "The Linux Foundation", Org 208777 |
 | LinkedIn Ads | LF Events | Account 509430019 |
 
-The LinkedIn rows above are the ones recorded here; #581 gives LF Events as account 509430019 / org
-208777 and CNCF as 500928401 / org 12893459. Which account the prod LF system row holds (TLF
-538170226 or LF Events 509430019) is not yet confirmed. Further foundation accounts reach the system
+The prod LF system row's default account is confirmed (owner runbook, cs#579, 2026-11-14) as
+538170226 "The Linux Foundation" with org 208777, not LF Events 509430019. #581 gives LF Events as
+account 509430019 / org 208777 and CNCF as 500928401 / org 12893459; the marketing-ops LinkedIn user
+manages five ad accounts in all, which are the candidates for grants. Further foundation accounts reach the system
 row as grants installed with `bootstrap-system-account -linkedin-grant account:org[:label]`, each
 verified with LinkedIn before it is written; a grant is the only way the system row addresses an
 account other than its own.
