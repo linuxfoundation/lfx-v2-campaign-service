@@ -142,3 +142,33 @@ func TestSysacctUsageOffersOnlyInstallableProviders(t *testing.T) {
 		}
 	}
 }
+
+// TestPlanGrantInstallRefusesFlagsThatCannotTakeEffect: the grant flags belong to LinkedIn
+// alone, -grants-only must name something to change, and it cannot carry the row flags that only
+// a credential run writes — each would otherwise exit 0 having done less than was asked (#581).
+func TestPlanGrantInstallRefusesFlagsThatCannotTakeEffect(t *testing.T) {
+	li := model.ProviderLinkedInAds
+	for name, tc := range map[string]struct {
+		provider              model.Provider
+		raw                   []string
+		clear, only, rowFlags bool
+		want                  string
+	}{
+		"grant on another provider":  {provider: model.ProviderGoogleAds, raw: []string{"1:2"}, want: "apply to -provider linkedin-ads only"},
+		"grants-only names nothing":  {provider: li, only: true, want: "needs -linkedin-grant"},
+		"grants-only with row flags": {provider: li, raw: []string{"1:2"}, only: true, rowFlags: true, want: "need a credential run"},
+		"malformed grant":            {provider: li, raw: []string{"12"}, want: "account:org"},
+		"clear on another provider":  {provider: model.ProviderMetaAds, clear: true, want: "linkedin-ads only"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := planGrantInstall(tc.provider, tc.raw, tc.clear, tc.only, tc.rowFlags)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	got, err := planGrantInstall(li, []string{"500928401:12893459:CNCF"}, false, true, false)
+	if err != nil || len(got) != 1 || got[0].OrgID != "12893459" {
+		t.Fatalf("valid grants-only plan = %+v, %v", got, err)
+	}
+}

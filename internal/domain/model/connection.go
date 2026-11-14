@@ -4,7 +4,10 @@
 // Package model holds the campaign service domain entities.
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Provider identifies a marketing platform. Each provider maps to its own
 // strongly-typed connection table (google_ads_connections, …). Connections are
@@ -231,6 +234,49 @@ type Connection struct {
 	UpdatedBy *Actor
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	// LinkedInGrants is the operator-installed list of extra (ad account, organization) pairs
+	// the LF SYSTEM LinkedIn row may address besides its own AccountID/org_id (#581). It is
+	// loaded only for the LinkedIn provider, from the typed linkedin_ads_account_grants table
+	// (migration 000058), and written only by the bootstrap-system-account subcommand — never by
+	// the public connection API. The list, not every account the token can reach, is the
+	// boundary, and each grant carries its own org: a campaign in a granted account is always
+	// authored by that grant's page, never by a caller-named one. Empty on every other provider
+	// and on every project-owned row.
+	LinkedInGrants []LinkedInAccountGrant
+}
+
+// LinkedInAccountGrant is one (ad account, organization) pair the LF system LinkedIn row may
+// address (#581). AccountID and OrgID are bare numeric LinkedIn ids (the forms the connection's
+// account_id and org_id take); Label is operator-set display text, never secret.
+type LinkedInAccountGrant struct {
+	AccountID string
+	OrgID     string
+	Label     string
+}
+
+// LinkedInGrant returns the grant for accountID on this connection, matched on the trimmed id.
+// The row's own AccountID is NOT reported here: it is the default, not a grant, and its org is
+// the row's org_id column.
+func (c *Connection) LinkedInGrant(accountID string) (LinkedInAccountGrant, bool) {
+	if c == nil {
+		return LinkedInAccountGrant{}, false
+	}
+	return FindLinkedInGrant(c.LinkedInGrants, accountID)
+}
+
+// FindLinkedInGrant returns the grant in grants whose account id equals accountID once both are
+// trimmed. An empty accountID matches nothing.
+func FindLinkedInGrant(grants []LinkedInAccountGrant, accountID string) (LinkedInAccountGrant, bool) {
+	want := strings.TrimSpace(accountID)
+	if want == "" {
+		return LinkedInAccountGrant{}, false
+	}
+	for _, g := range grants {
+		if strings.TrimSpace(g.AccountID) == want {
+			return g, true
+		}
+	}
+	return LinkedInAccountGrant{}, false
 }
 
 // HasCredentials reports whether an encrypted credential is stored, without
