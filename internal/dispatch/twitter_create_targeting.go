@@ -31,23 +31,23 @@ func twitterCreateTargetingEnabled() bool {
 }
 
 // twitterTargetingFields are the gated twitterConfig keys, in config order.
-var twitterTargetingFields = []string{twitter.FieldGeoTargets, twitter.FieldLanguages, twitter.FieldKeywords, twitter.FieldInterestIDs, twitter.FieldConversationTopics}
+var twitterTargetingFields = []string{twitter.FieldGeoTargets, twitter.FieldLanguages, twitter.FieldKeywords, twitter.FieldInterestIDs, twitter.FieldConversationTopics, twitter.FieldPlatforms}
 
 // twitterCreateTargeting is the normalized create-time targeting behind
 // TWITTER_CREATE_TARGETING_ENABLED: countries and languages (#564 gaps 1-2), keywords and
-// interest ids (gap 4), conversation topics (gap 8).
+// interest ids (gap 4), conversation topics (gap 8) and device platforms (gap 9).
 type twitterCreateTargeting struct {
-	geo, langs, keywords, interests, topics []string
+	geo, langs, keywords, interests, topics, platforms []string
 }
 
 // count is how many criteria these lists post (the custom audiences are counted separately).
 func (t twitterCreateTargeting) count() int {
-	return len(t.geo) + len(t.langs) + len(t.keywords) + len(t.interests) + len(t.topics)
+	return len(t.geo) + len(t.langs) + len(t.keywords) + len(t.interests) + len(t.topics) + len(t.platforms)
 }
 
 // checkTwitterCreateTargeting refuses a config that sets any of the lists while the deployment
 // gate is off, or whose lists break NormalizeCreateTargeting / NormalizeKeywordInterestTargeting /
-// NormalizeConversationTopics,
+// NormalizeConversationTopics / NormalizePlatforms,
 // and otherwise returns the normalized lists. Every refusal is a domain.ErrCreateConfigInvalid (a
 // 400 from PreflightCreate) wrapped as a PreflightRefusal (so a job that reached Dispatch copies
 // the sentence verbatim). Any non-empty list counts as set, so the gate never depends on the
@@ -63,6 +63,7 @@ func checkTwitterCreateTargeting(cfg twitterConfig) (twitterCreateTargeting, err
 		{twitter.FieldKeywords, len(cfg.Keywords)},
 		{twitter.FieldInterestIDs, len(cfg.InterestIDs)},
 		{twitter.FieldConversationTopics, len(cfg.ConversationTopics)},
+		{twitter.FieldPlatforms, len(cfg.Platforms)},
 	} {
 		if f.n > 0 {
 			set = append(set, f.name)
@@ -86,6 +87,9 @@ func checkTwitterCreateTargeting(cfg twitterConfig) (twitterCreateTargeting, err
 	}
 	if err == nil {
 		t.topics, err = twitter.NormalizeConversationTopics(cfg.ConversationTopics)
+	}
+	if err == nil {
+		t.platforms, err = twitter.NormalizePlatforms(cfg.Platforms)
 	}
 	if err != nil {
 		var tErr *twitter.TargetingError

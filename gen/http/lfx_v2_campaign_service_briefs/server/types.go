@@ -5495,22 +5495,26 @@ type CampaignCreateInputRequestBody struct {
 	// digits, lowercased, each listed by GET targeting_criteria/conversations,
 	// which is walked to its end before anything is created; at most 60), sent as
 	// CONVERSATION criteria (operator EQ) after the interests, with the same rules
-	// (#564 gap 8). All five are OFF unless TWITTER_CREATE_TARGETING_ENABLED is
-	// exactly "true". A blank or malformed entry, a list over its cap, a value
-	// that is not an array of strings (null reads as absent), or any list while
-	// the flag is off, is refused with 400 "invalid campaign config:
-	// twitterConfig.<field>: ..." before any job exists. X CUSTOM AUDIENCES
-	// (#564): twitterConfig takes `customAudienceIds` and
+	// (#564 gap 8), and `platforms` (X device platform values such as 0 for iOS,
+	// not the request's ad platforms; 1-32 letters or digits, lowercased, each
+	// listed by GET targeting_criteria/platforms before anything is created; at
+	// most 10), sent as PLATFORM criteria (operator EQ) after the conversation
+	// topics, with the same rules (#564 gap 9). All six are OFF unless
+	// TWITTER_CREATE_TARGETING_ENABLED is exactly "true". A blank or malformed
+	// entry, a list over its cap, a value that is not an array of strings (null
+	// reads as absent), or any list while the flag is off, is refused with 400
+	// "invalid campaign config: twitterConfig.<field>: ..." before any job exists.
+	// X CUSTOM AUDIENCES (#564): twitterConfig takes `customAudienceIds` and
 	// `excludedCustomAudienceIds`, arrays of X custom audience ids
 	// (list-twitter-ads-custom-audiences offers them) to target and to exclude,
 	// sent as CUSTOM_AUDIENCE targeting criteria on the new line item with
 	// operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
 	// given; at most 60 per list; no id twice and none in both lists. geoTargets,
-	// languages, keywords, interestIds, conversationTopics, customAudienceIds and
-	// excludedCustomAudienceIds together may name at most 60 criteria per create,
-	// since each is a separate X write paced at one per second inside the
-	// two-minute dispatch budget; more is refused with the same 400. Before
-	// anything is created every id is read with GET
+	// languages, keywords, interestIds, conversationTopics, platforms,
+	// customAudienceIds and excludedCustomAudienceIds together may name at most 60
+	// criteria per create, since each is a separate X write paced at one per
+	// second inside the two-minute dispatch budget; more is refused with the same
+	// 400. Before anything is created every id is read with GET
 	// accounts/:account_id/custom_audiences and must be live and targetable; a
 	// missing, deleted or non-targetable audience fails the job with nothing
 	// created. The exclusions are posted first of all the criteria and the

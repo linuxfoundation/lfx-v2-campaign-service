@@ -78,6 +78,10 @@ type twitterConfig struct {
 	// ConversationTopics (CONVERSATION, values from GET targeting_criteria/conversations) target
 	// the new line item too (#564 gap 8), behind the same TWITTER_CREATE_TARGETING_ENABLED flag.
 	ConversationTopics []string `json:"conversationTopics,omitempty"`
+	// Platforms (PLATFORM, values from GET targeting_criteria/platforms) narrow the new line item to
+	// device platforms (#564 gap 9), behind the same TWITTER_CREATE_TARGETING_ENABLED flag. These
+	// are X's device platforms (iOS, Android, desktop), not the request's ad platforms.
+	Platforms []string `json:"platforms,omitempty"`
 	// CustomAudienceIDs and ExcludedCustomAudienceIDs are X custom audience ids to target and to
 	// exclude on the new line item (#564 gap 3, twitter_custom_audiences.go). Behind
 	// TWITTER_CUSTOM_AUDIENCES_ENABLED, and global_marketing_ops only
@@ -434,6 +438,7 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		InterestIDs: tgt.interests,
 
 		ConversationTopics: tgt.topics,
+		Platforms:          tgt.platforms,
 
 		CustomAudienceIDs:         cfg.CustomAudienceIDs,
 		ExcludedCustomAudienceIDs: cfg.ExcludedCustomAudienceIDs,
