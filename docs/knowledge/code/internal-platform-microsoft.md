@@ -1656,3 +1656,25 @@ The ids are recorded as `AdScheduleCriterionIDs`.
 The dispatcher (`internal/dispatch/microsoft_ad_schedule.go`) decodes the hours as `*float64`, so a
 missing hour (0 is midnight) or a fractional one is refused on its own, and gates the list behind
 `MICROSOFT_AD_SCHEDULE_ENABLED`. Not verified live; not role-gated.
+
+## Device, age and gender bid adjustments at create (#563 gap 8)
+
+`CampaignInput.BidAdjustments` (`bid_adjustments.go`) holds three maps of segment name to whole
+percent. `ValidateBidAdjustments` matches each key ignoring case against Microsoft's enum
+(`DeviceName` Computers, Smartphones, Tablets; the five adult `AgeRange` values; `GenderType` Male,
+Female), refuses a segment named twice, and holds devices to -100..900 and age and gender to
+-90..900. Keys are visited sorted so a refusal is deterministic, and the result comes back in send
+order: devices, ages, genders, each in enum order.
+
+They are set on the CAMPAIGN, not the ad group the issue sketched: the one ad group inherits them,
+and the campaign-criterion path already has the fail-closed outcome rules. On a campaign this run
+created, `createBidAdjustmentCriterions` sends them in one `AddCampaignCriterions` call
+(`CriterionType: Targets`) of `BiddableCampaignCriterion` entries with a `BidMultiplier`, right
+after the ad schedule and before the ad group, through `postCampaignCriterions` and
+`criterionStepError`. The three keys join the fields that stop a create on a campaign found by
+name. The ids are recorded as `BidAdjustmentCriterionIDs`.
+
+The dispatcher (`internal/dispatch/microsoft_bid_adjustments.go`) refuses a value that is not an
+object of numbers, and any of the three while `MICROSOFT_BID_ADJUSTMENTS_ENABLED` is off. Not
+verified live. In particular it is unconfirmed whether Microsoft accepts an ADD of a device
+criterion on a new campaign; a refusal would stop the create, fail-closed. Not role-gated.

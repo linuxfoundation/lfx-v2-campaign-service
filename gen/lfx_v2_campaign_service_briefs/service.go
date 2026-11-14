@@ -179,8 +179,11 @@ type Service interface {
 	// microsoftConfig.searchPartners that is not a boolean or is sent while
 	// MICROSOFT_SEARCH_NETWORK_ENABLED is not "true". So is a
 	// microsoftConfig.adSchedules that breaks its rules or is sent while
-	// MICROSOFT_AD_SCHEDULE_ENABLED is not "true". An X custom audience list is
-	// also refused synchronously with 400 "invalid campaign config:
+	// MICROSOFT_AD_SCHEDULE_ENABLED is not "true". So is a
+	// microsoftConfig.deviceBidAdjustments, ageBidAdjustments or
+	// genderBidAdjustments that breaks its rules or is sent while
+	// MICROSOFT_BID_ADJUSTMENTS_ENABLED is not "true". An X custom audience list
+	// is also refused synchronously with 400 "invalid campaign config:
 	// twitterConfig.<field>: ..." when it is not an array of strings, when an id
 	// is not 1-32 letters or digits, repeats, or is in both lists, when a list
 	// holds more than 60 ids or the X targeting lists together name more than 60
@@ -1438,6 +1441,25 @@ type CampaignCreateInput struct {
 	// reads as absent), a missing or fractional hour, a rule breach, or the list
 	// while the flag is off is refused with 400 "invalid campaign config:
 	// microsoftConfig.adSchedules: ..." before any job exists. Not role-gated.
+	// MICROSOFT BID ADJUSTMENTS (#563): microsoftConfig takes
+	// `deviceBidAdjustments` (keys Computers, Smartphones, Tablets),
+	// `ageBidAdjustments` (keys EighteenToTwentyFour, TwentyFiveToThirtyFour,
+	// ThirtyFiveToFortyNine, FiftyToSixtyFour, SixtyFiveAndAbove) and
+	// `genderBidAdjustments` (keys Male, Female), each an object of segment name
+	// (any casing, each segment once) to a whole percent: -100..900 for a device
+	// (-100 stops serving on it), -90..900 for an age range or gender. They are
+	// set on the CAMPAIGN as biddable DeviceCriterion, AgeCriterion and
+	// GenderCriterion entries with a BidMultiplier, in one AddCampaignCriterions
+	// call right after the ad schedule and before the ad group, under the
+	// fail-closed rules of the other campaign criteria (a failed, partial or
+	// unconfirmed attach stops the create before the ad group with the PAUSED
+	// campaign reported and retained; a create that finds its campaign by name
+	// stops before the ad group). OFF unless MICROSOFT_BID_ADJUSTMENTS_ENABLED is
+	// exactly "true". A value that is not an object of numbers (null reads as
+	// absent), an unknown or repeated segment, an out-of-range or fractional
+	// percent, or any of the three while the flag is off is refused with 400
+	// "invalid campaign config: microsoftConfig.<field>: ..." before any job
+	// exists. Not role-gated.
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

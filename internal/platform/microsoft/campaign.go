@@ -222,6 +222,12 @@ type CampaignInput struct {
 	// Applied only to a campaign this run creates. Empty sends none: the campaign serves at
 	// every hour, as before.
 	AdSchedules []AdSchedule
+	// BidAdjustments are the campaign's device, age and gender bid adjustments (#563 gap 8,
+	// bid_adjustments.go), checked by ValidateBidAdjustments before anything is created and
+	// attached as biddable campaign criteria right after the ad schedule, before the ad group,
+	// under the same fail-closed rules. Applied only to a campaign this run creates. Empty sends
+	// none, as before.
+	BidAdjustments BidAdjustments
 }
 
 // CampaignResult reports what CreateCampaign created (or found). The campaign NAME
@@ -290,6 +296,9 @@ type CampaignResult struct {
 	RadiusCriterionIDs      []string `json:"radiusCriterionIds,omitempty"`
 	// AdScheduleCriterionIDs are the day-time criteria THIS RUN attached (#563 gap 10).
 	AdScheduleCriterionIDs []string `json:"adScheduleCriterionIds,omitempty"`
+	// BidAdjustmentCriterionIDs are the device, age and gender criteria THIS RUN attached (#563
+	// gap 8), in send order.
+	BidAdjustmentCriterionIDs []string `json:"bidAdjustmentCriterionIds,omitempty"`
 	// AlreadyExisted is true ONLY when this run created NOTHING — i.e. the campaign, the ad
 	// group, AND the ad were all matched as pre-existing (by name / by destination) and no
 	// create was issued at any level. If ANY level was created this run, it is false, even
@@ -695,6 +704,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, domain.PreflightRefusalf("invalid microsoftConfig.%s", err.Error())
 	}
+	adjustments, err := ValidateBidAdjustments(in.BidAdjustments)
+	if err != nil {
+		return nil, domain.PreflightRefusalf("invalid microsoftConfig.%s", err.Error())
+	}
 
 	// Flight dates go on the ad group, which is created only AFTER the campaign, so a date that
 	// is malformed or out of order is refused here, before anything exists. Whether it is already
@@ -865,7 +878,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// clean success path sets AlreadyExisted, and only when ALL three levels pre-existed.
 	// geoCriterionIDs accumulates the ids of the location criteria attached below, so a later
 	// ad-group/ad failure still reports the targeting this run put on the campaign.
-	var geoCriterionIDs, excludedCriterionIDs, radiusCriterionIDs, scheduleCriterionIDs []string
+	var geoCriterionIDs, excludedCriterionIDs, radiusCriterionIDs, scheduleCriterionIDs, adjustmentCriterionIDs []string
 	campaignPartial := func() *CampaignResult {
 		r := namePartial()
 		r.CampaignID = campaignID
@@ -873,6 +886,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		r.ExcludedGeoCriterionIDs = excludedCriterionIDs
 		r.RadiusCriterionIDs = radiusCriterionIDs
 		r.AdScheduleCriterionIDs = scheduleCriterionIDs
+		r.BidAdjustmentCriterionIDs = adjustmentCriterionIDs
 		return r
 	}
 
@@ -886,8 +900,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if len(schedules) > 0 {
 		reusedFields = append(reusedFields, FieldAdSchedules)
 	}
+	if len(adjustments) > 0 {
+		reusedFields = append(reusedFields, in.BidAdjustments.fields()...)
+	}
 	if alreadyExisted && len(reusedFields) > 0 {
-		steps = append(steps, fmt.Sprintf("Stopped before the ad group: campaign %s was found by name (an earlier attempt made it), and %s are applied only to a campaign this run creates; check its exclusions, radius targets, languages and schedule in Microsoft Advertising and finish the campaign there", campaignID, strings.Join(reusedFields, ", ")))
+		steps = append(steps, fmt.Sprintf("Stopped before the ad group: campaign %s was found by name (an earlier attempt made it), and %s are applied only to a campaign this run creates; check its exclusions, radius targets, languages, schedule and bid adjustments in Microsoft Advertising and finish the campaign there", campaignID, strings.Join(reusedFields, ", ")))
 		return campaignPartial(), fmt.Errorf("microsoft-ads create-time targeting NOT applied to reused campaign %s (%s are set only on a campaign this run creates; nothing below the campaign was created): verify the campaign in Microsoft Advertising",
 			campaignID, strings.Join(reusedFields, ", "))
 	}
@@ -1027,6 +1044,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return campaignPartial(), criterionStepError(campaignID, "ad schedule", "would serve outside the requested schedule if enabled", len(ids), len(schedules), serr)
 		}
 		steps = append(steps, fmt.Sprintf("Ad schedule attached: %d day-time criteria (%s, in the campaign's time zone)", len(ids), adScheduleLabel(schedules)))
+	}
+	// The device, age and gender bid adjustments (#563 gap 8) follow, fail-closed with the rest of
+	// the campaign criteria: a device at -100 that did not land would serve on that device.
+	if len(adjustments) > 0 {
+		ids, berr := c.createBidAdjustmentCriterions(ctx, campaignID, adjustments)
+		adjustmentCriterionIDs = ids
+		if berr != nil {
+			return campaignPartial(), criterionStepError(campaignID, "bid adjustments", "would bid without the requested device, age and gender adjustments if enabled", len(ids), len(adjustments), berr)
+		}
+		steps = append(steps, fmt.Sprintf("Bid adjustments attached: %d criteria (%s)", len(ids), bidAdjustmentLabel(adjustments)))
 	}
 	if len(extra.Languages) > 0 {
 		steps = append(steps, fmt.Sprintf("Campaign languages set: %s (the ad group carries no language of its own, so these apply)", strings.Join(extra.Languages, ", ")))

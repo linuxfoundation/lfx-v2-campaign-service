@@ -44,6 +44,8 @@ var microsoftUngatedFields = map[string]bool{
 	"searchPartners": true,
 	// #563 gap 10: days and hours name no account resource.
 	"adSchedules": true,
+	// #563 gap 8: devices, age ranges and genders name no account resource.
+	"deviceBidAdjustments": true, "ageBidAdjustments": true, "genderBidAdjustments": true,
 }
 
 // TestEveryMicrosoftConfigFieldIsClassifiedForTheMarketingOpsGate fails when a microsoftConfig
