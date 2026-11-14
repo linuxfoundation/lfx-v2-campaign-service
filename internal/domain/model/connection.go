@@ -5,6 +5,7 @@
 package model
 
 import (
+	"context"
 	"strings"
 	"time"
 )
@@ -262,6 +263,23 @@ func (c *Connection) LinkedInGrant(accountID string) (LinkedInAccountGrant, bool
 		return LinkedInAccountGrant{}, false
 	}
 	return FindLinkedInGrant(c.LinkedInGrants, accountID)
+}
+
+type pickerAccountKey struct{}
+
+// WithPickerAccount returns ctx carrying the ad account a picker read (the LinkedIn audiences and
+// conversions lookups, #581) was asked to list, for a dispatcher whose generic lookup interface
+// has no account argument. Empty means the account a create would use.
+func WithPickerAccount(ctx context.Context, accountID string) context.Context {
+	return context.WithValue(ctx, pickerAccountKey{}, strings.TrimSpace(accountID))
+}
+
+// PickerAccount returns the account set by WithPickerAccount, or "".
+func PickerAccount(ctx context.Context) string {
+	if a, ok := ctx.Value(pickerAccountKey{}).(string); ok {
+		return a
+	}
+	return ""
 }
 
 // FindLinkedInGrant returns the grant in grants whose account id equals accountID once both are

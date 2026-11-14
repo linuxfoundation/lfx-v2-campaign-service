@@ -46,7 +46,7 @@ func (s *ConnectionService) ListLinkedinAdsAudiences(ctx context.Context, p *con
 	if err != nil {
 		return nil, err
 	}
-	res, rerr := orch.ReadAudiences(ctx, p.ProjectID, model.ProviderLinkedInAds, linkedInAdSegmentKind)
+	res, rerr := orch.ReadAudiences(linkedInPickerContext(ctx, p.AccountID), p.ProjectID, model.ProviderLinkedInAds, linkedInAdSegmentKind)
 	if rerr != nil {
 		return nil, s.classifyTargetingLookupError(ctx, p.ProjectID, linkedInAdsAudienceLookup, rerr)
 	}
@@ -77,7 +77,7 @@ func (s *ConnectionService) ListLinkedinAdsConversions(ctx context.Context, p *c
 	if err != nil {
 		return nil, err
 	}
-	res, rerr := orch.ReadConversionActions(ctx, p.ProjectID, model.ProviderLinkedInAds)
+	res, rerr := orch.ReadConversionActions(linkedInPickerContext(ctx, p.AccountID), p.ProjectID, model.ProviderLinkedInAds)
 	if rerr != nil {
 		return nil, s.classifyTargetingLookupError(ctx, p.ProjectID, linkedInAdsConversionLookup, rerr)
 	}
@@ -88,4 +88,14 @@ func (s *ConnectionService) ListLinkedinAdsConversions(ctx context.Context, p *c
 		})
 	}
 	return &conn.LinkedinAdsConversionRules{AccountID: res.AccountID, Conversions: out, ConversionCount: len(out)}, nil
+}
+
+// linkedInPickerContext carries the picker's optional account_id (#581) to the dispatcher, whose
+// lookup interface is shared with Google Ads and has no account argument. The dispatcher accepts
+// only the resolved account or one of the LF system account's grants.
+func linkedInPickerContext(ctx context.Context, accountID *string) context.Context {
+	if accountID == nil {
+		return ctx
+	}
+	return model.WithPickerAccount(ctx, *accountID)
 }

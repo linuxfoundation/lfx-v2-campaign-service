@@ -8,7 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
@@ -89,4 +93,61 @@ func existingOnSystem(sys *resolved, creationAccountID string) (*resolved, bool)
 		return sys, true
 	}
 	return sys.grantScoped(creationAccountID)
+}
+
+// linkedinAccountSelectionEnabled reports whether this deployment lets linkedInConfig.adAccountId
+// name one of the LF system row's granted accounts (#581). Read per call so it flips without a
+// rebuild; only the exact value "true" turns it on.
+func linkedinAccountSelectionEnabled() bool {
+	return os.Getenv(constants.EnvLinkedInAdsAccountSelectionEnabled) == "true"
+}
+
+// selectLinkedInAccount resolves linkedInConfig.adAccountId against the resolution a create uses
+// (#581). An empty value, or the resolved account itself, keeps res. Any other value is honoured
+// only while LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is on, only on the LF system row, and only
+// for one of its grants: the result is then the grant-scoped copy, whose account AND org are the
+// grant's, so the caller never chooses the page. Everything else is the pre-#581 refusal: the
+// token reaches more accounts than LF creates in, and a caller-named account must never be
+// treated as authorised just because the token can reach it.
+//
+// Every refusal is a pre-flight 400 (ErrCreateConfigInvalid, operator-safe) raised before any
+// request, so PreflightCreate and Dispatch share it.
+func selectLinkedInAccount(res *resolved, requested string) (*resolved, error) {
+	requested = strings.TrimSpace(requested)
+	current := strings.TrimSpace(res.accountID)
+	if requested == "" || requested == current {
+		return res, nil
+	}
+	if !linkedinAccountSelectionEnabled() {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedin adAccountId %s does not match the connection's account %s — cross-account campaigns are not allowed on this deployment (%s is not \"true\")",
+			domain.ErrCreateConfigInvalid, domain.CallerValue(requested), domain.CallerValue(current), constants.EnvLinkedInAdsAccountSelectionEnabled))
+	}
+	if granted, ok := res.grantScoped(requested); ok {
+		return granted, nil
+	}
+	return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedin adAccountId %s is neither this project's connection account nor one of the LF system account's granted accounts; nothing was sent",
+		domain.ErrCreateConfigInvalid, domain.CallerValue(requested)))
+}
+
+// linkedInGrantAccounts is the accounts list the LF system row answers while account selection
+// is on (#581): its own account first, then each grant, labelled for the picker with the org the
+// grant pins. It replaces the token-wide ListAdAccounts walk for the system scope because the
+// grant list, not the token's reach, is what a create may name.
+func linkedInGrantAccounts(res *resolved) []model.AccessibleAccount {
+	out := make([]model.AccessibleAccount, 0, 1+len(res.grants))
+	if acct := strings.TrimSpace(res.accountID); acct != "" {
+		label := res.label
+		if label == "" {
+			label = acct
+		}
+		out = append(out, model.AccessibleAccount{ID: acct, Label: label + " (default, org " + strings.TrimSpace(res.providerConfig["org_id"]) + ")"})
+	}
+	for _, g := range res.grants {
+		label := g.Label
+		if label == "" {
+			label = g.AccountID
+		}
+		out = append(out, model.AccessibleAccount{ID: g.AccountID, Label: label + " (org " + g.OrgID + ")"})
+	}
+	return out
 }
