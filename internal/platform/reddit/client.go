@@ -565,6 +565,15 @@ type CampaignInput struct {
 	// existing PostURL, the create makes one ad exactly as before. The dispatcher sets it only
 	// behind REDDIT_AD_PER_VARIANT_ENABLED.
 	AdPerVariant bool
+	// Gender, Languages and Schedule are gender, language and dayparting targeting (#549 gap 13,
+	// demographic_targeting.go): Gender and Languages go on the ad group's targeting (on EVERY
+	// ad-group attempt), Schedule on the campaign, whose schedule replaces every ad group's under
+	// campaign budget optimization. nil / empty send nothing, the long-standing create. Checked
+	// with NormalizeDemographicTargeting before any upstream call. The dispatcher admits them only
+	// behind REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED.
+	Gender    *string
+	Languages []string
+	Schedule  []ScheduleWindow
 }
 
 // ManualCPCBidSupported reports whether a campaign with this objective can be created with a
@@ -2000,6 +2009,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, domain.PreflightRefusalf("%s", err.Error())
 	}
+	// Gender, languages and dayparting (#549 gap 13), refused before any mutating call with the
+	// rule set the dispatcher's PreflightCreate applies.
+	demographic, err := NormalizeDemographicTargeting(in.Gender, in.Languages, in.Schedule)
+	if err != nil {
+		return nil, domain.PreflightRefusalf("%s", err.Error())
+	}
 
 	// Compose BOTH names (campaign + ad group) and validate their lengths. The per-field
 	// EventName/Project bounds keep caller inputs sane, but the composed names also include
@@ -2246,6 +2261,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if conversionPixelID != "" {
 		campaignData["conversion_pixel_id"] = conversionPixelID
 	}
+	// Dayparting (#549 gap 13) goes on the CAMPAIGN: under campaign budget optimization, which
+	// every campaign here uses, the campaign's schedule replaces each ad group's.
+	if len(demographic.Schedule) > 0 {
+		campaignData["schedule"] = demographic.Schedule
+	}
 
 	campaignResp, err := c.requestNoThrottleRetry(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/campaigns", map[string]any{"data": campaignData})
 	if err != nil {
@@ -2337,6 +2357,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		"locations":        placement.Locations,
 		"platforms":        placement.Platforms,
 		"expand_targeting": placement.ExpandTargeting,
+	}
+	// Gender and languages (#549 gap 13) go in baseTargeting, the retry payload, so the
+	// communities/interests retry keeps them: dropping them would widen the audience silently.
+	if demographic.Gender != "" {
+		baseTargeting["gender"] = demographic.Gender
+	}
+	if len(demographic.Languages) > 0 {
+		baseTargeting["languages"] = demographic.Languages
 	}
 	if len(in.Keywords) > 0 {
 		baseTargeting["keywords"] = in.Keywords
@@ -2544,6 +2572,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if !placement.IsDefault() {
 		surviving = append(surviving, fmt.Sprintf("placements %s, platforms %s, expansion %t",
 			strings.Join(placement.Locations, "+"), strings.Join(placement.Platforms, "+"), placement.ExpandTargeting))
+	}
+	if demographic.Gender != "" {
+		surviving = append(surviving, "gender "+demographic.Gender)
+	}
+	if len(demographic.Languages) > 0 {
+		surviving = append(surviving, "languages "+strings.Join(demographic.Languages, "+"))
+	}
+	if n := len(demographic.Schedule); n > 0 {
+		surviving = append(surviving, fmt.Sprintf("%d schedule windows (campaign)", n))
 	}
 	steps = append(steps, "Targeting: "+strings.Join(surviving, ", "))
 

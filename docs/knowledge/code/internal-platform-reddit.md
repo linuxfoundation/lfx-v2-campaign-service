@@ -969,6 +969,24 @@ The dispatcher keeps both behind `REDDIT_TARGETING_EXCLUSIONS_ENABLED` (default 
 create has sent either field. What Reddit answers for an excluded community that does not exist
 is unknown, so it is not part of the communities-fallback match.
 
+## Gender, language and dayparting (`demographic_targeting.go`, #549 gap 13)
+
+`CampaignInput.Gender`, `Languages` and `Schedule` come from Reddit's public v3 OpenAPI document.
+`NormalizeDemographicTargeting` holds the rules: gender `FEMALE` | `MALE` (case-insensitive, a
+blank value refused, nil = every gender); languages from `components_enum_targeting_language_codes`
+(21 ISO 639-1 codes, upper-cased, de-duplicated, sent in enum order); schedule windows
+`{startDay, startHour, endDay, endHour}` (days 0-6 from Sunday, hours 0-23, every field required,
+at most `MaxScheduleWindows` = 50, a window that starts where it ends or an exact repeat refused).
+Gender and languages go in `baseTargeting`, so the communities/interests retry keeps them. The
+schedule goes on the CAMPAIGN create as `schedule: [{start_day, start_hour, end_day, end_hour}]`:
+Reddit documents the campaign schedule as available only under campaign budget optimization,
+where it replaces every ad group's, and every campaign here is budget-optimized. The Targeting
+step names any choice. The document does not say whether a window's end hour is inclusive or
+whether overlapping windows are accepted, so windows are sent as given. The dispatcher
+(`checkRedditDemographicShape`, `checkRedditDemographicTargeting`) refuses a wrong JSON type, a bad
+value, or any of the three while `REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED` is off with a
+synchronous 400, and `Dispatch` and the client re-check before any request. Not yet sent live.
+
 ## One ad per variant (`ad_variants.go`, #549 gap 6)
 
 With `CampaignInput.AdPerVariant` set, a create that AUTHORS its post (`ImageURL` or

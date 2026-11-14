@@ -291,6 +291,13 @@ openssl rand -base64 32
   it; anything else fails closed, and a create that sets the field is
   refused with a 400 before any job exists. Not role-gated. No live create
   has sent `DAILY_SPEND` yet. The chart sets it to `"false"`.
+- `REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED` (default unset, i.e. OFF) —
+  opts a deployment IN to `redditConfig.gender`, `languages` and `schedule`
+  (#549 gap 13): the ad group's `targeting.gender` / `targeting.languages`
+  and the campaign's weekly delivery `schedule`. Only the exact value `true`
+  enables them; anything else fails closed, and a create naming any of them
+  is refused with a 400 before any job exists. Not role-gated. No live
+  create has sent any of them yet. The chart sets it to `"false"`.
 - `REDDIT_PIXEL_LIST_ENABLED` (default unset, i.e. OFF) — opts a deployment
   IN to the Reddit pixel picker read `GET /projects/{project_id}/reddit-ads/pixels`
   (#549 gap 10; Reddit `GET /ad_accounts/{id}/pixels`), gated at the gateway

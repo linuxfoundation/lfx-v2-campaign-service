@@ -90,7 +90,8 @@ func (d *RedditDispatcher) checkRedditAssetChoice(cfg redditConfig) (string, err
 // conversionEvent is refused (checkRedditConversionEvent), or whose placements, platforms or
 // expandTargeting are refused (checkRedditPlacementTargeting, #549 gap 7), or whose budgetType is
 // refused (checkRedditBudgetType, #549 gap 9), or whose variants break the one-ad-per-variant
-// rules (checkRedditAdPerVariant, #549 gap 6). It
+// rules (checkRedditAdPerVariant, #549 gap 6), or whose gender, languages or schedule are refused
+// (checkRedditDemographicTargeting, #549 gap 13). It
 // never calls Reddit, so every other outcome is ErrPreflightNotApplicable. Whether the asset belongs to the brief cannot be checked here (the
 // pre-check is not given the brief); Dispatch checks it before any upstream call. A config that does
 // not decode is left to Dispatch, except a wrong-typed `bidding` (checkBiddingShape).
@@ -110,6 +111,10 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 	}
 	// And a wrong-typed placements, platforms or expandTargeting (#549 gap 7).
 	if err := checkRedditPlacementShape(config); err != nil {
+		return err
+	}
+	// And a wrong-typed gender, languages or schedule (#549 gap 13).
+	if err := checkRedditDemographicShape(config); err != nil {
 		return err
 	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can past a type
@@ -141,6 +146,11 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 	// Placements, platforms and expansion (#549 gap 7): gate and rules on the best-effort decode,
 	// like the exclusions; checkRedditPlacementShape above already refused a mistyped value.
 	if err := checkRedditPlacementTargeting(cfg); err != nil {
+		return err
+	}
+	// Gender, languages and dayparting (#549 gap 13): gate and rules on the best-effort decode,
+	// like the placements; checkRedditDemographicShape above already refused a mistyped value.
+	if err := checkRedditDemographicTargeting(cfg); err != nil {
 		return err
 	}
 	// The budget's pacing (#549 gap 9), checked on the raw key like conversionEvent, so a wrong

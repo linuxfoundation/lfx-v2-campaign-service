@@ -684,6 +684,27 @@ expandTargeting?: boolean       — OPTIONAL (#549 gap 7), sent as `targeting.ex
                                   redditConfig.<field>: ..." before any job exists, re-checked at
                                   dispatch before any Reddit call. No live create has sent a
                                   non-default value yet.
+gender?: string                 — OPTIONAL (#549 gap 13): "female" | "male", case-insensitive, sent
+                                  upper-case as the ad group's targeting.gender. Omit for every gender.
+languages?: string[]            — OPTIONAL (#549 gap 13): ISO 639-1 codes from Reddit's enum (AR CS DA
+                                  DE EL EN ES FI FR HU IT JA KO NL NO PL PT RO SV VI ZH),
+                                  case-insensitive, de-duplicated, sent upper-case as the ad group's
+                                  targeting.languages. Empty or omitted is every language.
+schedule?: [{startDay, startHour, endDay, endHour}]
+                                — OPTIONAL dayparting (#549 gap 13): recurring weekly delivery
+                                  windows, days 0 (Sunday)-6, hours 0-23 in the campaign's time zone,
+                                  sent as the CAMPAIGN's schedule (start_day/start_hour/end_day/
+                                  end_hour), which under campaign budget optimization replaces every
+                                  ad group's. At most 50 windows; every field required; a window that
+                                  starts where it ends, or an exact repeat, is refused. Sent as given
+                                  (whether the end hour is inclusive is not documented).
+                                  Gender and languages are sent on EVERY ad-group attempt (the
+                                  communities/interests retry keeps them). Accepted only while
+                                  REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED is "true". A wrong JSON
+                                  type, a bad value, or any of the three while the flag is off is a
+                                  synchronous **400** "invalid campaign config: redditConfig.<field>:
+                                  ..." before any job exists, re-checked at dispatch before any
+                                  Reddit call. Not role-gated. Not yet sent live.
 variants?: [{headline, body}]   — Ad copy variants. When no `postUrl`/`imageUrl` drives an ad, one
                                   "ready" instruction per variant is emitted (headline + display UTM
                                   URL) for manual ad creation. On the author-a-post path the FIRST
