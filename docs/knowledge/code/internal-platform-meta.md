@@ -1196,6 +1196,19 @@ Its own flag, `META_DEVICE_TARGETING_ENABLED` (default off), gates it exactly as
 `META_LOCALE_TARGETING_ENABLED` gates locales. Not verified live: the payload, and whether Meta
 refuses desktop-only with the Instagram, Stories or Reels placements.
 
+**Mobile operating systems (gap 15, remainder, `user_os.go`).** `AudienceTargeting.UserOS`
+(`metaConfig.targeting.userOs`) is sent as the ad set's `user_os`. `normalizeUserOS` accepts the
+Advanced Targeting reference's format table only (`iOS`, `Android`, `<OS>_ver_<x.x>_and_above`,
+`<OS>_ver_<x.x>_to_<y.y>` with x.x below y.y and both in the family's listed versions, `userOSVersions`),
+case-insensitively, rewrites each to Meta's spelling, de-duplicates, caps at `MaxUserOS` (10) and
+applies the reference's one combination rule: a versioned value of one family refuses any value of
+the other. `CheckUserOS` (client and `checkMetaTargeting`, which now takes the objective) refuses
+userOs with devicePlatforms `[desktop]` (a service rule: an OS list matches mobile devices only)
+and a versioned value on the awareness objective (the reference's brand-awareness note). Not an
+inclusion, so no Advantage+ flag. Its own flag, `META_OS_TARGETING_ENABLED` (default off). Not
+verified live: the payload, and the reference's own inconsistency (a lowercase `android` example,
+and SKAdNetwork's iOS 14+ ranges absent from the version list).
+
 **Interests (gap 7, core).** `AudienceTargeting.Interests` (`metaConfig.targeting.interests`) is a
 list of numeric detailed-targeting interest ids, de-duplicated, at most `MaxInterests` (25), sent
 as ONE `flexible_spec` entry (`[{"interests": [{"id": …}]}]`, so matching any listed interest

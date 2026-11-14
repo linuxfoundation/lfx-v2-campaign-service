@@ -140,6 +140,10 @@ rules as `META_LOCALE_TARGETING_ENABLED`.
 with Meta's ad account targeting validation read before anything is created), with the same rules
 as `META_LOCALE_TARGETING_ENABLED`.
 
+`META_OS_TARGETING_ENABLED` is the same kind of gate, defaulting to `"false"` (#550), for
+`metaConfig.targeting.userOs` (Meta `user_os` values checked against the documented formats before
+any request), with the same rules as `META_LOCALE_TARGETING_ENABLED`.
+
 `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is the same kind of gate, defaulting to `"false"`
 (#461): it opts a cluster in to `googleAdsConfig.performanceMaxAudienceSignal`, one existing
 Google Ads Audience attached to a Performance Max asset group as a signal. Like the Demand Gen

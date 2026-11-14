@@ -2994,8 +2994,8 @@ targeting?: object              — OPTIONAL audience targeting on the ad set (#
                                   with a 400 before any job exists unless the deployment sets
                                   META_AUDIENCE_TARGETING_ENABLED to exactly "true" (not yet
                                   live-verified); a block that sets only keys with their own
-                                  flag (locales, devicePlatforms, interests, regions, cities)
-                                  needs only that flag. null/absent → targeting
+                                  flag (locales, devicePlatforms, interests, regions, cities,
+                                  behaviors, workPositions, userOs) needs only that flag. null/absent → targeting
                                   unchanged. Keys:
   ageMin?, ageMax?: integer      — 18–65 each, ageMin ≤ ageMax → `age_min` / `age_max`. null or
                                   absent is Meta's default; an explicit 0 is out of range (400).
@@ -3067,6 +3067,20 @@ targeting?: object              — OPTIONAL audience targeting on the ad set (#
                                   or a read that fails, leaves an id unanswered or omits `valid`,
                                   fails the job with nothing created. Refused with a 400 unless
                                   META_BEHAVIOR_TARGETING_ENABLED is exactly "true"; not gated by
+                                  global_marketing_ops.
+  userOs?: string[]              — Meta `user_os` values (Advanced Targeting, Mobile): iOS,
+                                  Android, <OS>_ver_<x.x>_and_above or <OS>_ver_<x.x>_to_<y.y>
+                                  (x.x below y.y; iOS 2.0 3.0 4.0 4.3 5.0 6.0 7.0 8.0 9.0, Android
+                                  2.0–8.0 as Meta lists them), case-insensitive, sent in Meta's
+                                  spelling, de-duplicated, at most 10 → `user_os`. Not an
+                                  inclusion. Synchronous 400s: a value outside those formats; a
+                                  version of one family with any value of the other (Meta: "You
+                                  cannot target the minimum version of one platform with the
+                                  other platform"; iOS with Android unversioned is fine); userOs
+                                  with devicePlatforms ["desktop"] (an OS list matches mobile
+                                  devices only); an OS version on the awareness objective (Meta
+                                  allows only iOS or Android there). Refused with a 400 unless
+                                  META_OS_TARGETING_ENABLED is exactly "true"; not gated by
                                   global_marketing_ops.
                                   Every invalid value is a synchronous 400 ("invalid campaign
                                   config: metaConfig.targeting: …"). Before anything is created

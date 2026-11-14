@@ -81,7 +81,7 @@ type metaConfig struct {
 	// Targeting is the optional audience targeting (#550): age, gender, custom audiences to include
 	// and exclude, and the Advantage+ audience flag. Refused while META_AUDIENCE_TARGETING_ENABLED is
 	// not "true" (metaTargetingEnabled); the later fields (locales, devicePlatforms, interests, regions,
-	// cities, behaviors, workPositions) have their own flags
+	// cities, behaviors, workPositions, userOs) have their own flags
 	// (checkMetaTargeting). Validated by meta.NormalizeAudienceTargeting. Null or absent targets as
 	// before.
 	Targeting *meta.AudienceTargeting `json:"targeting,omitempty"`
@@ -194,12 +194,13 @@ func metaTargetingEnabled() bool {
 
 // checkMetaTargeting refuses a metaConfig.targeting the create cannot send: a field whose
 // deployment flag is off, and otherwise a block meta.NormalizeAudienceTargeting refuses. Each later
-// field (locales, devicePlatforms, interests, regions and cities, behaviors and workPositions) has its own flag; META_AUDIENCE_TARGETING_ENABLED gates the six audience fields
+// field (locales, devicePlatforms, interests, regions and cities, behaviors and workPositions, userOs) has its own flag; META_AUDIENCE_TARGETING_ENABLED gates the six audience fields
 // and any block that sets none of the later ones, an empty block included, as it did before. A
-// desktop-only device list is also checked against the placements (meta.CheckDevicePlacements).
+// desktop-only device list is also checked against the placements (meta.CheckDevicePlacements), and
+// a userOs list against the devices and the objective (meta.CheckUserOS).
 // Every refusal is a domain.PreflightRefusal, so PreflightCreate answers it with a 400 before any
 // job exists and Dispatch fails the job before any Meta request.
-func checkMetaTargeting(t *meta.AudienceTargeting, placements meta.Placement) error {
+func checkMetaTargeting(t *meta.AudienceTargeting, placements meta.Placement, objective string) error {
 	if t == nil {
 		return nil
 	}
@@ -219,6 +220,12 @@ func checkMetaTargeting(t *meta.AudienceTargeting, placements meta.Placement) er
 	if len(t.Interests) > 0 {
 		if os.Getenv(constants.EnvMetaInterestTargetingEnabled) != "true" {
 			return metaCreativeOptionDisabled("targeting.interests", constants.EnvMetaInterestTargetingEnabled)
+		}
+		ownFlag = true
+	}
+	if len(t.UserOS) > 0 {
+		if os.Getenv(constants.EnvMetaOSTargetingEnabled) != "true" {
+			return metaCreativeOptionDisabled("targeting.userOs", constants.EnvMetaOSTargetingEnabled)
 		}
 		ownFlag = true
 	}
@@ -254,7 +261,10 @@ func checkMetaTargeting(t *meta.AudienceTargeting, placements meta.Placement) er
 	if err != nil {
 		return err
 	}
-	return meta.CheckDevicePlacements(normalized, placements)
+	if err := meta.CheckDevicePlacements(normalized, placements); err != nil {
+		return err
+	}
+	return meta.CheckUserOS(normalized, objective)
 }
 
 // creativeAssetReader is the ONE creative-asset operation this dispatcher needs: read a
@@ -869,7 +879,7 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	}
 	// The audience targeting gate and its shape (#550), before any Meta request. The client
 	// normalizes it again and reads each custom audience before the first write.
-	if err := checkMetaTargeting(cfg.Targeting, cfg.Placements); err != nil {
+	if err := checkMetaTargeting(cfg.Targeting, cfg.Placements, cfg.Objective); err != nil {
 		return nil, notCreated(err)
 	}
 	// The awareness frequency cap gate and its rules (#550), before any Meta request.
@@ -1841,7 +1851,7 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 	if err != nil {
 		return err
 	}
-	if err := checkMetaTargeting(t, cfg.Placements); err != nil {
+	if err := checkMetaTargeting(t, cfg.Placements, cfg.Objective); err != nil {
 		return err
 	}
 	// The frequency cap (#550): decoded on its own for the same reason, then checked against the
@@ -1875,7 +1885,7 @@ var metaStringConfigKeys = []string{"instagramUserId", "callToAction", "conversi
 // best-effort decode skips a field it cannot decode. See decodeMetaConfigObject.
 func decodeMetaTargeting(config json.RawMessage) (*meta.AudienceTargeting, error) {
 	return decodeMetaConfigObject[meta.AudienceTargeting](config, "targeting",
-		"ageMin, ageMax (integers), genders, customAudiences, excludedCustomAudiences (string lists), advantageAudience (boolean), locales (an integer list), devicePlatforms, interests, regions, cities, behaviors and workPositions (string lists)")
+		"ageMin, ageMax (integers), genders, customAudiences, excludedCustomAudiences (string lists), advantageAudience (boolean), locales (an integer list), devicePlatforms, interests, regions, cities, behaviors, workPositions and userOs (string lists)")
 }
 
 // decodeMetaFrequencyCap decodes metaConfig.frequencyCap on its own, for the same reason as
