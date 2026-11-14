@@ -101,6 +101,10 @@ type metaConfig struct {
 	// not "true". meta.NormalizeLeadForm checks the id shape; the client reads the form before the
 	// first write.
 	LeadFormID string `json:"leadFormId"`
+	// AdSchedule runs the ad set only on some days and hours in the ad account's time zone (#550,
+	// gap 16), meta.NormalizeAdSchedule's rules: a lifetime budget only. Refused while
+	// META_AD_SCHEDULE_ENABLED is not "true". Null or absent sends nothing.
+	AdSchedule *meta.AdSchedule `json:"adSchedule,omitempty"`
 }
 
 // metaCreativeOptionDisabled refuses a creative option this deployment has not opted in to. It
@@ -166,6 +170,20 @@ func checkMetaFrequencyCap(objective string, f *meta.FrequencyCap) error {
 		return metaCreativeOptionDisabled("frequencyCap", constants.EnvMetaFrequencyCapEnabled)
 	}
 	return meta.NormalizeFrequencyCap(objective, f)
+}
+
+// checkMetaAdSchedule refuses a metaConfig.adSchedule while META_AD_SCHEDULE_ENABLED is not exactly
+// "true", and otherwise one meta.NormalizeAdSchedule refuses (a daily budget included). Nil is no
+// schedule. Like checkMetaFrequencyCap, PreflightCreate passes the schedule decodeMetaAdSchedule read.
+func checkMetaAdSchedule(lifetimeBudget bool, s *meta.AdSchedule) error {
+	if s == nil {
+		return nil
+	}
+	if os.Getenv(constants.EnvMetaAdScheduleEnabled) != "true" {
+		return metaCreativeOptionDisabled("adSchedule", constants.EnvMetaAdScheduleEnabled)
+	}
+	_, err := meta.NormalizeAdSchedule(lifetimeBudget, s)
+	return err
 }
 
 // metaTargetingEnabled reports whether this deployment opted in to metaConfig.targeting (#550).
@@ -846,6 +864,10 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	if err := checkMetaFrequencyCap(cfg.Objective, cfg.FrequencyCap); err != nil {
 		return nil, notCreated(err)
 	}
+	// The ad schedule gate and its rules (#550), before any Meta request.
+	if err := checkMetaAdSchedule(cfg.LifetimeBudget, cfg.AdSchedule); err != nil {
+		return nil, notCreated(err)
+	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
 	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
 	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
@@ -939,6 +961,8 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		FrequencyCap: cfg.FrequencyCap,
 		// The Instant Form as the caller sent it; the client checks it again and reads it (#550). Gated above.
 		LeadFormID: cfg.LeadFormID,
+		// The ad schedule; the client checks it again (#550). Gated above.
+		AdSchedule: cfg.AdSchedule,
 		// The audience targeting as the caller sent it; the client normalizes it (#550).
 		Targeting: cfg.Targeting,
 
@@ -1801,6 +1825,15 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 	if err := checkMetaFrequencyCap(cfg.Objective, fc); err != nil {
 		return err
 	}
+	// The ad schedule (#550): decoded on its own for the same reason, then checked against the
+	// best-effort lifetimeBudget.
+	sched, err := decodeMetaAdSchedule(config)
+	if err != nil {
+		return err
+	}
+	if err := checkMetaAdSchedule(cfg.LifetimeBudget, sched); err != nil {
+		return err
+	}
 	return domain.ErrPreflightNotApplicable
 }
 
@@ -1821,6 +1854,12 @@ func decodeMetaTargeting(config json.RawMessage) (*meta.AudienceTargeting, error
 // decodeMetaTargeting.
 func decodeMetaFrequencyCap(config json.RawMessage) (*meta.FrequencyCap, error) {
 	return decodeMetaConfigObject[meta.FrequencyCap](config, "frequencyCap", "maxImpressions and intervalDays (integers)")
+}
+
+// decodeMetaAdSchedule decodes metaConfig.adSchedule on its own, for the same reason as
+// decodeMetaTargeting.
+func decodeMetaAdSchedule(config json.RawMessage) (*meta.AdSchedule, error) {
+	return decodeMetaConfigObject[meta.AdSchedule](config, "adSchedule", "days (an integer list), startMinute and endMinute (integers)")
 }
 
 // decodeMetaConfigObject decodes the object at metaConfig.<key> on its own, so a wrong-typed object

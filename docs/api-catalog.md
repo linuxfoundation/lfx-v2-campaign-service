@@ -2957,6 +2957,18 @@ frequencyCap?:                  — OPTIONAL impressions-per-person cap on the a
                                   missing or out-of-range field, or a non-object is a synchronous
                                   400. Refused with a 400 unless META_FREQUENCY_CAP_ENABLED is
                                   exactly "true". null/absent → no cap.
+adSchedule?:                    — OPTIONAL ad scheduling (#550): the ad set runs only on `days`
+  {days: integer[],               (0 Sunday … 6 Saturday, de-duplicated) between `startMinute` and
+   startMinute: integer,          `endMinute` of the day, in the AD ACCOUNT's time zone →
+   endMinute: integer}            `adset_schedule: [{"start_minute", "end_minute", "days",
+                                  "timezone_type": "ADVERTISER"}]` plus `pacing_type:
+                                  ["day_parting"]`. Requires `lifetimeBudget: true` (Meta
+                                  schedules only lifetime budgets). Whole hours only:
+                                  multiples of 60 with 0 ≤ startMinute < endMinute ≤ 1440. A
+                                  daily budget, no day, a day outside 0–6, bad minutes or a
+                                  non-object is a synchronous 400. Refused with a 400 unless
+                                  META_AD_SCHEDULE_ENABLED is exactly "true". null/absent → runs
+                                  all day.
 leadFormId?: string             — OPTIONAL existing Meta Instant Form id (#550), for the `leads`
                                   objective only. The form is created in Meta Ads Manager on the
                                   connection's Page, with the Page's lead terms already accepted;

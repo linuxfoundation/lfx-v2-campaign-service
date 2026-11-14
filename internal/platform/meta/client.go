@@ -2863,6 +2863,11 @@ type CampaignInput struct {
 	// request on any other objective, outside the list, or with a manual bid cap (a link-click cap
 	// needs the LINK_CLICKS goal).
 	OptimizationGoal string
+	// AdSchedule runs the ad set only on some days and hours, in the ad account's time zone
+	// (metaConfig.adSchedule, #550 gap 16), sent as adset_schedule with pacing_type day_parting. Nil
+	// sends nothing. Refused before any request on a daily budget or with invalid days or minutes
+	// (NormalizeAdSchedule).
+	AdSchedule *AdSchedule
 	// LeadFormID is an existing Instant Form of the connection's Page (metaConfig.leadFormId, #550
 	// gap 8), created in Ads Manager with the Page's lead terms already accepted; this service never
 	// creates a form or accepts terms. Only with the leads objective: the campaign is then
@@ -3232,6 +3237,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, err
 	}
 	if err := NormalizeFrequencyCap(objective, in.FrequencyCap); err != nil {
+		return nil, err
+	}
+	// The ad schedule (#550, gap 16), lifetime budgets only, checked before any request.
+	schedule, err := NormalizeAdSchedule(in.LifetimeBudget, in.AdSchedule)
+	if err != nil {
 		return nil, err
 	}
 	// The ad set's optimization goal: the objective's own unless metaConfig.optimizationGoal picks
@@ -3706,6 +3716,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// The awareness frequency cap (#550, gap 18), checked with the deterministic inputs above.
 	if in.FrequencyCap != nil {
 		adSetBody["frequency_control_specs"] = frequencyControlSpecs(in.FrequencyCap)
+	}
+	// The ad schedule in the ad account's time zone, with the day-parting pacing it needs (#550,
+	// gap 16), checked with the deterministic inputs above.
+	if schedule != nil {
+		adSetBody["adset_schedule"] = adSetSchedule(schedule)
+		adSetBody["pacing_type"] = []string{PacingDayParting}
 	}
 
 	// EU DSA advertiser/payer disclosure. Attached only when supplied: Meta rejects an

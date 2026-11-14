@@ -1093,6 +1093,18 @@ object on its own (`decodeMetaFrequencyCap`, sharing `decodeMetaConfigObject` wi
 best-effort one, which can leave a partly filled cap behind a type error. Not live-verified: the
 payload and the 1–90 bounds.
 
+`CampaignInput.AdSchedule` (`metaConfig.adSchedule`, gap 16: `days` 0–6 plus `startMinute` /
+`endMinute`) is sent as the ad set's `adset_schedule`
+(`[{"start_minute","end_minute","days","timezone_type":"ADVERTISER"}]`) with `pacing_type:
+["day_parting"]`, so the hours are the ad account's time zone, as Ads Manager shows them.
+`NormalizeAdSchedule` refuses it on a daily budget (Meta schedules only lifetime budgets), without
+days, with a day outside 0–6, and unless the minutes are whole hours with 0 ≤ start < end ≤ 1440;
+it de-duplicates and sorts the days. The dispatcher gates it behind `META_AD_SCHEDULE_ENABLED`
+(default off) and decodes it on its own in `PreflightCreate` (`decodeMetaAdSchedule`). The budget
+lever writes only the budget kind an ad set already reports, so it cannot move a scheduled ad set to
+a daily budget. Not verified live: the payload, the whole-hour rule and the settings readback,
+which does not report the schedule.
+
 `CampaignInput.LeadFormID` (`metaConfig.leadFormId`, gap 8, `lead_forms.go`) names an existing
 Instant Form of the connection's Page; the owner decided (2026-11-14) that LFX never creates a form
 or accepts the Page's lead terms. `NormalizeLeadForm` refuses it on any objective but leads and when

@@ -404,6 +404,13 @@ openssl rand -base64 32
   anything else fails closed, and a create carrying the field is refused
   with a 400 before any job exists. The chart sets it to `"false"`; enable
   it per-environment in the ArgoCD overlay.
+- `META_AD_SCHEDULE_ENABLED` (default unset, i.e. OFF) — opts a deployment
+  IN to `metaConfig.adSchedule` (#550): days and whole hours, in the ad
+  account's time zone, sent as the ad set's `adset_schedule` with
+  `pacing_type: ["day_parting"]`. Lifetime budgets only. Only the exact
+  value `true` enables it; anything else fails closed, and a create
+  carrying the field is refused with a 400 before any job exists. The chart
+  sets it to `"false"`; enable it per-environment in the ArgoCD overlay.
 - `META_LEAD_FORMS_ENABLED` (default unset, i.e. OFF) — opts a deployment
   IN to `metaConfig.leadFormId` (#550): an existing Instant Form (created in
   Ads Manager, with the Page's lead terms accepted) that turns the `leads`

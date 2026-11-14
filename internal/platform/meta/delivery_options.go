@@ -88,3 +88,72 @@ func NormalizeFrequencyCap(objective string, f *FrequencyCap) error {
 func frequencyControlSpecs(f *FrequencyCap) []map[string]any {
 	return []map[string]any{{"event": "IMPRESSIONS", "interval_days": f.IntervalDays, "max_frequency": f.MaxImpressions}}
 }
+
+// AdSchedule is metaConfig.adSchedule (#550, gap 16): the ad set runs only on Days between
+// StartMinute and EndMinute of the day, in the ad ACCOUNT's time zone. Sent as the ad set's
+// `adset_schedule` (`[{"start_minute":…,"end_minute":…,"days":[…],"timezone_type":"ADVERTISER"}]`)
+// with `pacing_type: ["day_parting"]` (Ad Set reference). Meta accepts a schedule only on a
+// lifetime budget, so it is refused on a daily one rather than refused by Meta after the campaign
+// exists.
+type AdSchedule struct {
+	// Days are the days of the week it runs, 0 (Sunday) to 6 (Saturday), Meta's numbering.
+	Days []int `json:"days"`
+	// StartMinute and EndMinute are minutes of the day, whole hours (multiples of 60), with
+	// 0 <= StartMinute < EndMinute <= 1440.
+	StartMinute int `json:"startMinute"`
+	EndMinute   int `json:"endMinute"`
+}
+
+// Ad schedule bounds: Meta schedules in whole hours of a 1440-minute day; days are numbered 0
+// (Sunday) to 6 (Saturday).
+const (
+	adScheduleMinutesPerDay = 1440
+	adScheduleStep          = 60
+	adScheduleMaxDay        = 6
+	// AdScheduleTimezone is the timezone_type every schedule is sent with: the ad account's time
+	// zone, so an operator reads the hours as the account (and Ads Manager) shows them.
+	AdScheduleTimezone = "ADVERTISER"
+	// PacingDayParting is the pacing_type a scheduled ad set needs.
+	PacingDayParting = "day_parting"
+)
+
+// NormalizeAdSchedule refuses a schedule the create cannot send and returns the copy it sends
+// (days de-duplicated and sorted): one on a daily budget, no day, a day outside 0..6, or minutes
+// that are not whole hours with 0 <= start < end <= 1440. A nil schedule is no schedule. Every
+// refusal is a domain.PreflightRefusal wrapping domain.ErrCreateConfigInvalid.
+func NormalizeAdSchedule(lifetimeBudget bool, s *AdSchedule) (*AdSchedule, error) {
+	if s == nil {
+		return nil, nil
+	}
+	if !lifetimeBudget {
+		return nil, creativeOptionInvalid("adSchedule", "needs a lifetime budget (Meta schedules only lifetime-budget ad sets); set lifetimeBudget true or omit adSchedule")
+	}
+	if len(s.Days) == 0 {
+		return nil, creativeOptionInvalid("adSchedule", "days must name at least one day, 0 (Sunday) to 6 (Saturday)")
+	}
+	var seen [adScheduleMaxDay + 1]bool
+	for _, d := range s.Days {
+		if d < 0 || d > adScheduleMaxDay {
+			return nil, creativeOptionInvalid("adSchedule", "day %d is out of range; days run from 0 (Sunday) to 6 (Saturday)", d)
+		}
+		seen[d] = true
+	}
+	out := &AdSchedule{StartMinute: s.StartMinute, EndMinute: s.EndMinute}
+	for d, on := range seen {
+		if on {
+			out.Days = append(out.Days, d)
+		}
+	}
+	if s.StartMinute < 0 || s.EndMinute > adScheduleMinutesPerDay || s.StartMinute >= s.EndMinute {
+		return nil, creativeOptionInvalid("adSchedule", "startMinute %d and endMinute %d must satisfy 0 <= startMinute < endMinute <= %d", s.StartMinute, s.EndMinute, adScheduleMinutesPerDay)
+	}
+	if s.StartMinute%adScheduleStep != 0 || s.EndMinute%adScheduleStep != 0 {
+		return nil, creativeOptionInvalid("adSchedule", "startMinute %d and endMinute %d must be whole hours (multiples of %d)", s.StartMinute, s.EndMinute, adScheduleStep)
+	}
+	return out, nil
+}
+
+// adSetSchedule is the ad set's adset_schedule for a schedule NormalizeAdSchedule returned.
+func adSetSchedule(s *AdSchedule) []map[string]any {
+	return []map[string]any{{"start_minute": s.StartMinute, "end_minute": s.EndMinute, "days": s.Days, "timezone_type": AdScheduleTimezone}}
+}
