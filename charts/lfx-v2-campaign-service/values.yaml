@@ -524,6 +524,16 @@ app:
     META_FREQUENCY_CAP_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to metaConfig.adSchedule (#550): days and whole
+    # hours, in the ad account's time zone, sent as the ad set's adset_schedule
+    # with pacing_type day_parting. Meta schedules only lifetime-budget ad sets,
+    # so a daily budget is refused with a 400. Off by default until the payload
+    # is verified against a live ad account; set exactly "true" in
+    # lfx-v2-argocd. It names no account resource. Any value other than "true"
+    # is treated as off.
+    META_AD_SCHEDULE_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to metaConfig.leadFormId (#550): an existing
     # Instant Form that turns the leads objective into an OUTCOME_LEADS lead ad
     # (LEAD_GENERATION ad set, the form on every creative). The form is read

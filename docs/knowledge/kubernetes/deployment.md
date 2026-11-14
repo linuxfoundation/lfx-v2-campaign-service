@@ -94,6 +94,11 @@ a 400 before any job exists. It names no account resource, so it is not behind
 `metaConfig.frequencyCap` (an impressions-per-person cap on the awareness ad set). Only exactly
 `"true"` enables it; off, a create carrying the field is refused with a 400 before any job exists.
 
+`META_AD_SCHEDULE_ENABLED` is the same kind of gate, defaulting to `"false"` (#550), for
+`metaConfig.adSchedule` (days and whole hours in the ad account's time zone, lifetime budgets
+only). Only exactly `"true"` enables it; off, a create carrying the field is refused with a 400
+before any job exists.
+
 `META_LEAD_FORMS_ENABLED` is the same kind of gate, defaulting to `"false"` (#550), for
 `metaConfig.leadFormId` (an existing Instant Form that makes the `leads` objective an
 `OUTCOME_LEADS` lead ad). The form is read and must be an active form of the connection's Page

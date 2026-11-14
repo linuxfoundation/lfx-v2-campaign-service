@@ -150,3 +150,81 @@ func TestCreateCampaign_FrequencyCapRefusalsSendNothing(t *testing.T) {
 		})
 	}
 }
+
+// TestCreateCampaign_AdScheduleReachesTheLifetimeAdSet: a schedule is sent as one ADVERTISER-time
+// adset_schedule entry (days de-duplicated and sorted) with pacing_type day_parting; without one
+// the ad set carries neither field.
+func TestCreateCampaign_AdScheduleReachesTheLifetimeAdSet(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		schedule *AdSchedule
+		want     any
+	}{
+		{"none", nil, nil},
+		{"weekday office hours", &AdSchedule{Days: []int{5, 1, 3, 1}, StartMinute: 540, EndMinute: 1020},
+			[]any{map[string]any{"start_minute": float64(540), "end_minute": float64(1020), "days": []any{float64(1), float64(3), float64(5)}, "timezone_type": "ADVERTISER"}}},
+		{"whole day bounds", &AdSchedule{Days: []int{0, 6}, StartMinute: 0, EndMinute: 1440},
+			[]any{map[string]any{"start_minute": float64(0), "end_minute": float64(1440), "days": []any{float64(0), float64(6)}, "timezone_type": "ADVERTISER"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			adsetCap := newBodyCapture()
+			srv := metaFieldServer(t, adsetCap, newBodyCapture())
+			defer srv.Close()
+			in := metaFieldInput()
+			in.LifetimeBudget, in.AdSchedule = true, tc.schedule
+			if _, err := biddingClient(srv.URL, 100).CreateCampaign(context.Background(), in); err != nil {
+				t.Fatalf("CreateCampaign: %v", err)
+			}
+			body := adsetCap.get()
+			got, has := body["adset_schedule"]
+			if (tc.want == nil) == has || (has && !reflect.DeepEqual(got, tc.want)) {
+				t.Fatalf("adset_schedule = %#v (present %v), want %#v", got, has, tc.want)
+			}
+			pacing, hasPacing := body["pacing_type"]
+			if has != hasPacing || (hasPacing && !reflect.DeepEqual(pacing, []any{"day_parting"})) {
+				t.Fatalf("pacing_type = %#v (present %v), want day_parting exactly when scheduled", pacing, hasPacing)
+			}
+			if _, lifetime := body["lifetime_budget"]; !lifetime {
+				t.Fatalf("ad set has no lifetime_budget: %#v", body)
+			}
+		})
+	}
+}
+
+// TestCreateCampaign_AdScheduleRefusalsSendNothing: a schedule on a daily budget, without days, with
+// a day outside 0..6, or with minutes that are not whole hours in order inside the day is a
+// config-invalid refusal with no request sent.
+func TestCreateCampaign_AdScheduleRefusalsSendNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		lifetime bool
+		schedule AdSchedule
+		want     string
+	}{
+		{"daily budget", false, AdSchedule{Days: []int{1}, StartMinute: 540, EndMinute: 1020}, "metaConfig.adSchedule: needs a lifetime budget"},
+		{"no days", true, AdSchedule{StartMinute: 540, EndMinute: 1020}, "days must name at least one day"},
+		{"day 7", true, AdSchedule{Days: []int{7}, StartMinute: 540, EndMinute: 1020}, "day 7 is out of range"},
+		{"day -1", true, AdSchedule{Days: []int{-1}, StartMinute: 540, EndMinute: 1020}, "day -1 is out of range"},
+		{"start after end", true, AdSchedule{Days: []int{1}, StartMinute: 1020, EndMinute: 540}, "must satisfy 0 <= startMinute < endMinute <= 1440"},
+		{"empty window", true, AdSchedule{Days: []int{1}, StartMinute: 540, EndMinute: 540}, "must satisfy"},
+		{"negative start", true, AdSchedule{Days: []int{1}, StartMinute: -60, EndMinute: 540}, "must satisfy"},
+		{"past midnight", true, AdSchedule{Days: []int{1}, StartMinute: 0, EndMinute: 1500}, "must satisfy"},
+		{"half hour start", true, AdSchedule{Days: []int{1}, StartMinute: 570, EndMinute: 1020}, "must be whole hours (multiples of 60)"},
+		{"half hour end", true, AdSchedule{Days: []int{1}, StartMinute: 540, EndMinute: 1050}, "must be whole hours"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Errorf("no request may be sent, got %s %s", r.Method, r.URL.String())
+			}))
+			defer srv.Close()
+			in := metaFieldInput()
+			sc := tc.schedule
+			in.LifetimeBudget, in.AdSchedule = tc.lifetime, &sc
+			res, err := biddingClient(srv.URL, 100).CreateCampaign(context.Background(), in)
+			var refusal *domain.PreflightRefusal
+			if res != nil || !errors.As(err, &refusal) || !errors.Is(err, domain.ErrCreateConfigInvalid) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("CreateCampaign = %+v, %v; want a config-invalid pre-flight refusal containing %q", res, err, tc.want)
+			}
+		})
+	}
+}

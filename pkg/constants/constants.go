@@ -398,6 +398,12 @@ const (
 	// an account resource, so it needs no global_marketing_ops.
 	EnvMetaRegionTargetingEnabled = "META_REGION_TARGETING_ENABLED"
 
+	// EnvMetaAdScheduleEnabled opts a deployment IN to metaConfig.adSchedule (#550, gap 16): days
+	// and hours, in the ad account's time zone, sent as the ad set's adset_schedule with pacing_type
+	// day_parting; lifetime budgets only. Only the exact value "true" enables it; anything else
+	// refuses the field with a 400 before any job exists. It names no account resource.
+	EnvMetaAdScheduleEnabled = "META_AD_SCHEDULE_ENABLED"
+
 	// EnvGoogleAdsPMaxAudienceSignalEnabled opts a deployment IN to
 	// googleAdsConfig.performanceMaxAudienceSignal (#461): one existing Google Ads Audience
 	// attached to a Performance Max asset group as a signal. Only the exact value "true"
