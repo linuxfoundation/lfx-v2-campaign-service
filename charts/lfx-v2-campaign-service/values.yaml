@@ -463,6 +463,15 @@ app:
     MICROSOFT_SEARCH_NETWORK_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to microsoftConfig.adSchedules (#563): day-time
+    # windows (dayparting) on the new campaign, attached before its ad group.
+    # Built from the v13 Campaign Management reference and not yet sent by a
+    # live create. It names no account resource. While off, a create naming it
+    # is refused with a 400 before any job exists. Any value other than "true"
+    # is treated as off.
+    MICROSOFT_AD_SCHEDULE_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to googleAdsConfig.demandGenAudience (#459): one
     # existing Google Ads Audience on a Demand Gen ad group. The same flag
     # gates each googleAdsConfig.demandGenAdGroups[].audience (#460), the same

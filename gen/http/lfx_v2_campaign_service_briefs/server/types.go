@@ -5624,7 +5624,23 @@ type CampaignCreateInputRequestBody struct {
 	// exactly "true". A value that is not a JSON boolean (null reads as absent),
 	// or the field while the flag is off (false included), is refused with 400
 	// "invalid campaign config: microsoftConfig.searchPartners: ..." before any
-	// job exists. Not role-gated.
+	// job exists. Not role-gated. MICROSOFT AD SCHEDULE (#563): microsoftConfig
+	// takes `adSchedules`, [{day, startHour, endHour, bidAdjustment?}], at most 49
+	// windows: day Monday..Sunday (any casing), startHour a whole hour 0-23,
+	// endHour a whole hour 1-24 after startHour, bidAdjustment an optional whole
+	// percent -90..900 applied inside the window (omitted means 0). Windows on the
+	// same day may touch but not overlap. They are sent as DayTimeCriterion
+	// entries (BiddableCampaignCriterion with a BidMultiplier, both minutes Zero)
+	// in one AddCampaignCriterions call right after the radius targets and before
+	// the ad group, in the campaign's timeZone; once any window exists Microsoft
+	// serves the ads only inside the windows. The attach is fail-closed like
+	// geoTargets: a failed, partial or unconfirmed attach stops the create before
+	// the ad group with the PAUSED campaign reported and retained, and a create
+	// that finds its campaign by name stops before the ad group. OFF unless
+	// MICROSOFT_AD_SCHEDULE_ENABLED is exactly "true". A wrong JSON type (null
+	// reads as absent), a missing or fractional hour, a rule breach, or the list
+	// while the flag is off is refused with 400 "invalid campaign config:
+	// microsoftConfig.adSchedules: ..." before any job exists. Not role-gated.
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

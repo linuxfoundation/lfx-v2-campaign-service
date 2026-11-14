@@ -1634,3 +1634,25 @@ written to, and a warning step says its network is unchanged.
 The dispatcher (`internal/dispatch/microsoft_search_network.go`) refuses a non-boolean, and the
 field (false included) while `MICROSOFT_SEARCH_NETWORK_ENABLED` is off, with a synchronous 400.
 Not verified live; not role-gated.
+
+## Ad schedule at create (#563 gap 10)
+
+`CampaignInput.AdSchedules` (`ad_schedule.go`) is checked by `ValidateAdSchedules` before anything
+is created: at most 49 windows (this service's bound, not Microsoft's), a `Day` enum value matched
+ignoring case, whole hours `[StartHour 0-23, EndHour 1-24)` with the end after the start, a
+whole-percent `BidAdjustment` of -90..900, and no two windows overlapping on one day (touching is
+fine). The windows come back sorted by day and start hour, which is the order they are sent.
+
+On a campaign this run created, `createAdScheduleCriterions` attaches them right after the radius
+targets and before the ad group, one `AddCampaignCriterions` call (`CriterionType: Targets`) of
+`BiddableCampaignCriterion` entries carrying a `DayTimeCriterion` (both minutes `Zero`) and a
+`BidMultiplier` `CriterionBid`; `msTargetCampaignCriterion` gained the optional `CriterionBid` for
+it. The call goes through `postCampaignCriterions` and a failure is classified by
+`criterionStepError`, so the schedule is fail-closed exactly like the exclusions and radii: a
+campaign whose schedule did not land would serve at every hour. `adSchedules` joins the fields
+(`CreateTargeting.fields`) that stop a create on a campaign found by name before its ad group.
+The ids are recorded as `AdScheduleCriterionIDs`.
+
+The dispatcher (`internal/dispatch/microsoft_ad_schedule.go`) decodes the hours as `*float64`, so a
+missing hour (0 is midnight) or a fractional one is refused on its own, and gates the list behind
+`MICROSOFT_AD_SCHEDULE_ENABLED`. Not verified live; not role-gated.
