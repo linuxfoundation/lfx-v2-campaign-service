@@ -5603,6 +5603,17 @@ refused there with `ErrConnectionNotUsable` before any request (so it is not rec
 upstream call); a credential defect is the connection's (`linkedInLookupError`); anything else is
 the platform's.
 
+**LinkedIn targeting typeahead (#585).** `LinkedInDispatcher` implements
+`service.TargetingEntitySearcher` (`SearchTargetingEntities`). An unserved facet or unusable
+query is `domain.ErrTargetingQueryInvalid` before any credential is read. It resolves with
+`resolveLinkedInDiscoveryCredentials` (the create's `creds.resolve`, LF fallback and forced
+redirect included, but no ad account required: the finder takes none) and uses the cached client
+for the connection, so a refresh-capable credential mints one token per connection, not per
+keystroke. Successful answers are cached by facet and lower-cased query in
+`targetingEntityCache` (6 h TTL, 2048 entries, consulted after resolution, failures not cached);
+a hit reports `called` false. Dropped entries are logged as counts with the facet, never the
+query.
+
 **LinkedIn conversions (#552).** `linkedinConfig.Conversions` is gated by
 `linkedinConversionsEnabled` (`LINKEDIN_ADS_CONVERSIONS_ENABLED`, off by default) and validated by
 `linkedin.ValidateConversions` in `linkedinConversions`, which `PreflightCreate` (synchronous 400)

@@ -1041,6 +1041,19 @@ type ListLinkedinAdsConversionsResponseBody struct {
 	ConversionCount int `form:"conversion_count" json:"conversion_count" xml:"conversion_count"`
 }
 
+// SearchLinkedinAdsTargetingEntitiesResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "search-linkedin-ads-targeting-entities" endpoint HTTP response body.
+type SearchLinkedinAdsTargetingEntitiesResponseBody struct {
+	// The facet searched, as requested
+	Facet string `form:"facet" json:"facet" xml:"facet"`
+	// The matches, in LinkedIn's relevance order, de-duplicated by urn. Empty when
+	// nothing matches.
+	Entities []*LinkedinAdsTargetingEntityResponseBody `form:"entities" json:"entities" xml:"entities"`
+	// How many entities are in `entities`
+	EntityCount int `form:"entity_count" json:"entity_count" xml:"entity_count"`
+}
+
 // GetMicrosoftAdsKeywordsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body.
@@ -5084,6 +5097,72 @@ type ListLinkedinAdsConversionsUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// SearchLinkedinAdsTargetingEntitiesBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "search-linkedin-ads-targeting-entities" endpoint HTTP response body for the
+// "BadRequest" error.
+type SearchLinkedinAdsTargetingEntitiesBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SearchLinkedinAdsTargetingEntitiesServiceUnavailableResponseBody is the type
+// of the "lfx-v2-campaign-service-connections" service
+// "search-linkedin-ads-targeting-entities" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type SearchLinkedinAdsTargetingEntitiesServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SearchLinkedinAdsTargetingEntitiesInternalServerErrorResponseBody is the
+// type of the "lfx-v2-campaign-service-connections" service
+// "search-linkedin-ads-targeting-entities" endpoint HTTP response body for the
+// "InternalServerError" error.
+type SearchLinkedinAdsTargetingEntitiesInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SearchLinkedinAdsTargetingEntitiesNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "search-linkedin-ads-targeting-entities" endpoint HTTP response body for the
+// "NotFound" error.
+type SearchLinkedinAdsTargetingEntitiesNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SearchLinkedinAdsTargetingEntitiesPayloadTooLargeResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "search-linkedin-ads-targeting-entities" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type SearchLinkedinAdsTargetingEntitiesPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SearchLinkedinAdsTargetingEntitiesUnauthorizedResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "search-linkedin-ads-targeting-entities" endpoint HTTP response body for the
+// "Unauthorized" error.
+type SearchLinkedinAdsTargetingEntitiesUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetMicrosoftAdsKeywordsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -7109,6 +7188,18 @@ type LinkedinAdsConversionRuleResponseBody struct {
 	Enabled bool `form:"enabled" json:"enabled" xml:"enabled"`
 }
 
+// LinkedinAdsTargetingEntityResponseBody is used to define fields on response
+// body types.
+type LinkedinAdsTargetingEntityResponseBody struct {
+	// The entity's URN, in exactly the form the facet takes: a value of
+	// linkedInConfig.targeting.<facet>, or for locations the urn of a
+	// linkedInConfig.geoTargets entry
+	Urn string `form:"urn" json:"urn" xml:"urn"`
+	// LinkedIn's display name for the entity (en_US). Not an identifier; for
+	// locations, the label of the geoTargets entry.
+	Name string `form:"name" json:"name" xml:"name"`
+}
+
 // MicrosoftAdsAudienceBucketResponseBody is used to define fields on response
 // body types.
 type MicrosoftAdsAudienceBucketResponseBody struct {
@@ -8821,6 +8912,29 @@ func NewListLinkedinAdsConversionsResponseBody(res *lfxv2campaignserviceconnecti
 		}
 	} else {
 		body.Conversions = []*LinkedinAdsConversionRuleResponseBody{}
+	}
+	return body
+}
+
+// NewSearchLinkedinAdsTargetingEntitiesResponseBody builds the HTTP response
+// body from the result of the "search-linkedin-ads-targeting-entities"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewSearchLinkedinAdsTargetingEntitiesResponseBody(res *lfxv2campaignserviceconnections.LinkedinAdsTargetingEntities) *SearchLinkedinAdsTargetingEntitiesResponseBody {
+	body := &SearchLinkedinAdsTargetingEntitiesResponseBody{
+		Facet:       res.Facet,
+		EntityCount: res.EntityCount,
+	}
+	if res.Entities != nil {
+		body.Entities = make([]*LinkedinAdsTargetingEntityResponseBody, len(res.Entities))
+		for i, val := range res.Entities {
+			if val == nil {
+				body.Entities[i] = nil
+				continue
+			}
+			body.Entities[i] = marshalLfxv2campaignserviceconnectionsLinkedinAdsTargetingEntityToLinkedinAdsTargetingEntityResponseBody(val)
+		}
+	} else {
+		body.Entities = []*LinkedinAdsTargetingEntityResponseBody{}
 	}
 	return body
 }
@@ -13508,6 +13622,78 @@ func NewListLinkedinAdsConversionsUnauthorizedResponseBody(res *lfxv2campaignser
 	return body
 }
 
+// NewSearchLinkedinAdsTargetingEntitiesBadRequestResponseBody builds the HTTP
+// response body from the result of the
+// "search-linkedin-ads-targeting-entities" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSearchLinkedinAdsTargetingEntitiesBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *SearchLinkedinAdsTargetingEntitiesBadRequestResponseBody {
+	body := &SearchLinkedinAdsTargetingEntitiesBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSearchLinkedinAdsTargetingEntitiesServiceUnavailableResponseBody builds
+// the HTTP response body from the result of the
+// "search-linkedin-ads-targeting-entities" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSearchLinkedinAdsTargetingEntitiesServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *SearchLinkedinAdsTargetingEntitiesServiceUnavailableResponseBody {
+	body := &SearchLinkedinAdsTargetingEntitiesServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSearchLinkedinAdsTargetingEntitiesInternalServerErrorResponseBody builds
+// the HTTP response body from the result of the
+// "search-linkedin-ads-targeting-entities" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSearchLinkedinAdsTargetingEntitiesInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *SearchLinkedinAdsTargetingEntitiesInternalServerErrorResponseBody {
+	body := &SearchLinkedinAdsTargetingEntitiesInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSearchLinkedinAdsTargetingEntitiesNotFoundResponseBody builds the HTTP
+// response body from the result of the
+// "search-linkedin-ads-targeting-entities" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSearchLinkedinAdsTargetingEntitiesNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *SearchLinkedinAdsTargetingEntitiesNotFoundResponseBody {
+	body := &SearchLinkedinAdsTargetingEntitiesNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSearchLinkedinAdsTargetingEntitiesPayloadTooLargeResponseBody builds the
+// HTTP response body from the result of the
+// "search-linkedin-ads-targeting-entities" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSearchLinkedinAdsTargetingEntitiesPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *SearchLinkedinAdsTargetingEntitiesPayloadTooLargeResponseBody {
+	body := &SearchLinkedinAdsTargetingEntitiesPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSearchLinkedinAdsTargetingEntitiesUnauthorizedResponseBody builds the
+// HTTP response body from the result of the
+// "search-linkedin-ads-targeting-entities" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewSearchLinkedinAdsTargetingEntitiesUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *SearchLinkedinAdsTargetingEntitiesUnauthorizedResponseBody {
+	body := &SearchLinkedinAdsTargetingEntitiesUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetMicrosoftAdsKeywordsBadRequestResponseBody builds the HTTP response
 // body from the result of the "get-microsoft-ads-keywords" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -15882,6 +16068,19 @@ func NewListLinkedinAdsAudiencesPayload(projectID string, bearerToken *string) *
 func NewListLinkedinAdsConversionsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload {
 	v := &lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload{}
 	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewSearchLinkedinAdsTargetingEntitiesPayload builds a
+// lfx-v2-campaign-service-connections service
+// search-linkedin-ads-targeting-entities endpoint payload.
+func NewSearchLinkedinAdsTargetingEntitiesPayload(projectID string, facet string, query string, bearerToken *string) *lfxv2campaignserviceconnections.SearchLinkedinAdsTargetingEntitiesPayload {
+	v := &lfxv2campaignserviceconnections.SearchLinkedinAdsTargetingEntitiesPayload{}
+	v.ProjectID = projectID
+	v.Facet = facet
+	v.Query = query
 	v.BearerToken = bearerToken
 
 	return v

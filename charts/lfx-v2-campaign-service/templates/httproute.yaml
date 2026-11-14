@@ -52,7 +52,7 @@ spec:
     # for exactly the base, /test, and /set-credential sub-paths;
     # google-ads/keywords|audience|audiences|campaign-ref|geo-targets|user-lists|conversion-actions,
     # microsoft-ads/keywords|audience|campaign-ref,
-    # (linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience, linkedin-ads/audiences|conversions,
+    # (linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience, linkedin-ads/audiences|conversions|targeting-entities,
     # meta-ads/custom-audiences, reddit-ads/keywords|custom-audiences, twitter-ads/custom-audiences
     # and (meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref are
     # ruled at the base path only. There is NO per-provider /metrics branch: the chart used to
@@ -94,7 +94,7 @@ spec:
     - matches:
       - path:
           type: RegularExpression
-          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads|reddit-ads)(/(test|set-credential|accounts|account-monitor))?|connection-hubspot(/(test|set-credential|emails|campaigns|account-monitor))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|send-workflows|google-ads/(keywords|audience|audiences|campaign-ref|geo-targets|user-lists|conversion-actions)|microsoft-ads/(keywords|audience|campaign-ref)|(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience|linkedin-ads/(audiences|conversions)|meta-ads/custom-audiences|reddit-ads/(keywords|custom-audiences)|twitter-ads/custom-audiences|(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run|custom/(interpret|preview|create)))$
+          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads|reddit-ads)(/(test|set-credential|accounts|account-monitor))?|connection-hubspot(/(test|set-credential|emails|campaigns|account-monitor))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|send-workflows|google-ads/(keywords|audience|audiences|campaign-ref|geo-targets|user-lists|conversion-actions)|microsoft-ads/(keywords|audience|campaign-ref)|(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience|linkedin-ads/(audiences|conversions|targeting-entities)|meta-ads/custom-audiences|reddit-ads/(keywords|custom-audiences)|twitter-ads/custom-audiences|(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run|custom/(interpret|preview|create)))$
       {{- if .Values.heimdall.enabled }}
       filters:
         - type: ExtensionRef

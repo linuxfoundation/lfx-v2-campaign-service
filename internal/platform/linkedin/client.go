@@ -1706,6 +1706,7 @@ var preEncodedParams = map[string]struct{}{
 	"search":    {}, // findMatch — the name filter
 	"campaigns": {}, // listCreativeURNs — the creatives finder's campaign List()
 	"accounts":  {}, // ListAdSegments — the ad segments finder's account List() (#552)
+	"query":     {}, // SearchTargetingEntities — the typeahead text, %20 not "+" (#585)
 }
 
 // buildRawQuery renders params as a query string, percent-encoding every value

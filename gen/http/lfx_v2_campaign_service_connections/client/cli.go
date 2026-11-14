@@ -2200,6 +2200,63 @@ func BuildListLinkedinAdsConversionsPayload(lfxV2CampaignServiceConnectionsListL
 	return v, nil
 }
 
+// BuildSearchLinkedinAdsTargetingEntitiesPayload builds the payload for the
+// lfx-v2-campaign-service-connections search-linkedin-ads-targeting-entities
+// endpoint from CLI flags.
+func BuildSearchLinkedinAdsTargetingEntitiesPayload(lfxV2CampaignServiceConnectionsSearchLinkedinAdsTargetingEntitiesProjectID *string, lfxV2CampaignServiceConnectionsSearchLinkedinAdsTargetingEntitiesFacet *string, lfxV2CampaignServiceConnectionsSearchLinkedinAdsTargetingEntitiesQuery *string, lfxV2CampaignServiceConnectionsSearchLinkedinAdsTargetingEntitiesBearerToken *string) (*lfxv2campaignserviceconnections.SearchLinkedinAdsTargetingEntitiesPayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsSearchLinkedinAdsTargetingEntitiesProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsSearchLinkedinAdsTargetingEntitiesProjectID
+	}
+	var facet string
+	{
+		if lfxV2CampaignServiceConnectionsSearchLinkedinAdsTargetingEntitiesFacet == nil {
+			return nil, fmt.Errorf("missing required flag --facet")
+		}
+		facet = *lfxV2CampaignServiceConnectionsSearchLinkedinAdsTargetingEntitiesFacet
+		if !(facet == "employers" || facet == "groups" || facet == "industries" || facet == "interests" || facet == "locations" || facet == "skills" || facet == "titles") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("facet", facet, []any{"employers", "groups", "industries", "interests", "locations", "skills", "titles"}))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var query string
+	{
+		if lfxV2CampaignServiceConnectionsSearchLinkedinAdsTargetingEntitiesQuery == nil {
+			return nil, fmt.Errorf("missing required flag --query")
+		}
+		query = *lfxV2CampaignServiceConnectionsSearchLinkedinAdsTargetingEntitiesQuery
+		err = goa.MergeErrors(err, goa.ValidatePattern("query", query, "\\S"))
+		if utf8.RuneCountInString(query) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("query", query, utf8.RuneCountInString(query), 1, true))
+		}
+		if utf8.RuneCountInString(query) > 100 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("query", query, utf8.RuneCountInString(query), 100, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsSearchLinkedinAdsTargetingEntitiesBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsSearchLinkedinAdsTargetingEntitiesBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.SearchLinkedinAdsTargetingEntitiesPayload{}
+	v.ProjectID = projectID
+	v.Facet = facet
+	v.Query = query
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildGetMicrosoftAdsKeywordsPayload builds the payload for the
 // lfx-v2-campaign-service-connections get-microsoft-ads-keywords endpoint from
 // CLI flags.

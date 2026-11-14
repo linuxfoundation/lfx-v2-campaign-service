@@ -113,7 +113,9 @@ routed project-nested family except `google-ads/conversion-actions`,
 `google-ads/audiences`, `google-ads/user-lists`, `reddit-ads/custom-audiences`,
 `twitter-ads/custom-audiences`, `linkedin-ads/audiences`, `linkedin-ads/conversions` and
 `meta-ads/custom-audiences`, which its
-`marketing-ops-api` rule covers; its
+`marketing-ops-api` rule covers (`linkedin-ads/targeting-entities`, #585, shares the
+`linkedin-ads/(audiences|conversions|targeting-entities)` branch of the regex but is a
+`project-api` path); its
 `campaigns-placeholder` rule covers the reserved prefixes, so chart↔route parity holds.
 
 This parity is enforced by a Go test — `TestRouteRuleSetParity`

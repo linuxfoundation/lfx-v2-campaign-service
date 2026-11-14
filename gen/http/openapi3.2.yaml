@@ -16807,6 +16807,135 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/linkedin-ads/targeting-entities:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: search-linkedin-ads-targeting-entities lfx-v2-campaign-service-connections
+            description: 'Search LinkedIn''s targeting taxonomy by name, live from LinkedIn''s Ad Targeting Entities typeahead finder (GET /rest/adTargetingEntities?q=typeahead), for picking linkedInConfig.targeting values (skills, groups, titles, interests, industries, employers) and linkedInConfig.geoTargets (locations) by name instead of by URN (#585). Only URNs of the shape a create accepts for the facet are returned. The answer is LinkedIn''s own taxonomy, the same for every token, and names nothing any ad account holds, so it is gated on campaign_manager of {project_id} like every other project read, and a project with no LinkedIn connection of its own reads through the shared LF system credential, as a create would. No ad account need be selected. Answers are cached for up to six hours. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#search-linkedin-ads-targeting-entities
+            parameters:
+                - name: facet
+                  in: query
+                  description: The targeting facet to search. locations answers linkedInConfig.geoTargets; the rest are linkedInConfig.targeting keys.
+                  allowEmptyValue: true
+                  required: true
+                  schema:
+                    type: string
+                    description: The targeting facet to search. locations answers linkedInConfig.geoTargets; the rest are linkedInConfig.targeting keys.
+                    example: skills
+                    enum:
+                        - employers
+                        - groups
+                        - industries
+                        - interests
+                        - locations
+                        - skills
+                        - titles
+                  example: skills
+                - name: query
+                  in: query
+                  description: Text to match against entity names; surrounding space is ignored
+                  allowEmptyValue: true
+                  required: true
+                  schema:
+                    type: string
+                    description: Text to match against entity names; surrounding space is ignored
+                    example: kubernetes
+                    pattern: \S
+                    minLength: 1
+                    maxLength: 100
+                  example: kubernetes
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/LinkedinAdsTargetingEntities'
+                            example:
+                                entities:
+                                    - name: Kubernetes
+                                      urn: urn:li:skill:17
+                                    - name: Kubernetes
+                                      urn: urn:li:skill:17
+                                    - name: Kubernetes
+                                      urn: urn:li:skill:17
+                                entity_count: 1
+                                facet: skills
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/meta-ads/audience:
         get:
             tags:
@@ -26186,6 +26315,69 @@ components:
                 refresh_token: Maxime qui.
             required:
                 - access_token
+        LinkedinAdsTargetingEntities:
+            type: object
+            properties:
+                entities:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/LinkedinAdsTargetingEntity'
+                    description: The matches, in LinkedIn's relevance order, de-duplicated by urn. Empty when nothing matches.
+                    example:
+                        - name: Kubernetes
+                          urn: urn:li:skill:17
+                        - name: Kubernetes
+                          urn: urn:li:skill:17
+                        - name: Kubernetes
+                          urn: urn:li:skill:17
+                entity_count:
+                    type: integer
+                    description: How many entities are in `entities`
+                    example: 1
+                    format: int64
+                facet:
+                    type: string
+                    description: The facet searched, as requested
+                    example: skills
+                    enum:
+                        - employers
+                        - groups
+                        - industries
+                        - interests
+                        - locations
+                        - skills
+                        - titles
+            example:
+                entities:
+                    - name: Kubernetes
+                      urn: urn:li:skill:17
+                    - name: Kubernetes
+                      urn: urn:li:skill:17
+                    - name: Kubernetes
+                      urn: urn:li:skill:17
+                entity_count: 1
+                facet: skills
+            required:
+                - facet
+                - entities
+                - entity_count
+        LinkedinAdsTargetingEntity:
+            type: object
+            properties:
+                name:
+                    type: string
+                    description: LinkedIn's display name for the entity (en_US). Not an identifier; for locations, the label of the geoTargets entry.
+                    example: Kubernetes
+                urn:
+                    type: string
+                    description: 'The entity''s URN, in exactly the form the facet takes: a value of linkedInConfig.targeting.<facet>, or for locations the urn of a linkedInConfig.geoTargets entry'
+                    example: urn:li:skill:17
+            example:
+                name: Kubernetes
+                urn: urn:li:skill:17
+            required:
+                - urn
+                - name
         ListAudiencesResponseBody:
             type: object
             properties:

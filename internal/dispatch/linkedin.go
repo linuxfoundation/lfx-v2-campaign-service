@@ -457,11 +457,13 @@ type LinkedInDispatcher struct {
 	// fails pre-create and the reserver reserves nothing.
 	creatives creativeAssetReader
 	assets    *AssetReserver
+	// entities caches targeting typeahead answers (#585, linkedin_lookups.go).
+	entities *targetingEntityCache
 }
 
 // NewLinkedInDispatcher builds the adapter from the connection repo + encryptor.
 func NewLinkedInDispatcher(repo connReader, enc domain.Encryptor, opts ...linkedin.Option) *LinkedInDispatcher {
-	return &LinkedInDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts}
+	return &LinkedInDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), entities: newTargetingEntityCache(), opts: opts}
 }
 
 // Dispatch implements service.PlatformDispatcher for LinkedIn.

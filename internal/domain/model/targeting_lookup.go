@@ -41,3 +41,17 @@ type AudienceUserLists struct {
 	AccountID string
 	Lists     []AudienceUserList
 }
+
+// TargetingEntityQuery is a targeting taxonomy search (#585): a facet key (e.g. skills,
+// locations) and the text to match against entity names.
+type TargetingEntityQuery struct {
+	Facet string
+	Query string
+}
+
+// TargetingEntity is one entity a targeting taxonomy search matched. URN is in exactly the form
+// the platform's campaign config accepts for the facet searched.
+type TargetingEntity struct {
+	URN  string
+	Name string
+}

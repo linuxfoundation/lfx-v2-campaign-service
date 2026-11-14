@@ -5,9 +5,17 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 )
 
 // linkedInAdSegmentKind is the AudienceReader kind the LinkedIn dispatcher serves
@@ -88,4 +96,101 @@ func (s *ConnectionService) ListLinkedinAdsConversions(ctx context.Context, p *c
 		})
 	}
 	return &conn.LinkedinAdsConversionRules{AccountID: res.AccountID, Conversions: out, ConversionCount: len(out)}, nil
+}
+
+// TargetingEntitySearcher is an OPTIONAL dispatcher capability: search the platform's targeting
+// taxonomy by facet and name (#585). Type-asserted like GeoTargetSuggester; a dispatcher without
+// it yields ErrTargetingLookupUnsupported (400) and the platform is never contacted.
+//
+// A successful call MUST return a NON-NIL slice. called reports whether the platform was
+// actually contacted: false for a cache hit and for a local refusal before any request.
+type TargetingEntitySearcher interface {
+	SearchTargetingEntities(ctx context.Context, projectID string, platform model.Provider, q model.TargetingEntityQuery) (rows []model.TargetingEntity, called bool, err error)
+}
+
+const opSearchTargetingEntities = "search_targeting_entities"
+
+// targetingEntityCallTimeout bounds one typeahead read. Shorter than accountsCallTimeout: the
+// read is one request a picker makes while the operator types, so a LinkedIn 429 whose
+// Retry-After would hold it longer is better answered 503 now than after the operator has typed
+// on.
+const targetingEntityCallTimeout = 10 * time.Second
+
+// ReadTargetingEntities runs a targeting taxonomy search through the platform's dispatcher. A
+// pure read; nothing is persisted.
+func (o *Orchestrator) ReadTargetingEntities(ctx context.Context, projectID string, platform model.Provider, q model.TargetingEntityQuery) ([]model.TargetingEntity, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrTargetingLookupUnsupported, platform)
+	}
+	s, ok := d.(TargetingEntitySearcher)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrTargetingLookupUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, targetingEntityCallTimeout)
+	defer cancel()
+	start := time.Now()
+	rows, called, err := s.SearchTargetingEntities(callCtx, projectID, platform, q)
+	// Recorded only when the platform was reached, as ReadGeoTargetSuggestions does.
+	if called {
+		o.recordUpstream(ctx, platform, opSearchTargetingEntities, start, err)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if rows == nil {
+		return nil, fmt.Errorf("%s targeting entity searcher returned a nil result with no error", platform)
+	}
+	return rows, nil
+}
+
+var linkedInAdsTargetingEntitySearch = accountDiscovery{
+	provider:    model.ProviderLinkedInAds,
+	displayName: "linkedin ads",
+	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
+		"with access_token set",
+	operation: "targeting entity search",
+}
+
+// SearchLinkedinAdsTargetingEntities searches LinkedIn's targeting taxonomy by name for the
+// linkedInConfig.targeting and geoTargets pickers (#585).
+//
+// Gated on campaign_manager (the project-api gateway rule), NOT global_marketing_ops like the
+// sibling audience and conversion pickers: those list resources ON the ad account a create uses,
+// which is the LF system account for most projects, so they can name other foundations' segments
+// and rules. This read names only LinkedIn's own taxonomy (skills, titles, places), identical
+// for every token, so a foundation's executive director learns nothing about any other
+// foundation from it, and the resolution may fall back to the LF system credential, as
+// SuggestGoogleAdsGeoTargets does. The reserved LF scope stays unaddressable.
+//
+// The query is the operator's free text and is never logged or echoed.
+func (s *ConnectionService) SearchLinkedinAdsTargetingEntities(ctx context.Context, p *conn.SearchLinkedinAdsTargetingEntitiesPayload) (*conn.LinkedinAdsTargetingEntities, error) {
+	if err := rejectSystemScope(p.ProjectID); err != nil {
+		return nil, err
+	}
+	// Re-applies the design constraints for a caller that bypasses the generated decoder.
+	if !slices.Contains(linkedin.TypeaheadFacetKeys(), p.Facet) {
+		return nil, &conn.BadRequestError{Code: "400", Message: "facet must be one of " + strings.Join(linkedin.TypeaheadFacetKeys(), ", ")}
+	}
+	query, qerr := linkedin.NormalizeTypeaheadQuery(p.Query)
+	if qerr != nil {
+		return nil, &conn.BadRequestError{Code: "400", Message: "query must be 1-" + strconv.Itoa(linkedin.MaxTypeaheadQueryLen) +
+			" characters, not blank, with no control characters"}
+	}
+	_, _, orch, err := s.resolveBackendWithOrch(linkedInAdsTargetingEntitySearch.label())
+	if err != nil {
+		return nil, err
+	}
+	rows, rerr := orch.ReadTargetingEntities(ctx, p.ProjectID, model.ProviderLinkedInAds, model.TargetingEntityQuery{Facet: p.Facet, Query: query})
+	if rerr != nil {
+		if errors.Is(rerr, domain.ErrTargetingQueryInvalid) {
+			return nil, &conn.BadRequestError{Code: "400", Message: "the targeting search is not valid: check facet and query"}
+		}
+		return nil, s.classifyTargetingLookupError(ctx, p.ProjectID, linkedInAdsTargetingEntitySearch, rerr)
+	}
+	out := make([]*conn.LinkedinAdsTargetingEntity, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, &conn.LinkedinAdsTargetingEntity{Urn: r.URN, Name: r.Name})
+	}
+	return &conn.LinkedinAdsTargetingEntities{Facet: p.Facet, Entities: out, EntityCount: len(out)}, nil
 }

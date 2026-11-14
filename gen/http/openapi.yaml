@@ -11267,6 +11267,99 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/linkedin-ads/targeting-entities:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: search-linkedin-ads-targeting-entities lfx-v2-campaign-service-connections
+            description: 'Search LinkedIn''s targeting taxonomy by name, live from LinkedIn''s Ad Targeting Entities typeahead finder (GET /rest/adTargetingEntities?q=typeahead), for picking linkedInConfig.targeting values (skills, groups, titles, interests, industries, employers) and linkedInConfig.geoTargets (locations) by name instead of by URN (#585). Only URNs of the shape a create accepts for the facet are returned. The answer is LinkedIn''s own taxonomy, the same for every token, and names nothing any ad account holds, so it is gated on campaign_manager of {project_id} like every other project read, and a project with no LinkedIn connection of its own reads through the shared LF system credential, as a create would. No ad account need be selected. Answers are cached for up to six hours. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#search-linkedin-ads-targeting-entities
+            parameters:
+                - name: facet
+                  in: query
+                  description: The targeting facet to search. locations answers linkedInConfig.geoTargets; the rest are linkedInConfig.targeting keys.
+                  required: true
+                  type: string
+                  enum:
+                    - employers
+                    - groups
+                    - industries
+                    - interests
+                    - locations
+                    - skills
+                    - titles
+                - name: query
+                  in: query
+                  description: Text to match against entity names; surrounding space is ignored
+                  required: true
+                  type: string
+                  maxLength: 100
+                  minLength: 1
+                  pattern: \S
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/LinkedinAdsTargetingEntities'
+                        required:
+                            - facet
+                            - entities
+                            - entity_count
+                "400":
+                    description: 'BadRequest: Bad request'
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: 'NotFound: Resource not found'
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/meta-ads/audience:
         get:
             tags:
@@ -21120,6 +21213,71 @@ definitions:
             refresh_token: Maxime qui.
         required:
             - access_token
+    LinkedinAdsTargetingEntities:
+        title: LinkedinAdsTargetingEntities
+        type: object
+        properties:
+            entities:
+                type: array
+                items:
+                    $ref: '#/definitions/LinkedinAdsTargetingEntity'
+                description: The matches, in LinkedIn's relevance order, de-duplicated by urn. Empty when nothing matches.
+                example:
+                    - name: Kubernetes
+                      urn: urn:li:skill:17
+                    - name: Kubernetes
+                      urn: urn:li:skill:17
+                    - name: Kubernetes
+                      urn: urn:li:skill:17
+            entity_count:
+                type: integer
+                description: How many entities are in `entities`
+                example: 1
+                format: int64
+            facet:
+                type: string
+                description: The facet searched, as requested
+                example: skills
+                enum:
+                    - employers
+                    - groups
+                    - industries
+                    - interests
+                    - locations
+                    - skills
+                    - titles
+        example:
+            entities:
+                - name: Kubernetes
+                  urn: urn:li:skill:17
+                - name: Kubernetes
+                  urn: urn:li:skill:17
+                - name: Kubernetes
+                  urn: urn:li:skill:17
+            entity_count: 1
+            facet: skills
+        required:
+            - facet
+            - entities
+            - entity_count
+    LinkedinAdsTargetingEntity:
+        title: LinkedinAdsTargetingEntity
+        type: object
+        properties:
+            name:
+                type: string
+                description: LinkedIn's display name for the entity (en_US). Not an identifier; for locations, the label of the geoTargets entry.
+                example: Kubernetes
+            urn:
+                type: string
+                description: 'The entity''s URN, in exactly the form the facet takes: a value of linkedInConfig.targeting.<facet>, or for locations the urn of a linkedInConfig.geoTargets entry'
+                example: urn:li:skill:17
+        example:
+            name: Kubernetes
+            urn: urn:li:skill:17
+        required:
+            - urn
+            - name
     MarketingEmail:
         title: MarketingEmail
         type: object

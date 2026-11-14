@@ -8792,6 +8792,171 @@ func EncodeListLinkedinAdsConversionsError(encoder func(context.Context, http.Re
 	}
 }
 
+// EncodeSearchLinkedinAdsTargetingEntitiesResponse returns an encoder for
+// responses returned by the lfx-v2-campaign-service-connections
+// search-linkedin-ads-targeting-entities endpoint.
+func EncodeSearchLinkedinAdsTargetingEntitiesResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceconnections.LinkedinAdsTargetingEntities)
+		enc := encoder(ctx, w)
+		body := NewSearchLinkedinAdsTargetingEntitiesResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeSearchLinkedinAdsTargetingEntitiesRequest returns a decoder for
+// requests sent to the lfx-v2-campaign-service-connections
+// search-linkedin-ads-targeting-entities endpoint.
+func DecodeSearchLinkedinAdsTargetingEntitiesRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceconnections.SearchLinkedinAdsTargetingEntitiesPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceconnections.SearchLinkedinAdsTargetingEntitiesPayload, error) {
+		var payload *lfxv2campaignserviceconnections.SearchLinkedinAdsTargetingEntitiesPayload
+		var (
+			projectID   string
+			facet       string
+			query       string
+			bearerToken *string
+			err         error
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		qp := r.URL.Query()
+		facet = qp.Get("facet")
+		if facet == "" {
+			err = goa.MergeErrors(err, goa.MissingFieldError("facet", "query string"))
+		}
+		if !(facet == "employers" || facet == "groups" || facet == "industries" || facet == "interests" || facet == "locations" || facet == "skills" || facet == "titles") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("facet", facet, []any{"employers", "groups", "industries", "interests", "locations", "skills", "titles"}))
+		}
+		query = qp.Get("query")
+		if query == "" {
+			err = goa.MergeErrors(err, goa.MissingFieldError("query", "query string"))
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("query", query, "\\S"))
+		if utf8.RuneCountInString(query) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("query", query, utf8.RuneCountInString(query), 1, true))
+		}
+		if utf8.RuneCountInString(query) > 100 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("query", query, utf8.RuneCountInString(query), 100, false))
+		}
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewSearchLinkedinAdsTargetingEntitiesPayload(projectID, facet, query, bearerToken)
+		if payload.BearerToken != nil {
+			cred := *payload.BearerToken
+			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred = cred[index+1:]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeSearchLinkedinAdsTargetingEntitiesError returns an encoder for errors
+// returned by the search-linkedin-ads-targeting-entities
+// lfx-v2-campaign-service-connections endpoint.
+func EncodeSearchLinkedinAdsTargetingEntitiesError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSearchLinkedinAdsTargetingEntitiesBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSearchLinkedinAdsTargetingEntitiesServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceconnections.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSearchLinkedinAdsTargetingEntitiesInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceconnections.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSearchLinkedinAdsTargetingEntitiesNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSearchLinkedinAdsTargetingEntitiesPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceconnections.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewSearchLinkedinAdsTargetingEntitiesUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // EncodeGetMicrosoftAdsKeywordsResponse returns an encoder for responses
 // returned by the lfx-v2-campaign-service-connections
 // get-microsoft-ads-keywords endpoint.
@@ -13200,6 +13365,18 @@ func marshalLfxv2campaignserviceconnectionsLinkedinAdsConversionRuleToLinkedinAd
 		Name:    v.Name,
 		Type:    v.Type,
 		Enabled: v.Enabled,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceconnectionsLinkedinAdsTargetingEntityToLinkedinAdsTargetingEntityResponseBody
+// builds a value of type *LinkedinAdsTargetingEntityResponseBody from a value
+// of type *lfxv2campaignserviceconnections.LinkedinAdsTargetingEntity.
+func marshalLfxv2campaignserviceconnectionsLinkedinAdsTargetingEntityToLinkedinAdsTargetingEntityResponseBody(v *lfxv2campaignserviceconnections.LinkedinAdsTargetingEntity) *LinkedinAdsTargetingEntityResponseBody {
+	res := &LinkedinAdsTargetingEntityResponseBody{
+		Urn:  v.Urn,
+		Name: v.Name,
 	}
 
 	return res

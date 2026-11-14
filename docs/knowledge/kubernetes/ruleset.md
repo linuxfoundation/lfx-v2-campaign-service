@@ -73,6 +73,10 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    `google-ads/conversion-actions`, `google-ads/audiences`, `google-ads/user-lists`,
    `reddit-ads/custom-audiences`, `twitter-ads/custom-audiences`, `linkedin-ads/audiences`,
    `linkedin-ads/conversions` and `meta-ads/custom-audiences`, ruled by `marketing-ops-api` below.
+   `linkedin-ads/targeting-entities` (#585, the LinkedIn targeting typeahead) stays HERE: it
+   answers LinkedIn's own taxonomy, the same for every token, and names nothing any ad account
+   holds, so like `google-ads/geo-targets` it needs no wider audience than `campaign_manager`.
+   `TestLinkedInTargetingTypeaheadIsACampaignManagerRead` pins it to this rule.
 4. **`marketing-ops-api`** — `GET /projects/:projectId/google-ads/conversion-actions` (#458),
    `GET /projects/:projectId/google-ads/audiences` (#496),
    `GET /projects/:projectId/google-ads/user-lists`,

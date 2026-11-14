@@ -106,6 +106,32 @@ const googleAudiencesPath = "/projects/:projectId/google-ads/audiences"
 
 // userListsPath is the Google user-list read. It lists every foundation's user lists on the
 // shared customer (it used to answer 409 there), so it is ruled by marketing-ops-api only, and
+// TestLinkedInTargetingTypeaheadIsACampaignManagerRead pins the opposite for the LinkedIn
+// targeting typeahead (#585): it answers LinkedIn's own taxonomy, identical for every token, so
+// it is a project-api (campaign_manager) read, and marketing-ops-api must not take it over from
+// the foundation campaign managers who build LinkedIn campaigns.
+func TestLinkedInTargetingTypeaheadIsACampaignManagerRead(t *testing.T) {
+	ruleset := helmTemplate(t, "templates/ruleset.yaml")
+	const path = "/projects/p1/linkedin-ads/targeting-entities"
+	matched := false
+	for _, p := range rulePatterns(t, ruleset, projectAPIRuleID) {
+		if ruleMatcher(t, p).MatchString(path) {
+			matched = true
+		}
+	}
+	if !matched {
+		t.Errorf("%s rule must match %s", projectAPIRuleID, path)
+	}
+	for _, p := range rulePatterns(t, ruleset, marketingOpsRuleID) {
+		if ruleMatcher(t, p).MatchString(path) {
+			t.Errorf("%s rule pattern %s matches %s; the typeahead is a campaign_manager read", marketingOpsRuleID, p, path)
+		}
+	}
+	if !extractRouteRegex(t, helmTemplate(t, "templates/httproute.yaml")).MatchString(path) {
+		t.Errorf("the route regex does not forward %s", path)
+	}
+}
+
 // TestUserListsIsAMarketingOpsRead pins that.
 const userListsPath = "/projects/:projectId/google-ads/user-lists"
 
@@ -737,6 +763,10 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/linkedin-ads/conversions", true},
 		{"/projects/p1/linkedin-ads/audiences/x", false},
 		{"/projects/p1/linkedin-ads/conversions/x", false},
+		// The LinkedIn targeting typeahead (#585): a campaign_manager read at the base path only.
+		{"/projects/p1/linkedin-ads/targeting-entities", true},
+		{"/projects/p1/linkedin-ads/targeting-entities/x", false},
+		{"/projects/p1/meta-ads/targeting-entities", false},
 		{"/projects/p1/meta-ads/conversions", false},
 		// The Reddit keyword performance read (LFXV2-2665).
 		{"/projects/p1/reddit-ads/keywords", true},

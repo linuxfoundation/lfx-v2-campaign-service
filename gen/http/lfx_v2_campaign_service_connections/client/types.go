@@ -1041,6 +1041,19 @@ type ListLinkedinAdsConversionsResponseBody struct {
 	ConversionCount *int `form:"conversion_count,omitempty" json:"conversion_count,omitempty" xml:"conversion_count,omitempty"`
 }
 
+// SearchLinkedinAdsTargetingEntitiesResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "search-linkedin-ads-targeting-entities" endpoint HTTP response body.
+type SearchLinkedinAdsTargetingEntitiesResponseBody struct {
+	// The facet searched, as requested
+	Facet *string `form:"facet,omitempty" json:"facet,omitempty" xml:"facet,omitempty"`
+	// The matches, in LinkedIn's relevance order, de-duplicated by urn. Empty when
+	// nothing matches.
+	Entities []*LinkedinAdsTargetingEntityResponseBody `form:"entities,omitempty" json:"entities,omitempty" xml:"entities,omitempty"`
+	// How many entities are in `entities`
+	EntityCount *int `form:"entity_count,omitempty" json:"entity_count,omitempty" xml:"entity_count,omitempty"`
+}
+
 // GetMicrosoftAdsKeywordsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body.
@@ -5084,6 +5097,72 @@ type ListLinkedinAdsConversionsUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// SearchLinkedinAdsTargetingEntitiesBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "search-linkedin-ads-targeting-entities" endpoint HTTP response body for the
+// "BadRequest" error.
+type SearchLinkedinAdsTargetingEntitiesBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SearchLinkedinAdsTargetingEntitiesServiceUnavailableResponseBody is the type
+// of the "lfx-v2-campaign-service-connections" service
+// "search-linkedin-ads-targeting-entities" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type SearchLinkedinAdsTargetingEntitiesServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SearchLinkedinAdsTargetingEntitiesInternalServerErrorResponseBody is the
+// type of the "lfx-v2-campaign-service-connections" service
+// "search-linkedin-ads-targeting-entities" endpoint HTTP response body for the
+// "InternalServerError" error.
+type SearchLinkedinAdsTargetingEntitiesInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SearchLinkedinAdsTargetingEntitiesNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "search-linkedin-ads-targeting-entities" endpoint HTTP response body for the
+// "NotFound" error.
+type SearchLinkedinAdsTargetingEntitiesNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SearchLinkedinAdsTargetingEntitiesPayloadTooLargeResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "search-linkedin-ads-targeting-entities" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type SearchLinkedinAdsTargetingEntitiesPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// SearchLinkedinAdsTargetingEntitiesUnauthorizedResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "search-linkedin-ads-targeting-entities" endpoint HTTP response body for the
+// "Unauthorized" error.
+type SearchLinkedinAdsTargetingEntitiesUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetMicrosoftAdsKeywordsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -7107,6 +7186,18 @@ type LinkedinAdsConversionRuleResponseBody struct {
 	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
 	// Whether the rule is enabled; false when LinkedIn did not say
 	Enabled *bool `form:"enabled,omitempty" json:"enabled,omitempty" xml:"enabled,omitempty"`
+}
+
+// LinkedinAdsTargetingEntityResponseBody is used to define fields on response
+// body types.
+type LinkedinAdsTargetingEntityResponseBody struct {
+	// The entity's URN, in exactly the form the facet takes: a value of
+	// linkedInConfig.targeting.<facet>, or for locations the urn of a
+	// linkedInConfig.geoTargets entry
+	Urn *string `form:"urn,omitempty" json:"urn,omitempty" xml:"urn,omitempty"`
+	// LinkedIn's display name for the entity (en_US). Not an identifier; for
+	// locations, the label of the geoTargets entry.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 }
 
 // MicrosoftAdsAudienceBucketResponseBody is used to define fields on response
@@ -13369,6 +13460,100 @@ func NewListLinkedinAdsConversionsUnauthorized(body *ListLinkedinAdsConversionsU
 	return v
 }
 
+// NewSearchLinkedinAdsTargetingEntitiesLinkedinAdsTargetingEntitiesOK builds a
+// "lfx-v2-campaign-service-connections" service
+// "search-linkedin-ads-targeting-entities" endpoint result from a HTTP "OK"
+// response.
+func NewSearchLinkedinAdsTargetingEntitiesLinkedinAdsTargetingEntitiesOK(body *SearchLinkedinAdsTargetingEntitiesResponseBody) *lfxv2campaignserviceconnections.LinkedinAdsTargetingEntities {
+	v := &lfxv2campaignserviceconnections.LinkedinAdsTargetingEntities{
+		Facet:       *body.Facet,
+		EntityCount: *body.EntityCount,
+	}
+	v.Entities = make([]*lfxv2campaignserviceconnections.LinkedinAdsTargetingEntity, len(body.Entities))
+	for i, val := range body.Entities {
+		if val == nil {
+			v.Entities[i] = nil
+			continue
+		}
+		v.Entities[i] = unmarshalLinkedinAdsTargetingEntityResponseBodyToLfxv2campaignserviceconnectionsLinkedinAdsTargetingEntity(val)
+	}
+
+	return v
+}
+
+// NewSearchLinkedinAdsTargetingEntitiesBadRequest builds a
+// lfx-v2-campaign-service-connections service
+// search-linkedin-ads-targeting-entities endpoint BadRequest error.
+func NewSearchLinkedinAdsTargetingEntitiesBadRequest(body *SearchLinkedinAdsTargetingEntitiesBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSearchLinkedinAdsTargetingEntitiesServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service
+// search-linkedin-ads-targeting-entities endpoint ServiceUnavailable error.
+func NewSearchLinkedinAdsTargetingEntitiesServiceUnavailable(body *SearchLinkedinAdsTargetingEntitiesServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSearchLinkedinAdsTargetingEntitiesInternalServerError builds a
+// lfx-v2-campaign-service-connections service
+// search-linkedin-ads-targeting-entities endpoint InternalServerError error.
+func NewSearchLinkedinAdsTargetingEntitiesInternalServerError(body *SearchLinkedinAdsTargetingEntitiesInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSearchLinkedinAdsTargetingEntitiesNotFound builds a
+// lfx-v2-campaign-service-connections service
+// search-linkedin-ads-targeting-entities endpoint NotFound error.
+func NewSearchLinkedinAdsTargetingEntitiesNotFound(body *SearchLinkedinAdsTargetingEntitiesNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSearchLinkedinAdsTargetingEntitiesPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service
+// search-linkedin-ads-targeting-entities endpoint PayloadTooLarge error.
+func NewSearchLinkedinAdsTargetingEntitiesPayloadTooLarge(body *SearchLinkedinAdsTargetingEntitiesPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewSearchLinkedinAdsTargetingEntitiesUnauthorized builds a
+// lfx-v2-campaign-service-connections service
+// search-linkedin-ads-targeting-entities endpoint Unauthorized error.
+func NewSearchLinkedinAdsTargetingEntitiesUnauthorized(body *SearchLinkedinAdsTargetingEntitiesUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetMicrosoftAdsKeywordsMicrosoftAdsKeywordsOK builds a
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint result from a HTTP "OK" response.
@@ -16928,6 +17113,33 @@ func ValidateListLinkedinAdsConversionsResponseBody(body *ListLinkedinAdsConvers
 	for _, e := range body.Conversions {
 		if e != nil {
 			if err2 := validateLinkedinAdsConversionRuleResponseBody(e, "body.conversions[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateSearchLinkedinAdsTargetingEntitiesResponseBody runs the validations
+// defined on SearchLinkedinAdsTargetingEntitiesResponseBody
+func ValidateSearchLinkedinAdsTargetingEntitiesResponseBody(body *SearchLinkedinAdsTargetingEntitiesResponseBody) (err error) {
+	if body.Facet == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("facet", "body"))
+	}
+	if body.Entities == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("entities", "body"))
+	}
+	if body.EntityCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("entity_count", "body"))
+	}
+	if body.Facet != nil {
+		if !(*body.Facet == "employers" || *body.Facet == "groups" || *body.Facet == "industries" || *body.Facet == "interests" || *body.Facet == "locations" || *body.Facet == "skills" || *body.Facet == "titles") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.facet", *body.Facet, []any{"employers", "groups", "industries", "interests", "locations", "skills", "titles"}))
+		}
+	}
+	for _, e := range body.Entities {
+		if e != nil {
+			if err2 := validateLinkedinAdsTargetingEntityResponseBody(e, "body.entities[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -22108,6 +22320,83 @@ func ValidateListLinkedinAdsConversionsUnauthorizedResponseBody(body *ListLinked
 	return
 }
 
+// ValidateSearchLinkedinAdsTargetingEntitiesBadRequestResponseBody runs the
+// validations defined on
+// SearchLinkedinAdsTargetingEntitiesBadRequestResponseBody
+func ValidateSearchLinkedinAdsTargetingEntitiesBadRequestResponseBody(body *SearchLinkedinAdsTargetingEntitiesBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSearchLinkedinAdsTargetingEntitiesServiceUnavailableResponseBody
+// runs the validations defined on
+// SearchLinkedinAdsTargetingEntitiesServiceUnavailableResponseBody
+func ValidateSearchLinkedinAdsTargetingEntitiesServiceUnavailableResponseBody(body *SearchLinkedinAdsTargetingEntitiesServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSearchLinkedinAdsTargetingEntitiesInternalServerErrorResponseBody
+// runs the validations defined on
+// SearchLinkedinAdsTargetingEntitiesInternalServerErrorResponseBody
+func ValidateSearchLinkedinAdsTargetingEntitiesInternalServerErrorResponseBody(body *SearchLinkedinAdsTargetingEntitiesInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSearchLinkedinAdsTargetingEntitiesNotFoundResponseBody runs the
+// validations defined on SearchLinkedinAdsTargetingEntitiesNotFoundResponseBody
+func ValidateSearchLinkedinAdsTargetingEntitiesNotFoundResponseBody(body *SearchLinkedinAdsTargetingEntitiesNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSearchLinkedinAdsTargetingEntitiesPayloadTooLargeResponseBody runs
+// the validations defined on
+// SearchLinkedinAdsTargetingEntitiesPayloadTooLargeResponseBody
+func ValidateSearchLinkedinAdsTargetingEntitiesPayloadTooLargeResponseBody(body *SearchLinkedinAdsTargetingEntitiesPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateSearchLinkedinAdsTargetingEntitiesUnauthorizedResponseBody runs the
+// validations defined on
+// SearchLinkedinAdsTargetingEntitiesUnauthorizedResponseBody
+func ValidateSearchLinkedinAdsTargetingEntitiesUnauthorizedResponseBody(body *SearchLinkedinAdsTargetingEntitiesUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetMicrosoftAdsKeywordsBadRequestResponseBody runs the validations
 // defined on GetMicrosoftAdsKeywordsBadRequestResponseBody
 func ValidateGetMicrosoftAdsKeywordsBadRequestResponseBody(body *GetMicrosoftAdsKeywordsBadRequestResponseBody) (err error) {
@@ -24886,6 +25175,31 @@ func validateLinkedinAdsConversionRuleResponseBody(body *LinkedinAdsConversionRu
 	}
 	if body.Enabled == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("enabled", path))
+	}
+	return
+}
+
+// ValidateLinkedinAdsTargetingEntityResponseBody runs the validations defined
+// on linkedin-ads-targeting-entity
+func ValidateLinkedinAdsTargetingEntityResponseBody(body *LinkedinAdsTargetingEntityResponseBody) (err error) {
+	if body.Urn == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("urn", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	return
+}
+
+// validateLinkedinAdsTargetingEntityResponseBody checks
+// linkedin-ads-targeting-entity and reports errors using the path supplied by
+// its caller
+func validateLinkedinAdsTargetingEntityResponseBody(body *LinkedinAdsTargetingEntityResponseBody, path string) (err error) {
+	if body.Urn == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("urn", path))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
 	}
 	return
 }
