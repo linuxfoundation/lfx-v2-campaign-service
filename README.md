@@ -462,6 +462,14 @@ openssl rand -base64 32
   require `global_marketing_ops`. The chart sets it to `"false"`
   (`app.environment.LINKEDIN_ADS_CONVERSIONS_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once the probe passes.
+- `LINKEDIN_ADS_TEXT_ADS_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `linkedInConfig.format: "text"` (#586), a LinkedIn Text
+  Ad (TEXT_AD) campaign built from `linkedInConfig.textAds` instead of
+  single-image dark posts. Only the exact value `true` enables it; anything
+  else fails closed, and a create naming it is refused with a 400 before a
+  job exists. The default single-image create is unaffected. The chart sets
+  it to `"false"` (`app.environment.LINKEDIN_ADS_TEXT_ADS_ENABLED.value`);
+  enable it per-environment in the ArgoCD overlay once the probe passes.
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request
   names no `source_workflow_url`. Unset or empty selects the in-code

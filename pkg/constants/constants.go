@@ -404,6 +404,15 @@ const (
 	// The ids also require global_marketing_ops on the project (service.LinkedInMarketingOpsInputs).
 	EnvLinkedInAdsConversionsEnabled = "LINKEDIN_ADS_CONVERSIONS_ENABLED"
 
+	// EnvLinkedInAdsTextAdsEnabled opts a deployment IN to linkedInConfig.format "text" (#586):
+	// a TEXT_AD campaign whose creatives are linkedInConfig.textAds (headline, description,
+	// optional 100x100 image) instead of single-image dark posts. Only the exact value "true"
+	// enables it; unset or any other value fails closed, and a create naming it is refused
+	// before a job exists. Like EnvLinkedInAdsTargetingEnabled it keeps a request shape taken
+	// from LinkedIn's documentation, and not yet exercised against a live account, off the
+	// shared ad account until the probe in the field's docs passes.
+	EnvLinkedInAdsTextAdsEnabled = "LINKEDIN_ADS_TEXT_ADS_ENABLED"
+
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,
 	// so every campaign authenticates as the marketing-ops account regardless of any

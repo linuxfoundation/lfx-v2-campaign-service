@@ -1258,7 +1258,25 @@ type CampaignCreateInput struct {
 	// conversions while the deployment has not set
 	// LINKEDIN_ADS_CONVERSIONS_ENABLED. Conversion rules belong to the ad account,
 	// so conversions also require global_marketing_ops on the project (403; 503
-	// when the check cannot be made). REDDIT CONVERSION EVENT (#549):
+	// when the check cannot be made). LINKEDIN TEXT ADS (#586): linkedInConfig
+	// takes an optional `format`, "single_image" (the default, also when omitted:
+	// single-image/article Sponsored Content from `variants`, unchanged) or
+	// "text": a LinkedIn Text Ad campaign (type TEXT_AD, desktop right rail and
+	// top banner) whose creatives come from `textAds`, an array of 1 to 100
+	// {"headline": string (at most 25 characters), "description": string (at most
+	// 75 characters), "imageUrn"?: urn:li:image, "imageAssetId"?: a brief creative
+	// asset id of a 100x100 PNG/JPEG of at most 2 MB}, one DRAFT textAd creative
+	// each whose landing page is the brief's registration URL with UTMs. A text
+	// create requires bidding {"strategy": "manual", "bidAmount": <max CPC>}
+	// (LinkedIn offers Text Ads only manual bidding) and is created
+	// WEBSITE_CONVERSION / CPC / NONE with a Text name segment. Refused with a 400
+	// before any job exists: another format value or a non-string format, textAds
+	// without format text, format text with automatic or omitted bidding, with
+	// variants, with no textAds or more than 100, a textAds that is not an array
+	// of objects of those four string fields (null, a number or an unknown key
+	// included), a missing, blank or over-long headline or description, a
+	// malformed imageUrn, both image fields, and format text while the deployment
+	// has not set LINKEDIN_ADS_TEXT_ADS_ENABLED. REDDIT CONVERSION EVENT (#549):
 	// redditConfig.conversionEvent names the pixel event a conversions campaign
 	// optimizes toward, sent as the campaign's and the ad group's
 	// optimization_goal: PURCHASE, SIGN_UP, LEAD, PAGE_VISIT, VIEW_CONTENT,

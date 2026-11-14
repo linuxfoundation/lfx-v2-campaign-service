@@ -5610,3 +5610,15 @@ and `Dispatch` (not-created refusal) both run, after `checkConversionsShape` ref
 are not JSON strings (encoding/json would decode a number to `""`); `Dispatch` keeps the de-duplicated copy for the
 client and the snapshot. `campaignFromLinkedIn` reports a result with `ConversionsFailed` as
 `created_degraded`.
+
+**LinkedIn Text Ads (#586).** `linkedinConfig.Format` and `TextAds` (`linkedin_text_ads.go`) are
+checked by `checkFormatShape` (a non-string `format`; a `textAds` that is not an array of objects
+of the four `TextAd` string fields, null fields and unknown keys included) and `linkedinFormat`,
+which `PreflightCreate` (synchronous 400) and `Dispatch` (not-created refusal) both run:
+`format: "text"` is gated by `linkedinTextAdsEnabled` (`LINKEDIN_ADS_TEXT_ADS_ENABLED`, off by
+default), needs a manual bid plan, no variants and `linkedin.ValidateTextAds`-valid ads; `textAds`
+under any other format is refused. `Dispatch` stores `"text"` or `""` — an explicit
+`"single_image"` is stored as the omitted default, so a default create's snapshot is unchanged.
+`resolveLinkedInImages` resolves `textAds[].imageAssetId` like a variant's, under the text ad size
+and 100x100 rules (`linkedin.ValidateImageForFormat`); the snapshot redacts text-ad copy like
+variant copy, and `linkedinCreativeCount` gives `campaignFromLinkedIn` the requested creative count.

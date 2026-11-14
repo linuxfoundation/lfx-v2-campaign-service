@@ -1116,6 +1116,60 @@ list (omit the field), more than 20 ids. Conversion rules belong to the ad accou
 create-campaigns also requires `global_marketing_ops` on the project for `conversions` (`403`;
 `503` when the check cannot be made), as for `googleAdsConfig.conversionActions`.
 
+#### LinkedInConfig text ads (`linkedInConfig.format: "text"`, #586)
+
+An opt-in TEXT_AD campaign — LinkedIn Text Ads, the headline-plus-description ads on the right
+rail (and top banner) of LinkedIn desktop pages — behind `LINKEDIN_ADS_TEXT_ADS_ENABLED` (off by
+default; while off, `format: "text"` is a synchronous `400` naming the flag). Omitted `format`, or
+`"single_image"`, is the single-image/article Sponsored Content create, unchanged.
+
+```jsonc
+"linkedInConfig": {
+  "format": "text",
+  "bidding": { "strategy": "manual", "bidAmount": 5.04 },   // REQUIRED: Text Ads have no automated bidding
+  "textAds": [                                              // 1-100, replaces variants
+    { "headline": "KubeCon NA 2099",                        // required, at most 25 characters
+      "description": "Join cloud native engineers in Atlanta.",  // required, at most 75 characters
+      "imageAssetId": "<brief creative asset id>" },        // optional: 100x100 PNG/JPEG, <= 2 MB
+    { "headline": "KubeCon NA 2099", "description": "Early pricing ends Friday.",
+      "imageUrn": "urn:li:image:C4E22AQGX" }                // optional existing image; not with imageAssetId
+  ],
+  "budgetUsd": 100, "startDate": "2099-01-01", "endDate": "2099-02-01",
+  "geoTargets": [ ... ], "targetingProfile": "...", "targeting": { ... }, "conversions": [ ... ]
+}
+```
+
+The campaign is `type: TEXT_AD` on the manual plan — objectiveType `WEBSITE_CONVERSION`,
+costType `CPC`, optimizationTargetType `NONE`, unitCost = `bidAmount` — the only bidding LinkedIn
+offers Text Ads for Website conversions; `offsiteDeliveryEnabled` stays `false`. Its name's Ad
+Format segment is `Text` (`Events | <event> | LinkedIn | Conversions | <targeting> | Text |
+<project> | <funnel>`), so it never shares a name — and the by-name reuse lookup — with a
+single-image campaign of the same event; a same-name campaign of the other type is refused rather
+than reused. Each text ad is one DRAFT creative, with no dark post:
+
+```
+POST /rest/adAccounts/<acct>/creatives
+{"campaign":"urn:li:sponsoredCampaign:<c>","intendedStatus":"DRAFT","name":"<event> | text-<n>",
+ "content":{"textAd":{"headline":"…","description":"…","landingPage":"<registration URL + UTMs>","image":"urn:li:image:…"}}}
+```
+
+The landing page is the brief's registration URL with ad `n`'s UTM parameters, as a single-image
+variant's article link. Headline and description are trimmed and dash-normalised as variant copy
+is, then counted in characters; over-long copy is refused, never truncated. A stored image is
+uploaded through the Images API exactly as a variant's, after the campaign exists and before the
+first creative. Targeting, conversions, budget, schedule, the monitor, metrics, pause/resume (the
+creatives finder discovers text ads like any creative) and the bid and budget levers work on a
+text campaign as on a single-image one.
+
+Refused with a synchronous `400 invalid campaign config: linkedInConfig: …` before any job exists:
+a `format` other than `"single_image"` or `"text"` (or not a string); `textAds` without
+`format: "text"`; `format: "text"` with automatic or omitted bidding, with `variants`, with no
+`textAds` or more than 100; a `textAds` that is not an array of objects whose fields are the four
+strings above (`null`, a number, an unknown key such as a misspelled `description`); a headline or
+description missing, blank or dash-only after normalisation, or over 25 / 75 characters; a
+malformed `imageUrn`; both image fields. A stored image that is not a 100x100 PNG/JPEG of at most
+2 MB fails the job before anything is created.
+
 #### GoogleAdsConfig (the `googleAdsConfig` object)
 
 Google Ads per-platform config. Which campaign is created depends on `channel`. The default

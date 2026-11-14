@@ -191,12 +191,21 @@ type imageStatusResponse struct {
 func (c *Client) uploadVariantImages(ctx context.Context, accountID string, in CampaignInput) (map[string]string, []string, error) {
 	var order []string
 	seen := map[string]bool{}
+	assetIDs := make([]string, 0, len(in.Variants)+len(in.TextAds))
 	for _, v := range in.Variants {
-		if v.ImageAssetID == "" || seen[v.ImageAssetID] {
+		assetIDs = append(assetIDs, v.ImageAssetID)
+	}
+	// A text create (#586) carries its images on TextAds; CreateCampaign refuses variants
+	// beside them, so the two never mix.
+	for _, ad := range in.TextAds {
+		assetIDs = append(assetIDs, ad.ImageAssetID)
+	}
+	for _, id := range assetIDs {
+		if id == "" || seen[id] {
 			continue
 		}
-		seen[v.ImageAssetID] = true
-		order = append(order, v.ImageAssetID)
+		seen[id] = true
+		order = append(order, id)
 	}
 	if len(order) == 0 {
 		return nil, nil, nil
@@ -210,7 +219,7 @@ func (c *Client) uploadVariantImages(ctx context.Context, accountID string, in C
 	urns := make(map[string]string, len(order))
 	var steps []string
 	for _, assetID := range order {
-		urn, uerr := c.uploadImage(ctx, owner, in.Images[assetID])
+		urn, uerr := c.uploadImage(ctx, owner, in.Images[assetID], in.Format)
 		if urn != "" {
 			urns[assetID] = urn
 		}
@@ -237,8 +246,8 @@ func (c *Client) uploadVariantImages(ctx context.Context, accountID string, in C
 
 // uploadImage runs initializeUpload and the PUT for one image, returning the minted URN (empty
 // when none is known). Neither call is retried.
-func (c *Client) uploadImage(ctx context.Context, owner string, img ImageUpload) (string, error) {
-	if err := ValidateImage(img); err != nil {
+func (c *Client) uploadImage(ctx context.Context, owner string, img ImageUpload, format string) (string, error) {
+	if err := ValidateImageForFormat(format, img); err != nil {
 		return "", &imageUploadError{err: err}
 	}
 	const initPath = "images?action=initializeUpload"

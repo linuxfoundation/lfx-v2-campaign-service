@@ -1036,6 +1036,33 @@ still validated, since both still reach the wire. `SegmentFacetsSet` reports an 
 anywhere; the create path's role gate (`service.LinkedInMarketingOpsInputs`) is pinned to agree
 with the facet list by `TestEveryLinkedInFacetIsClassifiedForTheMarketingOpsGate`.
 
+## Text Ads (`text_ads.go`, #586)
+
+`CampaignInput.Format` selects the campaign format: empty or `FormatSingleImage` is the
+SPONSORED_UPDATES dark-post create, byte for byte as before; `FormatText` creates a TEXT_AD
+campaign whose creatives are `CampaignInput.TextAds` (headline, description, optional image).
+The contract is LinkedIn's li-lms-2026-02 "Text Ads API" page (creative `content.textAd` with
+`headline` up to 25 characters, `description` up to 75, `landingPage`, optional `image` of
+100x100 px, at most 2 MB, JPG or PNG) and the "Campaign Objectives" mapping, where the Text
+format under Website Visits and Website Conversions has only MANUAL rows (optimizationTargetType
+None, CPC or CPM). So a text create requires `ManualCPCBid > 0` and uses the existing manual plan
+(WEBSITE_CONVERSION / CPC / NONE / unitCost); the automatic MAX_CLICK plan is refused. No
+`format` field is sent on the campaign, as LinkedIn's own Text ads example sends none.
+
+Everything is checked before the campaign group: `NormalizeFormat`, `ValidateTextAds` (copy
+normalised exactly as the wire copy is, counted in runes, REFUSED rather than truncated, at most
+100 ads, image URN shape, not both image fields), and `ValidateTextAdImage` for stored assets;
+text ads under another format, and variants under the text format, are refused. The campaign
+name's Ad Format segment is `Text` instead of `Static` (`adFormatNameSegment`), so a text campaign
+never shares a name with a single-image one, and `findCampaignByNameInGroup` now also refuses a
+same-name campaign of another `type`. Stored images reuse `uploadVariantImages` — `uploadImage`
+validates by format (`ValidateImageForFormat`). `createTextAds` posts one DRAFT creative per ad to
+the same `adAccounts/{id}/creatives` endpoint, with the registration URL plus that ad's UTMs as
+`landingPage`; with no dark post there is nothing else to orphan, and a failure returns the partial
+with the same do-not-retry and UNCONFIRMED wording as the single-image loop. The status cascade,
+metrics and monitor read campaigns and creatives by id only, so they are format-agnostic
+(`TestUpdateCampaignAndCreativesStatus_TextAdCreatives`).
+
 ## Picker lookups (`lookups.go`, #552)
 
 `ListAdSegments` and `ListConversionRules` read the ad segments and conversion rules on the

@@ -524,7 +524,7 @@ func TestCreateSponsoredCampaign_SameNameDifferentGroupNotMatched(t *testing.T) 
 		context.Background(),
 		"123456789", wantGroupID, "Same Name", "2099-01-01", endMs,
 		100, []string{"urn:li:geo:103644278"}, "cloud-native", nil,
-		false, campaignBiddingPlan{},
+		false, campaignBiddingPlan{}, campaignTypeSponsoredUpdates,
 	)
 	if err != nil {
 		t.Fatalf("createSponsoredCampaign: %v", err)
@@ -566,7 +566,7 @@ func TestCreateSponsoredCampaign_SameNameSameGroupMatched(t *testing.T) {
 		context.Background(),
 		"123456789", groupID, "Same Name", "2099-01-01", endMs,
 		100, []string{"urn:li:geo:103644278"}, "cloud-native", nil,
-		false, campaignBiddingPlan{},
+		false, campaignBiddingPlan{}, campaignTypeSponsoredUpdates,
 	)
 	if err != nil {
 		t.Fatalf("createSponsoredCampaign: %v", err)
@@ -2514,7 +2514,7 @@ func TestFindCampaignByNameInGroup_MissingGroupIsAmbiguousError(t *testing.T) {
 			defer srv.Close()
 
 			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-			id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", "Events | KubeCon | tlf", "555", "")
+			id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", "Events | KubeCon | tlf", "555", "", "")
 			if err == nil {
 				t.Fatalf("expected an error for a same-name campaign with an unconfirmable group, got nil (id=%q)", id)
 			}
@@ -2546,7 +2546,7 @@ func TestFindCampaignByNameInGroup_SkippedStatusNotAmbiguous(t *testing.T) {
 			defer srv.Close()
 
 			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-			id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", "Events | KubeCon | tlf", "555", "")
+			id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", "Events | KubeCon | tlf", "555", "", "")
 			if err != nil {
 				t.Fatalf("a %s same-name campaign with a missing group must be SKIPPED, not raise an error, got: %v", status, err)
 			}

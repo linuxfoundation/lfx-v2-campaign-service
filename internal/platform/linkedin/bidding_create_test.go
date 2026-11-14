@@ -167,7 +167,7 @@ func TestFindCampaignByNameInGroup_RefusesAnObjectiveMismatch(t *testing.T) {
 			}))
 			defer srv.Close()
 			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-			id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", name, "555", ObjectiveWebsiteVisit)
+			id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", name, "555", ObjectiveWebsiteVisit, "")
 			if tc.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "objectiveType WEBSITE_CONVERSION, not WEBSITE_VISIT") {
 					t.Fatalf("id=%q err=%v, want an objective-mismatch abort", id, err)
