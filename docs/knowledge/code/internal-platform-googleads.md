@@ -2547,9 +2547,15 @@ the same answer the Video and Performance Max creatives give). Headlines are 1-5
 (`maxDemandGenVideoHeadlineWeight`: a probe accepted 40 and refused 41 — the image ad keeps
 30, its own limit unprobed); descriptions 1-5 at 90; long headlines 1-5 at 90 and required
 (the probe accepted 90 for both); the business name is required at 25. The call to action is
-limited to SIGN_UP, LEARN_MORE, BOOK_NOW, VISIT_SITE and WATCH_NOW, each accepted by the
-2026-11-03 probe, which also showed REGISTER and GET_STARTED are not CallToActionType values
-at all. Two choices are deliberately conservative and say so in the code: exactly ONE logo
+limited to `demandGenVideoCallToActions`: SIGN_UP, LEARN_MORE, BOOK_NOW, VISIT_SITE,
+WATCH_NOW, APPLY_NOW, CONTACT_US, DOWNLOAD, GET_QUOTE, SUBSCRIBE and SHOP_NOW, exactly the
+values a validateOnly `googleAds:mutate` probe accepted on 2026-11-14 (#604, v23, account
+8666746580; see `log/2026-11-14-604-google-video-cta-probe.md`). The field is a
+CallToActionType enum, not free text like Display's and Demand Gen image's
+`callToActionText` (#575): Google accepted the lower-case enum names too ("sign_up"), but
+refused label spellings ("Sign up", "SIGN UP", "Learn more") with 400 "Invalid value". This
+client takes only the canonical spelling and sends it unchanged. The 2026-11-03 probe showed
+REGISTER and GET_STARTED are not CallToActionType values at all. Two choices are deliberately conservative and say so in the code: exactly ONE logo
 (the probe sent one, and no cited source gives this ad type's range) and a required long
 headline (the probed shape).
 
