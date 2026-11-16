@@ -996,9 +996,11 @@ adGroups?: object[]             — Up to 5 ad groups under the campaign instead
                                   audiences?}]; the top-level adGroupId/adId/keywordIds are the
                                   first group's. Pause/resume address every created group (resume
                                   opens each group, with its live keywords, before the campaign;
-                                  pause closes the campaign first), PATCH .../bid re-bids every
-                                  created group (a failure after the first is UNCONFIRMED), and
-                                  keyword actions may name any created group, one per request. The
+                                  pause closes the campaign first; a failed group is never
+                                  opened), PATCH .../bid re-bids every group whose adGroupId was
+                                  confirmed, a failed one included (a failure after the first is
+                                  UNCONFIRMED), and keyword actions may name any such group, one
+                                  per request. The
                                   monitor and reports are campaign-level and unaffected. OFF unless
                                   MICROSOFT_AD_GROUPS_ENABLED is exactly "true"; a wrong JSON type
                                   (null reads as absent), a rule breach, or the list while the flag

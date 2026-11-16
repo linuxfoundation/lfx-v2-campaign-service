@@ -505,3 +505,76 @@ func TestMicrosoftAdGroups_WriteBidLaterGroupFailureWording(t *testing.T) {
 		})
 	}
 }
+
+// msConfirmedFailedGroupCampaign is msMultiGroupCampaign whose failed group B recorded a
+// CONFIRMED ad group id (656) and keyword (703) before its ad step failed, plus a later entry
+// that resolved to 655 again (never addressed twice).
+func msConfirmedFailedGroupCampaign() *model.Campaign {
+	c := msMultiGroupCampaign()
+	c.Result = json.RawMessage(strings.Replace(string(c.Result),
+		`{"nameSuffix":"B","status":"failed","error":"rejected"}`,
+		`{"nameSuffix":"B","adGroupId":"656","keywordIds":["703"],"status":"failed","error":"ad rejected"}`, 1))
+	c.Result = json.RawMessage(strings.Replace(string(c.Result), `"status":"created"}]}`,
+		`"status":"created"},{"nameSuffix":"D","adGroupId":"655","status":"failed","error":"same name"}]}`, 1))
+	return c
+}
+
+// A later group whose ad group id was confirmed but whose ad step failed still exists upstream
+// at the old bid, so the bid lever re-bids it too (each distinct confirmed group once).
+func TestMicrosoftAdGroups_WriteBidRebidsAConfirmedFailedGroup(t *testing.T) {
+	d, calls := msBudgetDispatcher(t, msBidStrategy("EnhancedCpc"), http.StatusOK, `{"PartialErrors":[]}`)
+	if err := writeMSBid(d, msConfirmedFailedGroupCampaign(), 2.35); err != nil {
+		t.Fatalf("WriteBid: %v", err)
+	}
+	writes := msWrites(calls())
+	var ids []string
+	for _, w := range writes {
+		for _, id := range []string{"654", "655", "656"} {
+			if strings.Contains(w.Body, `"Id":`+id) {
+				ids = append(ids, id)
+			}
+		}
+	}
+	if strings.Join(ids, ",") != "654,656,655" {
+		t.Fatalf("re-bid ad groups = %v, want 654,656,655", ids)
+	}
+}
+
+// The keyword lever owns a confirmed group whose ad step failed: its confirmed keywords are the
+// campaign's to act on. Activation still refuses nothing new and never addresses that group.
+func TestMicrosoftAdGroups_KeywordLeverOwnsAConfirmedFailedGroup(t *testing.T) {
+	d, calls, _ := msLeverDispatcher(t, func(_, path string) (int, string) {
+		if path == "Keywords/QueryByAdGroupId" {
+			return http.StatusOK, `{"Keywords":[{"Id":703,"Status":"Active"}]}`
+		}
+		return http.StatusOK, `{"PartialErrors":[]}`
+	})
+	out, err := d.ApplyKeywordActions(context.Background(), "proj", model.ProviderMicrosoftAds, msConfirmedFailedGroupCampaign(), []model.KeywordAction{
+		{AdGroupID: "656", CriterionID: "703", Action: model.KeywordActionPause},
+	})
+	if err != nil || len(out) != 1 || out[0].Outcome != model.KeywordOutcomeApplied {
+		t.Fatalf("ApplyKeywordActions = %+v, %v", out, err)
+	}
+	if cs := calls(); len(cs) == 0 || cs[0].Body != `{"AdGroupId":656}` {
+		t.Errorf("read = %+v, want ad group 656", cs)
+	}
+}
+
+// Activation keeps its completeness rule: the failed group, confirmed id or not, is not one of
+// the groups it opens.
+func TestMicrosoftAdGroups_ToggleActivateSkipsAConfirmedFailedGroup(t *testing.T) {
+	d, calls, _ := msLeverDispatcher(t, func(_, path string) (int, string) {
+		if path == "Keywords/QueryByAdGroupId" {
+			return http.StatusOK, `{"Keywords":[{"Id":701,"Status":"Paused"},{"Id":702,"Status":"Paused"}]}`
+		}
+		return http.StatusOK, `{"PartialErrors":[]}`
+	})
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, msConfirmedFailedGroupCampaign(), model.CampaignRunActive); err != nil {
+		t.Fatalf("ToggleStatus: %v", err)
+	}
+	for _, c := range msMutations(calls()) {
+		if strings.Contains(c.Body, "656") {
+			t.Errorf("activation addressed the failed group: %+v", c)
+		}
+	}
+}

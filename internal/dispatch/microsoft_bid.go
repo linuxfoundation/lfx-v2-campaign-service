@@ -118,9 +118,13 @@ func (d *MicrosoftDispatcher) WriteBid(ctx context.Context, projectID string, pl
 	// group changed is UNCONFIRMED as a whole: a definite refusal leaves the campaign partly
 	// re-bid, and an ambiguous one (timeout, 5xx, unreadable success) leaves the later group's own
 	// outcome unknown, so the campaign MAY be partly re-bid. The message says which.
-	for _, g := range microsoftExtraAdGroups(campaign.Result) {
-		if !microsoftCampaignIDRE.MatchString(g.adGroupID) {
-			return fmt.Errorf("write microsoft campaign bid: the recorded ad group id %q is not a Microsoft ad group id: %w", g.adGroupID, domain.ErrBidUnwritable)
+	// Every CONFIRMED further group is re-bid, including one whose ad or keyword step failed: it
+	// exists upstream at the old bid, and leaving it there would save a campaign bid it does not
+	// carry.
+	extraIDs := microsoftConfirmedExtraAdGroupIDs(campaign.Result, adGroupID)
+	for _, id := range extraIDs {
+		if !microsoftCampaignIDRE.MatchString(id) {
+			return fmt.Errorf("write microsoft campaign bid: the recorded ad group id %q is not a Microsoft ad group id: %w", id, domain.ErrBidUnwritable)
 		}
 	}
 	if err := client.UpdateAdGroupCpcBid(ctx, campaignID, adGroupID, bid.Amount); err != nil {
@@ -135,12 +139,12 @@ func (d *MicrosoftDispatcher) WriteBid(ctx context.Context, projectID string, pl
 		}
 		return werr
 	}
-	for _, g := range microsoftExtraAdGroups(campaign.Result) {
-		if err := client.UpdateAdGroupCpcBid(ctx, campaignID, g.adGroupID, bid.Amount); err != nil {
+	for _, extraID := range extraIDs {
+		if err := client.UpdateAdGroupCpcBid(ctx, campaignID, extraID, bid.Amount); err != nil {
 			if microsoft.IsOutcomeUnconfirmed(err) {
-				return &unconfirmedBidWriteError{err: fmt.Errorf("write microsoft campaign bid for campaign %s: ad group %s was re-bid but the outcome for ad group %s is unconfirmed (it may or may not have been re-bid), so the campaign may be partly re-bid: %w", campaignID, adGroupID, g.adGroupID, err)}
+				return &unconfirmedBidWriteError{err: fmt.Errorf("write microsoft campaign bid for campaign %s: ad group %s was re-bid but the outcome for ad group %s is unconfirmed (it may or may not have been re-bid), so the campaign may be partly re-bid: %w", campaignID, adGroupID, extraID, err)}
 			}
-			return &unconfirmedBidWriteError{err: fmt.Errorf("write microsoft campaign bid for campaign %s: ad group %s was re-bid but ad group %s was not, so the campaign is partly re-bid: %w", campaignID, adGroupID, g.adGroupID, err)}
+			return &unconfirmedBidWriteError{err: fmt.Errorf("write microsoft campaign bid for campaign %s: ad group %s was re-bid but ad group %s was not, so the campaign is partly re-bid: %w", campaignID, adGroupID, extraID, err)}
 		}
 	}
 	return nil

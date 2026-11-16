@@ -133,6 +133,11 @@ func TestAttachCampaignSharedNegativeKeywordLists_Outcomes(t *testing.T) {
 		{"unreadable 2xx", http.StatusOK, `not json`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", true},
 		{"definite refusal", http.StatusBadRequest, `{"Code":1001,"ErrorCode":"InvalidRequest"}`, "4001=FAILED:,4002=FAILED:", true},
 		{"ambiguous 500", http.StatusInternalServerError, `{}`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", true},
+		// A 200 that omits PartialErrors answered nothing about the associations; null and [] are
+		// present and mean no error.
+		{"200 without PartialErrors", http.StatusOK, `{}`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", true},
+		{"200 PartialErrors null", http.StatusOK, `{"PartialErrors":null}`, "4001=APPLIED:,4002=APPLIED:", false},
+		{"200 PartialErrors empty", http.StatusOK, `{"PartialErrors":[]}`, "4001=APPLIED:,4002=APPLIED:", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := kwRecorder(t, func(string, string) (int, string) { return tc.status, tc.body })

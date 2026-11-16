@@ -93,11 +93,11 @@ func (d *MicrosoftDispatcher) ApplyKeywordActions(ctx context.Context, projectID
 	// A multi-ad-group create (#563 gap 12) records further ad groups: an action may name any of
 	// them, but one batch acts on ONE ad group (the client's call and the live-keyword read below
 	// are per ad group), so a batch naming two is refused.
+	// Ownership is every CONFIRMED group, including one whose ad or keyword step failed after
+	// Microsoft confirmed it: its confirmed keywords are this campaign's to act on.
 	owned := map[string]bool{adGroupID: true}
-	for _, g := range microsoftExtraAdGroups(campaign.Result) {
-		if g.adGroupID != "" {
-			owned[g.adGroupID] = true
-		}
+	for _, id := range microsoftConfirmedExtraAdGroupIDs(campaign.Result, adGroupID) {
+		owned[id] = true
 	}
 	if len(validated) > 0 {
 		adGroupID = validated[0].AdGroupID

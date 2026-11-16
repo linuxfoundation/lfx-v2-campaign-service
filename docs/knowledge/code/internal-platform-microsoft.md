@@ -1678,8 +1678,9 @@ negatives: ONE `POST SharedEntityAssociations/Set` with an association per list 
 `FAILED` with the code for a `PartialErrors` entry naming the index (or every list on a definite
 refusal, or `NOT_SENT` when the context ended first); `UNCONFIRMED` for every list without its own
 error when an error carries no usable index or the array was truncated, and for all of them on an
-ambiguous call or an unreadable 2xx; `APPLIED` otherwise. Absent or null `PartialErrors` is no
-error. The dispatcher (`applyMicrosoftSharedNegativeLists`) records them as
+ambiguous call or an unreadable 2xx; `APPLIED` otherwise. A null or empty `PartialErrors` is no
+error, but a 200 that omits the field (`{}`) is `UNCONFIRMED` for every list: it answered nothing
+about the associations (#613 review). The dispatcher (`applyMicrosoftSharedNegativeLists`) records them as
 `CampaignResult.SharedNegativeKeywordLists`; anything but `APPLIED` makes the campaign
 `created_degraded` with a step, and the job never fails here. It runs on a campaign reused by name
 too, as the create-time negatives do, since a negative list only narrows serving; what Microsoft
@@ -1869,9 +1870,12 @@ by name, which the suffix check should already prevent) is recorded `failed` the
 `UpdateAdGroupChildrenStatus` sets one further group's ad group, ad and keywords without the
 campaign. The dispatcher's toggle activates every further created group (narrowed to its live
 keywords) BEFORE `UpdateCampaignAndChildrenStatus` opens the gate, and pauses them AFTER the gate
-is closed (a failure there is logged; delivery is already stopped). The bid lever re-bids every
-created group (a failure after the first is UNCONFIRMED), and the keyword lever accepts any
-created group, one per batch. The monitor, metrics and keyword report are campaign-level.
+is closed (a failure there is logged; delivery is already stopped); it addresses only `created`
+groups (`microsoftExtraAdGroups`), so activation never opens a partly built one. The bid lever
+re-bids, and the keyword lever accepts (one per batch), every distinct group with a CONFIRMED
+`AdGroupID` (`microsoftConfirmedExtraAdGroupIDs`), a `failed` one included: a group whose ad or
+keyword step failed after Microsoft confirmed it still exists at the old bid with its confirmed
+keywords (#613 review). A bid failure after the first group is UNCONFIRMED. The monitor, metrics and keyword report are campaign-level.
 
 Not verified live. Behind `MICROSOFT_AD_GROUPS_ENABLED` (default off); each per-group field also
 stays behind its single-group flag, and a group's lists need `global_marketing_ops`

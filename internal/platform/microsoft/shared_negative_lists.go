@@ -223,12 +223,18 @@ func (c *Client) AttachCampaignSharedNegativeKeywordLists(ctx context.Context, c
 		all(OutcomeFailed, "")
 		return out, fmt.Errorf("microsoft-ads negative keyword lists not associated: %w", err)
 	}
-	// The body must be a JSON object; PartialErrors may be absent or null, which is "no error".
+	// The body must be a JSON object carrying PartialErrors: null or [] is "no error", but a 200
+	// that omits the field (`{}`) answered nothing about the associations, so every list is
+	// UNCONFIRMED rather than APPLIED.
 	var probe map[string]json.RawMessage
 	var resp setSharedEntityAssociationsResponse
 	if json.Unmarshal(raw, &probe) != nil || probe == nil || json.Unmarshal(raw, &resp) != nil {
 		all(OutcomeUnconfirmed, "")
 		return out, errors.New("microsoft-ads negative keyword lists UNCONFIRMED: the response could not be read")
+	}
+	if _, ok := probe["PartialErrors"]; !ok {
+		all(OutcomeUnconfirmed, "")
+		return out, errors.New("microsoft-ads negative keyword lists UNCONFIRMED: the response omitted PartialErrors, so the associations cannot be confirmed")
 	}
 	att := attribute(resp.PartialErrors, len(ids))
 	for i := range out {

@@ -305,8 +305,9 @@ type microsoftAdGroupRef struct {
 
 // microsoftExtraAdGroups returns the CREATED ad groups after the first that a multi-ad-group row
 // records (#563 gap 12), in order. A failed entry is never returned, even when it recorded an
-// adGroupId, so the toggle, bid and keyword levers never touch a partly built group. Empty for a
-// single-group row.
+// adGroupId, so the status toggle never activates a partly built group (activation needs every
+// group's ad and keywords). The bid and keyword levers use microsoftConfirmedExtraAdGroupIDs
+// instead. Empty for a single-group row.
 func microsoftExtraAdGroups(raw json.RawMessage) (created []microsoftAdGroupRef) {
 	if len(raw) == 0 {
 		return nil
@@ -324,4 +325,35 @@ func microsoftExtraAdGroups(raw json.RawMessage) (created []microsoftAdGroupRef)
 		created = append(created, microsoftAdGroupRef{adGroupID: strings.TrimSpace(g.AdGroupID), adID: strings.TrimSpace(g.AdID), keywordIDs: g.KeywordIDs})
 	}
 	return created
+}
+
+// microsoftConfirmedExtraAdGroupIDs returns the distinct ad group ids after the first that a
+// multi-ad-group row records as CONFIRMED (#563 gap 12), in order: every entry with an adGroupId,
+// whatever its status. An entry records an adGroupId only once Microsoft confirmed that ad group,
+// so one whose ad or keyword step failed later still exists upstream, carrying the campaign's
+// bid and its confirmed keywords. The bid lever must re-bid it (or the campaign's recorded bid
+// would not match it) and the keyword lever must own it. firstAdGroupID, the row's top-level ad
+// group, is never repeated, nor is an id an earlier entry already named. Empty for a
+// single-group row.
+func microsoftConfirmedExtraAdGroupIDs(raw json.RawMessage, firstAdGroupID string) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var blob struct {
+		AdGroups []microsoft.AdGroupResult `json:"adGroups"`
+	}
+	if json.Unmarshal(raw, &blob) != nil {
+		return nil
+	}
+	seen := map[string]bool{strings.TrimSpace(firstAdGroupID): true}
+	var ids []string
+	for i, g := range blob.AdGroups {
+		id := strings.TrimSpace(g.AdGroupID)
+		if i == 0 || id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	return ids
 }

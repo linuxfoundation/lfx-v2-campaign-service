@@ -5817,8 +5817,9 @@ type CampaignCreateInputRequestBody struct {
 	// created|failed|not_attempted, error?, negativeKeywords?, audiences?}], and
 	// its top-level adGroupId, adId and keywordIds are the first group's. Pause
 	// and resume address every created group (resume opens them all before the
-	// campaign; pause closes the campaign first), update-campaign-bid re-bids
-	// every created group, and keyword actions may name any created group, one ad
+	// campaign; pause closes the campaign first; a failed group is never opened),
+	// update-campaign-bid re-bids every group whose adGroupId was confirmed, a
+	// failed one included, and keyword actions may name any such group, one ad
 	// group per request. OFF unless MICROSOFT_AD_GROUPS_ENABLED is exactly "true".
 	// A wrong JSON type (null reads as absent), a rule breach, or adGroups while
 	// the flag is off is refused with 400 "invalid campaign config:
