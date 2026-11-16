@@ -962,8 +962,9 @@ adGroups?: object[]             — Up to 5 ad groups under the campaign instead
                                   audienceIds?, excludedAudienceIds?, audienceBidAdjustment?,
                                   headlines?, descriptions?, path1?, path2?}. nameSuffix is
                                   required, 1-40 characters with a letter or digit, no control
-                                  character or "|", no leading/trailing space, unique ignoring
-                                  case and spacing; the ad group is named like the single one plus
+                                  character or "|", no leading/trailing space, no URL or
+                                  credentials (it is stored and logged as given),
+                                  unique ignoring case and spacing; the ad group is named like the single one plus
                                   " | <nameSuffix>". keywords: at least one. Every per-group field
                                   has its single-group twin's rules AND flag: copy behind
                                   MICROSOFT_AD_COPY_ENABLED; negativeKeywords behind

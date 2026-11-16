@@ -10,6 +10,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
 )
 
 // ---------------------------------------------------------------------------
@@ -106,7 +108,9 @@ func (e *AdGroupError) Error() string {
 
 // ValidateAdGroupNameSuffixes checks the suffixes alone, without contacting Microsoft: each
 // trimmed of nothing (sent as given), 1-MaxAdGroupNameSuffixRunes characters, at least one letter
-// or digit, no control character and no "|" (the name delimiter), and no two that compose the
+// or digit, no control character and no "|" (the name delimiter), nothing redact.SnapshotText
+// would change (a URL or credentials, since the suffix is stored and logged as
+// given), and no two that compose the
 // same ad group name: compared after sanitizeNamePart (the normalization the composed name gets,
 // which collapses whitespace runs and Unicode spaces) and with strings.EqualFold, the comparison
 // lookupNamedEntity finds an existing ad group by (Microsoft's ad group names are unique
@@ -129,6 +133,11 @@ func ValidateAdGroupNameSuffixes(suffixes []string) error {
 			return &AdGroupError{Entry: entry, Field: "nameSuffix", Msg: "must not contain a control character or \"|\""}
 		case !hasWord(s):
 			return &AdGroupError{Entry: entry, Field: "nameSuffix", Msg: "must contain a letter or digit"}
+		case redact.SnapshotText(s) != s:
+			// The suffix is persisted (the result, the steps and the composed ad group name) and
+			// logged verbatim, so one the snapshot redactor would change, such as a URL or
+			// credentials, is refused rather than stored.
+			return &AdGroupError{Entry: entry, Field: "nameSuffix", Msg: "must not contain a URL or credentials; a suffix is a label"}
 		}
 		key := sanitizeNamePart(s)
 		for _, prev := range seen {

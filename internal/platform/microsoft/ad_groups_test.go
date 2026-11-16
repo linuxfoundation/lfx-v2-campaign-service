@@ -27,6 +27,9 @@ func TestValidateAdGroupNameSuffixes(t *testing.T) {
 		{"repeat ignoring case", []string{"Alpha", "ALPHA"}, "entry 2: nameSuffix: repeats entry 1's suffix"},
 		{"repeat ignoring spacing", []string{"Group A", "Group  A"}, "entry 2: nameSuffix: repeats entry 1's suffix"},
 		{"repeat with a no-break space", []string{"Group A", "group\u00a0a"}, "entry 2: nameSuffix: repeats entry 1's suffix"},
+		{"url with a query", []string{"A", "https://x.co/t?key=abc"}, "entry 2: nameSuffix: must not contain a URL or credentials"},
+		{"url with credentials", []string{"https://u:p@x.co"}, "entry 1: nameSuffix: must not contain a URL or credentials"},
+		{"schemeless url", []string{"x.co/kubecon"}, "entry 1: nameSuffix: must not contain a URL or credentials"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := ValidateAdGroupNameSuffixes(tc.suffixes)
