@@ -130,6 +130,12 @@ func TestAttachCampaignSharedNegativeKeywordLists_Outcomes(t *testing.T) {
 		{"zero-code placeholder", http.StatusOK, `{"PartialErrors":[{"Index":0,"Code":null,"ErrorCode":null}]}`, "4001=APPLIED:,4002=APPLIED:", false},
 		{"numeric zero-code placeholder", http.StatusOK, `{"PartialErrors":[{"Index":0,"Code":0,"ErrorCode":null}]}`, "4001=APPLIED:,4002=APPLIED:", false},
 		{"empty-string placeholder", http.StatusOK, `{"PartialErrors":[{"Index":1,"Code":0,"ErrorCode":""}]}`, "4001=APPLIED:,4002=APPLIED:", false},
+		// A quoted "0" is the same default as 0 (isDefaultCode).
+		{"quoted zero placeholder", http.StatusOK, `{"PartialErrors":[{"Index":0,"Code":"0"}]}`, "4001=APPLIED:,4002=APPLIED:", false},
+		// A placeholder naming no slot of the request, or none, cannot clear the lists it claims to.
+		{"placeholder out of range", http.StatusOK, `{"PartialErrors":[{"Index":7,"Code":0}]}`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", false},
+		{"placeholder without index", http.StatusOK, `{"PartialErrors":[{"Code":0,"ErrorCode":""}]}`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", false},
+		{"placeholder out of range beside a refusal", http.StatusOK, `{"PartialErrors":[{"Index":1,"Code":1234,"ErrorCode":"X"},{"Index":2,"Code":0}]}`, "4001=UNCONFIRMED:,4002=FAILED:X", false},
 		{"unattributable", http.StatusOK, `{"PartialErrors":[{"Code":1234,"ErrorCode":"X"}]}`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", false},
 		{"out of range index", http.StatusOK, `{"PartialErrors":[{"Index":7,"ErrorCode":"X"}]}`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", false},
 		{"unreadable 2xx", http.StatusOK, `not json`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", true},

@@ -114,7 +114,7 @@ func TestListConversionGoals(t *testing.T) {
 		}
 	}
 	// A zero-code placeholder (both codes defaults) is not a partial error, so the list stands.
-	for _, pe := range []string{`[{"Index":0,"Code":0,"ErrorCode":null}]`, `[{"Index":0,"Code":0,"ErrorCode":""}]`, `[null]`} {
+	for _, pe := range []string{`[{"Index":0,"Code":0,"ErrorCode":null}]`, `[{"Index":0,"Code":0,"ErrorCode":""}]`, `[null]`, `[{"Index":0,"Code":"0"}]`, `[{"Index":0,"Code":"0","ErrorCode":"0"}]`} {
 		body := `{"ConversionGoals":[{"Id":5001,"Name":"Registration","Status":"Active"}],"PartialErrors":` + pe + `}`
 		c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, body })
 		if goals, err := c.ListConversionGoals(context.Background()); err != nil || len(goals) != 1 {

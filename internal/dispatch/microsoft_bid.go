@@ -133,6 +133,21 @@ func (d *MicrosoftDispatcher) WriteBid(ctx context.Context, projectID string, pl
 			campaignID, strings.Join(unresolved, ", "), domain.ErrBidUnwritable)
 	}
 	if len(unsettled) > 0 {
+		if retryAt, ok := microsoftCreateSettlesAt(campaign); ok {
+			// TEMPORARY: the caller is told so, which entry blocks, and when to retry — in a
+			// sentence this service writes (entry labels are the row's own recorded positions
+			// and suffixes, never Microsoft's text). An entry that settles to "found" before
+			// then is recorded and re-bid at once.
+			return &settlingBidWriteError{
+				// Retry time first: the service clips the sentence to its summary length.
+				reason: fmt.Sprintf("retry after %s, or once the ad group appears in Microsoft Advertising — ad group %s has an unconfirmed create that may still commit, so its absence is not yet trusted",
+					retryAt.UTC().Format(time.RFC3339), strings.Join(unsettled, ", ")),
+				err: fmt.Errorf("write microsoft campaign bid: campaign %s has ad group %s whose create was unconfirmed and which is not listed yet, but a timed-out create can still commit, so its absence is not trusted until %s after the campaign row was last written; retry the bid change after that, or once the ad group appears (it is then recorded and re-bid at once): %w",
+					campaignID, strings.Join(unsettled, ", "), microsoftUnconfirmedSettleWindow, domain.ErrBidUnwritable),
+			}
+		}
+		// No recorded update time: the window never closes, so this is not a refusal that
+		// clears by waiting, and it keeps the generic 409.
 		return fmt.Errorf("write microsoft campaign bid: campaign %s has ad group %s whose create was unconfirmed and which is not listed yet, but a timed-out create can still commit, so its absence is not trusted until %s after the campaign row was last written; retry the bid change after that, or once the ad group appears (it is then recorded and re-bid at once): %w",
 			campaignID, strings.Join(unsettled, ", "), microsoftUnconfirmedSettleWindow, domain.ErrBidUnwritable)
 	}
@@ -190,6 +205,15 @@ const microsoftUnconfirmedSettleWindow = time.Hour
 // (CreatedAt is the claim, BEFORE the create ran, so it could clear too early). A later write
 // only moves UpdatedAt forward, extending the window — the safe direction. An unknown (zero)
 // UpdatedAt is never settled.
+// microsoftCreateSettlesAt reports when microsoftCreateSettled turns true for the row, or false
+// when it never will (an unknown UpdatedAt).
+func microsoftCreateSettlesAt(campaign *model.Campaign) (time.Time, bool) {
+	if campaign.UpdatedAt.IsZero() {
+		return time.Time{}, false
+	}
+	return campaign.UpdatedAt.Add(microsoftUnconfirmedSettleWindow), true
+}
+
 func (d *MicrosoftDispatcher) microsoftCreateSettled(campaign *model.Campaign) bool {
 	if campaign.UpdatedAt.IsZero() {
 		return false

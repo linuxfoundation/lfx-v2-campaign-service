@@ -654,3 +654,58 @@ func TestApplyKeywordActions_ZeroCodePlaceholderIsApplied(t *testing.T) {
 		})
 	}
 }
+
+// A quoted "0" is the same default as 0 (isDefaultCode), so {"Index":0,"Code":"0"} is a
+// zero-code placeholder, not a refusal: the pause is APPLIED.
+func TestApplyKeywordActions_QuotedZeroCodeIsAPlaceholder(t *testing.T) {
+	for _, body := range []string{
+		`{"PartialErrors":[{"Index":0,"Code":"0"}]}`,
+		`{"PartialErrors":[{"Index":0,"Code":"0","ErrorCode":"0"}]}`,
+	} {
+		c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, body })
+		out, err := c.ApplyKeywordActions(context.Background(), "654", []KeywordAction{{AdGroupID: "654", KeywordID: "701", Action: "PAUSE"}})
+		if err != nil || strings.Join(outcomesOf(out), ",") != "APPLIED" {
+			t.Fatalf("%s: got %v, %v; want APPLIED", body, outcomesOf(out), err)
+		}
+	}
+}
+
+// A placeholder clears only the slot it names. One naming a slot outside the request, or none,
+// does not affirm the request's item, so the pause is UNCONFIRMED — and in a combined request
+// the remove is not sent after it.
+func TestApplyKeywordActions_PlaceholderIndexOutsideRequestIsUnconfirmed(t *testing.T) {
+	for name, body := range map[string]string{
+		"out of range": `{"PartialErrors":[{"Index":7,"Code":0}]}`,
+		"negative":     `{"PartialErrors":[{"Index":-1,"Code":0,"ErrorCode":""}]}`,
+		"no index":     `{"PartialErrors":[{"Code":0,"ErrorCode":null}]}`,
+		"mixed":        `{"PartialErrors":[{"Index":0,"Code":0},{"Index":7,"Code":0}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, calls := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, body })
+			out, err := c.ApplyKeywordActions(context.Background(), "654", []KeywordAction{
+				{AdGroupID: "654", KeywordID: "701", Action: "PAUSE"},
+				{AdGroupID: "654", KeywordID: "702", Action: "REMOVE"},
+			})
+			if got := strings.Join(outcomesOf(out), ","); got == "APPLIED,APPLIED" || strings.HasPrefix(got, "APPLIED") {
+				t.Fatalf("got %v, %v; the pause must not be APPLIED", outcomesOf(out), err)
+			}
+			for _, cs := range calls() {
+				if cs.method == http.MethodDelete {
+					t.Errorf("the remove must not be sent after an unverified pause: %+v", calls())
+				}
+			}
+		})
+	}
+	// An error at an index outside the request is still unattributable in a mixed array, and an
+	// out-of-range placeholder beside a real refusal leaves the other item UNCONFIRMED.
+	c, _ := kwRecorder(t, func(string, string) (int, string) {
+		return http.StatusOK, `{"PartialErrors":[{"Index":0,"Code":1234,"ErrorCode":"X"},{"Index":7,"Code":0}]}`
+	})
+	out, err := c.ApplyKeywordActions(context.Background(), "654", []KeywordAction{
+		{AdGroupID: "654", KeywordID: "701", Action: "PAUSE"},
+		{AdGroupID: "654", KeywordID: "703", Action: "PAUSE"},
+	})
+	if got := strings.Join(outcomesOf(out), ","); got != "FAILED,UNCONFIRMED" {
+		t.Fatalf("got %v, %v; want FAILED,UNCONFIRMED", got, err)
+	}
+}

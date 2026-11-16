@@ -5834,12 +5834,13 @@ type CampaignCreateInputRequestBody struct {
 	// first looked up by its name: found, its id is recorded and it is re-bid;
 	// definitely absent, it stops blocking once the campaign row was last written
 	// at least 1 hour ago (inside that window, since a timed-out create can still
-	// commit, absence keeps the 409); both are persisted with the bid; only when
-	// the lookup cannot establish it does the write answer 409 naming the entry,
-	// until a retry resolves it), and keyword actions may name any such group, one
-	// ad group per request. OFF unless MICROSOFT_AD_GROUPS_ENABLED is exactly
-	// "true". A wrong JSON type (null reads as absent), a rule breach, or adGroups
-	// while the flag is off is refused with 400 "invalid campaign config:
+	// commit, absence keeps the 409 — a temporary one whose message names the
+	// entry and the time to retry after); both are persisted with the bid; only
+	// when the lookup cannot establish it does the write answer 409 naming the
+	// entry, until a retry resolves it), and keyword actions may name any such
+	// group, one ad group per request. OFF unless MICROSOFT_AD_GROUPS_ENABLED is
+	// exactly "true". A wrong JSON type (null reads as absent), a rule breach, or
+	// adGroups while the flag is off is refused with 400 "invalid campaign config:
 	// microsoftConfig.adGroups..." before any job exists. A group's audienceIds or
 	// excludedAudienceIds need global_marketing_ops (403, or 503 when the check
 	// cannot be made).

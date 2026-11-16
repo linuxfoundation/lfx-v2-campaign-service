@@ -167,7 +167,10 @@ func (c *Client) AttachCampaignStructuredSnippets(ctx context.Context, campaignI
 // every requested value (compared as textfold keys). A missing one is Failed when the existing
 // snippets' contents rule it out, and Unconfirmed when one that may be it came back unreadable:
 // a snippet without a recognized header (it could be any), or one with the requested header but
-// missing, null or empty Values (Microsoft did not say which values it holds).
+// missing, null or empty Values, or Values with a null or blank entry (Microsoft did not say
+// which values it holds — a null decodes as "", so ["Keynotes","Talks",null] hides a value that
+// may be the requested one). Visible values that already satisfy the request still count as
+// present: an unreadable extra value cannot remove one that was reported.
 func reportExistingSnippets(r *TextExtensionsResult, requested []msTextAdExtension, contents []StructuredSnippet) {
 	unknownHeader := false
 	for _, e := range contents {
@@ -181,7 +184,7 @@ func reportExistingSnippets(r *TextExtensionsResult, requested []msTextAdExtensi
 		}
 		unreadable := unknownHeader
 		for _, e := range contents {
-			if canonicalSnippetHeader(e.Header) == want.Header && len(e.Values) == 0 {
+			if canonicalSnippetHeader(e.Header) == want.Header && (len(e.Values) == 0 || hasBlankSnippetValue(e.Values)) {
 				unreadable = true
 			}
 		}
@@ -193,6 +196,17 @@ func reportExistingSnippets(r *TextExtensionsResult, requested []msTextAdExtensi
 		r.Failed++
 		r.Steps = append(r.Steps, fmt.Sprintf("Structured snippet extension %d (%s) NOT attached: the campaign already has other structured snippets, so none was added — add it in Microsoft Advertising", i, want.Header))
 	}
+}
+
+// hasBlankSnippetValue reports whether any reported value is blank: a null (decoded as "") or
+// an empty or all-space string, none of which a valid snippet value can be.
+func hasBlankSnippetValue(values []string) bool {
+	for _, v := range values {
+		if strings.TrimSpace(v) == "" {
+			return true
+		}
+	}
+	return false
 }
 
 func snippetPresent(want msTextAdExtension, contents []StructuredSnippet) bool {

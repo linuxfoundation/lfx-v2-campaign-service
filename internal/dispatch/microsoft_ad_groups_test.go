@@ -720,13 +720,35 @@ func TestMicrosoftAdGroups_WriteBidReconcilesAnUnconfirmedLaterGroup(t *testing.
 		if g := msGroupResultBlob(t, camp.Result).AdGroups[1]; !g.Unconfirmed {
 			t.Errorf("group 2 = %+v, want the flag kept inside the window", g)
 		}
+		// The refusal is TEMPORARY and says so to the caller: a service-authored reason naming
+		// the entry and the retry time (UpdatedAt + window), carrying no campaign id.
+		var settling interface{ BidSettlingReason() string }
+		if !errors.As(err, &settling) {
+			t.Fatalf("err = %T %v, want a settling refusal the service can map", err, err)
+		}
+		reason := settling.BidSettlingReason()
+		for _, want := range []string{"retry after 2026-11-16T12:01:00Z", "entry 2 (B)", "may still commit"} {
+			if !strings.Contains(reason, want) {
+				t.Errorf("reason = %q, want it to contain %q", reason, want)
+			}
+		}
+		if strings.Contains(reason, camp.PlatformCampaignID) || len([]rune(reason)) > 200 {
+			t.Errorf("reason = %q (%d runes): must carry no campaign id and fit the service summary", reason, len([]rune(reason)))
+		}
 	})
 	t.Run("absent with no recorded update time", func(t *testing.T) {
 		camp := msUnconfirmedGroupCampaign() // UpdatedAt zero: never settled
 		d, _ := msBudgetDispatcherRouted(t, msAdGroupLookup(http.StatusOK, absentList),
 			msBidStrategy("EnhancedCpc"), func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"PartialErrors":[]}`) })
-		if err := writeMSBid(d, camp, 2.35); !errors.Is(err, domain.ErrBidUnwritable) {
+		err := writeMSBid(d, camp, 2.35)
+		if !errors.Is(err, domain.ErrBidUnwritable) {
 			t.Fatalf("err = %v, want 409", err)
+		}
+		// The window never closes without an update time, so waiting does not help: not
+		// reported as temporary.
+		var settling interface{ BidSettlingReason() string }
+		if errors.As(err, &settling) {
+			t.Errorf("a row with no update time must not be reported as settling: %q", settling.BidSettlingReason())
 		}
 	})
 	t.Run("absent", func(t *testing.T) {

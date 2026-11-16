@@ -1489,7 +1489,7 @@ the image extension. When the campaign already has snippets, the lookup's `Heade
 (`findCampaignExtensionContents`) decide the outcome (`reportExistingSnippets`): a requested
 snippet counts as present only when an existing one has its header and every one of its values;
 otherwise it is counted Failed, or Unconfirmed when an existing snippet that may be it came back
-unreadable (no recognized header, or the requested header with missing, null or empty `Values`), so a reused campaign holding a different snippet is degraded, not a clean create. `ValidateStructuredSnippets` holds the rules before any request: at most 10
+unreadable (no recognized header, or the requested header with missing, null or empty `Values`, or `Values` with a null or blank entry — a null decodes as "", so `["Keynotes","Talks",null]` is not a complete list; visible values that already cover the request still count as present), so a reused campaign holding a different snippet is degraded, not a clean create. `ValidateStructuredSnippets` holds the rules before any request: at most 10
 snippets (this service's cap, as for Google); `Header` one of Microsoft's 13 English headers,
 matched ignoring case and inner-space runs and sent in Microsoft's spelling, each once; 3-10
 `Values`, each trimmed, 1-25 characters (12 with a double-width character), no control character,
@@ -1686,10 +1686,14 @@ negatives: ONE `POST SharedEntityAssociations/Set` with an association per list 
 refusal, or `NOT_SENT` when the context ended first); `UNCONFIRMED` for every list without its own
 error when an error carries no usable index or the array was truncated, and for all of them on an
 ambiguous call or an unreadable 2xx; `APPLIED` otherwise. A `PartialErrors` entry whose codes
-are both defaults (absent, null, 0 or "", the `audienceErrorCode` rule `indexedErrorItem.isError`
-now shares) is a placeholder, not an error (the keyword lever's `keywordMutation` treats an
+are both defaults (absent, null, 0, "" or the quoted "0" — `isDefaultCode` — the
+`audienceErrorCode` rule `indexedErrorItem.isError` now shares) is a placeholder, not an error (the keyword lever's `keywordMutation` treats an
 answer of only explicit zero-code placeholders, `isZeroCodePlaceholder`, as APPLIED, while `[{}]`
-or `[null]` stays UNCONFIRMED), here and in the conversion-goal picker read. A null or empty `PartialErrors` is no
+or `[null]` stays UNCONFIRMED), here and in the conversion-goal picker read. A placeholder
+clears only the slot it names: one with no index or an index outside the request (or any entry
+naming an out-of-range index) makes `attribute` unattributable, so every list without its own
+error is UNCONFIRMED, and `keywordMutation` treats such a placeholder-only answer as UNCONFIRMED
+as a whole (#613 review). A null or empty `PartialErrors` is no
 error, but a 200 that omits the field (`{}`) is `UNCONFIRMED` for every list: it answered nothing
 about the associations (#613 review). The dispatcher (`applyMicrosoftSharedNegativeLists`) records them as
 `CampaignResult.SharedNegativeKeywordLists`; anything but `APPLIED` makes the campaign

@@ -202,6 +202,8 @@ func TestMicrosoftSharedNegativeLists_AssociationShortfallDegrades(t *testing.T)
 		{"one refused", 0, `{"PartialErrors":[{"Index":0,"ErrorCode":"CampaignServiceInvalidSharedEntityId","Code":4000}]}`, "1 associated, 1 failed, 0 unconfirmed"},
 		{"ambiguous", http.StatusInternalServerError, `{}`, "0 associated, 0 failed, 2 unconfirmed"},
 		{"200 without PartialErrors", http.StatusOK, `{}`, "0 associated, 0 failed, 2 unconfirmed"},
+		// A zero-code placeholder naming no slot of the two-list request clears nothing.
+		{"placeholder index out of range", http.StatusOK, `{"PartialErrors":[{"Index":7,"Code":0}]}`, "0 associated, 0 failed, 2 unconfirmed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := &msSharedAPI{setStatus: tc.status, setBody: tc.body}

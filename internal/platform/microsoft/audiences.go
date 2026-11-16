@@ -78,11 +78,12 @@ const (
 	errCodeDuplicateAdGroupCriterionNumeric = "4152"
 )
 
-// isDefaultCode reports whether one code field holds only a default: absent, null, 0 or "".
-// BatchError.Code is a non-nullable int, so a slot with no error may carry 0.
+// isDefaultCode reports whether one code field holds only a default: absent, null, 0, "" or the
+// quoted "0". BatchError.Code is a non-nullable int, so a slot with no error may carry 0, and a
+// serializer that quotes numbers sends it as "0" — the same default isZeroCodePlaceholder names.
 func isDefaultCode(raw json.RawMessage) bool {
 	switch string(bytes.TrimSpace(raw)) {
-	case "", "null", "0", `""`:
+	case "", "null", "0", `""`, `"0"`:
 		return true
 	}
 	return false

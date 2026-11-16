@@ -352,6 +352,47 @@ func TestUpdateCampaignBid_AdoptedCampaignHasItsOwnConflictText(t *testing.T) {
 	}
 }
 
+// settlingBidError mirrors the dispatch package's settlingBidWriteError.
+type settlingBidError struct {
+	reason string
+	err    error
+}
+
+func (e *settlingBidError) Error() string             { return e.err.Error() }
+func (e *settlingBidError) Unwrap() error             { return e.err }
+func (e *settlingBidError) BidSettlingReason() string { return e.reason }
+
+// A TEMPORARY refusal (Microsoft: an unconfirmed ad group create inside its settle window)
+// wraps ErrBidUnwritable but gets its own 409: it says the refusal is temporary and carries the
+// adapter's service-authored reason (the entry and when to retry) — not the generic "check the
+// campaign" text, and not the rendered chain with the campaign id.
+func TestUpdateCampaignBid_SettlingRefusalSaysTemporaryAndWhenToRetry(t *testing.T) {
+	reason := "retry after 2026-11-16T12:59:00Z, or once the ad group appears in Microsoft Advertising — ad group entry 2 (B) has an unconfirmed create that may still commit, so its absence is not yet trusted"
+	d := &bidWriterDispatcher{err: &settlingBidError{
+		reason: reason,
+		err:    fmt.Errorf("write microsoft campaign bid: campaign 555 has ad group entry 2 (B) whose create was unconfirmed: %w", ErrBidUnwritable),
+	}}
+	s, camps := budgetService(t, bidCampaign(), d)
+	_, err := s.UpdateCampaignBid(context.Background(), bidPayload(1, "cpc", "3"))
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("want 409, got %T: %v", err, err)
+	}
+	for _, want := range []string{"temporary", "entry 2 (B)", "retry after 2026-11-16T12:59:00Z"} {
+		if !strings.Contains(conflict.Message, want) {
+			t.Errorf("the 409 must say %q, got %q", want, conflict.Message)
+		}
+	}
+	for _, never := range []string{"555", "write microsoft campaign bid", "check the campaign in the ad platform"} {
+		if strings.Contains(conflict.Message, never) {
+			t.Errorf("the 409 must not carry %q, got %q", never, conflict.Message)
+		}
+	}
+	if camps.got != nil {
+		t.Error("the row must not be written when the bid was refused")
+	}
+}
+
 // reasonedBidAmountError mirrors the dispatch package's rejectedBidAmountError.
 type reasonedBidAmountError struct {
 	reason string

@@ -1019,7 +1019,9 @@ adGroups?: object[]             — Up to 5 ad groups under the campaign instead
                                   its recorded name — found, its id is recorded and it is re-bid;
                                   definitely absent, it stops blocking, but only once the campaign
                                   row was last written at least 1 hour ago (a timed-out create can
-                                  still commit; inside that window absence keeps the 409); both
+                                  still commit; inside that window absence keeps the 409, whose
+                                  message says the refusal is temporary and names the entry and
+                                  the time to retry after); both
                                   persisted with the bid — and when the lookup cannot establish it
                                   the write is refused with 409 naming the entry, until a retry
                                   resolves it), and

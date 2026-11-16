@@ -406,17 +406,27 @@ type attribution struct {
 	// errored records every index an error was attributed to.
 	errored map[int]bool
 	// unattributable is set when an error carried no usable index, an index outside the
-	// request, or the array was truncated. Then NO un-named item can be proven applied.
+	// request, or the array was truncated — or when a zero-code placeholder (or any entry with
+	// an index) named no slot of the request. Then NO un-named item can be proven applied.
 	unattributable bool
 }
 
 func attribute(errs indexedErrors, n int) attribution {
 	a := attribution{byIndex: map[int]string{}, errored: map[int]bool{}, unattributable: errs.Truncated}
 	for _, it := range errs.Items {
+		outOfRange := it.Index == nil || *it.Index < 0 || *it.Index >= n
 		if !it.isError() {
+			// A zero-code placeholder marks a clean item AT ITS INDEX, so it is evidence only
+			// about a slot of this request. One with no index, or one naming a slot outside the
+			// request (or any entry naming such a slot), cannot be matched to the items it
+			// claims to clear: the array is not the positional answer this request expects, so
+			// no un-named item is proven applied.
+			if (it.isZeroCodePlaceholder() || it.Index != nil) && outOfRange {
+				a.unattributable = true
+			}
 			continue
 		}
-		if it.Index == nil || *it.Index < 0 || *it.Index >= n {
+		if outOfRange {
 			a.unattributable = true
 			continue
 		}
@@ -705,9 +715,11 @@ func (c *Client) keywordMutation(ctx context.Context, method, what string, body 
 	// the `[]`/null that affirms no error: read leniently it would report every item APPLIED.
 	// Fail closed as UpdateCampaignStatus does for that shape — the call was answered, so it may
 	// have applied, and the outcome is UNCONFIRMED.
+	// A placeholder clears only the slot it names, so one with no index or an index outside
+	// this request's n items is not that affirmation either.
 	if len(resp.PartialErrors.Items) > 0 && !anyIndexedError(resp.PartialErrors.Items) {
 		for _, it := range resp.PartialErrors.Items {
-			if !it.isZeroCodePlaceholder() {
+			if !it.isZeroCodePlaceholder() || it.Index == nil || *it.Index < 0 || *it.Index >= n {
 				return nil, &keywordMutationUnconfirmedError{what: what, err: errMalformedKeywordResponse}
 			}
 		}

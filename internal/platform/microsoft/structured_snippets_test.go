@@ -236,3 +236,33 @@ func TestAttachCampaignStructuredSnippets_ExistingHeaderWithoutValuesIsUnconfirm
 		})
 	}
 }
+
+// A null entry in an existing snippet's Values decodes as "", so the reported list is not the
+// whole list: a requested value it does not show may be the hidden one, so the requested snippet
+// is UNCONFIRMED, not definitely NOT attached. Visible values that already cover the request
+// still make it present, and a different header still rules the other snippet out.
+func TestAttachCampaignStructuredSnippets_ExistingBlankValueIsUnconfirmed(t *testing.T) {
+	for name, tc := range map[string]struct {
+		values            string
+		unconfirmed, fail int
+	}{
+		"null hides a requested value":  {`["Kubernetes","Observability",null]`, 1, 1},
+		"blank hides a requested value": {`["Kubernetes","  ","Observability"]`, 1, 1},
+		"visible values satisfy":        {`["Kubernetes","Observability","Security",null]`, 0, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			api := &textExtAPI{
+				existing:       map[string]string{"StructuredSnippetAdExtension": "4441"},
+				existingFields: map[string]string{"StructuredSnippetAdExtension": `"Header":"Courses","Values":` + tc.values},
+			}
+			c, _ := textExtRecorder(t, api)
+			r, err := c.AttachCampaignStructuredSnippets(context.Background(), "321", goodSnippets())
+			if err != nil || r.Unconfirmed != tc.unconfirmed || r.Failed != tc.fail {
+				t.Fatalf("got %+v, %v; want %d unconfirmed, %d failed", r, err, tc.unconfirmed, tc.fail)
+			}
+			if tc.unconfirmed == 1 && !strings.Contains(strings.Join(r.Steps, "\n"), "Structured snippet extension 0 (Courses) UNCONFIRMED") {
+				t.Errorf("steps = %v", r.Steps)
+			}
+		})
+	}
+}
