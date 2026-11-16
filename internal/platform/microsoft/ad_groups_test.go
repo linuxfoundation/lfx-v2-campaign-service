@@ -25,6 +25,8 @@ func TestValidateAdGroupNameSuffixes(t *testing.T) {
 		{"no word", []string{"---"}, "must contain a letter or digit"},
 		{"long", []string{strings.Repeat("a", MaxAdGroupNameSuffixRunes+1)}, "is 41 characters; at most 40"},
 		{"repeat ignoring case", []string{"Alpha", "ALPHA"}, "entry 2: nameSuffix: repeats entry 1's suffix"},
+		{"repeat ignoring spacing", []string{"Group A", "Group  A"}, "entry 2: nameSuffix: repeats entry 1's suffix"},
+		{"repeat with a no-break space", []string{"Group A", "group\u00a0a"}, "entry 2: nameSuffix: repeats entry 1's suffix"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := ValidateAdGroupNameSuffixes(tc.suffixes)

@@ -1793,7 +1793,8 @@ holds the pure rules: at most 20, each the canonical spelling of a positive int6
 `POST ConversionGoals/QueryByIds` (`GetConversionGoalsByIds`) with every id and
 `ConversionGoalTypes` set to every type, space-delimited (the monitor's precedent for a flags
 enum). `ConversionGoals` must be index-aligned with the request; a null entry (Microsoft's "not
-retrieved") or a goal reported `Paused` or `Deleted` is a `PreflightRefusal` naming the id. An
+retrieved") or a goal whose status is not `Active` (an allow-list: `Paused`, `InActive`, `Deleted` or any
+later status) is a `PreflightRefusal` naming the id. An
 answer that cannot be believed (no array, a different length, an entry naming another goal) is a
 plain error. Partial errors are not attributed: Microsoft documents that they do not follow the
 request order, and the null entry already refuses the id. Either way nothing is created.
@@ -1835,7 +1836,8 @@ single-group path unchanged: the same `createAdGroupAndAd` call, the same ad gro
 
 `validateAdGroups` runs inside CreateCampaign's up-front checks, before anything exists: the
 suffixes (`ValidateAdGroupNameSuffixes`: 1-40 characters, a letter or digit, no control character
-or `|`, unique ignoring case), each composed name (`composeAdGroupName` plus ` | <suffix>`)
+or `|`, unique by the composed name: compared after `sanitizeNamePart` with `strings.EqualFold`,
+so suffixes differing only in case or spacing are refused), each composed name (`composeAdGroupName` plus ` | <suffix>`)
 against the 256-character limit, at least one keyword per group, the copy, and each group's
 display paths against the registration URL's domain.
 
@@ -1845,7 +1847,9 @@ degraded success, no rollback): the first group failing returns today's partial 
 group failing is recorded (`AdGroupResult.Status` `failed`, with the error), the remaining groups
 are still built unless the context ended (`not_attempted`), and the result is returned without an
 error; `FailedAdGroups` names them and the dispatcher marks the campaign `created_degraded` with
-one step. The top-level `AdGroupID`/`AdID`/`KeywordIDs` are the first group's; `BidApplied`,
+one step. A later group whose `AdGroupID` equals an earlier group's (it resolved to that ad group
+by name, which the suffix check should already prevent) is recorded `failed` the same way, never
+`created`, so the toggle, bid and keyword levers cannot address one ad group twice. The top-level `AdGroupID`/`AdID`/`KeywordIDs` are the first group's; `BidApplied`,
 `FlightApplied` and `AlreadyExisted` hold only when they hold for every group.
 
 `UpdateAdGroupChildrenStatus` sets one further group's ad group, ad and keywords without the

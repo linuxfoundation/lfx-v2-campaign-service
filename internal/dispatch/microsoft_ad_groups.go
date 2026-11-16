@@ -304,8 +304,9 @@ type microsoftAdGroupRef struct {
 }
 
 // microsoftExtraAdGroups returns the CREATED ad groups after the first that a multi-ad-group row
-// records (#563 gap 12), in order, and the entries that name an ad group but were not created.
-// Empty for a single-group row.
+// records (#563 gap 12), in order. A failed entry is never returned, even when it recorded an
+// adGroupId, so the toggle, bid and keyword levers never touch a partly built group. Empty for a
+// single-group row.
 func microsoftExtraAdGroups(raw json.RawMessage) (created []microsoftAdGroupRef) {
 	if len(raw) == 0 {
 		return nil

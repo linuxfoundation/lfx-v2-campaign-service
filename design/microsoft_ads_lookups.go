@@ -44,7 +44,7 @@ var MicrosoftAdsConversionGoal = Type("microsoft-ads-conversion-goal", func() {
 		Example("4100123")
 	})
 	Attribute("name", String, "The goal's display name. Not an identifier; may be empty.", func() { Example("KubeCon NA registration") })
-	Attribute("status", String, "Microsoft's Status, verbatim (for example Active or Paused). A create refuses a Paused or Deleted goal.", func() { Example("Active") })
+	Attribute("status", String, "Microsoft's Status, verbatim (for example Active or Paused). A create refuses any goal that is not Active.", func() { Example("Active") })
 	Attribute("type", String, "Microsoft's goal Type, verbatim (for example Url or Event); may be empty.", func() { Example("Url") })
 	Attribute("scope", String, "Microsoft's Scope, verbatim (Account or Customer); may be empty.", func() { Example("Account") })
 	Required("id", "name", "status", "type", "scope")
@@ -106,7 +106,7 @@ func microsoftAdsLookupMethods() {
 			"project uses, live from Campaign Management v13 GetConversionGoalsByIds (POST ConversionGoals/QueryByIds " +
 			"with no ids and every ConversionGoalType, which returns every goal of those types), for picking " +
 			"microsoftConfig.conversionGoalIds (#563). The same call, with ids, is the check a create makes before " +
-			"anything is created, so every Active goal listed is one it accepts (a Paused or Deleted goal is listed " +
+			"anything is created, so every Active goal listed is one it accepts (any other status is listed " +
 			"but refused by a create). This service never creates a goal or a UET tag: marketing ops owns both. " +
 			"Sorted by name, ignoring case, then id. Credentials resolve as for a create: the project's own " +
 			"Microsoft connection, or the LF system account when the deployment forces it. The Microsoft Advertising " +

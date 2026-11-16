@@ -168,17 +168,18 @@ type Service interface {
 	// twitter-ads requires global_marketing_ops on this project in the same single
 	// check; those audiences belong to the LF X ad account. MICROSOFT
 	// SHARED-ACCOUNT INPUTS (#563): likewise a microsoftConfig that sets
-	// audienceIds, excludedAudienceIds or sharedNegativeKeywordListIds (any
-	// non-empty list) on a create that selects microsoft-ads requires
+	// audienceIds, excludedAudienceIds, sharedNegativeKeywordListIds,
+	// conversionGoalIds, or the audienceIds or excludedAudienceIds of any adGroups
+	// entry (any non-empty list) on a create that selects microsoft-ads requires
 	// global_marketing_ops on this project in the same single check; those
-	// remarketing lists and negative keyword lists belong to the LF Microsoft
-	// Advertising account. A remarketing list input that breaks its rules, or is
-	// sent while MICROSOFT_AUDIENCES_ENABLED is not "true", is a synchronous 400
-	// too (see the config attribute). So is a microsoftConfig.excludedGeoTargets,
-	// proximityTargets or languages that breaks its rules or is sent while
-	// MICROSOFT_CREATE_TARGETING_ENABLED is not "true". So is a
-	// microsoftConfig.searchPartners that is not a boolean or is sent while
-	// MICROSOFT_SEARCH_NETWORK_ENABLED is not "true". So is a
+	// remarketing lists, negative keyword lists and conversion goals belong to the
+	// LF Microsoft Advertising account. A remarketing list input that breaks its
+	// rules, or is sent while MICROSOFT_AUDIENCES_ENABLED is not "true", is a
+	// synchronous 400 too (see the config attribute). So is a
+	// microsoftConfig.excludedGeoTargets, proximityTargets or languages that
+	// breaks its rules or is sent while MICROSOFT_CREATE_TARGETING_ENABLED is not
+	// "true". So is a microsoftConfig.searchPartners that is not a boolean or is
+	// sent while MICROSOFT_SEARCH_NETWORK_ENABLED is not "true". So is a
 	// microsoftConfig.adSchedules that breaks its rules or is sent while
 	// MICROSOFT_AD_SCHEDULE_ENABLED is not "true". So is a
 	// microsoftConfig.deviceBidAdjustments, ageBidAdjustments or
@@ -1535,37 +1536,39 @@ type CampaignCreateInput struct {
 	// canonical spelling of a positive int64, no repeat;
 	// list-microsoft-ads-conversion-goals offers them). This service creates no
 	// UET tag and no goal: marketing ops owns both. Before anything is created one
-	// GetConversionGoalsByIds read must return every id, none Paused or Deleted,
-	// or the job fails with nothing created. They are set as the new campaign's
-	// GoalIds; a campaign found by name keeps its goals, with a warning step, and
-	// only goals this run set are recorded as conversionGoalIds in the result.
-	// microsoftConfig.bidding also takes strategy "maxConversions" ({"strategy":
-	// "maxConversions"}) and "targetCpa" ({"strategy": "targetCpa", "targetCpa":
-	// number}), both sent as the campaign's MaxConversionsBiddingScheme, the
-	// second with TargetCpa (Microsoft converts a new Target CPA strategy to
-	// MaxConversions with the target anyway). Either is accepted only with at
-	// least one conversionGoalIds entry, never with bidAmount or cpcBid; targetCpa
-	// is required for "targetCpa" and refused for "maxConversions", and must be
-	// greater than zero, at most 1,000,000 and at most two decimals, in the
-	// account currency. Both are recorded as automatic bidding, so
-	// update-campaign-bid answers 409 for them. The bidding key targetCpa is
-	// microsoftConfig's only. OFF unless MICROSOFT_CONVERSION_GOALS_ENABLED is
-	// exactly "true". A wrong JSON type (null reads as absent for
-	// conversionGoalIds, and is refused for targetCpa), a rule breach, or any of
-	// it while the flag is off is refused with 400 "invalid campaign config:
-	// microsoftConfig.<field>: ..." before any job exists. The goals belong to the
-	// shared LF account, so conversionGoalIds needs global_marketing_ops (403, or
-	// 503 when the check cannot be made); the strategies alone are not role-gated.
-	// MICROSOFT AD GROUPS (#563): microsoftConfig takes `adGroups`, 1-5 objects
-	// {nameSuffix, keywords, negativeKeywords?, audienceIds?,
-	// excludedAudienceIds?, audienceBidAdjustment?, headlines?, descriptions?,
-	// path1?, path2?}, building that many ad groups under the campaign instead of
-	// the single one. nameSuffix is required, 1-40 characters with a letter or
-	// digit, no control character or '|', no leading or trailing space, unique
-	// ignoring case; the ad group is named like the single one plus " |
-	// <nameSuffix>". Each group needs at least one keyword; every per-group field
-	// has the rules of its single-group twin and stays behind that twin's flag
-	// (copy MICROSOFT_AD_COPY_ENABLED, negatives
+	// GetConversionGoalsByIds read must return every id, each Active (Paused,
+	// InActive, Deleted or any other status is refused), or the job fails with
+	// nothing created. They are set as the new campaign's GoalIds; a campaign
+	// found by name keeps its goals, with a warning step, and only goals this run
+	// set are recorded as conversionGoalIds in the result. microsoftConfig.bidding
+	// also takes strategy "maxConversions" ({"strategy": "maxConversions"}) and
+	// "targetCpa" ({"strategy": "targetCpa", "targetCpa": number}), both sent as
+	// the campaign's MaxConversionsBiddingScheme, the second with TargetCpa
+	// (Microsoft converts a new Target CPA strategy to MaxConversions with the
+	// target anyway). Either is accepted only with at least one conversionGoalIds
+	// entry, never with bidAmount or cpcBid; targetCpa is required for "targetCpa"
+	// and refused for "maxConversions", and must be greater than zero, at most
+	// 1,000,000 and at most two decimals, in the account currency. Both are
+	// recorded as automatic bidding, so update-campaign-bid answers 409 for them.
+	// The bidding key targetCpa is microsoftConfig's only. OFF unless
+	// MICROSOFT_CONVERSION_GOALS_ENABLED is exactly "true". A wrong JSON type
+	// (null reads as absent for conversionGoalIds, and is refused for targetCpa),
+	// a rule breach, or any of it while the flag is off is refused with 400
+	// "invalid campaign config: microsoftConfig.<field>: ..." before any job
+	// exists. The goals belong to the shared LF account, so conversionGoalIds
+	// needs global_marketing_ops (403, or 503 when the check cannot be made); the
+	// strategies alone are not role-gated. MICROSOFT AD GROUPS (#563):
+	// microsoftConfig takes `adGroups`, 1-5 objects {nameSuffix, keywords,
+	// negativeKeywords?, audienceIds?, excludedAudienceIds?,
+	// audienceBidAdjustment?, headlines?, descriptions?, path1?, path2?}, building
+	// that many ad groups under the campaign instead of the single one. nameSuffix
+	// is required, 1-40 characters with a letter or digit, no control character or
+	// '|', no leading or trailing space, unique ignoring case and spacing (two
+	// suffixes differing only in case, a run of spaces or a Unicode space compose
+	// the same name and are refused); the ad group is named like the single one
+	// plus " | <nameSuffix>". Each group needs at least one keyword; every
+	// per-group field has the rules of its single-group twin and stays behind that
+	// twin's flag (copy MICROSOFT_AD_COPY_ENABLED, negatives
 	// MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED and sent at the AD GROUP level,
 	// lists MICROSOFT_AUDIENCES_ENABLED, read before anything is created, one read
 	// per group). The single-group keywords, headlines, descriptions, path1,

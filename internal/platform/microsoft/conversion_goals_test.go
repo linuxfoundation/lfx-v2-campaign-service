@@ -64,7 +64,7 @@ func TestCheckConversionGoals_RequestShapeAndSuccess(t *testing.T) {
 	}
 }
 
-// A null entry (not retrieved) or a Paused or Deleted goal is a refusal naming the id; an answer
+// A null entry (not retrieved) or a goal that is not Active is a refusal naming the id; an answer
 // that is not index-aligned or names another goal is unbelievable, not a refusal.
 func TestCheckConversionGoals_Refusals(t *testing.T) {
 	for _, tc := range []struct {
@@ -74,6 +74,8 @@ func TestCheckConversionGoals_Refusals(t *testing.T) {
 		{"missing", `{"ConversionGoals":[{"Id":5001,"Status":"Active"},null]}`, `no conversion goal "5002"`, true},
 		{"paused", `{"ConversionGoals":[{"Id":5001,"Status":"Active"},{"Id":5002,"Status":"Paused"}]}`, `"5002" is Paused`, true},
 		{"deleted", `{"ConversionGoals":[{"Id":5001,"Status":"Deleted"},{"Id":5002,"Status":"Active"}]}`, `"5001" is Deleted`, true},
+		{"inactive", `{"ConversionGoals":[{"Id":5001,"Status":"Active"},{"Id":5002,"Status":"InActive"}]}`, `"5002" is InActive, not Active`, true},
+		{"no status", `{"ConversionGoals":[{"Id":5001,"Status":"Active"},{"Id":5002}]}`, `"5002" is`, true},
 		{"short", `{"ConversionGoals":[{"Id":5001,"Status":"Active"}]}`, "returned 1 entries for 2 ids", false},
 		{"other goal", `{"ConversionGoals":[{"Id":5001,"Status":"Active"},{"Id":9,"Status":"Active"}]}`, "position 2 is not the conversion goal asked for", false},
 		{"no array", `{"PartialErrors":[]}`, "no ConversionGoals array", false},

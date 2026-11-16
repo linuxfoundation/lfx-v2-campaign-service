@@ -106,10 +106,18 @@ func (e *AdGroupError) Error() string {
 
 // ValidateAdGroupNameSuffixes checks the suffixes alone, without contacting Microsoft: each
 // trimmed of nothing (sent as given), 1-MaxAdGroupNameSuffixRunes characters, at least one letter
-// or digit, no control character and no "|" (the name delimiter), and no two equal ignoring case
-// (Microsoft's ad group names are unique case-insensitively within a campaign).
+// or digit, no control character and no "|" (the name delimiter), and no two that compose the
+// same ad group name: compared after sanitizeNamePart (the normalization the composed name gets,
+// which collapses whitespace runs and Unicode spaces) and with strings.EqualFold, the comparison
+// lookupNamedEntity finds an existing ad group by (Microsoft's ad group names are unique
+// case-insensitively within a campaign). Two suffixes differing only there would otherwise send
+// the second group into the first.
 func ValidateAdGroupNameSuffixes(suffixes []string) error {
-	seen := make(map[string]int, len(suffixes))
+	type seenKey struct {
+		key   string
+		entry int
+	}
+	seen := make([]seenKey, 0, len(suffixes))
 	for i, s := range suffixes {
 		entry := i + 1
 		switch {
@@ -122,11 +130,13 @@ func ValidateAdGroupNameSuffixes(suffixes []string) error {
 		case !hasWord(s):
 			return &AdGroupError{Entry: entry, Field: "nameSuffix", Msg: "must contain a letter or digit"}
 		}
-		key := strings.ToLower(s)
-		if first, dup := seen[key]; dup {
-			return &AdGroupError{Entry: entry, Field: "nameSuffix", Msg: fmt.Sprintf("repeats entry %d's suffix (ad group names are unique ignoring case)", first)}
+		key := sanitizeNamePart(s)
+		for _, prev := range seen {
+			if strings.EqualFold(prev.key, key) {
+				return &AdGroupError{Entry: entry, Field: "nameSuffix", Msg: fmt.Sprintf("repeats entry %d's suffix (ad group names are unique ignoring case and spacing)", prev.entry)}
+			}
 		}
-		seen[key] = entry
+		seen = append(seen, seenKey{key: key, entry: entry})
 	}
 	return nil
 }
@@ -236,6 +246,17 @@ func (c *Client) createAdGroups(
 		res := &results[i]
 		if r != nil {
 			res.AdGroupName, res.AdGroupID, res.AdGroupReused, res.AdID, res.KeywordIDs = r.AdGroupName, r.AdGroupID, r.AdGroupReused, r.AdID, r.KeywordIDs
+		}
+		if err == nil && i > 0 {
+			// Defence in depth behind ValidateAdGroupNameSuffixes: a later group that resolved to an
+			// earlier group's ad group was built into it, so it is not a group of its own and must
+			// not be recorded as created (the levers would address that ad group twice).
+			for j := 0; j < i; j++ {
+				if results[j].AdGroupID != "" && results[j].AdGroupID == res.AdGroupID {
+					err = fmt.Errorf("microsoft-ads: ad group %d resolved to ad group %d's ad group %s; the suffixes compose the same name", i+1, j+1, clipID(res.AdGroupID))
+					break
+				}
+			}
 		}
 		if err != nil {
 			res.Status, res.Error = AdGroupStatusFailed, err.Error()

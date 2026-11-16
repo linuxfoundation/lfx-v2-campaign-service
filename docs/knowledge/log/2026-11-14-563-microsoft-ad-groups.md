@@ -12,6 +12,10 @@ builds today's single ad group unchanged.
 - Partial rules: the first group failing is today's failure; a later one failing leaves the
   earlier groups (no rollback), the rest are still built, and the campaign is `created_degraded`
   with a step naming every group not created.
+- Name suffixes must compose distinct ad group names: they are compared after the name's own
+  normalization (whitespace runs and Unicode spaces collapsed) and ignoring case, so `Group A` and
+  `Group  A` are refused. A later group that still resolves to an earlier group's ad group is
+  recorded `failed`, never `created`, so no lever addresses one ad group twice.
 - Every group is recorded as `adGroups` in the result; the top-level ad group fields are the
   first group's.
 - Pause/resume address every created group (resume opens them before the campaign gate, pause

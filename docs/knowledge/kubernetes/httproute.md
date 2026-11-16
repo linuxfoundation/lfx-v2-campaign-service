@@ -15,7 +15,7 @@ See [charts/lfx-v2-campaign-service/templates/httproute.yaml](../../../charts/lf
 
 The service serves its API under `/projects/{projectId}/…` (the approved contract —
 every endpoint is nested under a project and gated on that project's
-`campaign_manager` relation, except the Google conversion-action, audience and user lists, the Reddit, Meta and X custom-audience lists and the LinkedIn ad-segment and conversion-rule pickers, gated on
+`campaign_manager` relation, except the Google conversion-action, audience and user lists, the Reddit, Meta and X custom-audience lists, the Microsoft remarketing lists and conversion goals, and the LinkedIn ad-segment and conversion-rule pickers, gated on
 `global_marketing_ops`).
 `project-service` owns `PathPrefix: /projects/`, and
 the token that distinguishes a campaign-service path (`connection-*`, `briefs`,

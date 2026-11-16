@@ -7171,7 +7171,7 @@ type MicrosoftAdsConversionGoalResponseBody struct {
 	// The goal's display name. Not an identifier; may be empty.
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 	// Microsoft's Status, verbatim (for example Active or Paused). A create
-	// refuses a Paused or Deleted goal.
+	// refuses any goal that is not Active.
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// Microsoft's goal Type, verbatim (for example Url or Event); may be empty.
 	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`

@@ -24,15 +24,16 @@ import (
 
 // msGroupAPI is a fake Microsoft API for multi-ad-group creates: every AdGroups, Ads and Keywords
 // create answers the next id (701.., 901.., 1101..), and failAdGroup makes that AdGroups create
-// (1-based) a definite rejection.
+// (1-based) a definite rejection; repeatAdGroupID makes every AdGroups create answer 701.
 type msGroupAPI struct {
-	mu          sync.Mutex
-	calls       []string
-	bodies      []string
-	failAdGroup int
-	adGroups    int
-	ads         int
-	keywords    int
+	mu              sync.Mutex
+	calls           []string
+	bodies          []string
+	failAdGroup     int
+	repeatAdGroupID bool
+	adGroups        int
+	ads             int
+	keywords        int
 }
 
 func (a *msGroupAPI) snapshot() ([]string, []string) {
@@ -73,7 +74,11 @@ func newMSGroupDispatcher(t *testing.T, api *msGroupAPI) *MicrosoftDispatcher {
 				_, _ = io.WriteString(w, `{"AdGroupIds":[null],"PartialErrors":[{"Index":0,"ErrorCode":"CampaignServiceInvalidAdGroupName","Code":1201}]}`)
 				return
 			}
-			_, _ = fmt.Fprintf(w, `{"AdGroupIds":[%d],"PartialErrors":[]}`, 700+api.adGroups)
+			id := 700 + api.adGroups
+			if api.repeatAdGroupID {
+				id = 701
+			}
+			_, _ = fmt.Fprintf(w, `{"AdGroupIds":[%d],"PartialErrors":[]}`, id)
 		case "Ads":
 			api.ads++
 			_, _ = fmt.Fprintf(w, `{"AdIds":[%d],"PartialErrors":[]}`, 900+api.ads)
@@ -280,6 +285,32 @@ func TestMicrosoftAdGroups_LaterGroupFailureDegrades(t *testing.T) {
 	}
 	if camp.BiddingStrategy != nil {
 		t.Errorf("bidding recorded though not every ad group carries it")
+	}
+}
+
+// A later group that resolves to an earlier group's ad group is not a group of its own: it is
+// recorded failed, never created, so the levers cannot address that ad group twice.
+func TestMicrosoftAdGroups_LaterGroupResolvingToAnEarlierAdGroupFails(t *testing.T) {
+	t.Setenv(constants.EnvMicrosoftAdGroupsEnabled, "true")
+	t.Setenv(constants.EnvMicrosoftCreateNegativeKeywordsEnabled, "true")
+	t.Setenv(constants.EnvMicrosoftAudiencesEnabled, "true")
+	api := &msGroupAPI{repeatAdGroupID: true}
+	d := newMSGroupDispatcher(t, api)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMicrosoftAds, msGroupConfig(msThreeGroups))
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if camp.Status != campaignStatusCreatedDegraded {
+		t.Fatalf("status = %q, want created_degraded", camp.Status)
+	}
+	r := msGroupResult(t, camp)
+	if r.AdGroups[0].Status != microsoft.AdGroupStatusCreated {
+		t.Errorf("group 1 = %+v, want created", r.AdGroups[0])
+	}
+	for _, i := range []int{1, 2} {
+		if r.AdGroups[i].Status != microsoft.AdGroupStatusFailed || !strings.Contains(r.AdGroups[i].Error, "resolved to ad group 1's ad group 701") {
+			t.Errorf("group %d = %+v, want failed as a repeat of group 1", i+1, r.AdGroups[i])
+		}
 	}
 }
 

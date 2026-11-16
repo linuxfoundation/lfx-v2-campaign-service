@@ -52,10 +52,10 @@ const (
 	// misses a goal for its type.
 	conversionGoalTypesAll = "Url Duration PagesViewedPerVisit Event AppInstall OfflineConversion InStoreTransaction"
 
-	// conversionGoalStatusPaused / Deleted are the statuses a goal cannot be bid toward: a paused
-	// goal records no conversions, and a deleted one is gone.
-	conversionGoalStatusPaused  = "Paused"
-	conversionGoalStatusDeleted = "Deleted"
+	// conversionGoalStatusActive is the only status a goal can be bid toward: a Paused or
+	// InActive goal records no conversions and a Deleted one is gone. An allow-list, so a status
+	// Microsoft adds later is refused rather than bid toward.
+	conversionGoalStatusActive = "Active"
 
 	// BidSchemeMaxConversions is the conversion-based campaign bid strategy, sent with an
 	// optional TargetCpa.
@@ -156,9 +156,8 @@ func (c *Client) CheckConversionGoals(ctx context.Context, ids []string) error {
 		if numberID(g.Id) != id {
 			return fmt.Errorf("%w: position %d is not the conversion goal asked for", errConversionGoalLookupMalformed, i+1)
 		}
-		switch g.Status {
-		case conversionGoalStatusPaused, conversionGoalStatusDeleted:
-			return domain.PreflightRefusalf("invalid microsoftConfig.%s: conversion goal %s is %s, so it records no conversions to bid toward", FieldConversionGoalIDs, domain.CallerValue(id), g.Status)
+		if g.Status != conversionGoalStatusActive {
+			return domain.PreflightRefusalf("invalid microsoftConfig.%s: conversion goal %s is %s, not Active, so it records no conversions to bid toward", FieldConversionGoalIDs, domain.CallerValue(id), outputCode(g.Status))
 		}
 	}
 	return nil

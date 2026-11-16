@@ -6,8 +6,8 @@ account (no UET tag or goal is created in LFX; marketing ops owns the tag), and
 `microsoftConfig.bidding` gains the `maxConversions` and `targetCpa` strategies.
 
 - `microsoft.ValidateConversionGoalIDs`: at most 20 ids, each a canonical positive int64, no repeat.
-- Before anything is created, one `GetConversionGoalsByIds` read must return every id, none Paused
-  or Deleted; otherwise the job fails with nothing created.
+- Before anything is created, one `GetConversionGoalsByIds` read must return every id, each
+  Active (any other status is refused); otherwise the job fails with nothing created.
 - The goals are set as the new campaign's `GoalIds`; a campaign found by name keeps its goals with
   a warning step. Goals this run set are recorded as `conversionGoalIds` in the result.
 - `{"strategy":"maxConversions"}` and `{"strategy":"targetCpa","targetCpa":25}` are sent as

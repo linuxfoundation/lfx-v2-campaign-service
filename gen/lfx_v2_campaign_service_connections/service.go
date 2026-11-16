@@ -309,13 +309,13 @@ type Service interface {
 	// every ConversionGoalType, which returns every goal of those types), for
 	// picking microsoftConfig.conversionGoalIds (#563). The same call, with ids,
 	// is the check a create makes before anything is created, so every Active goal
-	// listed is one it accepts (a Paused or Deleted goal is listed but refused by
-	// a create). This service never creates a goal or a UET tag: marketing ops
-	// owns both. Sorted by name, ignoring case, then id. Credentials resolve as
-	// for a create: the project's own Microsoft connection, or the LF system
-	// account when the deployment forces it. The Microsoft Advertising account is
-	// shared by every foundation, so the response lists EVERY foundation's goals;
-	// like list-microsoft-ads-remarketing-lists it is therefore gated on
+	// listed is one it accepts (any other status is listed but refused by a
+	// create). This service never creates a goal or a UET tag: marketing ops owns
+	// both. Sorted by name, ignoring case, then id. Credentials resolve as for a
+	// create: the project's own Microsoft connection, or the LF system account
+	// when the deployment forces it. The Microsoft Advertising account is shared
+	// by every foundation, so the response lists EVERY foundation's goals; like
+	// list-microsoft-ads-remarketing-lists it is therefore gated on
 	// global_marketing_ops of {project_id}, not campaign_manager, which also
 	// admits a foundation's executive director. Disabled (400 not supported)
 	// unless MICROSOFT_CONVERSION_GOALS_ENABLED is "true": the read is built from
@@ -2633,7 +2633,7 @@ type MicrosoftAdsConversionGoal struct {
 	// The goal's display name. Not an identifier; may be empty.
 	Name string
 	// Microsoft's Status, verbatim (for example Active or Paused). A create
-	// refuses a Paused or Deleted goal.
+	// refuses any goal that is not Active.
 	Status string
 	// Microsoft's goal Type, verbatim (for example Url or Event); may be empty.
 	Type string
