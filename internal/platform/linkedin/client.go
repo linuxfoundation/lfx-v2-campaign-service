@@ -2315,8 +2315,8 @@ func legacyCampaignName(eventName, nameObjective, project string, in CampaignInp
 
 // targetingSegment composes the Targeting segment (#587): "Retargeting" for the retargeting
 // tactic, otherwise "Prospecting" with any other tactic appended ("Prospecting lookalike"); a
-// later slot's token is appended to either ("Retargeting #2"). The pipeline reads the segment by
-// substring, so the base word is what classifies the campaign.
+// later slot's token is appended to either ("Retargeting #2"). lf-dbt reads an 8-segment name by
+// position and stores this segment as-is, so it must already carry the vocabulary word.
 func targetingSegment(tactic, slot string) string {
 	segment := "Prospecting"
 	if t := nameToken(tactic); strings.EqualFold(t, "retargeting") {

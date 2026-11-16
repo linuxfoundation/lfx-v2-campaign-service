@@ -5,6 +5,7 @@ package twitter
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,7 +14,7 @@ import (
 )
 
 // TestTargetingSegment pins #587's Targeting segment on X: "Retargeting" for the retargeting
-// tactic, so lf-dbt's "%PROSPECT%"-first parser stops filing it as Prospecting.
+// tactic, the vocabulary word lf-dbt stores as-is (it reads an 8-segment name by position).
 func TestTargetingSegment(t *testing.T) {
 	for _, tc := range []struct{ tactic, slot, want string }{
 		{"", "", "Prospecting"},
@@ -47,7 +48,8 @@ func TestCreateCampaign_ReusesALegacyNamedRetargetingCampaign(t *testing.T) {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "campaigns"):
 			// X's name search: only the legacy name exists upstream.
 			if strings.Contains(r.URL.Query().Get("q"), "Prospecting retargeting") {
-				_, _ = w.Write([]byte(`{"data":[{"id":"cmp7","name":"` + legacy + `"}]}`))
+				// Marshalled, not concatenated, so a name needing JSON escaping stays valid JSON.
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]string{{"id": "cmp7", "name": legacy}}})
 				return
 			}
 			_, _ = w.Write([]byte(`{"data":[]}`))

@@ -5,6 +5,7 @@ package linkedin
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -55,8 +56,8 @@ func TestLinkedinRegion(t *testing.T) {
 }
 
 // TestTargetingSegment pins #587's Targeting segment: "Retargeting" for the retargeting tactic,
-// so lf-dbt's "%PROSPECT%"-first parser stops filing it as Prospecting; every other tactic keeps
-// the "Prospecting <tactic>" shape.
+// the vocabulary word lf-dbt stores as-is (it reads an 8-segment name by position); every other
+// tactic keeps the "Prospecting <tactic>" shape.
 func TestTargetingSegment(t *testing.T) {
 	for _, tc := range []struct{ tactic, slot, want string }{
 		{"", "", "Prospecting"},
@@ -112,7 +113,11 @@ func legacyFallbackServer(t *testing.T, groupExists bool, existingCampaign strin
 				searches++
 				mu.Unlock()
 				if existingCampaign != "" {
-					_, _ = io.WriteString(w, `{"elements":[{"name":"`+existingCampaign+`","status":"PAUSED","id":"urn:li:sponsoredCampaign:777","campaignGroup":"urn:li:sponsoredCampaignGroup:100"}],"metadata":{"nextPageToken":""}}`)
+					// Marshalled, not concatenated, so a name needing JSON escaping stays valid JSON.
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"elements": []map[string]string{{"name": existingCampaign, "status": "PAUSED", "id": "urn:li:sponsoredCampaign:777", "campaignGroup": "urn:li:sponsoredCampaignGroup:100"}},
+						"metadata": map[string]string{"nextPageToken": ""},
+					})
 					return
 				}
 				_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
