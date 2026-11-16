@@ -84,6 +84,15 @@ func NormalizeTweetVariants(texts []string, tweetID, tweetText string) ([]string
 			return nil, &TargetingError{Field: FieldTweetVariants, Msg: fmt.Sprintf("entry %d repeats entry %d's tweetText", i, j)}
 		}
 		seen[key] = i
+		// The length checks a config alone can decide, so preflight refuses them synchronously:
+		// copy over X's cap on its own, or copy with no URL of its own, which gets the
+		// destination URL appended (counted at tcoURLWeight plus the joining space).
+		// composeTweetText repeats the exact check at create, when the destination URL is known.
+		if n := weightedTweetLen(t); n > maxTweetWeightedChars {
+			return nil, &TargetingError{Field: FieldTweetVariants, Msg: fmt.Sprintf("entry %d tweetText has weighted length %d, over X's %d-character limit", i, n, maxTweetWeightedChars)}
+		} else if len(findTweetURLRuns(t)) == 0 && n+1+tcoURLWeight > maxTweetWeightedChars {
+			return nil, &TargetingError{Field: FieldTweetVariants, Msg: fmt.Sprintf("entry %d tweetText has weighted length %d; with the destination URL appended (%d) it exceeds X's %d-character limit", i, n, 1+tcoURLWeight, maxTweetWeightedChars)}
+		}
 		out = append(out, t)
 	}
 	return out, nil

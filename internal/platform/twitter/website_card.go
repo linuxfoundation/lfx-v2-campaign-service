@@ -63,7 +63,8 @@ type WebsiteCardInput struct {
 }
 
 // NormalizeWebsiteCardHeadline applies the gap 6 rule (#564): the headline is trimmed and must be
-// 1-70 characters with no control character. Pure, so the dispatcher's synchronous preflight and
+// 1-70 characters with no control character, and no link carrying a credential query parameter
+// (rejectCredentialQueryParamsInText, the tweet text's screen). Pure, so the dispatcher's synchronous preflight and
 // CreateCampaign apply the same rule.
 func NormalizeWebsiteCardHeadline(h string) (string, error) {
 	t := strings.TrimSpace(h)
@@ -72,6 +73,11 @@ func NormalizeWebsiteCardHeadline(h string) (string, error) {
 	}
 	if utf8.RuneCountInString(t) > MaxWebsiteCardHeadline || strings.IndexFunc(t, unicode.IsControl) >= 0 {
 		return "", &TargetingError{Field: FieldWebsiteCard, Msg: fmt.Sprintf("headline must be at most %d characters with no control character", MaxWebsiteCardHeadline)}
+	}
+	// The headline is published as the card's title, so it gets the tweet text's credential
+	// screen: a link in it carrying a token, key or password is refused before any create.
+	if err := rejectCredentialQueryParamsInText(t); err != nil {
+		return "", &TargetingError{Field: FieldWebsiteCard, Msg: "headline: " + err.Error()}
 	}
 	return t, nil
 }

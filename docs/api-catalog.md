@@ -3421,7 +3421,9 @@ variants?: {tweetText: string}[] — One promoted tweet per variant (#564 gap 10
                                   with `tweetId` or a top-level `tweetText`. Each variant is authored
                                   as its own nullcast tweet (tweetText's composition, 280-weighted
                                   length and credential-screen rules, destination tagged
-                                  `utm_content=variant-N`) and promoted on the ONE line item —
+                                  `utm_content=variant-N`; copy over 280 on its own, or with no URL
+                                  of its own and over 280 once the destination is appended, is a
+                                  synchronous 400) and promoted on the ONE line item —
                                   authored then promoted, variant by variant. `imageAssetId` rides on
                                   every variant. The result records every promoted tweet:
                                   `PromotedTweets: [{Variant, TweetID, Authored, PromotedTweetID,
@@ -3443,7 +3445,8 @@ variants?: {tweetText: string}[] — One promoted tweet per variant (#564 gap 10
                                   synchronous 400 `invalid campaign config: twitterConfig.variants:
                                   …`. Not role-gated.
 card?: {headline: string}        — Website card (#564 gap 6). `headline` (the only key) is trimmed,
-                                  1-70 characters, no control character. Needs media, `imageAssetId`
+                                  1-70 characters, no control character, no link carrying a
+                                  credential query parameter (the tweet text's screen). Needs media, `imageAssetId`
                                   or `videoAssetId` (never both; the card's MEDIA component carries
                                   its media_key), and an authored tweet (`tweetText` or `variants`,
                                   never `tweetId`). Created ONCE, after the line item and its
