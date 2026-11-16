@@ -69,6 +69,7 @@ type Endpoints struct {
 	SearchMetaTargetingOptions     goa.Endpoint
 	ListMetaLeadForms              goa.Endpoint
 	ListRedditAdsCustomAudiences   goa.Endpoint
+	ListRedditAdsPixels            goa.Endpoint
 	ListTwitterAdsCustomAudiences  goa.Endpoint
 	GetMetaAdsAudience             goa.Endpoint
 	GetTwitterAdsAudience          goa.Endpoint
@@ -161,6 +162,7 @@ func NewEndpoints(s Service) *Endpoints {
 		SearchMetaTargetingOptions:     NewSearchMetaTargetingOptionsEndpoint(s, a.JWTAuth),
 		ListMetaLeadForms:              NewListMetaLeadFormsEndpoint(s, a.JWTAuth),
 		ListRedditAdsCustomAudiences:   NewListRedditAdsCustomAudiencesEndpoint(s, a.JWTAuth),
+		ListRedditAdsPixels:            NewListRedditAdsPixelsEndpoint(s, a.JWTAuth),
 		ListTwitterAdsCustomAudiences:  NewListTwitterAdsCustomAudiencesEndpoint(s, a.JWTAuth),
 		GetMetaAdsAudience:             NewGetMetaAdsAudienceEndpoint(s, a.JWTAuth),
 		GetTwitterAdsAudience:          NewGetTwitterAdsAudienceEndpoint(s, a.JWTAuth),
@@ -251,6 +253,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.SearchMetaTargetingOptions = m(e.SearchMetaTargetingOptions)
 	e.ListMetaLeadForms = m(e.ListMetaLeadForms)
 	e.ListRedditAdsCustomAudiences = m(e.ListRedditAdsCustomAudiences)
+	e.ListRedditAdsPixels = m(e.ListRedditAdsPixels)
 	e.ListTwitterAdsCustomAudiences = m(e.ListTwitterAdsCustomAudiences)
 	e.GetMetaAdsAudience = m(e.GetMetaAdsAudience)
 	e.GetTwitterAdsAudience = m(e.GetTwitterAdsAudience)
@@ -1524,6 +1527,30 @@ func NewListRedditAdsCustomAudiencesEndpoint(s Service, authJWTFn security.AuthJ
 			return nil, err
 		}
 		return s.ListRedditAdsCustomAudiences(ctx, p)
+	}
+}
+
+// NewListRedditAdsPixelsEndpoint returns an endpoint function that calls the
+// method "list-reddit-ads-pixels" of service
+// "lfx-v2-campaign-service-connections".
+func NewListRedditAdsPixelsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ListRedditAdsPixelsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ListRedditAdsPixels(ctx, p)
 	}
 }
 

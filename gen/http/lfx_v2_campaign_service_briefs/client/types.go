@@ -5598,18 +5598,61 @@ type CampaignCreateInputRequestBody struct {
 	// blank or invalid entry, an overlap, a list over its cap, a value that is not
 	// an array of strings (null reads as absent), or either list while the flag is
 	// off, is refused with 400 "invalid campaign config: redditConfig.<field>:
-	// ..." before any job exists. X TARGETING (#564): twitterConfig takes
-	// `geoTargets` (ISO 3166-1 alpha-2 country codes, at most 50, uppercased and
-	// de-duplicated) and `languages` (X language values such as en, at most 20,
-	// lowercased and de-duplicated). Before anything is created each country is
-	// resolved with X's GET targeting_criteria/locations (location_type COUNTRIES,
-	// exactly one country-level entry required) and the languages are checked
-	// against GET targeting_criteria/languages; the new line item then gets one
-	// LOCATION or LANGUAGE criterion (operator EQ) per value, after the line item
-	// and before the promoted tweet. A value X does not offer, or a lookup that
-	// cannot be read, fails the job with nothing created; a criterion that fails
-	// stops the create before any tweet, with the PAUSED campaign and line item
-	// reported. Such a partial create is retained: repeating the request answers
+	// ..." before any job exists. REDDIT PLACEMENTS (#549): redditConfig takes
+	// `placements` (FEED, COMMENTS_PAGE), `platforms` (DESKTOP, MOBILE_NATIVE,
+	// MOBILE_WEB) and `expandTargeting` (boolean), sent as the ad group's
+	// targeting.locations, targeting.platforms and targeting.expand_targeting on
+	// every ad-group attempt. Values are case-insensitive, de-duplicated and sent
+	// upper-case in that fixed order. Omitted (or an empty list) keeps the
+	// long-standing default: both placements, platforms ALL, expansion true; ALL
+	// is not an accepted entry. All three are OFF unless
+	// REDDIT_PLACEMENT_TARGETING_ENABLED is exactly "true". A blank or unknown
+	// entry, a list that is not an array of strings or an expandTargeting that is
+	// not a boolean (null reads as absent), or any of the three set while the flag
+	// is off (expandTargeting: true included), is refused with 400 "invalid
+	// campaign config: redditConfig.<field>: ..." before any job exists. REDDIT
+	// DAILY BUDGET (#549): redditConfig.budgetType is the pacing of budgetUsd:
+	// "lifetime" (the default, goal_type LIFETIME_SPEND, as before) or "daily"
+	// (goal_type DAILY_SPEND, so budgetUsd is a per-day cap), case-insensitive;
+	// the campaign row records the same budget_type. It is accepted only while the
+	// deployment sets REDDIT_DAILY_BUDGET_ENABLED to "true". An unknown value, an
+	// explicit null, an empty or non-string value, a case variant of the key, or
+	// the field (either value) while the flag is off is refused synchronously with
+	// 400 "invalid campaign config: redditConfig.budgetType: ..." before any job
+	// exists. REDDIT GENDER, LANGUAGE AND DAYPARTING (#549): redditConfig.gender
+	// ("female" or "male", sent as the ad group's targeting.gender),
+	// redditConfig.languages (ISO 639-1 codes from Reddit's enum, sent as
+	// targeting.languages) and redditConfig.schedule ([{startDay, startHour,
+	// endDay, endHour}], days 0-6 from Sunday and hours 0-23, at most 50 windows,
+	// sent as the campaign's schedule, which replaces every ad group's under
+	// campaign budget optimization) are accepted only while the deployment sets
+	// REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED to "true". A wrong JSON type, an
+	// unknown or blank value, a schedule window that is incomplete, out of range,
+	// starts where it ends or repeats another, or any of the three while the flag
+	// is off is refused synchronously with 400 "invalid campaign config:
+	// redditConfig.<field>: ..." before any job exists. REDDIT ONE AD PER VARIANT
+	// (#549): while the deployment sets REDDIT_AD_PER_VARIANT_ENABLED to "true", a
+	// create that authors its post (redditConfig.imageUrl or imageAssetId, no
+	// postUrl) with 2 to 5 redditConfig.variants authors one promoted post (that
+	// variant's headline, utm_content=variant-N) and one ad per variant; the
+	// campaign result records every ad id as adIds (adId stays the first) and
+	// variantAds, a failed variant leaves the others in place and marks the
+	// campaign created_degraded with a step naming the failed variants, and the
+	// status toggle cascades over every ad. More than 5 variants, or a blank or
+	// over-300-character variant headline, is refused synchronously with 400
+	// "invalid campaign config: redditConfig.variants...: ..." before any job
+	// exists. X TARGETING (#564): twitterConfig takes `geoTargets` (ISO 3166-1
+	// alpha-2 country codes, at most 50, uppercased and de-duplicated) and
+	// `languages` (X language values such as en, at most 20, lowercased and
+	// de-duplicated). Before anything is created each country is resolved with X's
+	// GET targeting_criteria/locations (location_type COUNTRIES, exactly one
+	// country-level entry required) and the languages are checked against GET
+	// targeting_criteria/languages; the new line item then gets one LOCATION or
+	// LANGUAGE criterion (operator EQ) per value, after the line item and before
+	// the promoted tweet. A value X does not offer, or a lookup that cannot be
+	// read, fails the job with nothing created; a criterion that fails stops the
+	// create before any tweet, with the PAUSED campaign and line item reported.
+	// Such a partial create is retained: repeating the request answers
 	// reconciliation required rather than re-dispatching, so an operator completes
 	// the targeting in X Ads Manager. When a create does find its line item by
 	// name, it changes that line item's targeting only if X reports it PAUSED,

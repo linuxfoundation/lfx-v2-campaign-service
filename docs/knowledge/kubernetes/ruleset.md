@@ -71,9 +71,9 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    `:projectId` slug (see "Slug-to-UID resolution" below). A single rule covers
    all families because they share the identical authorization. The exceptions are
    `google-ads/conversion-actions`, `google-ads/audiences`, `google-ads/user-lists`,
-   `reddit-ads/custom-audiences`, `twitter-ads/custom-audiences`, `linkedin-ads/audiences`,
-   `linkedin-ads/conversions`, `meta-ads/custom-audiences` and `meta-ads/lead-forms`, ruled by
-   `marketing-ops-api` below.
+   `reddit-ads/custom-audiences`, `reddit-ads/pixels`, `twitter-ads/custom-audiences`,
+   `linkedin-ads/audiences`, `linkedin-ads/conversions`, `meta-ads/custom-audiences` and
+   `meta-ads/lead-forms`, ruled by `marketing-ops-api` below.
    The Meta targeting search, `meta-ads/targeting-search` (#550), stays here: it answers Meta's own
    taxonomy, the same for every token, and `TestMetaTargetingSearchIsACampaignManagerRead` pins it
    to `project-api` and off `marketing-ops-api`.
@@ -81,6 +81,7 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    `GET /projects/:projectId/google-ads/audiences` (#496),
    `GET /projects/:projectId/google-ads/user-lists`,
    `GET /projects/:projectId/reddit-ads/custom-audiences` (#549),
+   `GET /projects/:projectId/reddit-ads/pixels` (#549 gap 10),
    `GET /projects/:projectId/twitter-ads/custom-audiences` (#564),
    `GET /projects/:projectId/linkedin-ads/audiences`,
    `GET /projects/:projectId/linkedin-ads/conversions` (#552),
