@@ -23,19 +23,21 @@ func (t *AudienceTargeting) subCountryGeo() bool {
 }
 
 // geoLocationMeta is one location of Meta's geo-location metadata read (Targeting Search,
-// `type=adgeolocationmeta`): the key that was asked about, its type and the ISO country it lies in.
+// `type=adgeolocationmeta`): the key that was asked about, its type, the ISO country it lies in and,
+// for a city, the region it lies in (Meta renders region_id as a JSON number).
 type geoLocationMeta struct {
-	Key         string `json:"key"`
-	Name        string `json:"name"`
-	Type        string `json:"type"`
-	CountryCode string `json:"country_code"`
+	Key         string  `json:"key"`
+	Name        string  `json:"name"`
+	Type        string  `json:"type"`
+	CountryCode string  `json:"country_code"`
+	RegionID    graphID `json:"region_id"`
 }
 
 // checkGeoLocations proves, before the first mutating call, that every region and city t names is
 // a location Meta knows, and that its parent country passes the same rules a country target does:
 // ISO, not sanctioned or otherwise ineligible (metaIneligibleCountries), not a regulated market
 // (regulatedCountries), not already targeted as a whole country (Meta refuses overlapping
-// locations), and, when it is an EU DSA territory, covered by the DSA disclosures. One
+// locations; for the same reason a city inside a region t also names is refused), and, when it is an EU DSA territory, covered by the DSA disclosures. One
 // GET /search?type=adgeolocationmeta&regions=[…]&cities=[…] answers every key. A failed read or a
 // key left unanswered is an error; a location that breaks a rule is a refusal; either way nothing is
 // created. It returns the parent countries in first-seen order (the campaign name's region segment
@@ -75,6 +77,10 @@ func (c *Client) checkGeoLocations(ctx context.Context, t *AudienceTargeting, co
 	for _, cc := range countries {
 		targeted[cc] = true
 	}
+	regions := make(map[string]bool, len(t.Regions))
+	for _, key := range t.Regions {
+		regions[key] = true
+	}
 	var parents []string
 	seen := map[string]bool{}
 	for _, l := range []struct {
@@ -101,6 +107,8 @@ func (c *Client) checkGeoLocations(ctx context.Context, t *AudienceTargeting, co
 				return nil, domain.PreflightRefusalf("meta targeting: %s %s is in %s, a market that requires a regional compliance declaration in Meta Ads Manager and is excluded from API targeting; nothing was created", l.kind, domain.CallerValue(key), cc)
 			case targeted[cc]:
 				return nil, domain.PreflightRefusalf("meta targeting: %s %s is in %s, which geoTargets already targets as a whole country; Meta refuses overlapping locations, so remove one; nothing was created", l.kind, domain.CallerValue(key), cc)
+			case l.kind == "city" && regions[strings.TrimSpace(string(loc.RegionID))]:
+				return nil, domain.PreflightRefusalf("meta targeting: city %s is in region %s, which targeting.regions already targets; Meta refuses overlapping locations, so remove one; nothing was created", domain.CallerValue(key), domain.CallerValue(string(loc.RegionID)))
 			case dsaTerritories[cc] && !dsaDisclosed:
 				return nil, domain.PreflightRefusalf("meta targeting: %s %s is in %s, an EU territory, so dsaBeneficiary and dsaPayor are required; nothing was created", l.kind, domain.CallerValue(key), cc)
 			}

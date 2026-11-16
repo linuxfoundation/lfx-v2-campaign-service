@@ -429,10 +429,11 @@ func (c *Client) checkCustomAudiences(ctx context.Context, accountID string, t *
 // interestValidation is one row of Meta's interest validation read: GET
 // /search?type=adinterestvalid&interest_fbid_list=[…] (Targeting Search reference, "Validation").
 // Meta answers a row per requested id, with valid false for an id it no longer offers (detailed
-// targeting options are retired regularly).
+// targeting options are retired regularly). Meta renders id as a JSON number there, so it decodes
+// through graphID.
 type interestValidation struct {
-	ID    string `json:"id"`
-	Valid *bool  `json:"valid"`
+	ID    graphID `json:"id"`
+	Valid *bool   `json:"valid"`
 }
 
 // checkInterests proves, before the first mutating call, that every interest t names is one Meta
@@ -461,8 +462,8 @@ func (c *Client) checkInterests(ctx context.Context, t *AudienceTargeting) error
 	valid := make(map[string]bool, len(*page.Data))
 	answered := make(map[string]bool, len(*page.Data))
 	for _, row := range *page.Data {
-		answered[row.ID] = true
-		valid[row.ID] = row.Valid != nil && *row.Valid
+		answered[string(row.ID)] = true
+		valid[string(row.ID)] = row.Valid != nil && *row.Valid
 	}
 	for _, id := range t.Interests {
 		if !answered[id] {

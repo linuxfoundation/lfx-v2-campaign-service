@@ -513,8 +513,8 @@ this write accepts.
 
 ## Campaign status toggle
 
-`ActivateCampaignHoldingAdSet(ctx, campaignID, adSetID)` is the ACTIVATE cascade below with the
-ad set's own POST skipped (its ads and the campaign are still activated, campaign last; every
+`ActivateCampaignHolding(ctx, campaignID, adSetID, holdAdSet, heldAdIDs)` with `holdAdSet` true is
+the ACTIVATE cascade below with the ad set's own POST skipped (its ads and the campaign are still activated, campaign last; every
 other rule shared through `updateCampaignTree`). The dispatcher uses it when the campaign row
 holds a deliberate pause of that ad set (LFXV2-2665, see
 [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md)).
@@ -1136,7 +1136,10 @@ account preflight, before any write, `checkLeadForm` reads `GET /{form}?fields=i
 form of another Page or not ACTIVE is a refusal; a failed read or an answer that does not name the
 form and its Page is an error. Without a form, leads keeps the interim traffic mapping and reads
 nothing. The dispatcher gates it behind `META_LEAD_FORMS_ENABLED` (default off) in
-`PreflightCreate` and `Dispatch` and type-checks it with the `metaStringConfigKeys`. Not verified
+`PreflightCreate` and `Dispatch` and type-checks it with the `metaStringConfigKeys`;
+`service.MetaMarketingOpsInputs` puts any value but null or `""` behind `global_marketing_ops`,
+because for a project without its own connection the Page is the shared LF Page that holds every
+foundation's forms (the same reason the form list is gated). Not verified
 live: whether the connection's token may read the form node (it may need `pages_manage_ads` or
 `leads_retrieval`), the lead-ad CTA subset, the ON_AD ad set payload, and lead ads on the Audience
 Network placement.
@@ -1234,7 +1237,8 @@ and the Advantage+ flag is sent explicitly (0 unless the caller said `true`). Af
 preflight and before the campaign create, `checkInterests` sends every id in one
 `GET /search?type=adinterestvalid&interest_fbid_list=[…]`: a row with `valid` false (or absent) is
 a refusal, and a failed read or an answer missing an id is an error, so a retired interest cannot
-orphan a campaign at the ad set. Its own flag, `META_INTEREST_TARGETING_ENABLED` (default off),
+orphan a campaign at the ad set. A row's `id` decodes through `graphID`, so Meta's JSON-number ids
+match the caller's decimal strings. Its own flag, `META_INTEREST_TARGETING_ENABLED` (default off),
 gates it like the locale flag; interests are Meta's taxonomy, not an account resource, so they are
 not behind `global_marketing_ops`. Not verified live: the validation read's answer shape and the
 `flexible_spec` payload.
@@ -1266,7 +1270,8 @@ refusal is skipped when a region or city remains. After the account preflight, b
 missing `data` or a failed read is an error; a key of the other `type`, or a parent country that is
 in `metaIneligibleCountries` (the sanctioned-country check), in `regulatedCountries`, already a
 country target (Meta refuses overlapping locations) or a DSA territory without both disclosures is a
-refusal. Its own flag, `META_REGION_TARGETING_ENABLED` (default off), gates it like the locale flag;
+refusal, and so is a city whose `region_id` (decoded through `graphID`) is one of the request's
+regions, the same overlap one level down. Its own flag, `META_REGION_TARGETING_ENABLED` (default off), gates it like the locale flag;
 not behind `global_marketing_ops`. Not built: a city radius (Meta's default radius applies) and zip
 codes. Not verified live: the lookup's answer shape, whether Meta refuses (rather than merges) an
 overlap. The settings readback reports the regions and cities as `regions` / `cities` while

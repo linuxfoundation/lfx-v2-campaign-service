@@ -129,7 +129,7 @@ campaign writer through the claim.
 Product decision: **a deliberate pause of the campaign's recorded ad set made here survives a
 campaign pause and resume.** `toggle-campaign-status` ACTIVE on Meta normally cascades to the
 recorded ad set and its ads (`UpdateCampaignAndChildrenStatus`); when the row holds a pause of
-that ad set it instead calls `meta.Client.ActivateCampaignHoldingAdSet`, which activates the ads
+that ad set it instead calls `meta.Client.ActivateCampaignHolding` with the ad set held, which activates the ads
 and then the campaign (last, as always) but never posts the ad set. Its ads are activated so a
 later resume of the ad set alone is enough to serve; the paused ad set gates them meanwhile. A
 campaign PAUSE cascades exactly as before.
@@ -137,7 +137,7 @@ campaign PAUSE cascades exactly as before.
 **The record is checked against Meta before it is honoured.** It is this service's record, not
 Meta's: an UNCONFIRMED pause that never applied, or an ad set re-activated in Ads Manager, leaves
 it over an ACTIVE ad set, and a holding activation would then switch on the ads and the campaign
-over a serving ad set. So before `ActivateCampaignHoldingAdSet` the dispatcher READS the held ad
+over a serving ad set. So before a holding activation the dispatcher READS the held ad
 set (`GET /{ad_set_id}?fields=id,campaign_id,account_id,status`, `verifyMetaHeldAdSetPaused`). Its
 CONFIGURED status decides, because an ad set under a paused campaign is effectively
 `CAMPAIGN_PAUSED` whatever it is configured to, and the configured status is what serves once the

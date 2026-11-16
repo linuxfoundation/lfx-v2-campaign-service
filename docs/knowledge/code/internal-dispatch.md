@@ -2565,7 +2565,7 @@ recorded one, before any request; a non-canonical stored campaign id is
 `meta.ClassifyAdSetWrite`: unconfirmed → `unconfirmedToggleError`; not-sent and rejected →
 ordinary errors. `ReadMetaAdSets` marks `DeliberatelyPaused` on the recorded ad set when the
 row holds a deliberate pause of it, and `ToggleStatus` ACTIVATE on such a row calls
-`ActivateCampaignHoldingAdSet` (ads and campaign activated, the ad set left PAUSED) instead of
+`ActivateCampaignHolding` with the ad set held (ads and campaign activated, the ad set left PAUSED) instead of
 the full cascade (LFXV2-2665 decision, 2026-10-13). It first READS the held ad set
 (`verifyMetaHeldAdSetPaused`) under the connection's account, or the campaign's creation account
 when the selection was cleared: only a configured PAUSED/DELETED/ARCHIVED one proceeds. ACTIVE is

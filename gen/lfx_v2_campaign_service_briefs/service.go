@@ -204,10 +204,12 @@ type Service interface {
 	// REDDIT_CUSTOM_AUDIENCES_ENABLED is not "true" on this deployment. META
 	// SHARED-ACCOUNT INPUTS: likewise a metaConfig.targeting that sets
 	// customAudiences or excludedCustomAudiences (any non-empty list) names custom
-	// audiences of the Meta ad account every foundation shares and requires
-	// global_marketing_ops on this project (403 naming them, 503 when the check
-	// cannot be made); age, gender and advantageAudience are not gated. An invalid
-	// metaConfig.targeting, or any targeting block while
+	// audiences of the Meta ad account every foundation shares, and a
+	// metaConfig.leadFormId (any value but null or "") names an Instant Form of
+	// the connection's Page, the shared LF Page for every project without its own
+	// connection; either requires global_marketing_ops on this project (403 naming
+	// them, 503 when the check cannot be made); age, gender and advantageAudience
+	// are not gated. An invalid metaConfig.targeting, or any targeting block while
 	// META_AUDIENCE_TARGETING_ENABLED is not "true" on the deployment, is a
 	// synchronous 400 "invalid campaign config: metaConfig.targeting..."; a block
 	// that sets only targeting.locales, targeting.devicePlatforms,

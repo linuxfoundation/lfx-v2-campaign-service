@@ -548,7 +548,9 @@ app:
     # Instant Form that turns the leads objective into an OUTCOME_LEADS lead ad
     # (LEAD_GENERATION ad set, the form on every creative). The form is read
     # before anything is created and must be an active form of the connection's
-    # Page; this service never creates a form or accepts lead terms. Off by
+    # Page; this service never creates a form or accepts lead terms. Sending it
+    # needs global_marketing_ops (the shared LF Page holds every foundation's
+    # forms). Off by
     # default until the payload is verified against a live ad account; set
     # exactly "true" in lfx-v2-argocd. Any value other than "true" is treated as
     # off.

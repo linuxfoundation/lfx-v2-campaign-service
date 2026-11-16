@@ -240,6 +240,21 @@ func TestCreateCampaign_InterestsAreValidatedThenSentAsFlexibleSpec(t *testing.T
 	}
 }
 
+// TestCreateCampaign_InterestValidationAcceptsNumericIDs: Meta's adinterestvalid answer renders
+// each id as a JSON number; it must match the caller's decimal-string ids, not fail the decode.
+func TestCreateCampaign_InterestValidationAcceptsNumericIDs(t *testing.T) {
+	is := newInterestServer(t, `{"data":[{"name":"Kubernetes","valid":true,"id":6003},{"name":"DevOps","valid":true,"id":6004}]}`)
+	defer is.Close()
+	in := metaFieldInput()
+	in.Targeting = &AudienceTargeting{Interests: []string{"6003", "6004"}}
+	if _, err := biddingClient(is.URL, 100).CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if _, posts, _ := is.snapshot(); len(posts) == 0 {
+		t.Fatal("nothing was created")
+	}
+}
+
 // TestCreateCampaign_InvalidOrUnverifiableInterestCreatesNothing: an interest Meta marks invalid is
 // a refusal, and a failed read or an answer missing an id is an error; either way no POST is sent.
 func TestCreateCampaign_InvalidOrUnverifiableInterestCreatesNothing(t *testing.T) {

@@ -8,7 +8,7 @@ These rules apply to every endpoint below and reflect platform idioms ([entity-d
 
 1. **Everything is nested under a project.** No new top-level FGA types were introduced for this service — only new *relations against `project`*. Per [entity-design.md](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/docs/entity-design.md), a resource may only be a root API path if it is a top-level FGA type. Consequently **every** campaign resource is nested under `/projects/{projectId}/…`. Briefs and campaigns are subordinate to a project (campaigns are further subordinate to a brief).
 2. **Every endpoint declares its gating FGA relation.** The service defines no new object types; it relies on the marketing relations on `project` (defined in [`lfx-v2-helm/.../files/model.fga`](https://github.com/linuxfoundation/lfx-v2-helm/blob/main/charts/lfx-platform/files/model.fga#L36-L43)):
-   - **`global_marketing_ops`** — the LF marketing team, written on every project. Gates the Google conversion-action, audience and user lists, the Reddit, Meta and X custom-audience lists and the LinkedIn ad-segment and conversion-rule pickers on its own.
+   - **`global_marketing_ops`** — the LF marketing team, written on every project. Gates the Google conversion-action, audience and user lists, the Reddit, Meta and X custom-audience lists, the Meta Instant Form list and the LinkedIn ad-segment and conversion-rule pickers on its own.
    - **`campaign_manager`** = `executive_director or global_marketing_ops` — manages campaigns/briefs/connections for a project. Does *not* cascade from parent; scoped to the project it is granted on.
 
    **Every endpoint in this service is gated on `campaign_manager`** — both reads and writes — **except nine**: `GET /projects/{projectId}/google-ads/conversion-actions`, `GET /projects/{projectId}/google-ads/audiences` and `GET /projects/{projectId}/google-ads/user-lists` list every foundation's conversion actions, audiences and user lists on the shared Google Ads customer, `GET /projects/{projectId}/reddit-ads/custom-audiences` lists every foundation's custom audiences on the shared Reddit ad account (#549), `GET /projects/{projectId}/twitter-ads/custom-audiences` lists every foundation's custom audiences on the shared X ad account (#564), `GET /projects/{projectId}/linkedin-ads/audiences` and `GET /projects/{projectId}/linkedin-ads/conversions` list the ad segments and conversion rules on the LinkedIn ad account a create uses, which is the LF system account for every project without its own connection (#552), `GET /projects/{projectId}/meta-ads/custom-audiences` lists every foundation's custom audiences on the shared Meta ad account (#550), `GET /projects/{projectId}/meta-ads/lead-forms` lists the Instant Forms of the Page on the Meta connection a create uses, the shared LF connection for every project without its own (#550), and `campaign_manager` also includes the project's `executive_director`, a foundation-scoped role. Those reads are gated on `global_marketing_ops` of the project instead: the LF marketing team, granted on every project (#486). There is no read-only view of campaigns: the Campaigns page is only ever accessed by campaign managers, who both read and write. The `marketing_auditor` relation applies to the separate **Marketing Insights** analytics dashboard (Snowflake-backed), which is not served by this service, so it does **not** appear in any ruleset here.
@@ -2993,8 +2993,11 @@ leadFormId?: string             — OPTIONAL existing Meta Instant Form id (#550
                                   exactly "true". Before anything is created the form is read
                                   (`GET /{form}?fields=id,page,status`): a form of another Page
                                   or not ACTIVE, a read that fails, or an answer without the form
-                                  and its Page fails the job with nothing created. Not gated by
-                                  global_marketing_ops (the connection's own Page).
+                                  and its Page fails the job with nothing created. Any value
+                                  but null or "" needs global_marketing_ops on the project (403;
+                                  503 when the check cannot be made): for a project without its
+                                  own connection the Page is the shared LF Page, which holds
+                                  every foundation's forms, so it is gated like the form list.
 targeting?: object              — OPTIONAL audience targeting on the ad set (#550). Refused
                                   with a 400 before any job exists unless the deployment sets
                                   META_AUDIENCE_TARGETING_ENABLED to exactly "true" (not yet
@@ -3053,7 +3056,8 @@ targeting?: object              — OPTIONAL audience targeting on the ad set (#
                                   &cities=[…]`; a key in a sanctioned or ineligible country (the
                                   geoTargets list's), a regulated market (SG, TW, KR), a country
                                   geoTargets already targets (Meta refuses overlapping
-                                  locations) or an EU territory without dsaBeneficiary and
+                                  locations), a city inside one of the regions listed, or an
+                                  EU territory without dsaBeneficiary and
                                   dsaPayor, a key of the other type, a read that fails, or a key
                                   left unanswered or without a country fails the job with
                                   nothing created. Refused with a 400 unless

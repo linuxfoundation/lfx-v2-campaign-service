@@ -166,6 +166,39 @@ func TestCreateCampaign_UnusableRegionOrCityCreatesNothing(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_CityInsideATargetedRegionCreatesNothing: Meta refuses a city that lies inside
+// a region the same ad set targets, so the overlap is refused before the campaign POST. A city in a
+// different region is still accepted.
+func TestCreateCampaign_CityInsideATargetedRegionCreatesNothing(t *testing.T) {
+	const answer = `{"data":{"regions":{"3847":{"key":"3847","type":"region","country_code":"US"}},
+		"cities":{"2420379":{"key":"2420379","name":"San Francisco","type":"city","country_code":"US","region_id":%s}}}}`
+	t.Run("overlap", func(t *testing.T) {
+		gs := newGeoServer(t, strings.Replace(answer, "%s", "3847", 1))
+		defer gs.Close()
+		in := metaFieldInput()
+		in.GeoTargets = nil
+		in.Targeting = &AudienceTargeting{Regions: []string{"3847"}, Cities: []string{"2420379"}}
+		res, err := biddingClient(gs.URL, 100).CreateCampaign(context.Background(), in)
+		var refusal *domain.PreflightRefusal
+		if res != nil || !errors.As(err, &refusal) || !strings.Contains(err.Error(), `city "2420379" is in region "3847", which targeting.regions already targets`) {
+			t.Fatalf("CreateCampaign = %+v, %v; want the overlap refusal", res, err)
+		}
+		if _, posts, _ := gs.snapshot(); len(posts) != 0 {
+			t.Fatalf("posts = %v, want none", posts)
+		}
+	})
+	t.Run("another region", func(t *testing.T) {
+		gs := newGeoServer(t, strings.Replace(answer, "%s", "3843", 1))
+		defer gs.Close()
+		in := metaFieldInput()
+		in.GeoTargets = nil
+		in.Targeting = &AudienceTargeting{Regions: []string{"3847"}, Cities: []string{"2420379"}}
+		if _, err := biddingClient(gs.URL, 100).CreateCampaign(context.Background(), in); err != nil {
+			t.Fatalf("CreateCampaign: %v", err)
+		}
+	})
+}
+
 // TestCreateCampaign_EUCityWithDisclosures: an EU city is accepted when both DSA disclosures are
 // supplied.
 func TestCreateCampaign_EUCityWithDisclosures(t *testing.T) {

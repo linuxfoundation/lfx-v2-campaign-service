@@ -1307,19 +1307,10 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 	return c.updateCampaignTree(ctx, campaignID, adSetID, status, false, nil)
 }
 
-// ActivateCampaignHoldingAdSet is the ACTIVATE cascade of UpdateCampaignAndChildrenStatus with
-// ONE difference: the ad set itself is NOT posted, so an ad set a user deliberately paused stays
-// PAUSED (LFXV2-2665 product decision, 2026-10-13). Its ads ARE activated and the campaign is
-// flipped last, exactly as in the full cascade: a paused ad set gates its ads, so nothing serves
-// beneath it, and a later resume of that ad set alone is then enough to serve. Every other rule
-// is the full cascade's — ids validated before any request, discovery before any mutation, the
-// zero-ads refusal, and the same definite/Unconfirmed classification.
-func (c *Client) ActivateCampaignHoldingAdSet(ctx context.Context, campaignID, adSetID string) error {
-	return c.updateCampaignTree(ctx, campaignID, adSetID, StatusActive, true, nil)
-}
-
-// ActivateCampaignHolding is the ACTIVATE cascade with both holds (#550, gap 14): holdAdSet leaves
-// the ad set's own status untouched (ActivateCampaignHoldingAdSet), and every discovered ad whose
+// ActivateCampaignHolding is the ACTIVATE cascade with both holds (#550, gap 14). holdAdSet leaves
+// the ad set's own status untouched, so an ad set a user deliberately paused stays PAUSED
+// (LFXV2-2665 product decision, 2026-10-13): its ads are still activated and the campaign flipped
+// last, so a later resume of that ad set alone is enough to serve. And every discovered ad whose
 // id is in heldAdIDs — an ad an operator paused through the per-ad lever, still on record — is NOT
 // posted, so it stays PAUSED while its siblings, the ad set (unless held) and the campaign are
 // activated. An empty heldAdIDs and a false holdAdSet is exactly UpdateCampaignAndChildrenStatus's
@@ -1371,7 +1362,7 @@ func (c *Client) updateCampaignTree(ctx context.Context, campaignID, adSetID, st
 // when false (the ACTIVATE path, before the campaign flip), a DEFINITE 4xx or a discovery
 // failure is a CLEAN error (nothing serving yet); an ambiguous failure (5xx/transport) is
 // Unconfirmed. When true, any failure is Unconfirmed. An empty adSetID is a no-op. holdAdSet
-// skips the ad set's own POST (its ads are still updated) — see ActivateCampaignHoldingAdSet.
+// skips the ad set's own POST (its ads are still updated) — see ActivateCampaignHolding.
 // heldAds skips each named ad's POST on ACTIVATE (#550, gap 14) — see ActivateCampaignHolding.
 func (c *Client) updateAdSetAndAds(ctx context.Context, adSetID, status string, mutatedBefore, holdAdSet bool, heldAds map[string]bool) error {
 	if adSetID == "" {
