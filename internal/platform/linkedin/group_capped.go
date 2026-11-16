@@ -108,6 +108,12 @@ func (c *Client) findUnboundedCappedCampaignInGroup(ctx context.Context, account
 			if err := json.Unmarshal(elRaw, &el); err != nil {
 				return "", fmt.Errorf("search campaign group %s's campaigns: an element is not a campaign of the expected shape", groupID)
 			}
+			// null and {} unmarshal cleanly and leave every field empty, which would read as an
+			// uncapped campaign. An element with no id is unreadable, not "none".
+			id := trailingID(el.ID.String())
+			if id == "" {
+				return "", fmt.Errorf("search campaign group %s's campaigns: an element carries no campaign id", groupID)
+			}
 			if el.CampaignGroup != "" && trailingID(el.CampaignGroup) != groupID {
 				return "", fmt.Errorf("search campaign group %s's campaigns: the search returned a campaign of another group, so its group filter cannot be trusted", groupID)
 			}
@@ -119,10 +125,6 @@ func (c *Client) findUnboundedCappedCampaignInGroup(ctx context.Context, account
 			}
 			if el.RunSchedule != nil && el.RunSchedule.End != nil && *el.RunSchedule.End > 0 {
 				continue
-			}
-			id := trailingID(el.ID.String())
-			if id == "" {
-				id = "(unknown id)"
 			}
 			return id, nil
 		}

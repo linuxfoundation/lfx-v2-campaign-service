@@ -1987,6 +1987,14 @@ const groupScheduleAttempts = 3
 // per-client lock would serialize nothing. Replicas do not share it; the verify read covers them.
 var groupScheduleLocks = newKeyedLocks()
 
+// eventGroupLocks serializes, per (API base URL, account, campaign group NAME), a create's span
+// from the group's find-or-create through the campaign POST, across every client in this
+// PROCESS (see CreateCampaign). It is keyed on the name because a group this create makes has no
+// id yet, and the name is what every create of the event finds the group by. It is a separate
+// lock set from groupScheduleLocks, always taken first, so the two cannot deadlock. Replicas do
+// not share it: cross-replica serialization of same-group creates is LFXV2-2665's.
+var eventGroupLocks = newKeyedLocks()
+
 // ensureCampaignGroupCoversEnd makes campaign group groupID's runSchedule end no earlier than
 // endMs, and reports whether it wrote. A group with no end, or one already ending on or after
 // endMs, is left alone, so the end never moves earlier through this call.
@@ -2207,9 +2215,11 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 	// campaigns, so CreateCampaign only gets here with a group ending exactly at endMs — created by
 	// this call, or reused and ending there (widened to it if it ended earlier) — and
 	// ensureCampaignGroupCoversEnd refuses any later widening of a group holding this campaign.
-	// What it cannot stop is a hand edit of the group's end in Campaign Manager, or a widening
-	// racing this create's POST from another dispatch (see ensureCampaignGroupCoversEnd and
-	// LFXV2-2665). The guard is Misha Rautela's, from her #584 branch.
+	// CreateCampaign holds eventGroupLocks from the group's find-or-create through this POST, so
+	// within this process no other create of the event can widen the group between the check and
+	// the campaign existing. What it cannot stop is a hand edit of the group's end in Campaign
+	// Manager, or a widening from a create on ANOTHER replica in that window (LFXV2-2665). The
+	// guard is Misha Rautela's, from her #584 branch.
 	if dailyCap != "" && lifetimeBudget {
 		body["dailyBudget"] = map[string]any{"amount": dailyCap, "currencyCode": "USD"}
 		delete(runSchedule, "end")
@@ -3015,6 +3025,28 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, domain.PreflightRefusalf("campaign name is %d characters, exceeds the %d-character limit; shorten the event name or project", n, maxNameLen)
 	}
 
+	// Hold the event's group from its find-or-create through the campaign POST (#584). Between a
+	// create's group check and its campaign existing, another create of the same event could
+	// otherwise widen the group: a daily-capped campaign has no end of its own, so a widening that
+	// lands before it exists (its sibling search cannot see it yet) would let it serve to the new,
+	// later end. Same-event creates in this process therefore run that span one at a time, and
+	// the next one's sibling search sees the campaign. A group THIS create makes is covered too,
+	// because the lock is taken before the group exists. A wait is bounded by ctx. Released as
+	// soon as createSponsoredCampaign returns: the dark post and creatives do not touch the
+	// group's schedule. Other replicas are not covered (LFXV2-2665).
+	releaseGroup, err := eventGroupLocks.acquire(ctx, c.baseURL+"\x00"+accountID+"\x00"+groupName)
+	if err != nil {
+		return nil, fmt.Errorf("campaign group %q: waiting for another create of this event was aborted before any LinkedIn request; nothing was created: %w", groupName, err)
+	}
+	groupHeld := true
+	unlockGroup := func() {
+		if groupHeld {
+			groupHeld = false
+			releaseGroup()
+		}
+	}
+	defer unlockGroup()
+
 	groupID, groupReused, err := c.findOrCreateCampaignGroup(ctx, accountID, groupName, in.StartDate, endMs)
 	if err != nil {
 		// An AMBIGUOUS failure (transport/timeout after send, a 5xx, or an
@@ -3091,6 +3123,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, targeting, in.LifetimeBudget, bidding, dailyCap)
+	unlockGroup()
 	if err != nil {
 		// findOrCreateCampaignGroup may have just created a PERMANENT campaign group
 		// (groupID) whose creation is a real side effect. Returning nil,err here

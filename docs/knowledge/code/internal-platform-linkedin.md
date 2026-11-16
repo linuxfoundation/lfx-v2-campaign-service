@@ -462,14 +462,23 @@ from Misha Rautela's #584 branch):
 - capped and the reused group ends later, or never: refused with
   `ErrCampaignGroupScheduleConflict`; ending earlier, it is widened to exactly the campaign's end;
 - before the FIRST widening write of any create, `findUnboundedCappedCampaignInGroup` searches
-  the group's campaigns (`adCampaigns` `q=search` by group URN, fail-closed on an untrusted page)
-  and refuses the widening when one carries both budgets and no end, skipping CANCELED, REMOVED,
+  the group's campaigns (`adCampaigns` `q=search` by group URN, fail-closed on an untrusted page
+  or an element with no campaign id, which is what `null` and `{}` decode to) and refuses the widening when one carries both budgets and no end, skipping CANCELED, REMOVED,
   DELETED and PENDING_DELETION.
 
 Before any write the refusal is a `PreflightRefusal` carrying `ErrCreateConfigInvalid`;
 `CreateCampaign` returns it as `(nil, err)`. After this call's own write (another writer moved
-the end past the campaign's in between) it is a plain error. A hand edit of the group in
-Campaign Manager is not guarded. Pinned by `group_capped_test.go` and
+the end past the campaign's in between) it is a plain error.
+
+The sibling search only sees campaigns that exist, so a second create of the event could widen
+the group between a capped create's check and its campaign POST. `CreateCampaign` therefore
+holds `eventGroupLocks` (keyed on base URL, account and group NAME, since a group the create
+makes has no id yet) from `findOrCreateCampaignGroup` through `createSponsoredCampaign`: within
+the process, same-event creates run that span one at a time, and the next one's search sees the
+campaign. It is a separate lock set from `groupScheduleLocks` and always taken first. NOT
+covered: a create on another replica in that window (LFXV2-2665), and a hand edit of the group
+in Campaign Manager. Pinned by `group_capped_test.go` (including
+`TestCreateCampaign_InterleavedCreatesCannotWidenUnderACappedCampaign`) and
 `TestCreateCampaign_LifetimeBudgetWithDailyCap` (no `end`; an uncapped lifetime keeps it).
 
 `GetCampaignBudget(ctx, campaignID)` reads the campaign under the resolved account

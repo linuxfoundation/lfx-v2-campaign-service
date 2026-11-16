@@ -1547,7 +1547,10 @@ dailyCapUsd?: number             — OPTIONAL daily spending cap beside a LIFETI
     The check is one `adCampaigns` search of the group, made only when a widening write is about
     to happen; a failed search is an error, with nothing written.
 
-  A hand edit of the group's end in Campaign Manager is not guarded.
+  The search only sees campaigns that already exist, so creates of one event hold the group
+  from its find-or-create through the campaign POST, one at a time, within a service process.
+  NOT guarded: a create on another replica landing in that window (LFXV2-2665), and a hand
+  edit of the group's end in Campaign Manager.
 - **Monitor.** The account monitor paces a capped campaign with no end against
   min(cap × window days, total), not the total spread over the flight to date.
 - **Not yet verified live.** The two-field shape and the continuous schedule follow LinkedIn's

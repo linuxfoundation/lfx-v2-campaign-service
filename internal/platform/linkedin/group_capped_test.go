@@ -5,6 +5,7 @@ package linkedin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -12,7 +13,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
@@ -128,6 +131,9 @@ func TestEnsureCampaignGroupCoversEnd_WideningChecksForCappedCampaigns(t *testin
 		{"search ignores the group filter: error, group untouched", page(`{"id":905,"status":"ACTIVE","campaignGroup":"urn:li:sponsoredCampaignGroup:777"}`), 0, false, "another group", false},
 		{"page with no metadata: error, group untouched", `{"elements":[]}`, 0, false, "no metadata", false},
 		{"page with a duplicate key: error, group untouched", `{"elements":[],"elements":[],"metadata":{}}`, 0, false, "campaigns", false},
+		{"null element: error, group untouched", page(`null`), 0, false, "no campaign id", false},
+		{"empty element: error, group untouched", page(`{}`), 0, false, "no campaign id", false},
+		{"element with no id: error, group untouched", page(`{"status":"ACTIVE","campaignGroup":"urn:li:sponsoredCampaignGroup:555"}`), 0, false, "no campaign id", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -243,5 +249,140 @@ func TestCreateCampaign_CappedLifetimeReusedGroupEndGuard(t *testing.T) {
 				t.Fatalf("mutating requests = %v, want %v", posts, tc.wantPosts)
 			}
 		})
+	}
+}
+
+// Two creates of one event interleave: capped create A (ends 1 Feb) is between its group check
+// and its campaign POST when uncapped create B (ends 1 Mar) starts. Without coordination, B's
+// sibling search cannot see A's campaign yet, so B widens the shared group to 1 Mar and A, which
+// has no end of its own, serves to 1 Mar. CreateCampaign holds the event's group from its
+// find-or-create through the campaign POST, so B waits, then finds A's capped campaign and is
+// refused with the group untouched.
+func TestCreateCampaign_InterleavedCreatesCannotWidenUnderACappedCampaign(t *testing.T) {
+	var (
+		mu          sync.Mutex
+		groupExists bool
+		groupEnd    int64
+		campaigns   []string
+		patches     int
+		campaignN   int
+	)
+	var reqs atomic.Int64
+	aPosting := make(chan struct{})
+	releaseA := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqs.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "adCampaignGroups/100"):
+			mu.Lock()
+			end := groupEnd
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"id":100,"runSchedule":{"start":1000,"end":`+strconv.FormatInt(end, 10)+`}}`)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "adCampaignGroups"):
+			mu.Lock()
+			exists := groupExists
+			mu.Unlock()
+			if exists {
+				_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | CNCF","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:100"}],"metadata":{"nextPageToken":""}}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{"nextPageToken":""}}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "adCampaigns"):
+			mu.Lock()
+			els := strings.Join(campaigns, ",")
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"elements":[`+els+`],"metadata":{"nextPageToken":""}}`)
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{"nextPageToken":""}}`)
+		case strings.HasSuffix(r.URL.Path, "adCampaignGroups/100"):
+			mu.Lock()
+			patches++
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		case strings.HasSuffix(r.URL.Path, "adCampaignGroups"):
+			var body struct {
+				RunSchedule struct {
+					End int64 `json:"end"`
+				} `json:"runSchedule"`
+			}
+			raw, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(raw, &body)
+			mu.Lock()
+			groupExists, groupEnd = true, body.RunSchedule.End
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.HasSuffix(r.URL.Path, "adCampaigns"):
+			raw, _ := io.ReadAll(r.Body)
+			var body map[string]json.RawMessage
+			_ = json.Unmarshal(raw, &body)
+			mu.Lock()
+			campaignN++
+			n := campaignN
+			mu.Unlock()
+			if n == 1 {
+				close(aPosting)
+				<-releaseA
+			}
+			id := strconv.Itoa(199 + n)
+			el := `{"id":` + id + `,"name":` + string(body["name"]) + `,"status":"PAUSED","campaignGroup":"urn:li:sponsoredCampaignGroup:100","runSchedule":` + string(body["runSchedule"])
+			for _, k := range []string{"totalBudget", "dailyBudget"} {
+				if v, ok := body[k]; ok {
+					el += `,"` + k + `":` + string(v)
+				}
+			}
+			mu.Lock()
+			campaigns = append(campaigns, el+"}")
+			mu.Unlock()
+			w.Header().Set("x-restli-id", "urn:li:sponsoredCampaign:"+id)
+			_, _ = io.WriteString(w, `{}`)
+		case strings.Contains(r.URL.Path, "posts"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:400"}`)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+	newClient := func() *Client {
+		return NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	}
+
+	a := budgetCreateInput(1000, true, 20)
+	b := budgetCreateInput(1000, true, 0)
+	b.EndDate, b.Tactic = "2099-03-01", "lookalike"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var aErr, bErr error
+	aDone, bDone := make(chan struct{}), make(chan struct{})
+	go func() { defer close(aDone); _, aErr = newClient().CreateCampaign(ctx, a) }()
+	select {
+	case <-aPosting:
+	case <-ctx.Done():
+		t.Fatal("create A never reached its campaign POST")
+	}
+	before := reqs.Load()
+	go func() { defer close(bDone); _, bErr = newClient().CreateCampaign(ctx, b) }()
+	time.Sleep(200 * time.Millisecond)
+	if got := reqs.Load(); got != before {
+		t.Errorf("create B sent %d requests while A was between its group check and campaign POST; want it to wait", got-before)
+	}
+	close(releaseA)
+	<-aDone
+	<-bDone
+
+	if aErr != nil {
+		t.Fatalf("create A: %v", aErr)
+	}
+	assertScheduleRefusal(t, bErr, `campaign "200"`)
+	mu.Lock()
+	defer mu.Unlock()
+	if patches != 0 {
+		t.Fatalf("group widening writes = %d, want none: the capped campaign's flight would be extended", patches)
+	}
+	if campaignN != 1 {
+		t.Fatalf("campaign POSTs = %d, want only A's", campaignN)
 	}
 }
