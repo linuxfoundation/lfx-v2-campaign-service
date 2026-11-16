@@ -229,7 +229,8 @@ type CampaignInput struct {
 	// AdSchedules are the campaign's day-time windows (#563 gap 10, ad_schedule.go), checked by
 	// ValidateAdSchedules before anything is created and attached as DayTimeCriterion entries
 	// right after the radius targets, before the ad group, under the same fail-closed rules.
-	// Applied only to a campaign this run creates. Empty sends none: the campaign serves at
+	// The hours are read in the Microsoft Advertising account's time zone, not TimeZone (the
+	// create omits AdScheduleUseSearcherTimeZone). Applied only to a campaign this run creates. Empty sends none: the campaign serves at
 	// every hour, as before.
 	AdSchedules []AdSchedule
 	// BidAdjustments are the campaign's device, age and gender bid adjustments (#563 gap 8,
@@ -1145,7 +1146,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if serr != nil {
 			return campaignPartial(), criterionStepError(campaignID, "ad schedule", "would serve outside the requested schedule if enabled", len(ids), len(schedules), serr)
 		}
-		steps = append(steps, fmt.Sprintf("Ad schedule attached: %d day-time criteria (%s, in the campaign's time zone)", len(ids), adScheduleLabel(schedules)))
+		steps = append(steps, fmt.Sprintf("Ad schedule attached: %d day-time criteria (%s, in the Microsoft Advertising account's time zone, not the campaign's)", len(ids), adScheduleLabel(schedules)))
 	}
 	// The device, age and gender bid adjustments (#563 gap 8) follow, fail-closed with the rest of
 	// the campaign criteria: a device at -100 that did not land would serve on that device.

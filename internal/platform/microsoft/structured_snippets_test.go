@@ -107,9 +107,16 @@ func TestAttachCampaignStructuredSnippets_Success(t *testing.T) {
 	}
 }
 
-// A campaign that already has a structured snippet gets none added (a retry never doubles them).
-func TestAttachCampaignStructuredSnippets_SkipsWhenAlreadyAssociated(t *testing.T) {
-	api := &textExtAPI{existing: map[string]string{"StructuredSnippetAdExtension": "4441"}}
+// A campaign that already has the requested structured snippets gets none added (a retry never
+// doubles them), and that is a clean outcome: what was asked for is there.
+func TestAttachCampaignStructuredSnippets_SkipsWhenRequestedAlreadyAssociated(t *testing.T) {
+	const assocs = `[` +
+		`{"AdExtension":{"Id":4441,"Type":"StructuredSnippetAdExtension","Header":"Courses","Values":["kubernetes","Observability","Security"]},"AssociationType":"Campaign","EntityId":321},` +
+		`{"AdExtension":{"Id":4442,"Type":"StructuredSnippetAdExtension","Header":"Degree programs","Values":["CKA","CKAD","CKS","KCNA","LFCS"]},"AssociationType":"Campaign","EntityId":321}]`
+	api := &textExtAPI{
+		existing:       map[string]string{"StructuredSnippetAdExtension": "4441"},
+		existingFields: map[string]string{"StructuredSnippetAdExtension": assocs},
+	}
 	c, calls := textExtRecorder(t, api)
 	r, err := c.AttachCampaignStructuredSnippets(context.Background(), "321", goodSnippets())
 	if err != nil || r.Degraded() || len(r.StructuredSnippetAdExtensionIDs) != 0 {
@@ -118,8 +125,55 @@ func TestAttachCampaignStructuredSnippets_SkipsWhenAlreadyAssociated(t *testing.
 	if strings.Join(paths(calls()), ",") != "AdExtensionsAssociations/Query" {
 		t.Errorf("calls = %v", paths(calls()))
 	}
-	if !strings.Contains(strings.Join(r.Steps, "\n"), "Structured snippet extensions already associated with the campaign (1, e.g. 4441): none added") {
+	if !strings.Contains(strings.Join(r.Steps, "\n"), "Structured snippet extensions already associated with the campaign (2, e.g. 4441): none added") {
 		t.Errorf("steps = %v", r.Steps)
+	}
+}
+
+// A reused campaign holding a DIFFERENT structured snippet still gets none added, but the
+// requested snippets are not there, so the outcome is degraded (Failed), not a clean create.
+func TestAttachCampaignStructuredSnippets_ExistingDifferentSnippetDegrades(t *testing.T) {
+	api := &textExtAPI{
+		existing:       map[string]string{"StructuredSnippetAdExtension": "4441"},
+		existingFields: map[string]string{"StructuredSnippetAdExtension": `"Header":"Types","Values":["A","B","C"]`},
+	}
+	c, calls := textExtRecorder(t, api)
+	r, err := c.AttachCampaignStructuredSnippets(context.Background(), "321", goodSnippets())
+	if err != nil || !r.Degraded() || r.Failed != 2 || r.Unconfirmed != 0 || len(r.StructuredSnippetAdExtensionIDs) != 0 {
+		t.Fatalf("got %+v, %v", r, err)
+	}
+	if strings.Join(paths(calls()), ",") != "AdExtensionsAssociations/Query" {
+		t.Errorf("a different existing snippet must still add none: calls = %v", paths(calls()))
+	}
+	if !strings.Contains(strings.Join(r.Steps, "\n"), "Structured snippet extension 0 (Courses) NOT attached") {
+		t.Errorf("steps = %v", r.Steps)
+	}
+}
+
+// The same header with a missing value is not the requested snippet either.
+func TestAttachCampaignStructuredSnippets_ExistingSameHeaderOtherValuesDegrades(t *testing.T) {
+	api := &textExtAPI{
+		existing:       map[string]string{"StructuredSnippetAdExtension": "4441"},
+		existingFields: map[string]string{"StructuredSnippetAdExtension": `"Header":"Courses","Values":["Kubernetes","Observability","Linux"]`},
+	}
+	c, _ := textExtRecorder(t, api)
+	r, err := c.AttachCampaignStructuredSnippets(context.Background(), "321", goodSnippets()[:1])
+	if err != nil || !r.Degraded() || r.Failed != 1 {
+		t.Fatalf("got %+v, %v", r, err)
+	}
+}
+
+// An existing snippet whose contents Microsoft did not report may be the requested one, so the
+// outcome is UNCONFIRMED (degraded) rather than success or a definite failure.
+func TestAttachCampaignStructuredSnippets_ExistingUnreadableIsUnconfirmed(t *testing.T) {
+	api := &textExtAPI{existing: map[string]string{"StructuredSnippetAdExtension": "4441"}}
+	c, calls := textExtRecorder(t, api)
+	r, err := c.AttachCampaignStructuredSnippets(context.Background(), "321", goodSnippets())
+	if err != nil || !r.Degraded() || r.Unconfirmed != 2 || r.Failed != 0 {
+		t.Fatalf("got %+v, %v", r, err)
+	}
+	if strings.Join(paths(calls()), ",") != "AdExtensionsAssociations/Query" {
+		t.Errorf("calls = %v", paths(calls()))
 	}
 }
 

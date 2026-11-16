@@ -69,7 +69,7 @@ func checkMicrosoftBidAdjustments(cfg microsoftConfig) error {
 
 // checkMicrosoftBidAdjustmentsShape refuses any of the three that is not a JSON object of numbers,
 // before any job exists. Keys are matched case-insensitively, as encoding/json matches them, in
-// sorted order; null counts as absent.
+// sorted order; a null field counts as absent, but a null segment value is refused.
 func checkMicrosoftBidAdjustmentsShape(config json.RawMessage) error {
 	if len(config) == 0 {
 		return nil
@@ -95,6 +95,17 @@ func checkMicrosoftBidAdjustmentsShape(config json.RawMessage) error {
 		for _, field := range []string{microsoft.FieldDeviceBidAdjustments, microsoft.FieldAgeBidAdjustments, microsoft.FieldGenderBidAdjustments} {
 			if !strings.EqualFold(k, field) {
 				continue
+			}
+			// Each value is checked raw first: encoding/json decodes a null map value as 0, a real
+			// adjustment, which would reach Microsoft instead of this 400.
+			var rawMap map[string]json.RawMessage
+			if json.Unmarshal(raw, &rawMap) != nil {
+				return domain.WrapPreflightRefusal(fmt.Errorf("%w: microsoftConfig.%s: must be an object of segment names to numbers", domain.ErrCreateConfigInvalid, field))
+			}
+			for _, v := range rawMap {
+				if isJSONNull(v) {
+					return domain.WrapPreflightRefusal(fmt.Errorf("%w: microsoftConfig.%s: every value must be a number, not null; omit a segment to leave it unadjusted", domain.ErrCreateConfigInvalid, field))
+				}
 			}
 			var m map[string]float64
 			if json.Unmarshal(raw, &m) != nil {

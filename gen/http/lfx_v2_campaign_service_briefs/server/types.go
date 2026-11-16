@@ -5668,23 +5668,28 @@ type CampaignCreateInputRequestBody struct {
 	// or the field while the flag is off (false included), is refused with 400
 	// "invalid campaign config: microsoftConfig.searchPartners: ..." before any
 	// job exists. Not role-gated. MICROSOFT AD SCHEDULE (#563): microsoftConfig
-	// takes `adSchedules`, [{day, startHour, endHour, bidAdjustment?}], at most 49
-	// windows: day Monday..Sunday (any casing), startHour a whole hour 0-23,
-	// endHour a whole hour 1-24 after startHour, bidAdjustment an optional whole
-	// percent -90..900 applied inside the window (omitted means 0). Windows on the
-	// same day may touch but not overlap. They are sent as DayTimeCriterion
-	// entries (BiddableCampaignCriterion with a BidMultiplier, both minutes Zero)
-	// in one AddCampaignCriterions call right after the radius targets and before
-	// the ad group, in the campaign's timeZone; once any window exists Microsoft
-	// serves the ads only inside the windows. The attach is fail-closed like
-	// geoTargets: a failed, partial or unconfirmed attach stops the create before
-	// the ad group with the PAUSED campaign reported and retained, and a create
-	// that finds its campaign by name stops before the ad group. OFF unless
-	// MICROSOFT_AD_SCHEDULE_ENABLED is exactly "true". A wrong JSON type (null
-	// reads as absent), a missing or fractional hour, a rule breach, or the list
-	// while the flag is off is refused with 400 "invalid campaign config:
-	// microsoftConfig.adSchedules: ..." before any job exists. Not role-gated.
-	// MICROSOFT BID ADJUSTMENTS (#563): microsoftConfig takes
+	// takes `adSchedules`, [{day, startHour, endHour, bidAdjustment?}], at most 7
+	// windows on any one day (Microsoft's per-day limit) and 49 in total: day
+	// Monday..Sunday (any casing), startHour a whole hour 0-23, endHour a whole
+	// hour 1-24 after startHour, bidAdjustment an optional whole percent -90..900
+	// applied inside the window (omitted means 0). Windows on the same day may
+	// touch but not overlap. They are sent as DayTimeCriterion entries
+	// (BiddableCampaignCriterion with a BidMultiplier, both minutes Zero) in one
+	// AddCampaignCriterions call right after the radius targets and before the ad
+	// group. The hours are read in the Microsoft Advertising ACCOUNT's time zone,
+	// NOT the campaign's timeZone (the create omits
+	// AdScheduleUseSearcherTimeZone); they are sent as given, never translated, so
+	// convert campaign-local hours to the account's zone first. Once any window
+	// exists Microsoft serves the ads only inside the windows. The attach is
+	// fail-closed like geoTargets: a failed, partial or unconfirmed attach stops
+	// the create before the ad group with the PAUSED campaign reported and
+	// retained, and a create that finds its campaign by name stops before the ad
+	// group. OFF unless MICROSOFT_AD_SCHEDULE_ENABLED is exactly "true". A wrong
+	// JSON type (null reads as absent), a missing or fractional hour, an explicit
+	// null bidAdjustment (omit it for 0), more than 7 windows on one day, a rule
+	// breach, or the list while the flag is off is refused with 400 "invalid
+	// campaign config: microsoftConfig.adSchedules: ..." before any job exists.
+	// Not role-gated. MICROSOFT BID ADJUSTMENTS (#563): microsoftConfig takes
 	// `deviceBidAdjustments` (keys Computers, Smartphones, Tablets),
 	// `ageBidAdjustments` (keys EighteenToTwentyFour, TwentyFiveToThirtyFour,
 	// ThirtyFiveToFortyNine, FiftyToSixtyFour, SixtyFiveAndAbove) and
@@ -5698,21 +5703,21 @@ type CampaignCreateInputRequestBody struct {
 	// unconfirmed attach stops the create before the ad group with the PAUSED
 	// campaign reported and retained; a create that finds its campaign by name
 	// stops before the ad group). OFF unless MICROSOFT_BID_ADJUSTMENTS_ENABLED is
-	// exactly "true". A value that is not an object of numbers (null reads as
-	// absent), an unknown or repeated segment, an out-of-range or fractional
-	// percent, or any of the three while the flag is off is refused with 400
-	// "invalid campaign config: microsoftConfig.<field>: ..." before any job
-	// exists. Not role-gated. MICROSOFT SHARED NEGATIVE KEYWORD LISTS (#563):
-	// microsoftConfig takes `sharedNegativeKeywordListIds`, at most 20 decimal ids
-	// of EXISTING account-level negative keyword lists (each the canonical
-	// spelling of a positive int64, no repeat). Before anything is created one
-	// GetSharedEntities read (NegativeKeywordList, Account scope) must hold every
-	// id as a negative keyword list, or the job fails with nothing created. After
-	// the campaign is confirmed (created or reused by name) they are associated
-	// with it in one SetSharedEntityAssociations call; the per-list outcome
-	// (APPLIED, FAILED, UNCONFIRMED) is recorded as sharedNegativeKeywordLists in
-	// the result, and anything but APPLIED leaves the campaign created_degraded
-	// with a step, never failing the job. OFF unless
+	// exactly "true". A value that is not an object of numbers (a null field reads
+	// as absent; a null segment value is refused), an unknown or repeated segment,
+	// an out-of-range or fractional percent, or any of the three while the flag is
+	// off is refused with 400 "invalid campaign config: microsoftConfig.<field>:
+	// ..." before any job exists. Not role-gated. MICROSOFT SHARED NEGATIVE
+	// KEYWORD LISTS (#563): microsoftConfig takes `sharedNegativeKeywordListIds`,
+	// at most 20 decimal ids of EXISTING account-level negative keyword lists
+	// (each the canonical spelling of a positive int64, no repeat). Before
+	// anything is created one GetSharedEntities read (NegativeKeywordList, Account
+	// scope) must hold every id as a negative keyword list, or the job fails with
+	// nothing created. After the campaign is confirmed (created or reused by name)
+	// they are associated with it in one SetSharedEntityAssociations call; the
+	// per-list outcome (APPLIED, FAILED, UNCONFIRMED) is recorded as
+	// sharedNegativeKeywordLists in the result, and anything but APPLIED leaves
+	// the campaign created_degraded with a step, never failing the job. OFF unless
 	// MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED is exactly "true". A wrong JSON type
 	// (null reads as absent), a rule breach, or the list while the flag is off is
 	// refused with 400 "invalid campaign config:
@@ -5727,12 +5732,13 @@ type CampaignCreateInputRequestBody struct {
 	// characters (12 with a double-width character), trimmed, no repeat ignoring
 	// case. They are created as StructuredSnippetAdExtension entries and
 	// associated with the confirmed campaign, skipped with a step when the
-	// campaign already has one; ids are recorded as
-	// structuredSnippetAdExtensionIds, and a failed or unconfirmed snippet leaves
-	// the campaign created_degraded without failing the job. OFF unless
-	// MICROSOFT_STRUCTURED_SNIPPETS_ENABLED is exactly "true". A wrong JSON type
-	// (null reads as absent), a rule breach, or the list while the flag is off is
-	// refused with 400 "invalid campaign config:
+	// campaign already has one (then a requested snippet whose header and values
+	// are not among the existing ones leaves the campaign created_degraded, not
+	// created); ids are recorded as structuredSnippetAdExtensionIds, and a failed
+	// or unconfirmed snippet leaves the campaign created_degraded without failing
+	// the job. OFF unless MICROSOFT_STRUCTURED_SNIPPETS_ENABLED is exactly "true".
+	// A wrong JSON type (null reads as absent), a rule breach, or the list while
+	// the flag is off is refused with 400 "invalid campaign config:
 	// microsoftConfig.structuredSnippets: ..." before any job exists. Not
 	// role-gated. MICROSOFT LOGO EXTENSION (#563): microsoftConfig takes
 	// `logoAssetId`, a stored creative asset of THIS brief

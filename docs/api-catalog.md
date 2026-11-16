@@ -827,14 +827,18 @@ searchPartners?: boolean        — The new ad group's search network (#563 gap 
                                   included), is a synchronous 400 "invalid campaign config:
                                   microsoftConfig.searchPartners: ..." before any job exists. Not
                                   role-gated.
-adSchedules?: object[]          — Dayparting (#563 gap 10), at most 49 windows:
+adSchedules?: object[]          — Dayparting (#563 gap 10), at most 7 windows per day (49 total):
                                   {day (Monday..Sunday, any casing), startHour (whole hour 0-23,
                                   required), endHour (whole hour 1-24, after startHour, required),
                                   bidAdjustment? (whole percent -90..900, default 0)}. Windows on
                                   the same day may touch (9-12, 12-17) but not overlap. Sent as
                                   BiddableCampaignCriterion / DayTimeCriterion (minutes Zero) with
                                   a BidMultiplier, in one call right after the radius targets and
-                                  before the ad group, read in the campaign's timeZone. Once any
+                                  before the ad group. The hours are read in the Microsoft
+                                  Advertising ACCOUNT's time zone, NOT the campaign's timeZone
+                                  (the create omits AdScheduleUseSearcherTimeZone); they are sent
+                                  as given, never translated, so convert campaign-local hours to
+                                  the account's zone first. Once any
                                   window exists the ads serve only inside the windows. Fail-closed
                                   like geoTargets: a failed, partial or unconfirmed attach stops
                                   the create before the ad group (PAUSED campaign reported and
@@ -842,8 +846,9 @@ adSchedules?: object[]          — Dayparting (#563 gap 10), at most 49 windows
                                   the ad group. The ids are recorded as adScheduleCriterionIds in
                                   the result. OFF unless MICROSOFT_AD_SCHEDULE_ENABLED is exactly
                                   "true". A wrong JSON type (null reads as absent), a missing or
-                                  fractional hour, a rule breach, or the list while the flag is off
-                                  is a synchronous 400 "invalid campaign config:
+                                  fractional hour, an explicit null bidAdjustment (omit it for 0),
+                                  more than 7 windows on one day, a rule breach, or the list while
+                                  the flag is off is a synchronous 400 "invalid campaign config:
                                   microsoftConfig.adSchedules: ..." before any job exists. Not
                                   role-gated.
 deviceBidAdjustments?: object   — Bid adjustments (#563 gap 8), each an object of segment name
@@ -903,7 +908,10 @@ structuredSnippets?:            — Structured snippet extensions (#563 gap 13),
                                   snippet) and associated with the CONFIRMED campaign
                                   (AdExtensionsAssociations/Set, Campaign), the sitelink/callout
                                   transport: a campaign that already has a structured snippet (a
-                                  retry) gets none added, with a step. Ids are recorded as
+                                  retry) gets none added, with a step; a requested snippet whose
+                                  header and values are not among the existing ones is then a
+                                  failed (or, when their contents were not reported, UNCONFIRMED)
+                                  snippet, so the campaign is created_degraded, not created. Ids are recorded as
                                   structuredSnippetAdExtensionIds; a failed or UNCONFIRMED snippet
                                   leaves the campaign created_degraded with a step and never fails
                                   the job. OFF unless MICROSOFT_STRUCTURED_SNIPPETS_ENABLED is

@@ -101,7 +101,8 @@ func checkMicrosoftAdSchedule(cfg microsoftConfig) error {
 
 // checkMicrosoftAdScheduleShape refuses an adSchedules that is not an array of objects with a
 // string day and numeric hours and bidAdjustment, before any job exists. Keys are matched
-// case-insensitively, as encoding/json matches them, in sorted order; null counts as absent.
+// case-insensitively, as encoding/json matches them, in sorted order; null counts as absent, for
+// the list itself, but an entry's explicit null bidAdjustment is refused rather than read as 0.
 func checkMicrosoftAdScheduleShape(config json.RawMessage) error {
 	if len(config) == 0 {
 		return nil
@@ -127,6 +128,19 @@ func checkMicrosoftAdScheduleShape(config json.RawMessage) error {
 		var list []microsoftAdScheduleConfig
 		if json.Unmarshal(raw, &list) != nil {
 			return microsoftAdScheduleInvalid("must be an array of objects with a string day and numeric startHour, endHour and bidAdjustment")
+		}
+		// An explicit "bidAdjustment": null decodes to 0, a real (no-change) adjustment, so it is
+		// refused here from the raw entries; omitting the key is still 0 by design.
+		var entries []map[string]json.RawMessage
+		if json.Unmarshal(raw, &entries) != nil {
+			return microsoftAdScheduleInvalid("must be an array of objects with a string day and numeric startHour, endHour and bidAdjustment")
+		}
+		for i, e := range entries {
+			for ek, ev := range e {
+				if strings.EqualFold(ek, "bidAdjustment") && isJSONNull(ev) {
+					return microsoftAdScheduleInvalid("entry %d bidAdjustment must be a number, not null; omit it for no adjustment", i+1)
+				}
+			}
 		}
 	}
 	return nil

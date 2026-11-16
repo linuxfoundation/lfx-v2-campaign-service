@@ -49,12 +49,15 @@ func TestMicrosoftBidAdjustments_PreflightRefusesBadInput(t *testing.T) {
 	api := &msAudAPI{}
 	d := newMSAudDispatcher(t, api)
 	for extra, want := range map[string]string{
-		`,"deviceBidAdjustments":[-100]`:                              "microsoftConfig.deviceBidAdjustments: must be an object of segment names to numbers",
-		`,"AGEBIDADJUSTMENTS":{"EighteenToTwentyFour":"5"}`:           "microsoftConfig.ageBidAdjustments: must be an object",
-		`,"genderBidAdjustments":"Male"`:                              "microsoftConfig.genderBidAdjustments: must be an object",
-		`,"deviceBidAdjustments":{"TV":5}`:                            "microsoftConfig.deviceBidAdjustments: unknown key",
-		`,"genderBidAdjustments":{"Male":5,"MALE":6}`:                 "microsoftConfig.genderBidAdjustments: Male is named twice",
-		`,"budget":"x","ageBidAdjustments":{"FiftyToSixtyFour":-100}`: "microsoftConfig.ageBidAdjustments: FiftyToSixtyFour must be a whole percent from -90 to 900",
+		`,"deviceBidAdjustments":[-100]`:                                          "microsoftConfig.deviceBidAdjustments: must be an object of segment names to numbers",
+		`,"AGEBIDADJUSTMENTS":{"EighteenToTwentyFour":"5"}`:                       "microsoftConfig.ageBidAdjustments: must be an object",
+		`,"genderBidAdjustments":"Male"`:                                          "microsoftConfig.genderBidAdjustments: must be an object",
+		`,"deviceBidAdjustments":{"TV":5}`:                                        "microsoftConfig.deviceBidAdjustments: unknown key",
+		`,"genderBidAdjustments":{"Male":5,"MALE":6}`:                             "microsoftConfig.genderBidAdjustments: Male is named twice",
+		`,"budget":"x","ageBidAdjustments":{"FiftyToSixtyFour":-100}`:             "microsoftConfig.ageBidAdjustments: FiftyToSixtyFour must be a whole percent from -90 to 900",
+		`,"deviceBidAdjustments":{"Tablets":null}`:                                "microsoftConfig.deviceBidAdjustments: every value must be a number, not null",
+		`,"ageBidAdjustments":{"EighteenToTwentyFour":5,"FiftyToSixtyFour":null}`: "microsoftConfig.ageBidAdjustments: every value must be a number, not null",
+		`,"GENDERBIDADJUSTMENTS":{"Female":null}`:                                 "microsoftConfig.genderBidAdjustments: every value must be a number, not null",
 	} {
 		err := d.PreflightCreate(context.Background(), "cncf", model.ProviderMicrosoftAds, msNegConfig(extra))
 		requireConfigInvalid(t, err, want)

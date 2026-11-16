@@ -33,6 +33,9 @@ type msTextAPI struct {
 	next     int
 	attached map[string][]string // AdExtensionType -> associated ids
 	pending  map[string]string   // created id -> AdExtensionType
+	// contents is each created extension's snippet Header/Values as JSON members, echoed by the
+	// association read as Microsoft reports a StructuredSnippetAdExtension's contents.
+	contents map[string]string
 	failAt   map[string]struct {
 		status int
 		body   string
@@ -59,7 +62,7 @@ func (a *msTextAPI) total() int {
 
 func newMSTextDispatcher(t *testing.T, api *msTextAPI) *MicrosoftDispatcher {
 	t.Helper()
-	api.attached, api.pending = map[string][]string{}, map[string]string{}
+	api.attached, api.pending, api.contents = map[string][]string{}, map[string]string{}, map[string]string{}
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"access_token":"at-123","expires_in":3600,"token_type":"Bearer"}`)
@@ -103,7 +106,7 @@ func newMSTextDispatcher(t *testing.T, api *msTextAPI) *MicrosoftDispatcher {
 			if ids := api.attached[q.AdExtensionType]; len(ids) > 0 {
 				assocs := make([]string, len(ids))
 				for i, id := range ids {
-					assocs[i] = fmt.Sprintf(`{"AdExtension":{"Id":%s,"Type":%q},"AssociationType":"Campaign","EntityId":321}`, id, q.AdExtensionType)
+					assocs[i] = fmt.Sprintf(`{"AdExtension":{"Id":%s,"Type":%q%s},"AssociationType":"Campaign","EntityId":321}`, id, q.AdExtensionType, api.contents[id])
 				}
 				_, _ = fmt.Fprintf(w, `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[%s]}]}`, strings.Join(assocs, ","))
 				return
@@ -122,6 +125,16 @@ func newMSTextDispatcher(t *testing.T, api *msTextAPI) *MicrosoftDispatcher {
 				typ = "LogoAdExtension"
 			}
 			api.pending[id] = typ
+			var created struct {
+				AdExtensions []struct {
+					Header string
+					Values []string
+				}
+			}
+			if json.Unmarshal(b, &created) == nil && len(created.AdExtensions) == 1 && created.AdExtensions[0].Header != "" {
+				v, _ := json.Marshal(created.AdExtensions[0].Values)
+				api.contents[id] = fmt.Sprintf(`,"Header":%q,"Values":%s`, created.AdExtensions[0].Header, v)
+			}
 			_, _ = fmt.Fprintf(w, `{"AdExtensionIdentities":[{"Id":%s,"Version":1}],"NestedPartialErrors":[]}`, id)
 		case "Media":
 			_, _ = io.WriteString(w, `{"MediaIds":[5551]}`)

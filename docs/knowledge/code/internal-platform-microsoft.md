@@ -1485,7 +1485,11 @@ returns the count), serve none. `CampaignResult.SitelinkAdExtensionIDs` /
 runs `attachTextExtensionsOfType` for the type, so one association read decides whether the
 campaign already has a snippet (then none is added, with a step), and each snippet is then one
 `AddAdExtensions` and one `SetAdExtensionsAssociations`, classified definite or UNCONFIRMED like
-the image extension. `ValidateStructuredSnippets` holds the rules before any request: at most 10
+the image extension. When the campaign already has snippets, the lookup's `Header`/`Values`
+(`findCampaignExtensionContents`) decide the outcome (`reportExistingSnippets`): a requested
+snippet counts as present only when an existing one has its header and every one of its values;
+otherwise it is counted Failed, or Unconfirmed when an existing snippet came back without its
+contents, so a reused campaign holding a different snippet is degraded, not a clean create. `ValidateStructuredSnippets` holds the rules before any request: at most 10
 snippets (this service's cap, as for Google); `Header` one of Microsoft's 13 English headers,
 matched ignoring case and inner-space runs and sent in Microsoft's spelling, each once; 3-10
 `Values`, each trimmed, 1-25 characters (12 with a double-width character), no control character,
@@ -1742,7 +1746,8 @@ Not verified live; not role-gated.
 ## Ad schedule at create (#563 gap 10)
 
 `CampaignInput.AdSchedules` (`ad_schedule.go`) is checked by `ValidateAdSchedules` before anything
-is created: at most 49 windows (this service's bound, not Microsoft's), a `Day` enum value matched
+is created: at most seven windows on any one day and 49 in total (Microsoft's per-day limit of
+seven day-time criteria, which it would otherwise refuse only after the campaign exists), a `Day` enum value matched
 ignoring case, whole hours `[StartHour 0-23, EndHour 1-24)` with the end after the start, a
 whole-percent `BidAdjustment` of -90..900, and no two windows overlapping on one day (touching is
 fine). The windows come back sorted by day and start hour, which is the order they are sent.
@@ -1757,8 +1762,16 @@ campaign whose schedule did not land would serve at every hour. `adSchedules` jo
 (`CreateTargeting.fields`) that stop a create on a campaign found by name before its ad group.
 The ids are recorded as `AdScheduleCriterionIDs`.
 
+The windows run in the Microsoft Advertising ACCOUNT's time zone, not `CampaignInput.TimeZone`:
+the create omits `AdScheduleUseSearcherTimeZone`, and Microsoft then reads day-time criteria in
+the account's zone. The hours are sent as given, never translated; the comments, the result step
+("in the Microsoft Advertising account's time zone, not the campaign's"), the API catalog and the
+design text all say so (#613 review).
+
 The dispatcher (`internal/dispatch/microsoft_ad_schedule.go`) decodes the hours as `*float64`, so a
-missing hour (0 is midnight) or a fractional one is refused on its own, and gates the list behind
+missing hour (0 is midnight) or a fractional one is refused on its own, refuses an explicit
+`"bidAdjustment": null` from the raw entries (it would decode as 0; omitting it is still 0), and
+gates the list behind
 `MICROSOFT_AD_SCHEDULE_ENABLED`. Not verified live; not role-gated.
 
 ## Device, age and gender bid adjustments at create (#563 gap 8)
@@ -1779,7 +1792,8 @@ after the ad schedule and before the ad group, through `postCampaignCriterions` 
 name. The ids are recorded as `BidAdjustmentCriterionIDs`.
 
 The dispatcher (`internal/dispatch/microsoft_bid_adjustments.go`) refuses a value that is not an
-object of numbers, and any of the three while `MICROSOFT_BID_ADJUSTMENTS_ENABLED` is off. Not
+object of numbers, checking each raw segment value for null first (encoding/json would decode a
+null as 0, a real adjustment), and any of the three while `MICROSOFT_BID_ADJUSTMENTS_ENABLED` is off. Not
 verified live. In particular it is unconfirmed whether Microsoft accepts an ADD of a device
 criterion on a new campaign; a refusal would stop the create, fail-closed. Not role-gated.
 

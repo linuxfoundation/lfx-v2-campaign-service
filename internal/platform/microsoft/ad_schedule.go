@@ -18,10 +18,18 @@ import (
 // Microsoft Advertising Campaign Management v13 reference (learn.microsoft.com):
 //   - A DayTimeCriterion (Day Monday..Sunday, FromHour 0-23, FromMinute, ToHour 0-24, ToMinute
 //     Zero | Fifteen | Thirty | FortyFive) in a BiddableCampaignCriterion schedules when the
-//     campaign's ads are eligible, in the campaign's TimeZone. Once a campaign has any day-time
-//     criterion its ads serve only inside the scheduled windows. It is added with
-//     AddCampaignCriterions, CriterionType "Targets", like the location and radius criteria.
+//     campaign's ads are eligible. Once a campaign has any day-time criterion its ads serve only
+//     inside the scheduled windows. It is added with AddCampaignCriterions, CriterionType
+//     "Targets", like the location and radius criteria.
 //   - Its CriterionBid is a BidMultiplier, the percent adjustment applied inside the window.
+//   - At most seven day-time criteria per day (so 49 for the week), refused here before the
+//     campaign exists rather than by Microsoft after.
+//
+// TIME ZONE: the windows run in the Microsoft Advertising ACCOUNT's time zone, NOT the
+// Campaign.TimeZone this service sends. Microsoft reads them in the account's zone unless the
+// campaign sets AdScheduleUseSearcherTimeZone, and the create omits that field. Hours are sent as
+// given, never translated; a caller wanting campaign-local hours must convert them to the
+// account's zone first.
 //
 // This service takes whole hours only (both minutes are sent as Zero): the issue's shape, and
 // enough for an event's dayparting. Windows on the same day may touch (9-12 and 12-17) but not
@@ -35,10 +43,14 @@ const (
 	// FieldAdSchedules is the microsoftConfig key, named in refusals.
 	FieldAdSchedules = "adSchedules"
 
-	// MaxAdSchedules bounds the list (seven windows for each of the seven days). It is this
-	// service's bound, keeping the one criterion call small; it is not a documented Microsoft
-	// limit.
+	// MaxAdSchedules bounds the list: Microsoft accepts at most seven day-time criteria per day,
+	// so 49 for the week.
 	MaxAdSchedules = 49
+
+	// MaxAdSchedulesPerDay is Microsoft's limit of seven day-time criteria for any one day
+	// (campaign-daytime-criterion reference); an eighth would be refused only after the campaign
+	// exists.
+	MaxAdSchedulesPerDay = 7
 
 	// MinScheduleBidAdjustment and MaxScheduleBidAdjustment are Microsoft's BidMultiplier range
 	// for a day-time criterion, in whole percent.
@@ -114,6 +126,13 @@ func ValidateAdSchedules(in []AdSchedule) ([]AdSchedule, error) {
 		}
 		return out[a].StartHour < out[b].StartHour
 	})
+	perDay := make([]int, len(scheduleDays))
+	for _, s := range out {
+		perDay[s.day]++
+		if perDay[s.day] > MaxAdSchedulesPerDay {
+			return nil, &AdScheduleError{Msg: fmt.Sprintf("at most %d windows are accepted for one day, got more on %s", MaxAdSchedulesPerDay, s.Day)}
+		}
+	}
 	res := make([]AdSchedule, len(out))
 	for i, s := range out {
 		if i > 0 && out[i-1].day == s.day && s.StartHour < out[i-1].EndHour {

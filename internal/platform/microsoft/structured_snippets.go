@@ -131,7 +131,10 @@ func ValidateStructuredSnippets(in []StructuredSnippet) ([]StructuredSnippet, er
 
 // AttachCampaignStructuredSnippets validates the list, then attaches each snippet to the
 // campaign, unless the campaign already has a structured snippet (a retry that reused it, or a
-// human), when none is added. It never stops at one snippet's failure: each is reported in Steps
+// human), when none is added. In that case each requested snippet counts as attached only when
+// an existing one carries its header and every one of its values; one that is not there is
+// counted Failed, or Unconfirmed when an existing snippet's contents were not reported, so the
+// result is degraded rather than recorded as a clean create with nothing of it attached. It never stops at one snippet's failure: each is reported in Steps
 // and counted, and the result is never nil. The error is non-nil only for a refusal before any
 // request (bad ids or input), when nothing was sent.
 func (c *Client) AttachCampaignStructuredSnippets(ctx context.Context, campaignID string, snippets []StructuredSnippet) (*TextExtensionsResult, error) {
@@ -156,4 +159,54 @@ func (c *Client) AttachCampaignStructuredSnippets(ctx context.Context, campaignI
 	r.StructuredSnippetAdExtensionIDs = c.attachTextExtensionsOfType(ctx, r, json.Number(c.account.AccountID), json.Number(campaignID),
 		adExtensionTypeStructuredSnippet, "structured snippet", exts)
 	return r, nil
+}
+
+// reportExistingSnippets compares the requested snippets with those already associated with the
+// campaign (contents, as the association lookup reported them) when none is added. A requested
+// snippet is present when an existing one has the same header (ignoring case and spacing) and
+// every requested value (compared as textfold keys). A missing one is Failed when every existing
+// snippet's contents were reported, since it is then known not to be there, and Unconfirmed
+// when some existing snippet came back without a header, which may be it.
+func reportExistingSnippets(r *TextExtensionsResult, requested []msTextAdExtension, contents []StructuredSnippet) {
+	unreadable := false
+	for _, e := range contents {
+		if canonicalSnippetHeader(e.Header) == "" {
+			unreadable = true
+		}
+	}
+	for i, want := range requested {
+		if snippetPresent(want, contents) {
+			continue
+		}
+		if unreadable {
+			r.Unconfirmed++
+			r.Steps = append(r.Steps, fmt.Sprintf("Structured snippet extension %d (%s) UNCONFIRMED: the campaign already has structured snippets whose contents Microsoft did not report, so none was added — verify in Microsoft Advertising", i, want.Header))
+			continue
+		}
+		r.Failed++
+		r.Steps = append(r.Steps, fmt.Sprintf("Structured snippet extension %d (%s) NOT attached: the campaign already has other structured snippets, so none was added — add it in Microsoft Advertising", i, want.Header))
+	}
+}
+
+func snippetPresent(want msTextAdExtension, contents []StructuredSnippet) bool {
+	for _, e := range contents {
+		if canonicalSnippetHeader(e.Header) != want.Header {
+			continue
+		}
+		have := make(map[string]struct{}, len(e.Values))
+		for _, v := range e.Values {
+			have[textfold.Key(strings.TrimSpace(v))] = struct{}{}
+		}
+		all := true
+		for _, v := range want.Values {
+			if _, ok := have[textfold.Key(v)]; !ok {
+				all = false
+				break
+			}
+		}
+		if all {
+			return true
+		}
+	}
+	return false
 }

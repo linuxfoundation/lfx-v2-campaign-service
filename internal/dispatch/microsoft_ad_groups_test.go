@@ -466,3 +466,42 @@ func TestMicrosoftAdGroups_WriteBidRebidsEveryGroup(t *testing.T) {
 		t.Fatalf("writes = %+v, want ad groups 654 then 655", writes)
 	}
 }
+
+// A later group's write that fails ambiguously (5xx) leaves THAT group's outcome unknown: the
+// error says it is unconfirmed and the campaign MAY be partly re-bid, never that it "was not"
+// re-bid. A definite refusal of the later group still says it was not.
+func TestMicrosoftAdGroups_WriteBidLaterGroupFailureWording(t *testing.T) {
+	for _, tc := range []struct {
+		name, want, notWant string
+		status              int
+		body                string
+	}{
+		{"5xx is unconfirmed", "the outcome for ad group 655 is unconfirmed (it may or may not have been re-bid), so the campaign may be partly re-bid", "655 was not", http.StatusInternalServerError, `{}`},
+		{"definite refusal", "ad group 655 was not, so the campaign is partly re-bid", "may be partly", http.StatusBadRequest, `{"Code":1001,"ErrorCode":"InvalidRequest"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n := 0
+			var mu sync.Mutex
+			d, _ := msBudgetDispatcherWith(t, msBidStrategy("EnhancedCpc"), func(w http.ResponseWriter, _ *http.Request) {
+				mu.Lock()
+				n++
+				first := n == 1
+				mu.Unlock()
+				if first {
+					_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+					return
+				}
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			})
+			err := writeMSBid(d, msMultiGroupCampaign(), 2.35)
+			var u interface{ Unconfirmed() bool }
+			if !errors.As(err, &u) || !u.Unconfirmed() {
+				t.Fatalf("err = %v, want an unconfirmed bid write", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), tc.notWant) {
+				t.Errorf("err = %v\nwant it to contain %q and not %q", err, tc.want, tc.notWant)
+			}
+		})
+	}
+}

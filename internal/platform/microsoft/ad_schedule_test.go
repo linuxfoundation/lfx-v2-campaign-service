@@ -16,11 +16,25 @@ func TestValidateAdSchedules(t *testing.T) {
 	for i := range tooMany {
 		tooMany[i] = AdSchedule{Day: "Monday", StartHour: 0, EndHour: 1}
 	}
+	// Eight non-overlapping Monday windows: within the 49 total but over Microsoft's seven per
+	// day; seven per day on every day (49) is accepted.
+	eightMonday := make([]AdSchedule, MaxAdSchedulesPerDay+1)
+	for i := range eightMonday {
+		eightMonday[i] = AdSchedule{Day: "Monday", StartHour: i, EndHour: i + 1}
+	}
+	fullWeek := make([]AdSchedule, 0, MaxAdSchedules)
+	for _, d := range scheduleDays {
+		for h := 0; h < 7; h++ {
+			fullWeek = append(fullWeek, AdSchedule{Day: d, StartHour: h, EndHour: h + 1})
+		}
+	}
 	for _, tc := range []struct {
 		name string
 		in   []AdSchedule
 		want string // "" = accepted
 	}{
+		{"eight windows on one day", eightMonday, "adSchedules: at most 7 windows are accepted for one day, got more on Monday"},
+		{"seven windows on every day", fullWeek, ""},
 		{"nothing", nil, ""},
 		{"touching windows", []AdSchedule{{Day: "monday", StartHour: 12, EndHour: 17}, {Day: " MONDAY ", StartHour: 9, EndHour: 12}}, ""},
 		{"whole day with bounds", []AdSchedule{{Day: "Sunday", StartHour: 0, EndHour: 24, BidAdjustment: 900}, {Day: "Saturday", StartHour: 23, EndHour: 24, BidAdjustment: -90}}, ""},
@@ -89,7 +103,7 @@ func TestCreateCampaign_AdScheduleAttachedBeforeTheAdGroup(t *testing.T) {
 	if strings.Join(res.AdScheduleCriterionIDs, ",") != "9002,9102" {
 		t.Errorf("schedule ids = %v", res.AdScheduleCriterionIDs)
 	}
-	if !strings.Contains(strings.Join(res.Steps, "\n"), "Ad schedule attached: 2 day-time criteria (Monday 9-17 (+20%); Tuesday 0-24, in the campaign's time zone)") {
+	if !strings.Contains(strings.Join(res.Steps, "\n"), "Ad schedule attached: 2 day-time criteria (Monday 9-17 (+20%); Tuesday 0-24, in the Microsoft Advertising account's time zone, not the campaign's)") {
 		t.Errorf("steps = %v", res.Steps)
 	}
 }
