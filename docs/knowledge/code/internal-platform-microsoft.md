@@ -1651,7 +1651,9 @@ an overflow (MembershipDuration above int32) makes the answer unbelievable (#613
 service answers 503 with nothing partial: no `Audiences` array, a null entry, an id that is not the
 canonical spelling of a positive int64 or repeats, an entry of another type (the filter was not
 applied), more than 5,000 entries, or any partial error with a present code. A zero or null
-placeholder code is not an error (`audienceErrorCode`).
+placeholder code is not an error (`audienceErrorCode`). The body is streamed
+(`decodeCappedList`, client.go), so the 5,000-row cap refuses the answer at the first row past it,
+before the rest is read or allocated.
 
 The dispatcher (`internal/dispatch/microsoft_remarketing_lists.go`,
 `ListMicrosoftRemarketingLists`) answers `ErrTargetingLookupUnsupported` (400 "not supported")
@@ -1807,7 +1809,10 @@ and `ageRangeWire` sends Microsoft's spelling (the other four adult ranges match
 reference as spelled). The `AddCampaignCriterions` response decode (`boundedGeoIDs` and
 `boundedNestedErrorItems`) retains up to `maxCampaignCriterionResults` (64) ids and error
 collections, covering a 49-window ad schedule; the geographic input limit stays `maxGeoTargets`
-(30). The three keys join the fields that stop a create on a campaign found by
+(30). Its error entries, at the collection and nested `BatchErrors` levels, are classified by
+`nestedErrorState` with `audienceErrorCode`'s rule: a zero-code placeholder is not a rejection, an
+unreadable code is one (never success), and an entry with both codes explicitly null is
+UNCONFIRMED; the ad schedule, bid adjustments and geo criteria all share it (#613 review). The three keys join the fields that stop a create on a campaign found by
 name. The ids are recorded as `BidAdjustmentCriterionIDs`.
 
 The dispatcher (`internal/dispatch/microsoft_bid_adjustments.go`) refuses a value that is not an
@@ -1848,7 +1853,8 @@ answers 409, as for MaxClicks.
 
 `ListConversionGoals` is the picker read (`GET /projects/{project_id}/microsoft-ads/conversion-goals`,
 the same call with no ids): every goal on the account, or `ErrConversionGoalsMalformed` (503) for
-a null entry, an unusable or repeated id, more than 5,000 rows or any partial error.
+a null entry, an unusable or repeated id, more than 5,000 rows (streamed with `decodeCappedList`,
+so refused at the first row past the cap) or any partial error.
 
 Not verified live, in particular `Campaign.GoalIds` (the reference describes it only as "A list of
 goal IDs") and the JSON spelling of the `ConversionGoalTypes` flags. Everything is behind
@@ -1894,7 +1900,10 @@ re-bids, and the keyword lever accepts (one per batch), every distinct group wit
 `AdGroupID` (`microsoftConfirmedExtraAdGroupIDs`), a `failed` one included: a group whose ad or
 keyword step failed after Microsoft confirmed it still exists at the old bid with its confirmed
 keywords (#613 review). A bid failure after the first group is UNCONFIRMED. A later group whose
-create was ambiguous and confirmed no id is recorded `failed` with `Unconfirmed`; while any is,
+create was ambiguous and confirmed no id (a timeout, a 5xx, or an accepted create with an
+unreadable body, errNoID; `createAdGroupAndAd` marks its UNCONFIRMED steps with
+`hierarchyStepUnconfirmedError` so `IsOutcomeUnconfirmed` agrees) is recorded `failed` with
+`Unconfirmed`; while any is,
 the bid lever refuses with `ErrBidUnwritable` naming the entry to reconcile
 (`microsoftUnaddressedAdGroups`), since an ad group may exist at the old bid that no write can
 reach. The keyword lever needs no such rule: it acts only on a group the caller names, and an id

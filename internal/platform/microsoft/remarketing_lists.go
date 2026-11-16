@@ -88,11 +88,6 @@ func wholeNumberField(raw json.RawMessage, max int64) (*int64, bool) {
 	return &v, true
 }
 
-type listRemarketingListsResponse struct {
-	Audiences     []*msRemarketingList `json:"Audiences"`
-	PartialErrors indexedErrors        `json:"PartialErrors"`
-}
-
 // ErrRemarketingListsMalformed marks a list answer this client cannot believe. The service maps
 // it, like any upstream failure it cannot classify, to a 503 with nothing partial.
 var ErrRemarketingListsMalformed = errors.New("microsoft-ads remarketing list read could not be confirmed")
@@ -114,12 +109,16 @@ func (c *Client) ListRemarketingLists(ctx context.Context) ([]RemarketingList, e
 	if err != nil {
 		return nil, fmt.Errorf("microsoft-ads remarketing list read failed: %w", err)
 	}
-	var probe map[string]json.RawMessage
-	var resp listRemarketingListsResponse
-	if json.Unmarshal(raw, &probe) != nil || json.Unmarshal(raw, &resp) != nil {
+	// Streamed (decodeCappedList), so an answer longer than maxRemarketingListRows is refused
+	// at the first row past the cap instead of after every row is decoded.
+	resp, err := decodeCappedList[msRemarketingList](raw, "Audiences", maxRemarketingListRows)
+	if errors.Is(err, errListOverCap) {
+		return nil, fmt.Errorf("%w: it returned more than %d lists", ErrRemarketingListsMalformed, maxRemarketingListRows)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("%w: the response is not the documented shape", ErrRemarketingListsMalformed)
 	}
-	if aud, ok := probe["Audiences"]; !ok || isJSONNullRaw(aud) {
+	if !resp.SawList {
 		return nil, fmt.Errorf("%w: the response carries no Audiences array", ErrRemarketingListsMalformed)
 	}
 	if resp.PartialErrors.Truncated {
@@ -130,12 +129,9 @@ func (c *Client) ListRemarketingLists(ctx context.Context) ([]RemarketingList, e
 			return nil, fmt.Errorf("%w: it reported errors", ErrRemarketingListsMalformed)
 		}
 	}
-	if len(resp.Audiences) > maxRemarketingListRows {
-		return nil, fmt.Errorf("%w: it returned more than %d lists", ErrRemarketingListsMalformed, maxRemarketingListRows)
-	}
-	out := make([]RemarketingList, 0, len(resp.Audiences))
-	seen := make(map[string]struct{}, len(resp.Audiences))
-	for i, a := range resp.Audiences {
+	out := make([]RemarketingList, 0, len(resp.Rows))
+	seen := make(map[string]struct{}, len(resp.Rows))
+	for i, a := range resp.Rows {
 		if a == nil {
 			return nil, fmt.Errorf("%w: position %d is empty", ErrRemarketingListsMalformed, i+1)
 		}

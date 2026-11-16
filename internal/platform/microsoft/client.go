@@ -1690,3 +1690,96 @@ func parseNonNegativeInt(s string) (int64, error) {
 	}
 	return n, nil
 }
+
+// errListOverCap is returned by decodeCappedList once the list holds more than its cap.
+var errListOverCap = errors.New("the list exceeds this client's row cap")
+
+// cappedListResponse is a picker read decoded by decodeCappedList: the rows of listKey (each
+// may be nil for a JSON null entry), whether that key was present as a non-null value, and the
+// PartialErrors array.
+type cappedListResponse[T any] struct {
+	Rows          []*T
+	SawList       bool
+	PartialErrors indexedErrors
+}
+
+// decodeCappedList decodes a picker read's top-level object by STREAMING it with json.Decoder,
+// so a list longer than max is refused (errListOverCap) as soon as entry max+1 begins, before
+// the rest of the body is read or the rows allocated. Keys are matched case-insensitively, as
+// encoding/json matches them; a repeated key replaces the earlier value, as encoding/json does.
+// Any other key is skipped. A body that is not one JSON object, or a list that is neither an
+// array nor null, is a plain error (the caller classifies both as malformed).
+func decodeCappedList[T any](raw []byte, listKey string, max int) (cappedListResponse[T], error) {
+	var out cappedListResponse[T]
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return out, err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return out, errors.New("expected a JSON object")
+	}
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return out, err
+		}
+		key, _ := keyTok.(string)
+		switch {
+		case strings.EqualFold(key, listKey):
+			rows, saw, err := decodeCappedArray[T](dec, max)
+			if err != nil {
+				return out, err
+			}
+			out.Rows, out.SawList = rows, saw
+		case strings.EqualFold(key, "PartialErrors"):
+			var pe indexedErrors
+			if err := dec.Decode(&pe); err != nil {
+				return out, err
+			}
+			out.PartialErrors = pe
+		default:
+			var skip json.RawMessage
+			if err := dec.Decode(&skip); err != nil {
+				return out, err
+			}
+		}
+	}
+	if _, err := dec.Token(); err != nil { // the closing '}'
+		return out, err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return out, errors.New("trailing data after the JSON object")
+	}
+	return out, nil
+}
+
+// decodeCappedArray reads one array value (or null, saw=false) from dec, stopping with
+// errListOverCap as soon as it would hold more than max entries.
+func decodeCappedArray[T any](dec *json.Decoder, max int) (rows []*T, saw bool, err error) {
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, false, err
+	}
+	if tok == nil {
+		return nil, false, nil
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '[' {
+		return nil, false, errors.New("expected a JSON array")
+	}
+	rows = []*T{}
+	for dec.More() {
+		if len(rows) >= max {
+			return nil, true, errListOverCap
+		}
+		var row *T
+		if err := dec.Decode(&row); err != nil {
+			return nil, true, err
+		}
+		rows = append(rows, row)
+	}
+	if _, err := dec.Token(); err != nil { // the closing ']'
+		return nil, true, err
+	}
+	return rows, true, nil
+}

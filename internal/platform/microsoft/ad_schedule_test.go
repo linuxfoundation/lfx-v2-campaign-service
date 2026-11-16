@@ -206,3 +206,49 @@ func TestCreateCampaign_FullWeekAdScheduleIsConfirmed(t *testing.T) {
 		})
 	}
 }
+
+// The criterion response's error entries follow audienceErrorCode's rule, for the ad schedule
+// and the bid adjustments alike (both go through postCampaignCriterions): zero-code padding
+// ({"Code":0,"ErrorCode":null}, at either nesting level) is success; an unreadable code is a
+// rejection, never success; codes that are both explicitly null are UNCONFIRMED.
+func TestCreateCampaign_CriterionErrorEntriesUseTheDefaultCodeRule(t *testing.T) {
+	for _, step := range []struct {
+		name string
+		in   func() CampaignInput
+		n    int
+	}{
+		{"ad schedule", scheduleCreateInput, 2},
+		{"bid adjustments", bidAdjustmentCreateInput, 5}, // Tablets expands to three devices
+	} {
+		ids := make([]string, step.n)
+		for i := range ids {
+			ids[i] = strconv.Itoa(7000 + i)
+		}
+		idList := strings.Join(ids, ",")
+		for _, tc := range []struct {
+			name, errs  string
+			wantErr     bool
+			unconfirmed bool
+		}{
+			{"zero-code collection padding", `[{"Code":0,"ErrorCode":null,"Index":0},{"Code":0,"ErrorCode":"","Index":1}]`, false, false},
+			{"zero-code nested padding", `[{"Code":0,"ErrorCode":null,"BatchErrors":[{"Code":0,"ErrorCode":null,"Index":0}]}]`, false, false},
+			{"unreadable collection code", `[{"Code":true,"ErrorCode":null,"Index":0}]`, true, false},
+			{"unreadable nested code", `[{"BatchErrors":[{"Code":{"x":1},"Index":0}]}]`, true, false},
+			{"both codes explicitly null", `[{"Code":null,"ErrorCode":null,"Index":0}]`, true, true},
+		} {
+			t.Run(step.name+"/"+tc.name, func(t *testing.T) {
+				a := &targetingAPI{failCriterion: 2, criterionStatus: http.StatusOK,
+					criterionBody: `{"CampaignCriterionIds":[` + idList + `],"NestedPartialErrors":` + tc.errs + `}`}
+				c := newTargetingClient(t, a)
+				_, err := c.CreateCampaign(context.Background(), step.in())
+				if (err != nil) != tc.wantErr {
+					t.Fatalf("err = %v, want error=%v", err, tc.wantErr)
+				}
+				// The step error says which: "UNCONFIRMED" or a definite "PARTIALLY attached".
+				if err != nil && strings.Contains(err.Error(), "UNCONFIRMED") != tc.unconfirmed {
+					t.Fatalf("err = %v, want unconfirmed=%v", err, tc.unconfirmed)
+				}
+			})
+		}
+	}
+}

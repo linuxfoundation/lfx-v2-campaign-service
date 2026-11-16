@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -145,5 +146,36 @@ func TestValidateBiddingScheme_MaxConversions(t *testing.T) {
 		if _, err := validateBiddingScheme(tc.scheme, tc.cpc, tc.target, tc.goals); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%+v: err = %v, want %q", tc, err, tc.want)
 		}
+	}
+}
+
+// The picker read is streamed: maxConversionGoalRows goals are accepted, and one more is
+// refused as soon as that entry begins, before trailing garbage is ever read.
+func TestListConversionGoals_RowCapIsEnforcedWhileStreaming(t *testing.T) {
+	rows := func(n int) string {
+		parts := make([]string, n)
+		for i := range parts {
+			parts[i] = `{"Id":` + strconv.Itoa(i+1) + `}`
+		}
+		return strings.Join(parts, ",")
+	}
+	c, _ := kwRecorder(t, func(string, string) (int, string) {
+		return http.StatusOK, `{"ConversionGoals":[` + rows(maxConversionGoalRows) + `],"PartialErrors":[]}`
+	})
+	if got, err := c.ListConversionGoals(context.Background()); err != nil || len(got) != maxConversionGoalRows {
+		t.Fatalf("at the cap: %d goals, %v", len(got), err)
+	}
+	for name, tail := range map[string]string{
+		"well formed":      `]}`,
+		"garbage past cap": `, THIS IS NOT JSON`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := `{"ConversionGoals":[` + rows(maxConversionGoalRows+1) + tail
+			c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, body })
+			got, err := c.ListConversionGoals(context.Background())
+			if !errors.Is(err, ErrConversionGoalsMalformed) || got != nil || !strings.Contains(err.Error(), "more than 5000 conversion goals") {
+				t.Fatalf("got (%d goals, %v), want the row-cap refusal", len(got), err)
+			}
+		})
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -117,5 +118,37 @@ func TestListRemarketingLists_QuotedAndNumericLongs(t *testing.T) {
 	}
 	if r := rows[2]; r.SearchSize != nil || r.MembershipDuration != nil {
 		t.Errorf("null row = %+v", r)
+	}
+}
+
+// The read is streamed: maxRemarketingListRows lists are accepted, and one more is refused as
+// soon as that entry begins — before the rest of the body, here garbage that a whole-body
+// decode would reject as "not the documented shape", is ever read.
+func TestListRemarketingLists_RowCapIsEnforcedWhileStreaming(t *testing.T) {
+	rows := func(n int) string {
+		parts := make([]string, n)
+		for i := range parts {
+			parts[i] = `{"Id":` + strconv.Itoa(i+1) + `,"Type":"RemarketingList"}`
+		}
+		return strings.Join(parts, ",")
+	}
+	c, _ := kwRecorder(t, func(string, string) (int, string) {
+		return http.StatusOK, `{"Audiences":[` + rows(maxRemarketingListRows) + `],"PartialErrors":[]}`
+	})
+	if got, err := c.ListRemarketingLists(context.Background()); err != nil || len(got) != maxRemarketingListRows {
+		t.Fatalf("at the cap: %d rows, %v", len(got), err)
+	}
+	for name, tail := range map[string]string{
+		"well formed":      `]}`,
+		"garbage past cap": `, THIS IS NOT JSON`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := `{"Audiences":[` + rows(maxRemarketingListRows+1) + tail
+			c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, body })
+			got, err := c.ListRemarketingLists(context.Background())
+			if !errors.Is(err, ErrRemarketingListsMalformed) || got != nil || !strings.Contains(err.Error(), "more than 5000 lists") {
+				t.Fatalf("got (%d rows, %v), want the row-cap refusal", len(got), err)
+			}
+		})
 	}
 }

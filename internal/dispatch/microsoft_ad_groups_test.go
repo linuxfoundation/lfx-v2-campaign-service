@@ -32,6 +32,7 @@ type msGroupAPI struct {
 	bodies          []string
 	failAdGroup     int
 	ambiguousFail   bool
+	unreadableFail  bool
 	repeatAdGroupID bool
 	adGroups        int
 	ads             int
@@ -72,6 +73,11 @@ func newMSGroupDispatcher(t *testing.T, api *msGroupAPI) *MicrosoftDispatcher {
 			_, _ = io.WriteString(w, `{"CampaignIds":[321],"PartialErrors":[]}`)
 		case "AdGroups":
 			api.adGroups++
+			if api.adGroups == api.failAdGroup && api.unreadableFail {
+				// Accepted, but the body names no id: errNoID, UNCONFIRMED.
+				_, _ = io.WriteString(w, `{}`)
+				return
+			}
 			if api.adGroups == api.failAdGroup && api.ambiguousFail {
 				w.WriteHeader(http.StatusBadGateway)
 				_, _ = io.WriteString(w, `{}`)
@@ -661,5 +667,33 @@ func TestMicrosoftAdGroups_WriteBidRefusesWhileALaterGroupIsUnconfirmed(t *testi
 	// A definite failure with no id (msMultiGroupCampaign as is) does not block the write.
 	if err := writeMSBid(d, msMultiGroupCampaign(), 2.35); err != nil {
 		t.Fatalf("definite failure: WriteBid = %v", err)
+	}
+}
+
+// A later ad group create that is accepted but answered with an unreadable body ({}, no id) is
+// UNCONFIRMED like a 5xx: it is recorded unconfirmed, and the bid write then refuses rather than
+// re-bidding the rest.
+func TestMicrosoftAdGroups_UnreadableLaterGroupCreateIsUnconfirmedAndBlocksTheBid(t *testing.T) {
+	t.Setenv(constants.EnvMicrosoftAdGroupsEnabled, "true")
+	t.Setenv(constants.EnvMicrosoftCreateNegativeKeywordsEnabled, "true")
+	t.Setenv(constants.EnvMicrosoftAudiencesEnabled, "true")
+	api := &msGroupAPI{failAdGroup: 2, unreadableFail: true}
+	d := newMSGroupDispatcher(t, api)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMicrosoftAds, msGroupConfig(msThreeGroups))
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	g := msGroupResult(t, camp).AdGroups[1]
+	if g.Status != microsoft.AdGroupStatusFailed || g.AdGroupID != "" || !g.Unconfirmed {
+		t.Fatalf("group 2 = %+v, want failed, no id, unconfirmed", g)
+	}
+	bd, calls := msBudgetDispatcher(t, msBidStrategy("EnhancedCpc"), http.StatusOK, `{"PartialErrors":[]}`)
+	camp.PlatformCampaignID = "321"
+	berr := writeMSBid(bd, camp, 2.35)
+	if !errors.Is(berr, domain.ErrBidUnwritable) || !strings.Contains(berr.Error(), "entry 2 (Beta)") {
+		t.Fatalf("WriteBid = %v, want ErrBidUnwritable naming entry 2 (Beta)", berr)
+	}
+	if w := msWrites(calls()); len(w) != 0 {
+		t.Fatalf("writes = %+v, want none", w)
 	}
 }

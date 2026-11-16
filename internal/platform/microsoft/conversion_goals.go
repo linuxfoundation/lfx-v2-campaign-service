@@ -192,16 +192,17 @@ func (c *Client) ListConversionGoals(ctx context.Context) ([]ConversionGoal, err
 	if err != nil {
 		return nil, fmt.Errorf("microsoft-ads conversion goal read failed: %w", err)
 	}
-	var probe map[string]json.RawMessage
-	var resp getConversionGoalsByIDsResponse
-	if json.Unmarshal(raw, &probe) != nil || json.Unmarshal(raw, &resp) != nil {
+	// Streamed (decodeCappedList), so an answer longer than maxConversionGoalRows is refused at
+	// the first row past the cap instead of after every row is decoded.
+	resp, err := decodeCappedList[msConversionGoal](raw, "ConversionGoals", maxConversionGoalRows)
+	if errors.Is(err, errListOverCap) {
+		return nil, fmt.Errorf("%w: it returned more than %d conversion goals", ErrConversionGoalsMalformed, maxConversionGoalRows)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("%w: the response is not the documented shape", ErrConversionGoalsMalformed)
 	}
-	if goals, ok := probe["ConversionGoals"]; !ok || isJSONNullRaw(goals) {
+	if !resp.SawList {
 		return nil, fmt.Errorf("%w: the response carries no ConversionGoals array", ErrConversionGoalsMalformed)
-	}
-	if len(resp.ConversionGoals) > maxConversionGoalRows {
-		return nil, fmt.Errorf("%w: it returned more than %d conversion goals", ErrConversionGoalsMalformed, maxConversionGoalRows)
 	}
 	for _, it := range resp.PartialErrors.Items {
 		if it.isError() {
@@ -211,9 +212,9 @@ func (c *Client) ListConversionGoals(ctx context.Context) ([]ConversionGoal, err
 	if resp.PartialErrors.Truncated {
 		return nil, fmt.Errorf("%w: it reported a partial error, so the list may be incomplete", ErrConversionGoalsMalformed)
 	}
-	out := make([]ConversionGoal, 0, len(resp.ConversionGoals))
-	seen := make(map[string]struct{}, len(resp.ConversionGoals))
-	for i, g := range resp.ConversionGoals {
+	out := make([]ConversionGoal, 0, len(resp.Rows))
+	seen := make(map[string]struct{}, len(resp.Rows))
+	for i, g := range resp.Rows {
 		if g == nil {
 			return nil, fmt.Errorf("%w: position %d is empty", ErrConversionGoalsMalformed, i+1)
 		}

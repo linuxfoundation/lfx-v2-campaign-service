@@ -777,20 +777,31 @@ func (b *boundedNestedErrorItems) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// nestedErrorsHaveAny reports whether the collection carries at least one ACTUAL error,
-// checking BOTH the collection level and each nested BatchErrors list. Mirrors
-// partialErrorsHaveAny's null-placeholder filtering: a position-aligned array can contain
-// nulls that decode to zero-value items, and those are not errors.
-func nestedErrorsHaveAny(items []msNestedErrorCollection) bool {
-	for _, it := range items {
-		if codeString(it.ErrorCode) != "" || codeString(it.Code) != "" {
-			return true
+// nestedErrorState classifies a NestedPartialErrors array with audienceErrorCode's rule, at the
+// collection level and for each nested BatchErrors entry: an entry is an error unless BOTH codes
+// are defaults (absent, null, 0 or ""), and a present code this client cannot read is still an
+// error. So a zero-code placeholder ({"Code":0,"ErrorCode":null}) is not a rejection and an
+// unreadable code ({"Code":true}) is never read as success. unreadable reports an entry whose
+// codes are BOTH explicitly null (the isZeroCodePlaceholder rule): it names neither an error nor
+// a clean slot, so a caller must not read it as success. An absent code or a null slot (an
+// index-aligned array's padding) is neither.
+func nestedErrorState(items []msNestedErrorCollection) (anyErr, unreadable bool) {
+	classify := func(errorCode, code json.RawMessage) {
+		if present, _ := audienceErrorCode(errorCode, code); present {
+			anyErr = true
+			return
 		}
-		if partialErrorsHaveAny(it.BatchErrors.Items) {
-			return true
+		if isJSONNullRaw(errorCode) && isJSONNullRaw(code) {
+			unreadable = true
 		}
 	}
-	return false
+	for _, it := range items {
+		classify(it.ErrorCode, it.Code)
+		for _, b := range it.BatchErrors.Items {
+			classify(b.ErrorCode, b.Code)
+		}
+	}
+	return anyErr, unreadable
 }
 
 // nestedErrorCodes renders the machine-readable codes from a NestedPartialErrors array for an
@@ -799,18 +810,20 @@ func nestedErrorsHaveAny(items []msNestedErrorCollection) bool {
 // this client.
 func nestedErrorCodes(items []msNestedErrorCollection) string {
 	var codes []string
-	for _, it := range items {
-		for _, raw := range []json.RawMessage{it.ErrorCode, it.Code} {
-			if v := codeString(raw); v != "" && len(v) <= maxErrorCodeLen {
-				codes = append(codes, v)
-				if len(codes) >= maxRetainedErrorCodes {
-					return strings.Join(codes, ",")
-				}
-			}
+	// Rendered with audienceErrorCode, so a zero-code placeholder adds no "0" and an unreadable
+	// code is shown as withheld.
+	add := func(errorCode, code json.RawMessage) bool {
+		if present, rendered := audienceErrorCode(errorCode, code); present {
+			codes = append(codes, rendered)
 		}
-		if nested := partialErrorCodes(it.BatchErrors.Items); nested != "" && nested != "unspecified" {
-			codes = append(codes, nested)
-			if len(codes) >= maxRetainedErrorCodes {
+		return len(codes) >= maxRetainedErrorCodes
+	}
+	for _, it := range items {
+		if add(it.ErrorCode, it.Code) {
+			return strings.Join(codes, ",")
+		}
+		for _, b := range it.BatchErrors.Items {
+			if add(b.ErrorCode, b.Code) {
 				return strings.Join(codes, ",")
 			}
 		}
@@ -1090,7 +1103,13 @@ func (c *Client) postCampaignCriterions(ctx context.Context, campaignID, what, n
 	if resp.NestedPartialErrors.Truncated || nestedTruncated(resp.NestedPartialErrors.Items) {
 		return nil, fmt.Errorf("microsoft-ads %s returned a truncated error array for campaign %s, so the outcome cannot be classified: %w", what, campaignID, errNoID)
 	}
-	if nestedErrorsHaveAny(resp.NestedPartialErrors.Items) {
+	anyErr, unreadable := nestedErrorState(resp.NestedPartialErrors.Items)
+	if !anyErr && unreadable {
+		// An entry whose codes are both explicitly null says neither "rejected" nor "clean":
+		// the criteria may or may not all be attached.
+		return nil, fmt.Errorf("microsoft-ads %s returned an error entry with no readable code for campaign %s, so the outcome cannot be classified: %w", what, campaignID, errNoID)
+	}
+	if anyErr {
 		created := make([]string, 0, len(resp.CampaignCriterionIds))
 		for _, raw := range resp.CampaignCriterionIds {
 			if id := numberID(raw); id != "" {

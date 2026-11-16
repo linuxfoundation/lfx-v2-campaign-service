@@ -366,7 +366,7 @@ func (c *Client) createAdGroupAndAd(
 		// clean abort where nothing was created. errNoID (malformed 2xx, no id) is UNCONFIRMED.
 		switch {
 		case createOutcomeAmbiguous(err) || errors.Is(err, errNoID):
-			return adGroupPartial(), fmt.Errorf("microsoft-ads ad group creation UNCONFIRMED (campaign %s %s; %q may exist — verify before retrying): %w", campaignID, campaignState, adGroupName, err)
+			return adGroupPartial(), &hierarchyStepUnconfirmedError{err: fmt.Errorf("microsoft-ads ad group creation UNCONFIRMED (campaign %s %s; %q may exist — verify before retrying): %w", campaignID, campaignState, adGroupName, err)}
 		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
 			return adGroupPartial(), fmt.Errorf("microsoft-ads ad group step aborted (campaign %s %s; context done during the lookup, no ad group created): %w", campaignID, campaignState, err)
 		case errors.Is(err, errPartialFailure):
@@ -452,7 +452,7 @@ func (c *Client) createAdGroupAndAd(
 		// clean abort).
 		switch {
 		case createOutcomeAmbiguous(err) || errors.Is(err, errNoID):
-			return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad creation UNCONFIRMED (%s; an ad may exist — verify before retrying): %w", hierState, err)
+			return adGroupWithIDPartial(), &hierarchyStepUnconfirmedError{err: fmt.Errorf("microsoft-ads ad creation UNCONFIRMED (%s; an ad may exist — verify before retrying): %w", hierState, err)}
 		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
 			return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad step aborted (%s; context done during the lookup, no ad created): %w", hierState, err)
 		case errors.Is(err, errPartialFailure):
@@ -583,7 +583,7 @@ func (c *Client) createAdGroupAndAd(
 				r.Steps = *steps
 				return r, nil
 			case createOutcomeAmbiguous(kerr) || errors.Is(kerr, errNoID):
-				return adWithIDPartial(), fmt.Errorf("microsoft-ads keyword targeting UNCONFIRMED (%s + ad %s; keywords may exist — verify before retrying, a blind retry would duplicate them): %w", hierState, adID, kerr)
+				return adWithIDPartial(), &hierarchyStepUnconfirmedError{err: fmt.Errorf("microsoft-ads keyword targeting UNCONFIRMED (%s + ad %s; keywords may exist — verify before retrying, a blind retry would duplicate them): %w", hierState, adID, kerr)}
 			case errors.Is(kerr, context.Canceled) || errors.Is(kerr, context.DeadlineExceeded):
 				return adWithIDPartial(), fmt.Errorf("microsoft-ads keyword step aborted (%s + ad %s; context done, no keywords created): %w", hierState, adID, kerr)
 			case errors.Is(kerr, errPartialFailure):
@@ -1661,3 +1661,14 @@ func redactAdURL(raw string) string {
 	}
 	return truncate(trimmed, maxErrorBodyChars)
 }
+
+// hierarchyStepUnconfirmedError marks an ad group, ad or keyword step of createAdGroupAndAd that
+// was classified UNCONFIRMED, so IsOutcomeUnconfirmed agrees with that classification. Without
+// it, an accepted create whose response was unreadable (errNoID, which IsOutcomeUnconfirmed does
+// not recognize on its own) read as definite, and a later ad group's Unconfirmed flag was saved
+// false (#613 review).
+type hierarchyStepUnconfirmedError struct{ err error }
+
+func (e *hierarchyStepUnconfirmedError) Error() string     { return e.err.Error() }
+func (e *hierarchyStepUnconfirmedError) Unwrap() error     { return e.err }
+func (e *hierarchyStepUnconfirmedError) Unconfirmed() bool { return true }
