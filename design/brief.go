@@ -308,6 +308,11 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		"Conversion rules belong to the ad account, so conversions also require global_marketing_ops on the "+
 		"project (403; "+
 		"503 when the check cannot be made). "+
+		"LINKEDIN DAILY CAP (#584): with lifetimeBudget true, linkedInConfig takes an optional "+
+		"`dailyCapUsd` (USD), sent as the campaign's dailyBudget beside its totalBudget. Refused with a "+
+		"400 before any job exists when it is set without lifetimeBudget, is not a number (null "+
+		"included), is not above zero, is under LinkedIn's $10 daily minimum, or is more than the "+
+		"lifetime budget. "+
 		"REDDIT CONVERSION EVENT (#549): redditConfig.conversionEvent names the pixel event a conversions "+
 		"campaign optimizes toward, sent as the campaign's and the ad group's optimization_goal: "+
 		"PURCHASE, SIGN_UP, LEAD, PAGE_VISIT, VIEW_CONTENT, ADD_TO_CART, ADD_TO_WISHLIST or SEARCH, "+

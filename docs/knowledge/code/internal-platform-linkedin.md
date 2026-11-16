@@ -438,6 +438,20 @@ than a `%w` in the message: wrapping with `%w` would append the sentinel's own t
 message and make the client-safe sentence indistinguishable from its chain — which matters
 because the dispatcher hands exactly that sentence to an API client.
 
+**A lifetime budget may carry a daily cap (#584).** `CampaignInput.DailyCapUSD` (zero for none)
+is sent as the campaign's `dailyBudget` beside its `totalBudget`. `ValidateDailyCap(cap, total,
+lifetime)` owns the rules:
+- a cap exists only beside a lifetime budget;
+- it obeys every daily rule, by running `ValidateBudgetAmount(cap, false)`, with the refusal
+  prefixed "daily cap:";
+- it may not exceed the lifetime total, compared only when the total is itself valid.
+
+`CreateCampaign` calls it before any POST, next to `ValidateBudgetAmount`, and passes the wire
+string to `createSponsoredCampaign`. The edit-side twin `ValidateTotalCoversCap(total, cap)`
+refuses a lifetime total below an existing cap. Both return `budgetAmountError`, so
+`BudgetAmountReason` surfaces their sentence as a 400. The shape is not yet verified against a
+live account (cs#579).
+
 `GetCampaignBudget(ctx, campaignID)` reads the campaign under the resolved account
 (`adAccounts/{acct}/adCampaigns/{id}`, numeric ids only) and returns a `CampaignBudget` carrying
 `DailyBudget`, `TotalBudget`, `CurrencyCode` and `Status`. An **absent** field stays `nil`

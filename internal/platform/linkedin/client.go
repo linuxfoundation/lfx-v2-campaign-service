@@ -240,11 +240,15 @@ type CreativeVariant struct {
 // CampaignInput is the full campaign-creation request. Mirrors
 // LinkedInCampaignCreateRequest (the fields CreateCampaign consumes).
 type CampaignInput struct {
-	EventName        string
-	RegistrationURL  string
-	HSToken          string // optional
-	BudgetUSD        float64
-	LifetimeBudget   bool
+	EventName       string
+	RegistrationURL string
+	HSToken         string // optional
+	BudgetUSD       float64
+	LifetimeBudget  bool
+	// DailyCapUSD is the optional daily spending cap beside a LIFETIME budget (#584), in USD like
+	// BudgetUSD. ZERO means no cap. When set, the campaign carries both totalBudget (BudgetUSD)
+	// and dailyBudget (this). See ValidateDailyCap.
+	DailyCapUSD      float64
 	StartDate        string // YYYY-MM-DD
 	EndDate          string // YYYY-MM-DD
 	GeoTargets       []GeoTarget
@@ -2084,7 +2088,7 @@ func (c *Client) readCampaignGroupEnd(ctx context.Context, path, groupID string)
 // single-flight claim is PLANNED but NOT provided here (tracked separately as
 // LFXV2-2665); until it exists, callers MUST NOT rely on any dedup guarantee and
 // must serialize concurrent calls for the same name on their own.
-func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, custom *Targeting, lifetimeBudget bool, bidding campaignBiddingPlan) (id string, reused bool, err error) {
+func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, custom *Targeting, lifetimeBudget bool, bidding campaignBiddingPlan, dailyCap string) (id string, reused bool, err error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
 	// Scope the idempotency lookup to the resolved campaign group: the campaign
@@ -2160,6 +2164,12 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 		"politicalIntent":        "NOT_POLITICAL",
 		budgetField:              map[string]any{"amount": amount, "currencyCode": "USD"},
 		"runSchedule":            map[string]any{"start": startMs, "end": endMs},
+	}
+	// A lifetime budget may also carry a daily cap (#584): LinkedIn takes totalBudget and
+	// dailyBudget together. dailyCap is ValidateDailyCap's wire string, so it is set only beside
+	// a lifetime budget, at or under it.
+	if dailyCap != "" && lifetimeBudget {
+		body["dailyBudget"] = map[string]any{"amount": dailyCap, "currencyCode": "USD"}
 	}
 	// Merge the bidding fields, then the targetingCriteria block.
 	for k, v := range bidding.fields {
@@ -2803,6 +2813,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if _, _, err := ValidateBudgetAmount(in.BudgetUSD, in.LifetimeBudget); err != nil {
 		return nil, domain.WrapPreflightRefusal(err)
 	}
+	// The optional daily cap (#584), checked here for the same reason: an amount LinkedIn would
+	// refuse must be refused before the campaign group exists. Its wire string is what is sent.
+	dailyCap := ""
+	if in.DailyCapUSD != 0 {
+		if dailyCap, err = ValidateDailyCap(in.DailyCapUSD, in.BudgetUSD, in.LifetimeBudget); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+	}
 	// The bidding fields, resolved BEFORE any POST: a manual bid that is not a whole number of cents
 	// is refused here, with nothing created, rather than after the campaign group exists. The plan
 	// also decides the objective and the campaign name's Objective segment.
@@ -3021,7 +3039,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
-	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, targeting, in.LifetimeBudget, bidding)
+	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, targeting, in.LifetimeBudget, bidding, dailyCap)
 	if err != nil {
 		// findOrCreateCampaignGroup may have just created a PERMANENT campaign group
 		// (groupID) whose creation is a real side effect. Returning nil,err here
