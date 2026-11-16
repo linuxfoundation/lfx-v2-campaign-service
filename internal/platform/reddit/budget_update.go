@@ -15,9 +15,10 @@ import (
 )
 
 // Reddit's campaign-level budget goals, as the create path sends them (goal_type). The create
-// path only ever sends GoalTypeLifetimeSpend; GoalTypeDailySpend is the daily counterpart in
-// Reddit's published campaign model and is mapped so that a campaign READ as daily is described
-// truthfully. Any other value is a budget shape this service has no mapping for.
+// path sends GoalTypeLifetimeSpend unless CampaignInput.BudgetType is "daily" (#549 gap 9, behind
+// REDDIT_DAILY_BUDGET_ENABLED and not yet sent live), which sends GoalTypeDailySpend, the daily
+// counterpart in Reddit's published campaign model; it is also mapped so that a campaign READ as
+// daily is described truthfully. Any other value is a budget shape this service has no mapping for.
 const (
 	GoalTypeLifetimeSpend = "LIFETIME_SPEND"
 	GoalTypeDailySpend    = "DAILY_SPEND"

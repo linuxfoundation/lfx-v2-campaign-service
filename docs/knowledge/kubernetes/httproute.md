@@ -111,7 +111,7 @@ MUST have a matching rule in [ruleset.md](ruleset.md) — a routed request with 
 matching Heimdall rule is rejected. The RuleSet's `project-api` rule covers every
 routed project-nested family except `google-ads/conversion-actions`,
 `google-ads/audiences`, `google-ads/user-lists`, `reddit-ads/custom-audiences`,
-`twitter-ads/custom-audiences`, `microsoft-ads/remarketing-lists`, `microsoft-ads/conversion-goals`,
+`reddit-ads/pixels`, `twitter-ads/custom-audiences`, `microsoft-ads/remarketing-lists`, `microsoft-ads/conversion-goals`,
 `linkedin-ads/audiences`,
 `linkedin-ads/conversions` and `meta-ads/custom-audiences`, which its
 `marketing-ops-api` rule covers; its

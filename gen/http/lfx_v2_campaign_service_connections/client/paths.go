@@ -264,6 +264,11 @@ func ListRedditAdsCustomAudiencesLfxV2CampaignServiceConnectionsPath(projectID s
 	return fmt.Sprintf("/projects/%v/reddit-ads/custom-audiences", projectID)
 }
 
+// ListRedditAdsPixelsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-reddit-ads-pixels HTTP endpoint.
+func ListRedditAdsPixelsLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/reddit-ads/pixels", projectID)
+}
+
 // ListTwitterAdsCustomAudiencesLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-twitter-ads-custom-audiences HTTP endpoint.
 func ListTwitterAdsCustomAudiencesLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/twitter-ads/custom-audiences", projectID)
