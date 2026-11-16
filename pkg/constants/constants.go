@@ -200,6 +200,54 @@ const (
 	// been exercised against a live account; the issue asks for a probe of the interests shape.
 	EnvRedditTargetingResolutionEnabled = "REDDIT_TARGETING_RESOLUTION_ENABLED"
 
+	// EnvRedditPlacementTargetingEnabled opts a deployment IN to redditConfig.placements,
+	// redditConfig.platforms and redditConfig.expandTargeting (#549 gap 7), sent at create time as
+	// the ad group's targeting.locations, targeting.platforms and targeting.expand_targeting in
+	// place of the fixed FEED + COMMENTS_PAGE, ALL and true. Only the exact value "true" enables
+	// them; unset or any other value fails closed, and a create naming any of the three is refused
+	// with a 400 before any job exists (and again at dispatch, before anything upstream). It names
+	// no account resource, so it is not role-gated. Default off because no live create has sent a
+	// value other than the fixed defaults; the platform values come from the gap review's reading
+	// of Reddit's published v3 schema. Turn it on per environment, in lfx-v2-argocd.
+	EnvRedditPlacementTargetingEnabled = "REDDIT_PLACEMENT_TARGETING_ENABLED"
+
+	// EnvRedditDailyBudgetEnabled opts a deployment IN to redditConfig.budgetType (#549 gap 9):
+	// "daily" creates the campaign with goal_type DAILY_SPEND, so budgetUsd is a per-day cap, and
+	// "lifetime" keeps LIFETIME_SPEND. Only the exact value "true" enables it; unset or any other
+	// value fails closed, and a create that sets the field (either value) is refused with a 400
+	// before any job exists. It names no account resource, so it is not role-gated. Default off
+	// because no live create has sent DAILY_SPEND on a budget-optimized campaign with an end_time;
+	// the budget lever, settings readback and account monitor already read both goal types.
+	EnvRedditDailyBudgetEnabled = "REDDIT_DAILY_BUDGET_ENABLED"
+
+	// EnvRedditAdPerVariantEnabled opts a deployment IN to one ad per variant (#549 gap 6): a
+	// Reddit create that authors its post (redditConfig.imageUrl or imageAssetId, no postUrl) and
+	// carries two to five variants authors one promoted post and one ad per variant, instead of
+	// one ad from the first variant. Only the exact value "true" enables it; unset or any other
+	// value keeps the one-ad create. While on, such a create with more than five variants or a
+	// blank or over-long variant headline is refused with a 400 before any job exists. It names
+	// no account resource, so it is not role-gated. Default off because no live create has
+	// authored more than one post or put more than one ad in an ad group.
+	EnvRedditAdPerVariantEnabled = "REDDIT_AD_PER_VARIANT_ENABLED"
+
+	// EnvRedditPixelListEnabled opts a deployment IN to the Reddit pixel picker read (#549 gap
+	// 10), GET /projects/{project_id}/reddit-ads/pixels, which lists the pixels on the ad account
+	// a Reddit create for the project uses. Only the exact value "true" enables it; unset or any
+	// other value answers 400 "not supported" without contacting Reddit. The gateway admits only
+	// global_marketing_ops to the route because the shared LF account lists every foundation's
+	// pixels. Default off because the read is built from Reddit's public OpenAPI document
+	// (list_pixels_by_ad_account) and has not been exercised against a live ad account.
+	EnvRedditPixelListEnabled = "REDDIT_PIXEL_LIST_ENABLED"
+
+	// EnvRedditGenderLanguageDaypartingEnabled opts a deployment IN to redditConfig.gender,
+	// languages and schedule (#549 gap 13): the ad group's targeting.gender and
+	// targeting.languages, and the campaign's schedule (recurring weekly delivery windows). Only
+	// the exact value "true" enables them; unset or any other value fails closed, and a create
+	// naming any of them is refused with a 400 before any job exists. They name no account
+	// resource, so they are not role-gated. Default off because no live create has sent any of
+	// them; the shapes are from Reddit's public v3 OpenAPI document.
+	EnvRedditGenderLanguageDaypartingEnabled = "REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED"
+
 	// EnvTwitterCreateTargetingEnabled opts a deployment IN to twitterConfig.geoTargets and
 	// twitterConfig.languages (#564): country and language targeting criteria added to the line
 	// item an X create makes. Only the exact value "true" enables them; unset or any other value

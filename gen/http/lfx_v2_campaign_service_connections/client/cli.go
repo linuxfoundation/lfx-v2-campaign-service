@@ -2014,6 +2014,30 @@ func BuildListRedditAdsCustomAudiencesPayload(lfxV2CampaignServiceConnectionsLis
 	return v, nil
 }
 
+// BuildListRedditAdsPixelsPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-reddit-ads-pixels endpoint from CLI
+// flags.
+func BuildListRedditAdsPixelsPayload(lfxV2CampaignServiceConnectionsListRedditAdsPixelsProjectID *string, lfxV2CampaignServiceConnectionsListRedditAdsPixelsBearerToken *string) (*lfxv2campaignserviceconnections.ListRedditAdsPixelsPayload, error) {
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsListRedditAdsPixelsProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsListRedditAdsPixelsProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListRedditAdsPixelsBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsListRedditAdsPixelsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListRedditAdsPixelsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildListTwitterAdsCustomAudiencesPayload builds the payload for the
 // lfx-v2-campaign-service-connections list-twitter-ads-custom-audiences
 // endpoint from CLI flags.

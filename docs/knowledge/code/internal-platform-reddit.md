@@ -339,7 +339,9 @@ other caller strings through `sanitizeSnapshotText` (`redditSnapshotConfig`, see
 ## Campaign status toggle
 
 `UpdateCampaignAndChildrenStatus(ctx, campaignID, adGroupID, adID, status)` pauses/resumes a
-campaign AND cascades to its child ad group + ad, because the create path PAUSES all three
+campaign AND cascades to its child ad group + ad (it delegates to
+`UpdateCampaignTreeStatus(ctx, campaignID, adGroupID, adIDs, status)`, which takes every ad of a
+one-ad-per-variant create, #549 gap 6, and applies the same ordering to each), because the create path PAUSES all three
 entities — toggling only the campaign to ACTIVE would leave the ad group/ad PAUSED and the
 campaign would not serve. Each entity is set via `PATCH /ad_accounts/{accountID}/{entity}/{id}`
 with `{"data":{"configured_status": "ACTIVE"|"PAUSED"}}` — the same envelope + `configured_status`
@@ -381,8 +383,9 @@ field existed records no provenance at all and is treated as "unknown, proceed".
 `budget_update.go` backs `RedditDispatcher.WriteBudget` (see
 [internal/dispatch](internal-dispatch.md) for the guard order). The budget this service sets is
 the one `CreateCampaign` sets: `goal_value` on the **campaign**, in integer micro-units of the
-account currency, under `goal_type: "LIFETIME_SPEND"` with `is_campaign_budget_optimization:
-true`. The ad group carries no budget.
+account currency, under `goal_type: "LIFETIME_SPEND"` (or `"DAILY_SPEND"` for a create with
+`budgetType: "daily"`, #549 gap 9) with `is_campaign_budget_optimization: true`. The ad group
+carries no budget.
 
 - `BudgetMicros(amount)` — the create path's own bound (`redditMaxBudgetUSD`) and rounding
   (`toMicrodollars`), refusing an amount that rounds to zero. Refusals wrap
@@ -544,8 +547,9 @@ connection.
 
 It implements `StatusToggler`: `resolveRedditClient` (shared with `Dispatch`, so a create
 and a toggle accept exactly the same connections) builds the client, then
-`client.UpdateCampaignAndChildrenStatus` PATCHes `configured_status` on the campaign AND its
-child ad group + ad (read from the persisted `CampaignResult`) — because the create path
+`client.UpdateCampaignTreeStatus` PATCHes `configured_status` on the campaign AND its
+child ad group + every ad (read from the persisted `CampaignResult` by `redditChildIDs`: `adIds`
+from a one-ad-per-variant create, #549 gap 6, else the one `adId`) — because the create path
 PAUSES all three, so toggling only the campaign would not serve.
 
 It also implements `BudgetWriter` (`reddit_budget.go`): the same credential resolution, with
@@ -608,8 +612,8 @@ defect; five other defects were fixed:
   this repo and never run against a live account; an absent key reads as one page.
 - **goal_type.** `LIFETIME_SPEND` → `TotalBudget`, `DAILY_SPEND` → `DailyBudget` (mapped to
   `BudgetDay`), anything else or absent → neither, so pacing is reported unknown.
-  `LIFETIME_SPEND` is the literal this client's own create path sends; `DAILY_SPEND` is not
-  exercised anywhere else in this repo.
+  `LIFETIME_SPEND` is the literal this client's own create path sends by default; `DAILY_SPEND`
+  is sent only by a create with `budgetType: "daily"` (#549 gap 9, flag-gated, not yet sent live).
 - The stale comment that cited the superseded UNVERIFIED-CONTRACT banner on
   `GetCampaignMetrics` now says what is and is not verified: the reports operation is, the
   campaign-list operation is not.
@@ -965,6 +969,84 @@ The dispatcher keeps both behind `REDDIT_TARGETING_EXCLUSIONS_ENABLED` (default 
 create has sent either field. What Reddit answers for an excluded community that does not exist
 is unknown, so it is not part of the communities-fallback match.
 
+## Gender, language and dayparting (`demographic_targeting.go`, #549 gap 13)
+
+`CampaignInput.Gender`, `Languages` and `Schedule` come from Reddit's public v3 OpenAPI document.
+`NormalizeDemographicTargeting` holds the rules: gender `FEMALE` | `MALE` (case-insensitive, a
+blank value refused, nil = every gender); languages from `components_enum_targeting_language_codes`
+(21 ISO 639-1 codes, upper-cased, de-duplicated, sent in enum order); schedule windows
+`{startDay, startHour, endDay, endHour}` (days 0-6 from Sunday, hours 0-23, every field required,
+at most `MaxScheduleWindows` = 50, a window that starts where it ends or an exact repeat refused).
+Gender and languages go in `baseTargeting`, so the communities/interests retry keeps them. The
+schedule goes on the CAMPAIGN create as `schedule: [{start_day, start_hour, end_day, end_hour}]`:
+Reddit documents the campaign schedule as available only under campaign budget optimization,
+where it replaces every ad group's, and every campaign here is budget-optimized. The Targeting
+step names any choice. The document does not say whether a window's end hour is inclusive or
+whether overlapping windows are accepted, so windows are sent as given. The dispatcher
+(`checkRedditDemographicShape`, `checkRedditDemographicTargeting`) refuses a wrong JSON type, a bad
+value, or any of the three while `REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED` is off with a
+synchronous 400, and `Dispatch` and the client re-check before any request. Not yet sent live.
+
+## One ad per variant (`ad_variants.go`, #549 gap 6)
+
+With `CampaignInput.AdPerVariant` set, a create that AUTHORS its post (`ImageURL` or
+`ImageURLSource`, no `PostURL`) and has two or more `Variants` authors one post per variant (its
+headline, `destination_url` with `utm_content=variant-N`) before the campaign, then one ad per
+authored post in the single ad group (`click_url` with the same variant's UTM, name `<event> - Ad
+N`). `ValidateAdVariants` refuses, before any upstream call, more than `MaxAdVariants` (5) or a
+blank or over-300-character variant headline. Each variant's post and ad failure is classified with
+the promo outcome table and its step is prefixed `Variant N:`. A failed variant does not roll back
+the others: the result is a degraded success whose `AdWarning` and final `Variant ads:` step name
+the failed variants. A caller cancellation still stops the create with a partial result naming
+every post and ad already made, and its `AdWarning` names every variant left without a confirmed
+ad, not only the cancelled one. A definite refusal of the campaign create after the variants'
+posts were authored is also a partial result (no campaign id, `VariantAds` naming the posts), not
+`(nil, err)`, so the claim is kept and a retry does not author the posts again. A late
+`ImageURLSource` is called once per post. The result carries `AdIDs` (every confirmed ad, variant
+order; `AdID` stays the first, so readers that know only `adId` still see a real ad) and
+`VariantAds` (`{variant, postId, adId, outcome}`, `outcome` omitted on a variant a cancelled
+create never reached); both are
+omitted on a one-ad create. No migration: they live in the campaign row's result blob, like
+Meta's per-variant `AdResult`s. `UpdateCampaignTreeStatus` cascades the status toggle over every
+ad. The monitor, metrics and settings reads are campaign-level, and the bid, keyword, negative
+keyword and budget levers address the single ad group or the campaign, so none of them reads an ad
+id; adoption records no ad ids. The dispatcher sets `AdPerVariant` only behind
+`REDDIT_AD_PER_VARIANT_ENABLED` (default off) until a live create confirms Reddit serves several
+ads from authored posts in one ad group.
+
+## Daily budget at create (`budget_type.go`, #549 gap 9)
+
+`CampaignInput.BudgetType` chooses the campaign's `goal_type`: `""` or `"lifetime"` is
+`LIFETIME_SPEND`, the long-standing create, and `"daily"` is `DAILY_SPEND`, which makes `BudgetUSD`
+a per-day cap (`ResolveBudgetGoalType`, case-insensitive). `goal_value` is the same micro-unit
+amount either way. It is refused before any upstream call when it is neither, and the
+`Campaign created` step names the pacing. The dispatcher (`checkRedditBudgetType`) reads the raw
+key like `conversionEvent` (exact key, non-blank string, refused while
+`REDDIT_DAILY_BUDGET_ENABLED` is off, `"lifetime"` included) and records the row's `budget_type`
+by the same resolution, so the budget lever, settings readback and account monitor, which
+already map both goal types, compare against the right quantity. Off until a live create
+confirms Reddit accepts `DAILY_SPEND` on a budget-optimized campaign with an `end_time`.
+
+## Placements, platforms and expansion (`placement_targeting.go`, #549 gap 7)
+
+`CampaignInput.Placements`, `Platforms` and `ExpandTargeting` become the ad group's
+`targeting.locations`, `targeting.platforms` and `targeting.expand_targeting`, which the create
+used to fix at `FEED` + `COMMENTS_PAGE`, `ALL` and `true`. `NormalizePlacementTargeting` is the one
+rule set: entries are trimmed and uppercased, must be in `Placements()` (FEED, COMMENTS_PAGE) or
+`Platforms()` (DESKTOP, MOBILE_NATIVE, MOBILE_WEB), and are returned de-duplicated in that fixed
+order; a blank or unknown entry is a `PlacementError` naming the field and the 1-based entry. An
+empty list or a nil `ExpandTargeting` keeps the old default, and `ALL` is not an accepted entry, so
+the default has one spelling. `CreateCampaign` applies it before any upstream call; the dispatcher
+applies it in `PreflightCreate` (`checkRedditPlacementTargeting`, plus `checkRedditPlacementShape`
+for a wrong JSON type) so a breach is a synchronous 400.
+
+All three go in `baseTargeting`, so the communities/interests retry keeps them: a retry that turned
+expansion back on would serve beyond what the operator limited the ad group to. Pinned by
+`TestCreateCampaign_RetryKeepsPlacementChoices`. A non-default choice is added to the
+`Targeting:` step. The dispatcher keeps the three behind `REDDIT_PLACEMENT_TARGETING_ENABLED`
+(default off): no live create has sent a non-default value. The config snapshot omits an absent
+choice (`omitempty`, `*bool`), so a stored snapshot replays through the gate as the request did.
+
 ## Campaign name (multi-campaign cs-3)
 
 `buildRedditCampaignName` composes the data pipeline's 8-segment name, `Events | <event> |
@@ -993,6 +1075,21 @@ or more than 5000 audiences is `ErrCustomAudiencesMalformed`. Both shapes come f
 public v3 OpenAPI document and are unverified live; the dispatcher gates them on
 `REDDIT_CUSTOM_AUDIENCES_ENABLED`. See
 [Reddit Custom Audiences](../architecture/reddit-custom-audiences.md).
+
+## Pixel list (`pixels.go`, #549 gap 10)
+
+`ListPixels` reads `GET /ad_accounts/{ad_account_id}/pixels` (`list_pixels_by_ad_account` in
+Reddit's public v3 OpenAPI document: a required `data` array of `components_schema_pixel` and a
+required `pagination`) on the client's account, following `pagination.next_url` with the same
+walk as the custom-audience list for at most 10 pages and reporting `truncated` past that. Only
+`id`, `name` and `business_id` are decoded. Each id must be 1-64 letters, digits or underscores
+(`ValidPixelID`, the form `conversionPixelId` takes); a missing or non-array `data`, an unusable or
+repeated id, or more than 5000 items is `ErrPixelsMalformed` with nothing partial. The dispatcher's
+`ListRedditPixels` resolves credentials as a create does and is off unless
+`REDDIT_PIXEL_LIST_ENABLED` is `"true"` (400 not supported otherwise). The service sorts by name
+ignoring case, then id, and serves it as `GET /projects/{project_id}/reddit-ads/pixels`, which the
+gateway admits only to `global_marketing_ops` (the shared account lists every foundation's
+pixels). Not yet exercised against a live account.
 
 ## Community validation and interest resolution (`targeting_resolution.go`, #549 gaps 4 and 8)
 

@@ -86,8 +86,12 @@ func (d *RedditDispatcher) checkRedditAssetChoice(cfg redditConfig) (string, err
 // PreflightCreate refuses, before the create job exists, a Reddit config that names a stored
 // asset the service cannot serve (the feature off, imageAssetId together with imageUrl or
 // postUrl, or a malformed id), whose bidding cannot be created as asked (redditBidPlan), whose
-// custom audience lists are mistyped, malformed or off on this deployment (#549), or whose
-// conversionEvent is refused (checkRedditConversionEvent). It
+// custom audience lists are mistyped, malformed or off on this deployment (#549), whose
+// conversionEvent is refused (checkRedditConversionEvent), or whose placements, platforms or
+// expandTargeting are refused (checkRedditPlacementTargeting, #549 gap 7), or whose budgetType is
+// refused (checkRedditBudgetType, #549 gap 9), or whose variants break the one-ad-per-variant
+// rules (checkRedditAdPerVariant, #549 gap 6), or whose gender, languages or schedule are refused
+// (checkRedditDemographicTargeting, #549 gap 13). It
 // never calls Reddit, so every other outcome is ErrPreflightNotApplicable. Whether the asset belongs to the brief cannot be checked here (the
 // pre-check is not given the brief); Dispatch checks it before any upstream call. A config that does
 // not decode is left to Dispatch, except a wrong-typed `bidding` (checkBiddingShape).
@@ -103,6 +107,14 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 	}
 	// A wrong-typed exclusion list is a synchronous 400 too (#549).
 	if err := checkRedditExclusionsShape(config); err != nil {
+		return err
+	}
+	// And a wrong-typed placements, platforms or expandTargeting (#549 gap 7).
+	if err := checkRedditPlacementShape(config); err != nil {
+		return err
+	}
+	// And a wrong-typed gender, languages or schedule (#549 gap 13).
+	if err := checkRedditDemographicShape(config); err != nil {
 		return err
 	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can past a type
@@ -131,10 +143,30 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 	if err := checkRedditTargetingExclusions(cfg); err != nil {
 		return err
 	}
+	// Placements, platforms and expansion (#549 gap 7): gate and rules on the best-effort decode,
+	// like the exclusions; checkRedditPlacementShape above already refused a mistyped value.
+	if err := checkRedditPlacementTargeting(cfg); err != nil {
+		return err
+	}
+	// Gender, languages and dayparting (#549 gap 13): gate and rules on the best-effort decode,
+	// like the placements; checkRedditDemographicShape above already refused a mistyped value.
+	if err := checkRedditDemographicTargeting(cfg); err != nil {
+		return err
+	}
+	// The budget's pacing (#549 gap 9), checked on the raw key like conversionEvent, so a wrong
+	// type is the synchronous 400 even when it made the decode fail.
+	if err := checkRedditBudgetType(config); err != nil {
+		return err
+	}
 	if decodeErr != nil {
 		return domain.ErrPreflightNotApplicable // Dispatch reports a malformed config as the job failure
 	}
 	if _, err := d.checkRedditAssetChoice(cfg); err != nil {
+		return err
+	}
+	// One ad per variant (#549 gap 6): the cap and every variant headline, on a config that
+	// decoded cleanly (variants is a plain list, so a mistyped one is the decode failure above).
+	if err := checkRedditAdPerVariant(cfg, redditAdPerVariantEnabled()); err != nil {
 		return err
 	}
 	// Community and interest resolution (#549 gaps 4 and 8): the one check here that reads
@@ -177,13 +209,13 @@ func (d *RedditDispatcher) checkRedditAsset(ctx context.Context, brief *model.Ca
 // fetches it. The post request itself may still refresh the token after minting, which adds
 // at most one more request timeout; assetsign.MinTTL covers it. The minted URL is also written to *minted so the caller
 // can scrub it from anything that comes back.
-func (d *RedditDispatcher) lateAssetURL(brief *model.CampaignBrief, assetID string, minted *string) func(context.Context) (string, error) {
+func (d *RedditDispatcher) lateAssetURL(brief *model.CampaignBrief, assetID string, minted *[]string) func(context.Context) (string, error) {
 	return func(ctx context.Context) (string, error) {
 		signed, exp, err := d.assetURLs.Mint(brief.ProjectID, brief.ID, assetID)
 		if err != nil {
 			return "", fmt.Errorf("reddit: cannot mint a signed URL for creative asset %s: %w", assetID, err)
 		}
-		*minted = signed
+		*minted = append(*minted, signed) // one per post on a one-ad-per-variant create (#549 gap 6)
 		// The URL is a bearer credential for the image until exp: log the id and expiry only.
 		slog.InfoContext(ctx, "minted signed creative-asset URL for a Reddit promoted post",
 			"asset_id", assetID, "brief_id", brief.ID, "exp", exp.Unix())
