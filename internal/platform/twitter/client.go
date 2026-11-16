@@ -1941,8 +1941,8 @@ func (c *Client) findByNameChecked(ctx context.Context, path, name string, check
 // joins on.
 //
 // Since #587 the Targeting segment is "Retargeting" for a retargeting campaign
-// (targetingSegment), so the pipeline, which matches "%PROSPECT%" first, no longer files it as
-// Prospecting. A campaign created under the earlier shape is still found on a retry:
+// (targetingSegment): lf-dbt reads an 8-segment name by position and stores the segment as-is, so
+// "Prospecting retargeting" was stored as the targeting value. A campaign created under the earlier shape is still found on a retry:
 // CreateCampaign falls back to legacyTwitterCampaignName.
 func buildTwitterCampaignName(in CampaignInput) string {
 	event := strings.ReplaceAll(in.EventName, "|", "-")
@@ -3334,11 +3334,11 @@ type CampaignInput struct {
 	// StageToken, Tactic and SlotToken name a LABELLED or later-slot campaign (multi-campaign
 	// cs-4). The dispatcher reads all three from the CLAIMED campaign row (its stored labels and
 	// slot version), never from a request, so a retry composes the same name. All empty — every
-	// campaign before cs-4, and any unlabelled slot-1 campaign — composes the legacy name byte for
-	// byte (buildTwitterCampaignName):
+	// campaign before cs-4, and any unlabelled slot-1 campaign — composes the same name as before
+	// (buildTwitterCampaignName):
 	//   - StageToken (ToFU, MoFU or BoFU) replaces the fixed "MoFU" in the Funnel Stage segment;
-	//   - Tactic (a model.Tactic name token) is appended to the Targeting segment ("Prospecting
-	//     retargeting");
+	//   - Tactic (a model.Tactic name token) shapes the Targeting segment (targetingSegment:
+	//     "Retargeting" for the retargeting tactic, else "Prospecting <tactic>");
 	//   - SlotToken ("#2" from slot 2 on, model.SlotNameToken) is appended to the Targeting
 	//     segment too, so a second campaign's name differs from the first's while the name keeps
 	//     exactly the 8 segments the data pipeline parses.

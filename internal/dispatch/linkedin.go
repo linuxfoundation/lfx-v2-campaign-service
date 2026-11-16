@@ -503,10 +503,12 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		Conversions:      cfg.Conversions,
 
 		// The name labels of the CLAIMED row (multi-campaign cs-4): its stored funnel stage and
-		// tactic (model.DispatchLabels) and its slot version, never the request's. A retry of
-		// that row composes the same name; an unlabelled slot-1 row composes its legacy name
-		// byte for byte; slot 2 on gets a "#<n>" token, so it never shares slot 1's name — and
-		// so the client's by-name reuse lookup never binds it to slot 1's campaign.
+		// tactic (model.DispatchLabels) and its slot version, never the request's. Slot 2 on gets
+		// a "#<n>" token, so it never shares slot 1's name — and so the client's by-name reuse
+		// lookup never binds it to slot 1's campaign. The name also carries the request's Region
+		// (from geoTargets, #587) and Objective (from bidding), so a retry that changes either
+		// composes a different name and is not reused by it; a retry spanning #587 itself still
+		// finds a pre-#587 campaign through the client's legacy-name fallback.
 		StageToken: stageToken,
 		Tactic:     tacticToken,
 		SlotToken:  model.SlotNameToken(model.DispatchSlotVersion(ctx)),

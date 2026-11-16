@@ -264,12 +264,11 @@ type CampaignInput struct {
 	Images map[string]ImageUpload
 	// StageToken, Tactic and SlotToken name a LABELLED or later-slot campaign (multi-campaign
 	// cs-4). The dispatcher reads all three from the CLAIMED campaign row (its stored labels and
-	// slot version), never from a request, so a retry composes the same name. All empty — every
-	// campaign before cs-4, and any unlabelled slot-1 campaign — composes the legacy name byte for
-	// byte (buildCampaignName):
+	// slot version), never from a request. All empty is an unlabelled slot-1 campaign
+	// (buildCampaignName; its Region segment comes from GeoTargets, see linkedinRegion):
 	//   - StageToken (ToFU, MoFU or BoFU) replaces the fixed "MoFU" in the Funnel Stage segment;
-	//   - Tactic (a model.Tactic name token) is appended to the Targeting segment ("Prospecting
-	//     retargeting");
+	//   - Tactic (a model.Tactic name token) shapes the Targeting segment (targetingSegment:
+	//     "Retargeting" for the retargeting tactic, else "Prospecting <tactic>");
 	//   - SlotToken ("#2" from slot 2 on, model.SlotNameToken) is appended to the Targeting
 	//     segment too, so a second campaign's name differs from the first's while the name keeps
 	//     exactly the 8 segments the data pipeline parses.
@@ -2273,11 +2272,17 @@ func isValidPostURN(raw string) bool {
 // Program | Event | Region | Objective | Targeting | Ad Format | Project | Funnel. eventName and
 // project arrive trimmed and pipe-stripped from CreateCampaign.
 //
-// Since #587 two segments carry what the pipeline expects there:
+// lf-dbt reads every segment of an 8-segment name BY POSITION and stores it as-is (its substring
+// parsers are only fallbacks for other names), so each segment must already be the vocabulary
+// word. Since #587 two segments are:
 //   - Region (3) is the campaign's region (linkedinRegion: NA, EMEA, APAC, India, or Global), as
-//     the Meta and Reddit names have it, not the literal "LinkedIn" the pipeline cannot read as one.
-//   - Targeting (5) is "Retargeting" for a retargeting campaign (targetingSegment), so the
-//     pipeline, which matches "%PROSPECT%" first, no longer files it as Prospecting.
+//     the Meta and Reddit names have it, where the literal "LinkedIn" was stored as the region.
+//   - Targeting (5) is "Retargeting" for a retargeting campaign (targetingSegment), where
+//     "Prospecting retargeting" was stored as the targeting value.
+//
+// The Region segment comes from the request's geo targets, not the claimed row, so a retry whose
+// first resolved geo maps to a different region composes a different name and is not reused by
+// it — the same as a retry that changes the bidding objective (the Objective segment).
 //
 // The stage, tactic and slot tokens still change only the Targeting and Funnel segments; they
 // never become a segment of their own, and never touch the Event (2) or Project (7) segments the
@@ -2341,15 +2346,20 @@ var linkedinGeoRegion = map[string]string{
 	"urn:li:geo:103291313": "APAC",  // Hong Kong
 }
 
-// linkedinRegion is the Region segment (#587): the region of the FIRST geo target, as Meta's and
-// Reddit's resolveRegion take the primary country, or "Global" when there is none or its URN is
-// not in linkedinGeoRegion.
+// linkedinRegion is the Region segment (#587): the region of the first geo target that carries a
+// URN — the first one the campaign actually targets, since CreateCampaign drops a target the
+// resolver left without one — as Meta's and Reddit's resolveRegion take the primary country.
+// "Global" when there is none or its URN is not in linkedinGeoRegion.
 func linkedinRegion(geo []GeoTarget) string {
-	if len(geo) == 0 {
+	for _, g := range geo {
+		urn := strings.TrimSpace(g.URN)
+		if urn == "" {
+			continue
+		}
+		if r, ok := linkedinGeoRegion[urn]; ok {
+			return r
+		}
 		return "Global"
-	}
-	if r, ok := linkedinGeoRegion[strings.TrimSpace(geo[0].URN)]; ok {
-		return r
 	}
 	return "Global"
 }

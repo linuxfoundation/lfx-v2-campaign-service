@@ -968,9 +968,12 @@ tactic, else `Prospecting <tactic>`, plus the slot token, e.g. `Retargeting #2`)
 
 **#587 region and targeting.** The Region segment is `linkedinRegion`: the first geo target's region
 from `linkedinGeoRegion` (every `geoResolveMap` URN mapped to Meta's and Reddit's NA / EMEA / APAC /
-India vocabulary), else `Global`. It replaced the literal `LinkedIn`, which lf-dbt's
-`parse_campaign_name` cannot read as a region; `Retargeting` replaced `Prospecting retargeting`,
-which its `%PROSPECT%`-first match filed as Prospecting. Because every name changed, `CreateCampaign`
+India vocabulary) of the first target carrying a URN, else `Global`. lf-dbt reads an 8-segment name
+by position and stores each segment as-is, so the literal `LinkedIn` was stored as the region and
+`Prospecting retargeting` as the targeting value; both segments now carry vocabulary words. The
+Region comes from the REQUEST's geo targets, not the claimed row: a retry whose first resolved geo
+maps to another region composes a different name and is not reused by it, as a changed bidding
+objective already is. Because every name changed, `CreateCampaign`
 looks up `legacyCampaignName` (the pre-#587 shape, byte for byte) in a REUSED campaign group before
 `createSponsoredCampaign`, and when it exists passes that name on, so a retry spanning the change
 reuses the earlier campaign (step "Found campaign … under its earlier name"). A new group cannot

@@ -37,6 +37,10 @@ func TestLinkedinRegion(t *testing.T) {
 		{"the first decides a mixed set", geo("urn:li:geo:103644278", "urn:li:geo:101355337"), "NA"},
 		{"an unmapped URN", geo("urn:li:geo:999"), "Global"},
 		{"surrounding space is ignored", geo(" urn:li:geo:101452733 "), "APAC"},
+		// CreateCampaign drops a target the resolver left without a URN, so the region is the
+		// first one actually targeted, not the first one listed.
+		{"an unresolved first entry is skipped", geo("", "urn:li:geo:103644278"), "NA"},
+		{"only unresolved entries", geo("", " "), "Global"},
 	} {
 		if got := linkedinRegion(tc.geo); got != tc.want {
 			t.Errorf("%s: linkedinRegion = %q, want %q", tc.name, got, tc.want)

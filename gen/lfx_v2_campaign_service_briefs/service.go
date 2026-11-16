@@ -1448,7 +1448,8 @@ type CampaignCreateInput struct {
 	// tactic in the targeting segment (`Intent retargeting` on Reddit and Meta; on
 	// LinkedIn and X the segment is `Retargeting` for the retargeting tactic and
 	// `Prospecting <tactic>` otherwise, #587). An unlabelled campaign keeps the
-	// names it has always had.
+	// names it has always had, except on LinkedIn, whose region segment changed
+	// for every new campaign in #587.
 	FunnelStage *string
 	// How the campaign(s) this request creates pursue their stage, from a
 	// controlled list (free text is refused because the label can reach campaign
