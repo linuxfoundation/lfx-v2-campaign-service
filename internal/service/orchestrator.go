@@ -365,7 +365,10 @@ type BidWriter interface {
 	// provenance and the recorded ad group id.
 	//
 	// Returns nil ONLY when the platform confirmed the change. The caller persists the new
-	// bid onto the row on nil and on nothing else.
+	// bid onto the row on nil and on nothing else. The adapter MAY update campaign.Result to
+	// record what it reconciled while writing (Microsoft resolves an unconfirmed further ad
+	// group by name); that change is persisted with the bid on nil, through the same
+	// ReplaceCampaign that writes the result column, and dropped on any error.
 	WriteBid(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, bid model.BidChange) error
 }
 

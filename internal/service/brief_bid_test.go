@@ -29,15 +29,21 @@ type bidWriterDispatcher struct {
 	err       error
 	calls     int
 	gotChange model.BidChange
+	// reconciled, when set, is written into the row's Result the way an adapter records what it
+	// reconciled during the write (Microsoft's unconfirmed ad groups).
+	reconciled json.RawMessage
 }
 
 func (d *bidWriterDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
 	return nil, errors.New("unused")
 }
 
-func (d *bidWriterDispatcher) WriteBid(_ context.Context, _ string, _ model.Provider, _ *model.Campaign, bid model.BidChange) error {
+func (d *bidWriterDispatcher) WriteBid(_ context.Context, _ string, _ model.Provider, c *model.Campaign, bid model.BidChange) error {
 	d.calls++
 	d.gotChange = bid
+	if d.reconciled != nil {
+		c.Result = d.reconciled
+	}
 	return d.err
 }
 
@@ -493,5 +499,28 @@ func TestBuildUpdateCampaignBidPayload_AcceptsAnOmittedBidType(t *testing.T) {
 	}
 	if p.Bid != 2.5 || p.BidType != nil {
 		t.Errorf("built bid=%v bid_type=%v, want 2.5 and nil", p.Bid, p.BidType)
+	}
+}
+
+// What the adapter records into the row's Result during a confirmed write (Microsoft's
+// reconciled ad groups) is persisted with the new bid; on a refused write nothing is.
+func TestUpdateCampaignBid_PersistsTheResultTheAdapterReconciled(t *testing.T) {
+	reconciled := json.RawMessage(`{"adGroups":[{"adGroupId":"654"},{"adGroupId":"656","status":"failed"}]}`)
+	d := &bidWriterDispatcher{reconciled: reconciled}
+	s, camps := budgetService(t, bidCampaign(), d)
+	if _, err := s.UpdateCampaignBid(context.Background(), bidPayload(2.35, "cpc", "3")); err != nil {
+		t.Fatalf("UpdateCampaignBid: %v", err)
+	}
+	if camps.got == nil || string(camps.got.Result) != string(reconciled) {
+		t.Fatalf("persisted result = %s, want the reconciled %s", camps.got.Result, reconciled)
+	}
+
+	refused := &bidWriterDispatcher{reconciled: reconciled, err: fmt.Errorf("refused: %w", ErrBidUnwritable)}
+	s2, camps2 := budgetService(t, bidCampaign(), refused)
+	if _, err := s2.UpdateCampaignBid(context.Background(), bidPayload(2.35, "cpc", "3")); err == nil {
+		t.Fatal("a refused write must answer an error")
+	}
+	if camps2.got != nil {
+		t.Errorf("a refused write persisted the row: %+v", camps2.got)
 	}
 }

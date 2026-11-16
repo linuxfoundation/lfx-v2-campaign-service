@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
@@ -388,4 +389,78 @@ func clipAdGroupSuffix(s string) string {
 		return string(r[:40]) + "…"
 	}
 	return s
+}
+
+// microsoftAdGroupFinder is the one client read reconcileMicrosoftUnaddressedAdGroups needs.
+type microsoftAdGroupFinder interface {
+	FindAdGroupByName(ctx context.Context, campaignID, name string) (string, bool, error)
+}
+
+// reconcileMicrosoftUnaddressedAdGroups resolves every further ad group the row records as
+// failed with an UNCONFIRMED create and no id (#563 gap 12) by looking it up by its recorded,
+// composed ad group name under the campaign:
+//   - found: its id is recorded (adGroupId set, unconfirmed cleared; status stays failed, since
+//     its ad and keywords are still unknown), so the caller re-bids it with the rest;
+//   - definitely absent (a complete, readable list without it): unconfirmed is cleared, so it
+//     no longer blocks — there is no ad group to re-bid;
+//   - otherwise (the lookup failed, the list was unreadable, the name matched an entry with no
+//     usable id, the id is one another entry already records, or no name was recorded) it stays
+//     unconfirmed and is returned, named "entry N (suffix)", for the caller to refuse.
+//
+// Changes are written back into campaign.Result, so the caller that persists the row on success
+// (update-campaign-bid's ReplaceCampaign, which writes the result column) records them; on any
+// failure nothing is persisted and the next write reconciles again. Fields of the result this
+// function does not know are preserved.
+func reconcileMicrosoftUnaddressedAdGroups(ctx context.Context, client microsoftAdGroupFinder, campaign *model.Campaign, campaignID, firstAdGroupID string) []string {
+	if len(microsoftUnaddressedAdGroups(campaign.Result)) == 0 {
+		return nil
+	}
+	var top map[string]json.RawMessage
+	var entries []map[string]json.RawMessage
+	if json.Unmarshal(campaign.Result, &top) != nil || json.Unmarshal(top["adGroups"], &entries) != nil {
+		return microsoftUnaddressedAdGroups(campaign.Result)
+	}
+	var typed []microsoft.AdGroupResult
+	_ = json.Unmarshal(top["adGroups"], &typed)
+	known := map[string]bool{strings.TrimSpace(firstAdGroupID): true}
+	for _, g := range typed {
+		if id := strings.TrimSpace(g.AdGroupID); id != "" {
+			known[id] = true
+		}
+	}
+	var unresolved []string
+	changed := false
+	for i, g := range typed {
+		if i == 0 || i >= len(entries) || !g.Unconfirmed || strings.TrimSpace(g.AdGroupID) != "" {
+			continue
+		}
+		label := fmt.Sprintf("entry %d (%s)", i+1, clipAdGroupSuffix(g.NameSuffix))
+		id, found, err := client.FindAdGroupByName(ctx, campaignID, g.AdGroupName)
+		switch {
+		case err != nil:
+			unresolved = append(unresolved, label)
+		case !found:
+			delete(entries[i], "unconfirmed")
+			changed = true
+		case known[id] || !microsoftCampaignIDRE.MatchString(id):
+			// The name resolved to an ad group another entry already records (or to an unusable
+			// id): not a group of its own, and not safely addressable.
+			unresolved = append(unresolved, label)
+		default:
+			raw, _ := json.Marshal(id)
+			entries[i]["adGroupId"] = raw
+			delete(entries[i], "unconfirmed")
+			known[id] = true
+			changed = true
+		}
+	}
+	if changed {
+		if raw, err := json.Marshal(entries); err == nil {
+			top["adGroups"] = raw
+			if out, err := json.Marshal(top); err == nil {
+				campaign.Result = out
+			}
+		}
+	}
+	return unresolved
 }

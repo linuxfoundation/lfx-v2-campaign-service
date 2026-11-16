@@ -122,10 +122,12 @@ func (d *MicrosoftDispatcher) WriteBid(ctx context.Context, projectID string, pl
 	// exists upstream at the old bid, and leaving it there would save a campaign bid it does not
 	// carry.
 	// A further group whose create was UNCONFIRMED and recorded no id may exist upstream at the
-	// old bid, and this write cannot reach it: refuse before any change rather than report a
-	// campaign bid that group does not carry.
-	if unaddressed := microsoftUnaddressedAdGroups(campaign.Result); len(unaddressed) > 0 {
-		return fmt.Errorf("write microsoft campaign bid: campaign %s has ad group %s whose create was unconfirmed and recorded no ad group id, so it cannot be re-bid; reconcile it in Microsoft Advertising (find or remove that ad group) before changing the bid: %w",
+	// old bid. It is reconciled first, by name (reconcileMicrosoftUnaddressedAdGroups): found, its
+	// id is recorded and it is re-bid below; definitely absent, it stops blocking. One that still
+	// cannot be established refuses before any change rather than report a campaign bid that
+	// group may not carry. The reconciled result is persisted with the new bid on success.
+	if unaddressed := reconcileMicrosoftUnaddressedAdGroups(ctx, client, campaign, campaignID, adGroupID); len(unaddressed) > 0 {
+		return fmt.Errorf("write microsoft campaign bid: campaign %s has ad group %s whose create was unconfirmed and whose lookup by name could not establish it (the read failed or was unreadable, or the name resolved to an unusable or already-recorded id), so it cannot be re-bid; retry the bid change — it clears once the lookup finds that ad group or confirms it absent — or resolve the ad group in Microsoft Advertising: %w",
 			campaignID, strings.Join(unaddressed, ", "), domain.ErrBidUnwritable)
 	}
 	extraIDs := microsoftConfirmedExtraAdGroupIDs(campaign.Result, adGroupID)

@@ -648,26 +648,107 @@ func TestMicrosoftAdGroups_AmbiguousLaterGroupIsRecordedUnconfirmed(t *testing.T
 	}
 }
 
-// While a later group is unconfirmed with no recorded id, an ad group may exist upstream at the
-// old bid that no write can reach: the bid write is refused (ErrBidUnwritable, nothing written)
-// naming the entry and asking for reconciliation, never a success.
-func TestMicrosoftAdGroups_WriteBidRefusesWhileALaterGroupIsUnconfirmed(t *testing.T) {
+// msUnconfirmedGroupCampaign is msMultiGroupCampaign whose failed group B was an UNCONFIRMED
+// create with no recorded id, named as the create composed it.
+func msUnconfirmedGroupCampaign() *model.Campaign {
 	camp := msMultiGroupCampaign()
 	camp.Result = json.RawMessage(strings.Replace(string(camp.Result),
 		`{"nameSuffix":"B","status":"failed","error":"rejected"}`,
-		`{"nameSuffix":"B","status":"failed","error":"ad group create UNCONFIRMED","unconfirmed":true}`, 1))
-	d, calls := msBudgetDispatcher(t, msBidStrategy("EnhancedCpc"), http.StatusOK, `{"PartialErrors":[]}`)
-	err := writeMSBid(d, camp, 2.35)
-	if !errors.Is(err, domain.ErrBidUnwritable) || !strings.Contains(err.Error(), "entry 2 (B)") || !strings.Contains(err.Error(), "reconcile it") {
-		t.Fatalf("err = %v, want ErrBidUnwritable naming entry 2 (B) and reconciliation", err)
+		`{"nameSuffix":"B","adGroupName":"LFX | Ad Group | B","status":"failed","error":"ad group create UNCONFIRMED","unconfirmed":true}`, 1))
+	return camp
+}
+
+// msAdGroupLookup routes the bid write's reconciliation read to status/body.
+func msAdGroupLookup(status int, body string) func(string) (int, string, bool) {
+	return func(path string) (int, string, bool) {
+		return status, body, strings.HasSuffix(path, "/AdGroups/QueryByCampaignId")
 	}
-	if w := msWrites(calls()); len(w) != 0 {
-		t.Fatalf("writes = %+v, want none", w)
+}
+
+// The bid write reconciles a later group recorded UNCONFIRMED with no id by looking it up by its
+// recorded name: found, its id is recorded in the result (unconfirmed cleared, status still
+// failed) and it is re-bid with the rest; definitely absent, the flag is cleared and the write
+// proceeds without it; a lookup that cannot answer keeps the 409 (ErrBidUnwritable, nothing
+// written), naming the entry and how it clears.
+func TestMicrosoftAdGroups_WriteBidReconcilesAnUnconfirmedLaterGroup(t *testing.T) {
+	t.Run("found", func(t *testing.T) {
+		camp := msUnconfirmedGroupCampaign()
+		d, calls := msBudgetDispatcherRouted(t, msAdGroupLookup(http.StatusOK,
+			`{"AdGroups":[{"Id":654,"Name":"LFX | Ad Group"},{"Id":656,"Name":"lfx | ad group | b"},{"Id":655,"Name":"LFX | Ad Group | C"}]}`),
+			msBidStrategy("EnhancedCpc"), func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"PartialErrors":[]}`) })
+		if err := writeMSBid(d, camp, 2.35); err != nil {
+			t.Fatalf("WriteBid: %v", err)
+		}
+		var ids []string
+		for _, w := range msWrites(calls()) {
+			for _, id := range []string{"654", "655", "656"} {
+				if strings.Contains(w.Body, `"Id":`+id) {
+					ids = append(ids, id)
+				}
+			}
+		}
+		if strings.Join(ids, ",") != "654,656,655" {
+			t.Fatalf("re-bid = %v, want 654,656,655", ids)
+		}
+		g := msGroupResultBlob(t, camp.Result).AdGroups[1]
+		if g.AdGroupID != "656" || g.Unconfirmed || g.Status != microsoft.AdGroupStatusFailed {
+			t.Errorf("reconciled group = %+v, want id 656, unconfirmed cleared, still failed", g)
+		}
+		if !strings.Contains(string(camp.Result), `"accountId":"1234567"`) {
+			t.Errorf("other result fields must be kept: %s", camp.Result)
+		}
+	})
+	t.Run("absent", func(t *testing.T) {
+		camp := msUnconfirmedGroupCampaign()
+		d, calls := msBudgetDispatcherRouted(t, msAdGroupLookup(http.StatusOK,
+			`{"AdGroups":[{"Id":654,"Name":"LFX | Ad Group"},{"Id":655,"Name":"LFX | Ad Group | C"}]}`),
+			msBidStrategy("EnhancedCpc"), func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"PartialErrors":[]}`) })
+		if err := writeMSBid(d, camp, 2.35); err != nil {
+			t.Fatalf("WriteBid: %v", err)
+		}
+		if n := len(msWrites(calls())); n != 2 {
+			t.Fatalf("%d writes, want 654 and 655", n)
+		}
+		if g := msGroupResultBlob(t, camp.Result).AdGroups[1]; g.Unconfirmed || g.AdGroupID != "" {
+			t.Errorf("absent group = %+v, want unconfirmed cleared and no id", g)
+		}
+	})
+	for name, lookup := range map[string]func(string) (int, string, bool){
+		"lookup 5xx":       msAdGroupLookup(http.StatusBadGateway, `{}`),
+		"list omitted":     msAdGroupLookup(http.StatusOK, `{}`),
+		"name with no id":  msAdGroupLookup(http.StatusOK, `{"AdGroups":[{"Id":null,"Name":"LFX | Ad Group | B"}]}`),
+		"already-recorded": msAdGroupLookup(http.StatusOK, `{"AdGroups":[{"Id":655,"Name":"LFX | Ad Group | B"}]}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			camp := msUnconfirmedGroupCampaign()
+			before := string(camp.Result)
+			d, calls := msBudgetDispatcherRouted(t, lookup, msBidStrategy("EnhancedCpc"), func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"PartialErrors":[]}`) })
+			err := writeMSBid(d, camp, 2.35)
+			if !errors.Is(err, domain.ErrBidUnwritable) || !strings.Contains(err.Error(), "entry 2 (B)") || !strings.Contains(err.Error(), "clears once the lookup finds that ad group or confirms it absent") {
+				t.Fatalf("err = %v, want ErrBidUnwritable naming entry 2 (B) and how it clears", err)
+			}
+			if w := msWrites(calls()); len(w) != 0 {
+				t.Fatalf("writes = %+v, want none", w)
+			}
+			if string(camp.Result) != before {
+				t.Errorf("an unresolved lookup must not change the result: %s", camp.Result)
+			}
+		})
 	}
-	// A definite failure with no id (msMultiGroupCampaign as is) does not block the write.
+	// A definite failure with no id (msMultiGroupCampaign as is) needs no lookup and does not block.
+	d, _ := msBudgetDispatcher(t, msBidStrategy("EnhancedCpc"), http.StatusOK, `{"PartialErrors":[]}`)
 	if err := writeMSBid(d, msMultiGroupCampaign(), 2.35); err != nil {
 		t.Fatalf("definite failure: WriteBid = %v", err)
 	}
+}
+
+func msGroupResultBlob(t *testing.T, raw json.RawMessage) microsoft.CampaignResult {
+	t.Helper()
+	var r microsoft.CampaignResult
+	if err := json.Unmarshal(raw, &r); err != nil {
+		t.Fatalf("result: %v", err)
+	}
+	return r
 }
 
 // A later ad group create that is accepted but answered with an unreadable body ({}, no id) is

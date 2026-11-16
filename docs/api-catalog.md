@@ -1011,8 +1011,11 @@ adGroups?: object[]             — Up to 5 ad groups under the campaign instead
                                   pause closes the campaign first; a failed group is never
                                   opened), PATCH .../bid re-bids every group whose adGroupId was
                                   confirmed, a failed one included (a failure after the first is
-                                  UNCONFIRMED; while any group is unconfirmed with no id the bid
-                                  write is refused with 409, naming the entry to reconcile), and
+                                  UNCONFIRMED; a group unconfirmed with no id is first looked up by
+                                  its recorded name — found, its id is recorded and it is re-bid;
+                                  definitely absent, it stops blocking; both persisted with the
+                                  bid — and only when the lookup cannot establish it is the write
+                                  refused with 409 naming the entry, until a retry resolves it), and
                                   keyword actions may name any such group, one
                                   per request. The
                                   monitor and reports are campaign-level and unaffected. OFF unless

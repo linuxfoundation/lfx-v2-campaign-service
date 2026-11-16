@@ -1904,9 +1904,14 @@ create was ambiguous and confirmed no id (a timeout, a 5xx, or an accepted creat
 unreadable body, errNoID; `createAdGroupAndAd` marks its UNCONFIRMED steps with
 `hierarchyStepUnconfirmedError` so `IsOutcomeUnconfirmed` agrees) is recorded `failed` with
 `Unconfirmed`; while any is,
-the bid lever refuses with `ErrBidUnwritable` naming the entry to reconcile
-(`microsoftUnaddressedAdGroups`), since an ad group may exist at the old bid that no write can
-reach. The keyword lever needs no such rule: it acts only on a group the caller names, and an id
+the bid lever first reconciles it (`reconcileMicrosoftUnaddressedAdGroups`): `FindAdGroupByName`
+looks up its recorded `adGroupName` under the campaign; found, its id is written into the result
+(`unconfirmed` cleared, status still `failed`) and it is re-bid; definitely absent (a complete,
+readable list without it), the flag is cleared. The reconciled result is persisted with the new
+bid by update-campaign-bid's `ReplaceCampaign` (the BidWriter contract now allows the adapter to
+update `campaign.Result`), and dropped on any error. Only a lookup that cannot establish it (a
+failed or unreadable read, a match with no usable id, an id another entry records, no recorded
+name) keeps the `ErrBidUnwritable` refusal naming the entry, which a later retry can clear. The keyword lever needs no such rule: it acts only on a group the caller names, and an id
 the row does not record is already refused. The monitor, metrics and keyword report are campaign-level.
 
 Not verified live. Behind `MICROSOFT_AD_GROUPS_ENABLED` (default off); each per-group field also

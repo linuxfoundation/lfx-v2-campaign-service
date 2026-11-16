@@ -5827,14 +5827,17 @@ type CampaignCreateInputRequestBody struct {
 	// Pause and resume address every created group (resume opens them all before
 	// the campaign; pause closes the campaign first; a failed group is never
 	// opened), update-campaign-bid re-bids every group whose adGroupId was
-	// confirmed, a failed one included (and answers 409, naming the entry to
-	// reconcile, while any group is unconfirmed with no recorded id), and keyword
-	// actions may name any such group, one ad group per request. OFF unless
-	// MICROSOFT_AD_GROUPS_ENABLED is exactly "true". A wrong JSON type (null reads
-	// as absent), a rule breach, or adGroups while the flag is off is refused with
-	// 400 "invalid campaign config: microsoftConfig.adGroups..." before any job
-	// exists. A group's audienceIds or excludedAudienceIds need
-	// global_marketing_ops (403, or 503 when the check cannot be made).
+	// confirmed, a failed one included (a group unconfirmed with no recorded id is
+	// first looked up by its name: found, its id is recorded and it is re-bid;
+	// definitely absent, it stops blocking; both are persisted with the bid; only
+	// when the lookup cannot establish it does the write answer 409 naming the
+	// entry, until a retry resolves it), and keyword actions may name any such
+	// group, one ad group per request. OFF unless MICROSOFT_AD_GROUPS_ENABLED is
+	// exactly "true". A wrong JSON type (null reads as absent), a rule breach, or
+	// adGroups while the flag is off is refused with 400 "invalid campaign config:
+	// microsoftConfig.adGroups..." before any job exists. A group's audienceIds or
+	// excludedAudienceIds need global_marketing_ops (403, or 503 when the check
+	// cannot be made).
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

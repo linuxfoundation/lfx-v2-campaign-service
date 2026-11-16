@@ -782,6 +782,26 @@ func (c *Client) findAdGroupByName(ctx context.Context, campaignID, name string)
 	return id, nil
 }
 
+// FindAdGroupByName looks up the ad group named name under the campaign with one
+// GetAdGroupsByCampaignId read (findAdGroupByName). found=false with a nil error means a
+// complete, readable list held no such name — it is DEFINITELY absent. Any error (the read
+// failed, the list was omitted, truncated or unreadable, or the name matched an entry with no
+// usable id) means it could not be established either way. Used by the bid write to reconcile
+// a further ad group whose create was UNCONFIRMED (#563 gap 12).
+func (c *Client) FindAdGroupByName(ctx context.Context, campaignID, name string) (id string, found bool, err error) {
+	if !idRE.MatchString(campaignID) {
+		return "", false, fmt.Errorf("microsoft-ads ad group lookup: campaign id %q is not a Microsoft id", clipID(campaignID))
+	}
+	if strings.TrimSpace(name) == "" {
+		return "", false, errors.New("microsoft-ads ad group lookup: no ad group name to look up")
+	}
+	id, err = c.findAdGroupByName(ctx, campaignID, name)
+	if err != nil {
+		return "", false, err
+	}
+	return id, id != "", nil
+}
+
 // lookupNamedEntity streams the top-level object's `field` array (whose elements are
 // {"Id":..,"Name":..}) comparing each Name case-insensitively to `name`, WITHOUT materializing
 // the whole array. It returns the first match's usable id (or "" when the match has no usable
