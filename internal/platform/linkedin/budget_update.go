@@ -156,8 +156,10 @@ func ValidateBudgetAmount(budgetUSD float64, lifetime bool) (wire string, rounde
 //     positive, at least LinkedIn's $10 daily minimum);
 //   - the cap may not exceed the lifetime total, which would make it no cap at all.
 //
-// totalUSD is compared only when it is itself a valid lifetime amount: an invalid total is
-// ValidateBudgetAmount's refusal to make, with its own sentence, not this function's.
+// The cap is compared with any finite, positive totalUSD at wire precision, even one under
+// LinkedIn's lifetime minimum: whether the total is itself acceptable is ValidateBudgetAmount's
+// refusal to make, with its own sentence, but a cap above it is refused here either way, so a
+// caller learns about it synchronously rather than from a failed job.
 func ValidateDailyCap(capUSD, totalUSD float64, lifetime bool) (wire string, err error) {
 	if !lifetime {
 		return "", invalidBudgetAmount("a daily cap applies only to a lifetime budget; with a daily budget, the budget amount is already the daily amount")
@@ -170,8 +172,11 @@ func ValidateDailyCap(capUSD, totalUSD float64, lifetime bool) (wire string, err
 		}
 		return "", err
 	}
-	if _, total, terr := ValidateBudgetAmount(totalUSD, true); terr == nil && rounded > total {
-		return "", invalidBudgetAmount("daily cap %s is more than the lifetime budget %s, so it would never apply", wire, strconv.FormatFloat(total, 'f', budgetWireDecimals, 64))
+	if !math.IsNaN(totalUSD) && !math.IsInf(totalUSD, 0) && totalUSD > 0 {
+		totalWire := strconv.FormatFloat(totalUSD, 'f', budgetWireDecimals, 64)
+		if total, perr := strconv.ParseFloat(totalWire, 64); perr == nil && rounded > total {
+			return "", invalidBudgetAmount("daily cap %s is more than the lifetime budget %s, so it would never apply", wire, totalWire)
+		}
 	}
 	return wire, nil
 }
@@ -273,7 +278,8 @@ func (c *Client) GetCampaignBudget(ctx context.Context, campaignID string) (*Cam
 }
 
 // UpdateCampaignBudget sets a campaign's budget amount on the platform. lifetime selects which
-// amount field is written (totalBudget vs dailyBudget; a $set of one leaves the other in force, which is what keeps a lifetime campaign's daily cap, #584); the caller is
+// amount field is written (totalBudget vs dailyBudget). A $set of one leaves the other in force,
+// which is what keeps a lifetime campaign's daily cap (#584). The caller is
 // responsible for having established that this matches the campaign's CURRENT pacing model —
 // this function writes what it is told.
 //

@@ -444,7 +444,8 @@ lifetime)` owns the rules:
 - a cap exists only beside a lifetime budget;
 - it obeys every daily rule, by running `ValidateBudgetAmount(cap, false)`, with the refusal
   prefixed "daily cap:";
-- it may not exceed the lifetime total, compared only when the total is itself valid.
+- it may not exceed the lifetime total, compared with any finite positive total (even one under
+  the lifetime minimum, which `ValidateBudgetAmount` refuses on its own).
 
 `CreateCampaign` calls it before any POST, next to `ValidateBudgetAmount`, and passes the wire
 string to `createSponsoredCampaign`. The edit-side twin `ValidateTotalCoversCap(total, cap)`

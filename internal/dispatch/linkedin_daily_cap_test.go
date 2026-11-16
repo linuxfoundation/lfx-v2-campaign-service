@@ -47,6 +47,9 @@ func TestLinkedIn_DailyCapPreflight(t *testing.T) {
 		{"beside a daily budget", `"budgetUsd":50,"dailyCapUsd":20`, "applies only to a lifetime budget"},
 		{"under the daily minimum", `"budgetUsd":1000,"lifetimeBudget":true,"dailyCapUsd":5`, "below LinkedIn's minimum"},
 		{"above the total", `"budgetUsd":1000,"lifetimeBudget":true,"dailyCapUsd":1500`, "is more than the lifetime budget"},
+		// Copilot (PR #607): a total under LinkedIn's $100 lifetime minimum must not let a cap
+		// above it through to an async job failure.
+		{"above a total under the lifetime minimum", `"budgetUsd":50,"lifetimeBudget":true,"dailyCapUsd":150`, "daily cap 150.00 is more than the lifetime budget 50.00"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := d.PreflightCreate(context.Background(), "cncf", model.ProviderLinkedInAds, linkedInDailyCapConfig(tc.budget))

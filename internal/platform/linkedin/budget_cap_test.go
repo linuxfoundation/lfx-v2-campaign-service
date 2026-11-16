@@ -30,8 +30,11 @@ func TestValidateDailyCap(t *testing.T) {
 		{name: "zero", capUSD: 0, totalUSD: 1000, lifetime: true, wantReason: "daily cap: budget must be greater than zero"},
 		{name: "not a number", capUSD: math.NaN(), totalUSD: 1000, lifetime: true, wantReason: "daily cap: budget must be a finite number"},
 		{name: "above the total", capUSD: 1500, totalUSD: 1000, lifetime: true, wantReason: "daily cap 1500.00 is more than the lifetime budget 1000.00"},
-		// The total's own refusal belongs to ValidateBudgetAmount; the cap is not compared to it.
-		{name: "an invalid total is not compared", capUSD: 20, totalUSD: 50, lifetime: true, wantWire: "20.00"},
+		// The total's own refusal belongs to ValidateBudgetAmount, but a cap above even an
+		// unacceptable total is refused here, so the caller hears about it synchronously.
+		{name: "a total under the lifetime minimum: a cap within it passes here", capUSD: 20, totalUSD: 50, lifetime: true, wantWire: "20.00"},
+		{name: "a total under the lifetime minimum: a cap above it is refused", capUSD: 150, totalUSD: 50, lifetime: true, wantReason: "daily cap 150.00 is more than the lifetime budget 50.00"},
+		{name: "a non-finite total is not compared", capUSD: 20, totalUSD: math.Inf(1), lifetime: true, wantWire: "20.00"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wire, err := ValidateDailyCap(tc.capUSD, tc.totalUSD, tc.lifetime)
