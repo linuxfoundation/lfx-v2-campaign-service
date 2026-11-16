@@ -40,7 +40,12 @@ type redditCreds struct {
 // The brief supplies event identity (name/slug/project/registration URL); this
 // supplies the Reddit-specific campaign shape.
 type redditConfig struct {
-	BudgetUSD  float64  `json:"budgetUsd"`
+	BudgetUSD float64 `json:"budgetUsd"`
+	// BudgetType is the pacing of BudgetUSD (#549 gap 9): "lifetime" (the default) or "daily".
+	// Gated by REDDIT_DAILY_BUDGET_ENABLED and validated by checkRedditBudgetType
+	// (reddit_budget_type.go). omitempty: an omitted type stays ABSENT in the persisted
+	// ConfigSnapshot, so a snapshot replays through the gate exactly as the request did.
+	BudgetType string   `json:"budgetType,omitempty"`
 	StartDate  string   `json:"startDate"` // YYYY-MM-DD
 	EndDate    string   `json:"endDate"`   // YYYY-MM-DD
 	Objective  string   `json:"objective"` // awareness|traffic|conversions|video_views
@@ -83,6 +88,21 @@ type redditConfig struct {
 	// (service.RedditMarketingOpsInputs), because the audiences belong to the shared ad account.
 	CustomAudienceIDs         []string `json:"customAudienceIds"`
 	ExcludedCustomAudienceIDs []string `json:"excludedCustomAudienceIds"`
+	// Placements, Platforms and ExpandTargeting are the ad group's targeting.locations,
+	// targeting.platforms and targeting.expand_targeting (#549 gap 7), behind
+	// REDDIT_PLACEMENT_TARGETING_ENABLED (reddit_placement_targeting.go). omitempty: an omitted
+	// choice stays ABSENT in the persisted ConfigSnapshot, so a snapshot replays through the gate
+	// exactly as the request did.
+	Placements      []string `json:"placements,omitempty"`
+	Platforms       []string `json:"platforms,omitempty"`
+	ExpandTargeting *bool    `json:"expandTargeting,omitempty"`
+	// Gender, Languages and Schedule are gender, language and dayparting targeting (#549 gap 13),
+	// gated by REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED and validated by
+	// checkRedditDemographicTargeting (reddit_demographic_targeting.go). omitempty keeps an
+	// omitted choice ABSENT in the persisted ConfigSnapshot, so a snapshot replays through the gate.
+	Gender    *string                 `json:"gender,omitempty"`
+	Languages []string                `json:"languages,omitempty"`
+	Schedule  []reddit.ScheduleWindow `json:"schedule,omitempty"`
 }
 
 // redditBidPlan resolves redditConfig's bidding choice. Manual bidding creates campaign and ad
@@ -244,6 +264,14 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	if err := checkRedditCustomAudienceShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	// Likewise a mistyped placements, platforms or expandTargeting (#549 gap 7).
+	if err := checkRedditPlacementShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	// And a mistyped gender, languages or schedule (#549 gap 13).
+	if err := checkRedditDemographicShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg redditConfig
 	if err := unmarshalPlatformConfig(config, "redditConfig", &cfg); err != nil {
 		// A wrong-typed conversionEvent also fails this decode; report it by its own field-specific
@@ -251,6 +279,10 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		// failure, exactly as PreflightCreate would have.
 		if cerr := checkRedditConversionEvent(config, cfg); cerr != nil {
 			return nil, notCreated(cerr)
+		}
+		// Likewise a wrong-typed budgetType (#549 gap 9).
+		if berr := checkRedditBudgetType(config); berr != nil {
+			return nil, notCreated(berr)
 		}
 		return nil, notCreated(err)
 	}
@@ -272,6 +304,27 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	// The exclusions' deployment gate and rules, re-checked here for any path that skipped
 	// PreflightCreate (which normally refused a bad or gated one as a synchronous 400).
 	if err := checkRedditTargetingExclusions(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// Placements, platforms and expansion (#549 gap 7): the same, for any path that skipped
+	// PreflightCreate.
+	if err := checkRedditPlacementTargeting(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// The budget's pacing (#549 gap 9): the same, for any path that skipped PreflightCreate.
+	if err := checkRedditBudgetType(config); err != nil {
+		return nil, notCreated(err)
+	}
+	// Gender, languages and dayparting (#549 gap 13): the gate and rules, for any path that
+	// skipped PreflightCreate.
+	if err := checkRedditDemographicTargeting(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// One ad per variant (#549 gap 6): the cap and headlines, for any path that skipped
+	// PreflightCreate. The flag is read once here, passed to the check and handed to the client,
+	// so the check and the create agree on the path.
+	adPerVariant := redditAdPerVariantEnabled()
+	if err := checkRedditAdPerVariant(cfg, adPerVariant); err != nil {
 		return nil, notCreated(err)
 	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
@@ -312,7 +365,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	// ImageURLSource immediately before the post request that hands it to Reddit, so the
 	// account verification and any throttle wait in between cannot expire it. cfg itself is
 	// left untouched, so the persisted config snapshot records imageAssetId and never a URL.
-	var signedURL string
+	var signedURLs []string
 	var imageURLSource func(context.Context) (string, error)
 	assetID, err := d.checkRedditAssetChoice(cfg)
 	if err != nil {
@@ -324,7 +377,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		if err := d.checkRedditAsset(ctx, brief, assetID); err != nil {
 			return nil, notCreated(err)
 		}
-		imageURLSource = d.lateAssetURL(brief, assetID, &signedURL)
+		imageURLSource = d.lateAssetURL(brief, assetID, &signedURLs)
 	}
 
 	// Community and interest resolution (#549 gaps 4 and 8), before anything is created and
@@ -354,6 +407,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		// the canonical LFX slug, not free text.
 		Project:            brief.ProjectID,
 		BudgetUSD:          cfg.BudgetUSD,
+		BudgetType:         cfg.BudgetType,
 		StartDate:          cfg.StartDate,
 		EndDate:            cfg.EndDate,
 		Objective:          cfg.Objective,
@@ -375,6 +429,16 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 
 		CustomAudienceIDs:         cfg.CustomAudienceIDs,
 		ExcludedCustomAudienceIDs: cfg.ExcludedCustomAudienceIDs,
+
+		Placements:      cfg.Placements,
+		Platforms:       cfg.Platforms,
+		ExpandTargeting: cfg.ExpandTargeting,
+
+		AdPerVariant: adPerVariant,
+
+		Gender:    cfg.Gender,
+		Languages: cfg.Languages,
+		Schedule:  cfg.Schedule,
 
 		// The name labels of the CLAIMED row (multi-campaign cs-3): its stored funnel stage and
 		// tactic (model.DispatchLabels) and its slot version, never the request's. A retry of
@@ -403,10 +467,10 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	//                       orphan as reconciliation-required, not a false success.
 	//   - (result, nil)   → success.
 	result, cerr := client.CreateCampaign(ctx, in)
-	if signedURL != "" {
+	for _, signedURL := range signedURLs {
 		// Reddit may echo media_url in an error body, which would carry the signature into the
 		// job error and the persisted Steps/AdWarning. Scrub it; classification is unaffected
-		// (scrubErr preserves errors.Is/As).
+		// (scrubErr preserves errors.Is/As). A one-ad-per-variant create mints one URL per post.
 		cerr = scrubErr(cerr, signedURL)
 		if result != nil {
 			result.AdWarning = scrubSignedURL(result.AdWarning, signedURL)
@@ -684,7 +748,7 @@ func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, p
 	if err := verifyRedditAccountMatch("toggle reddit campaign status", campaign, client); err != nil {
 		return err
 	}
-	adGroupID, adID := redditChildIDs(campaign)
+	adGroupID, adIDs := redditChildIDs(campaign)
 	// ACTIVATE requires the FULL servable tree. A reddit create can legitimately land a
 	// campaign + ad group but NO ad (the no-PostURL path returns AdCount 0 / empty AdID) and
 	// the dispatcher still persists that row as "created" — which passes the service's
@@ -693,10 +757,10 @@ func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, p
 	// unless BOTH child ids are known, and return ErrCampaignNotProvisioned so the service
 	// classifies it as a 409 state error (the platform is never called), not a 503. Pausing
 	// needs no child ids — pausing the parent already stops delivery.
-	if redditStatus == reddit.StatusActive && (strings.TrimSpace(adGroupID) == "" || strings.TrimSpace(adID) == "") {
+	if redditStatus == reddit.StatusActive && (strings.TrimSpace(adGroupID) == "" || len(adIDs) == 0) {
 		return fmt.Errorf("%w: reddit campaign %s cannot be activated because this service has no record of a fully-created ad group + ad — either they were never fully provisioned, or the campaign was ADOPTED, which records no serving resources and leaves un-pausing to Reddit Ads Manager", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 	}
-	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, redditStatus); uerr != nil {
+	if uerr := client.UpdateCampaignTreeStatus(ctx, campaign.PlatformCampaignID, adGroupID, adIDs, redditStatus); uerr != nil {
 		// An UNCONFIRMED outcome (transport/5xx/3xx-mutating) means the PATCH MAY have
 		// applied upstream — wrap it in an error that reports Unconfirmed() so the caller
 		// (across the package boundary, via errors.As on the behavioral interface — same
@@ -1059,20 +1123,30 @@ func verifyRedditAccountMatch(op string, campaign *model.Campaign, client *reddi
 }
 
 // redditChildIDs pulls the ad group + ad ids the create path stored in the persisted
-// CampaignResult blob. A missing/unparseable blob yields empty ids (only the campaign is
-// toggled) rather than an error — the service already blocks toggling a degraded campaign.
-func redditChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
+// CampaignResult blob: every ad of a one-ad-per-variant create (adIds, #549 gap 6), else the one
+// adId. A missing/unparseable blob yields empty ids (only the campaign is toggled) rather than
+// an error — the service already blocks toggling a degraded campaign.
+func redditChildIDs(campaign *model.Campaign) (adGroupID string, adIDs []string) {
 	if campaign == nil || len(campaign.Result) == 0 {
-		return "", ""
+		return "", nil
 	}
 	var blob struct {
-		AdGroupID string `json:"adGroupId"`
-		AdID      string `json:"adId"`
+		AdGroupID string   `json:"adGroupId"`
+		AdID      string   `json:"adId"`
+		AdIDs     []string `json:"adIds"`
 	}
 	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
-		return "", ""
+		return "", nil
 	}
-	return blob.AdGroupID, blob.AdID
+	for _, id := range blob.AdIDs {
+		if strings.TrimSpace(id) != "" {
+			adIDs = append(adIDs, id)
+		}
+	}
+	if len(adIDs) == 0 && strings.TrimSpace(blob.AdID) != "" {
+		adIDs = []string{blob.AdID}
+	}
+	return blob.AdGroupID, adIDs
 }
 
 // unconfirmedToggleError wraps a toggle whose platform outcome is unknowable (the change may
@@ -1160,12 +1234,14 @@ func campaignFromReddit(ctx context.Context, r *reddit.CampaignResult, cfg reddi
 		CampaignName:       r.CampaignName,
 		Status:             campaignStatusCreated,
 	}
-	// Persist the budget/schedule/config the caller supplied. The Reddit client always
-	// creates campaigns with goal_type LIFETIME_SPEND (client.go) — budgetUsd is a
-	// LIFETIME spend cap, not a daily one — so the persisted budget_type is lifetime.
-	// ConfigSnapshot captures the validated config for reconciliation, with its caller
-	// URLs and free text redacted — see redditSnapshotConfig.
-	applyCampaignConfig(ctx, c, cfg.BudgetUSD, true, cfg.StartDate, cfg.EndDate, redditSnapshotConfig(cfg))
+	// Persist the budget/schedule/config the caller supplied. The Reddit client creates
+	// campaigns with goal_type LIFETIME_SPEND (client.go) — budgetUsd is a LIFETIME spend cap —
+	// unless budgetType is "daily" (#549 gap 9), which sends DAILY_SPEND, so the persisted
+	// budget_type follows the same resolution. ConfigSnapshot captures the validated config for
+	// reconciliation, with its caller URLs and free text redacted — see redditSnapshotConfig.
+	goalType, _ := reddit.ResolveBudgetGoalType(cfg.BudgetType) // validated before the create
+	lifetime := goalType != reddit.GoalTypeDailySpend
+	applyCampaignConfig(ctx, c, cfg.BudgetUSD, lifetime, cfg.StartDate, cfg.EndDate, redditSnapshotConfig(cfg))
 	if raw, err := json.Marshal(r); err == nil {
 		c.Result = raw
 	}

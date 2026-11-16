@@ -276,6 +276,43 @@ openssl rand -base64 32
   off the shared ad account. The chart sets it to `"false"`
   (`app.environment.REDDIT_TARGETING_EXCLUSIONS_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once a live create confirms it.
+- `REDDIT_PLACEMENT_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `redditConfig.placements`, `platforms` and
+  `expandTargeting` (#549 gap 7), sent at create time as the ad group's
+  `targeting.locations`, `platforms` and `expand_targeting` in place of the
+  fixed `FEED` + `COMMENTS_PAGE`, `ALL` and `true`. Only the exact value
+  `true` enables them; anything else fails closed, and a create naming any of
+  them is refused with a 400 before any job exists. Not role-gated. No live
+  create has sent a non-default value yet. The chart sets it to `"false"`.
+- `REDDIT_DAILY_BUDGET_ENABLED` (default unset, i.e. OFF) — opts a deployment
+  IN to `redditConfig.budgetType` (#549 gap 9): `"daily"` creates the campaign
+  with `goal_type` `DAILY_SPEND`, so `budgetUsd` is a per-day cap, and
+  `"lifetime"` keeps `LIFETIME_SPEND`. Only the exact value `true` enables
+  it; anything else fails closed, and a create that sets the field is
+  refused with a 400 before any job exists. Not role-gated. No live create
+  has sent `DAILY_SPEND` yet. The chart sets it to `"false"`.
+- `REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED` (default unset, i.e. OFF) —
+  opts a deployment IN to `redditConfig.gender`, `languages` and `schedule`
+  (#549 gap 13): the ad group's `targeting.gender` / `targeting.languages`
+  and the campaign's weekly delivery `schedule`. Only the exact value `true`
+  enables them; anything else fails closed, and a create naming any of them
+  is refused with a 400 before any job exists. Not role-gated. No live
+  create has sent any of them yet. The chart sets it to `"false"`.
+- `REDDIT_PIXEL_LIST_ENABLED` (default unset, i.e. OFF) — opts a deployment
+  IN to the Reddit pixel picker read `GET /projects/{project_id}/reddit-ads/pixels`
+  (#549 gap 10; Reddit `GET /ad_accounts/{id}/pixels`), gated at the gateway
+  on `global_marketing_ops`. Only the exact value `true` enables it;
+  anything else answers 400 "not supported" without contacting Reddit. Not
+  yet exercised live. The chart sets it to `"false"`.
+- `REDDIT_AD_PER_VARIANT_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to one ad per variant (#549 gap 6): a Reddit create that
+  authors its post (`imageUrl` or `imageAssetId`, no `postUrl`) and carries
+  2-5 `variants` authors one post and one ad per variant, recording every ad
+  id (`adIds`) on the campaign. A failed variant leaves the others in place
+  and the campaign `created_degraded`. While on, more than 5 variants or a
+  blank or over-long variant headline is a 400 before any job exists. Only
+  the exact value `true` enables it. Not role-gated. No live create has put
+  more than one ad in an ad group yet. The chart sets it to `"false"`.
 - `TWITTER_CREATE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `twitterConfig.geoTargets`, `languages`, `keywords`,
   `interestIds`, `conversationTopics`, `platforms`, `devices`, `ageBucket`
