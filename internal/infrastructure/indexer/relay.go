@@ -201,7 +201,7 @@ func (r *Relay) keyOnProjectUID(ctx context.Context, msg map[string]json.RawMess
 	uid, err := r.projectUID(ctx, slug)
 	if errors.Is(err, accesscheck.ErrProjectNotFound) {
 		slog.WarnContext(ctx, "index relay: project slug resolves to no project; publishing the message slug-keyed (readable by nobody)",
-			"project_slug", slug)
+			"project_id", slug)
 		return nil
 	}
 	if err != nil {
