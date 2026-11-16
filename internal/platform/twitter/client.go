@@ -3432,9 +3432,9 @@ type CampaignInput struct {
 	// tweet path (TweetID / TweetText), as before.
 	TweetVariants []string
 	// WebsiteCard (#564 gap 6; website_card.go), when non-nil, creates one website card (the
-	// creative image as its media, Headline as its title, the UTM'd registration URL as its
+	// creative image or video as its media, Headline as its title, the UTM'd registration URL as its
 	// destination) right before the first authoring write, and attaches it by card_uri to every
-	// tweet this create authors. It requires Image and an authored tweet (TweetText or
+	// tweet this create authors. It requires Image or Video and an authored tweet (TweetText or
 	// TweetVariants, no TweetID). nil means no card, as before.
 	WebsiteCard *WebsiteCardInput
 	// Video, when non-nil, is attached to the AUTHORED tweet(s) instead of an image (#564 gap 7;
@@ -3769,7 +3769,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	// Website card (#564 gap 6): a closed rule set, checked before any request. The card's media is
-	// the creative image, and it rides on an authored tweet only.
+	// the creative image or video, and it rides on an authored tweet only.
 	var cardHeadline, cardDestURL string
 	if in.WebsiteCard != nil {
 		h, herr := NormalizeWebsiteCardHeadline(in.WebsiteCard.Headline)

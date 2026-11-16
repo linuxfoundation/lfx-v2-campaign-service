@@ -1821,8 +1821,9 @@ single-tweet path right before its authoring write, or by `promoteTweetVariants`
 failure authors nothing and degrades like an authoring failure (`websiteCardFailure`,
 `PromotedTweetWarning`, so `created_degraded`); `CampaignResult.CardURI` records the card. The
 dispatcher gates it on `TWITTER_WEBSITE_CARD_ENABLED` (`internal/dispatch/twitter_website_card.go`)
-with synchronous 400s for the flag, the shape (`headline` the only key), the headline, a missing
-`imageAssetId` and a non-authoring create, re-checked in `Dispatch`. Not verified live: the cards
+with synchronous 400s for the flag, the shape (`headline` the only key), the headline, missing media
+(neither `imageAssetId` nor `videoAssetId`; with a video, the card's `MEDIA` component carries the
+video's media_key) and a non-authoring create, re-checked in `Dispatch`. Not verified live: the cards
 body and `card_uri` echo follow the published v12 reference only.
 
 ## Video creative (`CampaignInput.Video`, #564 gap 7)

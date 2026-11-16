@@ -22,8 +22,8 @@ import (
 //
 // X Ads API v12 cards (docs.x.com/x-ads-api/creatives/reference, "Cards"): POST
 // accounts/:account_id/cards takes a JSON body naming the card and its COMPONENTS. A website card
-// is a MEDIA component (a media_key from the account's Media Library — the image this create
-// already uploads) and a DETAILS component carrying the title (the headline shown under the
+// is a MEDIA component (a media_key from the account's Media Library — the image or video this
+// create already uploads) and a DETAILS component carrying the title (the headline shown under the
 // media) and a WEBSITE destination (the registration URL with this service's UTMs). The response
 // carries a card_uri ("card://..."), which POST accounts/:account_id/tweet takes as card_uri to
 // attach the card to the tweet it authors; the media then rides in the card, so media_keys is not

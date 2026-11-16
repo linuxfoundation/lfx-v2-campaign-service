@@ -172,10 +172,13 @@ holds for Reddit; on X the removal now has a counterpart. Body `{"keywords": [..
 - **60 criteria per line item.** After the criteria list, the live criteria of every type plus the
   keywords this request would send must not exceed `twitter.MaxCreateTargetingCriteria` (60), else
   `ErrKeywordTargetingLimit` (409) with nothing sent.
-- **Idempotent.** A keyword the line item already targets as a live `BROAD_KEYWORD` / `EQ` criterion
-  (compared under `twitterNegativeKey`'s fold and whitespace collapse) is `ALREADY_PRESENT` with that
-  criterion's id and is not sent. A positive PHRASE or EXACT criterion with the same text does not
-  count.
+- **Idempotent.** A keyword the line item already targets as a live `BROAD_KEYWORD` criterion with
+  `operator_type` `EQ` or none (X's default, read as on the write path's echo check;
+  `TargetingCriterion.PositiveBroadKeyword`), compared under `twitterNegativeKey`'s fold and
+  whitespace collapse, is `ALREADY_PRESENT` with that criterion's id and is not sent. A positive
+  PHRASE or EXACT criterion with the same text does not count. The request's keywords are first
+  de-duplicated under that same key (`dedupeTwitterKeywordAdditions`), so `cloud native` and
+  `cloud  native` are one keyword: one outcome, counted once against the cap, sent at most once.
 - **Lock.** The X removal takes no lock (it re-lists before each DELETE instead); the add needs one,
   because two adds could each pass the cap or each send the same keyword. `TwitterDispatcher` now
   has the Reddit dispatcher's `targetingLock` — in-process by default, the same Postgres advisory

@@ -96,6 +96,7 @@ func (d *TwitterDispatcher) AddKeywordTargeting(ctx context.Context, projectID s
 	if err != nil {
 		return nil, err
 	}
+	kws = dedupeTwitterKeywordAdditions(kws)
 	client, lineItemID, err := d.ownedTwitterLineItem(ctx, op, projectID, platform, campaign, true)
 	if err != nil {
 		return nil, err
@@ -132,21 +133,17 @@ func (d *TwitterDispatcher) AddKeywordTargeting(ctx context.Context, projectID s
 			continue
 		}
 		liveCriteria++
-		if tc.PositiveKeyword() && tc.TargetingType == twitter.TargetingBroadKeyword {
+		if tc.PositiveBroadKeyword() {
 			if _, seen := present[twitterNegativeKey(tc.TargetingType, tc.TargetingValue)]; !seen {
 				present[twitterNegativeKey(tc.TargetingType, tc.TargetingValue)] = tc.ID
 			}
 		}
 	}
 	toSend := 0
-	pending := make(map[string]bool, len(kws))
 	for _, k := range kws {
-		key := twitterNegativeKey(twitter.TargetingBroadKeyword, k)
-		if _, held := present[key]; held || pending[key] {
-			continue
+		if _, held := present[twitterNegativeKey(twitter.TargetingBroadKeyword, k)]; !held {
+			toSend++
 		}
-		pending[key] = true
-		toSend++
 	}
 	if liveCriteria+toSend > twitter.MaxCreateTargetingCriteria {
 		return nil, fmt.Errorf("%s: line item %s holds %d targeting criteria and this request would add %d; at most %d are accepted on one line item: %w",
@@ -176,8 +173,6 @@ func (d *TwitterDispatcher) AddKeywordTargeting(ctx context.Context, projectID s
 		switch {
 		case cerr == nil:
 			o.Outcome, o.CriterionID = model.KeywordOutcomeApplied, id
-			// A later keyword equal to this one under the whitespace collapse is now present.
-			present[key] = id
 			definite = true
 		case errors.Is(cerr, twitter.ErrWriteNotSent):
 			o.Outcome, o.ErrorCode = model.KeywordOutcomeFailed, model.KeywordTargetingErrNotSent
@@ -195,4 +190,22 @@ func (d *TwitterDispatcher) AddKeywordTargeting(ctx context.Context, projectID s
 		return nil, &unconfirmedKeywordLeverError{err: fmt.Errorf("%s for line item %s: %w", op, lineItemID, lastUnconfirmed)}
 	}
 	return out, nil
+}
+
+// dedupeTwitterKeywordAdditions keeps the first of each keyword under the key the add compares
+// with (twitterNegativeKey: case-folded, whitespace collapsed), so "cloud native" and
+// "cloud  native" are one keyword: counted once against the cap and sent at most once, whatever
+// the first POST's outcome.
+func dedupeTwitterKeywordAdditions(kws []string) []string {
+	seen := make(map[string]bool, len(kws))
+	out := kws[:0:0]
+	for _, k := range kws {
+		key := twitterNegativeKey(twitter.TargetingBroadKeyword, k)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, k)
+	}
+	return out
 }

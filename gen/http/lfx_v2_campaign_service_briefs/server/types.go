@@ -5673,12 +5673,13 @@ type CampaignCreateInputRequestBody struct {
 	// with 400 "invalid campaign config: twitterConfig.variants: ..." before any
 	// job exists. Not role-gated. X WEBSITE CARD (#564 gap 6): twitterConfig takes
 	// `card`, {"headline": string} (trimmed, 1-70 characters, no control
-	// character; headline is the only key). It needs media (imageAssetId) and an
-	// authored tweet (tweetText or variants, never tweetId). Once the campaign and
-	// line item exist and a tweet is about to be authored, one website card is
-	// created with POST accounts/:account_id/cards (a MEDIA component carrying the
-	// creative image's media_key and a DETAILS component carrying the headline and
-	// a WEBSITE destination: the registration URL with this service's UTMs and
+	// character; headline is the only key). It needs media (imageAssetId or
+	// videoAssetId, never both) and an authored tweet (tweetText or variants,
+	// never tweetId). Once the campaign and line item exist and a tweet is about
+	// to be authored, one website card is created with POST
+	// accounts/:account_id/cards (a MEDIA component carrying the creative image's
+	// or video's media_key and a DETAILS component carrying the headline and a
+	// WEBSITE destination: the registration URL with this service's UTMs and
 	// utm_content=website-card), and its card_uri is sent on every tweet the
 	// create authors (media_keys is then not sent; the image rides in the card).
 	// The result records it as CardURI. A card that cannot be created publishes
@@ -5717,12 +5718,12 @@ type CampaignCreateInputRequestBody struct {
 	// on the new line item with operator EQ and NE. Each id is 1-32 letters or
 	// digits, sent exactly as given; at most 60 per list; no id twice and none in
 	// both lists. geoTargets, languages, keywords, interestIds,
-	// conversationTopics, platforms, devices, ageBucket, gender, customAudienceIds
-	// and excludedCustomAudienceIds together may name at most 60 criteria per
-	// create, since each is a separate X write paced at one per second inside the
-	// two-minute dispatch budget; more is refused with the same 400. Before
-	// anything is created every id is read with GET
-	// accounts/:account_id/custom_audiences and must be live and targetable; a
+	// conversationTopics, platforms, devices, ageBucket, gender,
+	// followerLookalikeUserIds, customAudienceIds and excludedCustomAudienceIds
+	// together may name at most 60 criteria per create, since each is a separate X
+	// write paced at one per second inside the two-minute dispatch budget; more is
+	// refused with the same 400. Before anything is created every id is read with
+	// GET accounts/:account_id/custom_audiences and must be live and targetable; a
 	// missing, deleted or non-targetable audience fails the job with nothing
 	// created. The exclusions are posted first of all the criteria and the
 	// inclusions last, after the line item and before the promoted tweet; a

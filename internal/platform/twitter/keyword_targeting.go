@@ -96,6 +96,14 @@ func (t TargetingCriterion) PositiveKeyword() bool {
 	return !t.Deleted && IsKeywordTargetingType(t.TargetingType) && t.OperatorType == OperatorEQ && t.TargetingValue != ""
 }
 
+// PositiveBroadKeyword reports whether the criterion is a live BROAD_KEYWORD that is not negated.
+// Unlike PositiveKeyword it reads a missing operator_type as EQ, X's default, the same way the
+// write path's echo check (echoedOperator) does, so a keyword the add lever wrote is recognised
+// as present on the next add whether or not X's list carries the operator.
+func (t TargetingCriterion) PositiveBroadKeyword() bool {
+	return !t.Deleted && t.TargetingType == TargetingBroadKeyword && t.TargetingValue != "" && echoedOperator(t.OperatorType, OperatorEQ)
+}
+
 type targetingCriterionWire struct {
 	ID             string          `json:"id"`
 	LineItemID     string          `json:"line_item_id"`

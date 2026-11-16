@@ -231,3 +231,34 @@ func TestTwitter_AddKeywordTargeting_HoldsThePerLineItemLock(t *testing.T) {
 		t.Errorf("an add inside the cooldown of an UNCONFIRMED add: want ErrKeywordTargetingWriteInProgress, got %v", err)
 	}
 }
+
+// A live broad keyword X lists without operator_type is EQ (X's default, as the write path's echo
+// check reads it), so it is ALREADY_PRESENT and not posted again.
+func TestTwitter_AddKeywordTargeting_ListedKeywordWithoutOperatorIsPresent(t *testing.T) {
+	enableXKeywordAdd(t)
+	noOp := xCriteriaWith(0, `{"id":"k9","line_item_id":"li1","targeting_type":"BROAD_KEYWORD","targeting_value":"kubernetes","deleted":false}`)
+	s := newXNegStub(t, xKWTLineItem, noOp, nil)
+	out, err := addXKeywords(s, xBidCampaign(), "Kubernetes")
+	if err != nil || len(out) != 1 || out[0].Outcome != model.KeywordOutcomeAlreadyPresent || out[0].CriterionID != "k9" {
+		t.Fatalf("AddKeywordTargeting = %+v, %v; want ALREADY_PRESENT k9", out, err)
+	}
+	if n := len(s.sent()); n != 0 {
+		t.Errorf("%d POSTs for a keyword already present", n)
+	}
+}
+
+// Keywords equal under the add's own comparison (case folded, whitespace collapsed) are one
+// keyword: one outcome, one POST, even when that POST is rejected.
+func TestTwitter_AddKeywordTargeting_WhitespaceVariantsAreOneKeyword(t *testing.T) {
+	enableXKeywordAdd(t)
+	s := newXNegStub(t, xKWTLineItem, xCriteria, map[string]kwtReply{
+		"service mesh": {http.StatusBadRequest, `{"errors":[{"code":"INVALID_PARAMETER"}]}`},
+	})
+	out, err := addXKeywords(s, xBidCampaign(), "service mesh", "Service  Mesh")
+	if err != nil || len(out) != 1 || out[0].Keyword != "service mesh" || out[0].ErrorCode != model.KeywordTargetingErrRejected {
+		t.Fatalf("AddKeywordTargeting = %+v, %v; want one REJECTED outcome", out, err)
+	}
+	if n := len(s.sent()); n != 1 {
+		t.Errorf("POSTs = %d, want 1", n)
+	}
+}

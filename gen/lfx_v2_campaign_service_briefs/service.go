@@ -39,33 +39,33 @@ type Service interface {
 	// video/mp4, #586) is checked structurally rather than decoded: it must open
 	// with an ftyp box of an MP4 brand, its top-level boxes must tile the file
 	// exactly, and it must carry moov and mdat boxes; it is stored with no width
-	// or height, and only a LinkedIn video variant
-	// (linkedInConfig.variants[].videoAssetId) consumes it — every image slot
-	// refuses a video asset at dispatch. Re-uploading identical bytes to the same
-	// brief returns the existing asset (idempotent). This does not touch any ad
-	// platform; the account-scoped Meta image_hash is resolved later, at campaign
-	// dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft
-	// Advertising campaign names one by microsoftConfig.imageAssetId, and at
-	// dispatch it is uploaded to the ad account's media library (an account-scoped
-	// MediaId) and attached to the campaign as an image ad extension; Microsoft
-	// accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit
-	// campaign can also reference the asset (redditConfig.imageAssetId), served to
-	// Reddit at a short-lived signed URL when that feature is configured. An X
-	// (Twitter) campaign may also reference the asset as the image of its authored
-	// tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is
-	// likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig
-	// variant names one by imageAssetId, and at dispatch it is uploaded once
-	// through LinkedIn's Images API (an organization-owned image URN) and used as
-	// that dark post's article thumbnail; LinkedIn accepts at most 5,000,000 bytes
-	// and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or
-	// 360x640 to 2430x4320 (vertical) pixels. A brief's library is bounded by a
-	// per-brief quota on both count and total stored bytes; an upload that would
-	// exceed either is refused with 409 and reason creative_asset_quota_exceeded,
-	// and list-creative-assets publishes the ceilings and the current totals so a
-	// client can see the headroom before it uploads. A re-upload of identical
-	// bytes is idempotent and is NOT judged against the quota, since it stores
-	// nothing. An archived brief returns 404, matching every other access to a
-	// brief's children.
+	// or height, and only an X campaign (twitterConfig.videoAssetId, #564: the
+	// authored tweet's video or the website card's media) consumes it — every
+	// image slot refuses a video asset at dispatch. Re-uploading identical bytes
+	// to the same brief returns the existing asset (idempotent). This does not
+	// touch any ad platform; the account-scoped Meta image_hash is resolved later,
+	// at campaign dispatch. Meta and Microsoft Advertising consume stored assets:
+	// a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId,
+	// and at dispatch it is uploaded to the ad account's media library (an
+	// account-scoped MediaId) and attached to the campaign as an image ad
+	// extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048
+	// pixels. A Reddit campaign can also reference the asset
+	// (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL
+	// when that feature is configured. An X (Twitter) campaign may also reference
+	// the asset as the image of its authored tweet (twitterConfig.imageAssetId, at
+	// most 5 MiB for X); its X media key is likewise resolved at dispatch.
+	// LinkedIn consumes them too: a linkedInConfig variant names one by
+	// imageAssetId, and at dispatch it is uploaded once through LinkedIn's Images
+	// API (an organization-owned image URN) and used as that dark post's article
+	// thumbnail; LinkedIn accepts at most 5,000,000 bytes and 640x360 to 7680x4320
+	// (horizontal), 360x360 to 4320x4320 (square) or 360x640 to 2430x4320
+	// (vertical) pixels. A brief's library is bounded by a per-brief quota on both
+	// count and total stored bytes; an upload that would exceed either is refused
+	// with 409 and reason creative_asset_quota_exceeded, and list-creative-assets
+	// publishes the ceilings and the current totals so a client can see the
+	// headroom before it uploads. A re-upload of identical bytes is idempotent and
+	// is NOT judged against the quota, since it stores nothing. An archived brief
+	// returns 404, matching every other access to a brief's children.
 	UploadCreativeAsset(context.Context, *UploadCreativeAssetPayload) (res *CreativeAsset, err error)
 	// List the creative assets stored for a brief, with the per-brief quota the
 	// next upload will be judged against. Metadata only: the image bytes are never
@@ -1419,12 +1419,13 @@ type CampaignCreateInput struct {
 	// with 400 "invalid campaign config: twitterConfig.variants: ..." before any
 	// job exists. Not role-gated. X WEBSITE CARD (#564 gap 6): twitterConfig takes
 	// `card`, {"headline": string} (trimmed, 1-70 characters, no control
-	// character; headline is the only key). It needs media (imageAssetId) and an
-	// authored tweet (tweetText or variants, never tweetId). Once the campaign and
-	// line item exist and a tweet is about to be authored, one website card is
-	// created with POST accounts/:account_id/cards (a MEDIA component carrying the
-	// creative image's media_key and a DETAILS component carrying the headline and
-	// a WEBSITE destination: the registration URL with this service's UTMs and
+	// character; headline is the only key). It needs media (imageAssetId or
+	// videoAssetId, never both) and an authored tweet (tweetText or variants,
+	// never tweetId). Once the campaign and line item exist and a tweet is about
+	// to be authored, one website card is created with POST
+	// accounts/:account_id/cards (a MEDIA component carrying the creative image's
+	// or video's media_key and a DETAILS component carrying the headline and a
+	// WEBSITE destination: the registration URL with this service's UTMs and
 	// utm_content=website-card), and its card_uri is sent on every tweet the
 	// create authors (media_keys is then not sent; the image rides in the card).
 	// The result records it as CardURI. A card that cannot be created publishes
@@ -1463,12 +1464,12 @@ type CampaignCreateInput struct {
 	// on the new line item with operator EQ and NE. Each id is 1-32 letters or
 	// digits, sent exactly as given; at most 60 per list; no id twice and none in
 	// both lists. geoTargets, languages, keywords, interestIds,
-	// conversationTopics, platforms, devices, ageBucket, gender, customAudienceIds
-	// and excludedCustomAudienceIds together may name at most 60 criteria per
-	// create, since each is a separate X write paced at one per second inside the
-	// two-minute dispatch budget; more is refused with the same 400. Before
-	// anything is created every id is read with GET
-	// accounts/:account_id/custom_audiences and must be live and targetable; a
+	// conversationTopics, platforms, devices, ageBucket, gender,
+	// followerLookalikeUserIds, customAudienceIds and excludedCustomAudienceIds
+	// together may name at most 60 criteria per create, since each is a separate X
+	// write paced at one per second inside the two-minute dispatch budget; more is
+	// refused with the same 400. Before anything is created every id is read with
+	// GET accounts/:account_id/custom_audiences and must be live and targetable; a
 	// missing, deleted or non-targetable audience fails the job with nothing
 	// created. The exclusions are posted first of all the criteria and the
 	// inclusions last, after the line item and before the promoted tweet; a

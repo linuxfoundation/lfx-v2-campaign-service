@@ -40,7 +40,7 @@ import (
 const snapshotAssetIDKey = "imageassetid"
 
 // snapshotVideoAssetIDKey is the second key, LOWERCASED, a snapshot names a stored asset under:
-// a LinkedIn video variant's videoAssetId (#586). It is matched exactly like snapshotAssetIDKey,
+// an X campaign's twitterConfig.videoAssetId (#564). It is matched exactly like snapshotAssetIDKey,
 // so a video an existing campaign names is guarded against deletion the same way an image is.
 const snapshotVideoAssetIDKey = "videoassetid"
 

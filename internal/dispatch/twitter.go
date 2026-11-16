@@ -100,9 +100,9 @@ type twitterConfig struct {
 	// twitter_tweet_variants.go): 1-5 entries, never with tweetId or tweetText. Behind
 	// TWITTER_TWEET_VARIANTS_ENABLED.
 	Variants []twitterTweetVariant `json:"variants,omitempty"`
-	// Card is a website card (headline, the creative image, the UTM'd registration URL) attached to
-	// the authored tweet(s) by card_uri (#564 gap 6, twitter_website_card.go). Behind
-	// TWITTER_WEBSITE_CARD_ENABLED; needs imageAssetId and an authored tweet.
+	// Card is a website card (headline, the creative image or video, the UTM'd registration URL)
+	// attached to the authored tweet(s) by card_uri (#564 gap 6, twitter_website_card.go). Behind
+	// TWITTER_WEBSITE_CARD_ENABLED; needs imageAssetId or videoAssetId and an authored tweet.
 	Card *twitterWebsiteCard `json:"card,omitempty"`
 	// VideoAssetID references a stored MP4 creative asset (upload-creative-asset, video/mp4) to
 	// upload as amplify_video and attach to the authored tweet(s) instead of an image (#564 gap 7,
