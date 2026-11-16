@@ -939,7 +939,10 @@ logoBusinessName?: string         logoAssetId is a stored creative asset of THIS
                                   After the campaign is confirmed: AdExtensionsAssociations/Query
                                   for a LogoAdExtension on it (Microsoft allows one per campaign;
                                   a campaign that has one, such as a retry, gets nothing uploaded
-                                  or added, with a step), then AddMedia (POST Media, one Image,
+                                  or added, with a step; the read shows that logo's business name
+                                  and media id but not its image, so one with another business
+                                  name is NOT attached and one that may be the requested logo is
+                                  UNCONFIRMED, both created_degraded), then AddMedia (POST Media, one Image,
                                   MediaType Image1x1), AddAdExtensions (one LogoAdExtension
                                   {BusinessLogo: the media id, BusinessName}) and
                                   AdExtensionsAssociations/Set (Campaign). The ids are recorded as
@@ -1000,14 +1003,17 @@ adGroups?: object[]             — Up to 5 ad groups under the campaign instead
                                   each group not created (no rollback; a repeat does not retry
                                   them). The result records adGroups [{nameSuffix, adGroupName,
                                   adGroupId, adGroupReused?, adId, keywordIds, status
-                                  created|failed|not_attempted, error?, negativeKeywords?,
-                                  audiences?}]; the top-level adGroupId/adId/keywordIds are the
+                                  created|failed|not_attempted, error?, unconfirmed? (a failed
+                                  group whose create was ambiguous and recorded no id),
+                                  negativeKeywords?, audiences?}]; the top-level adGroupId/adId/keywordIds are the
                                   first group's. Pause/resume address every created group (resume
                                   opens each group, with its live keywords, before the campaign;
                                   pause closes the campaign first; a failed group is never
                                   opened), PATCH .../bid re-bids every group whose adGroupId was
                                   confirmed, a failed one included (a failure after the first is
-                                  UNCONFIRMED), and keyword actions may name any such group, one
+                                  UNCONFIRMED; while any group is unconfirmed with no id the bid
+                                  write is refused with 409, naming the entry to reconcile), and
+                                  keyword actions may name any such group, one
                                   per request. The
                                   monitor and reports are campaign-level and unaffected. OFF unless
                                   MICROSOFT_AD_GROUPS_ENABLED is exactly "true"; a wrong JSON type

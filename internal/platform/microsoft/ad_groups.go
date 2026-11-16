@@ -75,7 +75,12 @@ type AdGroupResult struct {
 	KeywordIDs    []string `json:"keywordIds,omitempty"`
 	Status        string   `json:"status"`
 	// Error is the group's failure, service-authored text, when Status is not created.
-	Error            string                   `json:"error,omitempty"`
+	Error string `json:"error,omitempty"`
+	// Unconfirmed marks a failed group whose ad group create (or a later step) was ambiguous
+	// (timeout, 5xx, unreadable success) while no ad group id was confirmed: an ad group may
+	// exist upstream that this row cannot address. The levers that must reach every group (the
+	// bid write) refuse until it is reconciled.
+	Unconfirmed      bool                     `json:"unconfirmed,omitempty"`
 	NegativeKeywords []NegativeKeywordOutcome `json:"negativeKeywords,omitempty"`
 	Audiences        []AudienceOutcome        `json:"audiences,omitempty"`
 }
@@ -269,6 +274,7 @@ func (c *Client) createAdGroups(
 		}
 		if err != nil {
 			res.Status, res.Error = AdGroupStatusFailed, err.Error()
+			res.Unconfirmed = res.AdGroupID == "" && IsOutcomeUnconfirmed(err)
 			if i == 0 {
 				// No ad group exists yet: today's failure, with the group recorded.
 				if r == nil {

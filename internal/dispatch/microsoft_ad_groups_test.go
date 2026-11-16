@@ -24,12 +24,14 @@ import (
 
 // msGroupAPI is a fake Microsoft API for multi-ad-group creates: every AdGroups, Ads and Keywords
 // create answers the next id (701.., 901.., 1101..), and failAdGroup makes that AdGroups create
-// (1-based) a definite rejection; repeatAdGroupID makes every AdGroups create answer 701.
+// (1-based) a definite rejection (an ambiguous 502 when ambiguousFail); repeatAdGroupID makes
+// every AdGroups create answer 701.
 type msGroupAPI struct {
 	mu              sync.Mutex
 	calls           []string
 	bodies          []string
 	failAdGroup     int
+	ambiguousFail   bool
 	repeatAdGroupID bool
 	adGroups        int
 	ads             int
@@ -70,6 +72,11 @@ func newMSGroupDispatcher(t *testing.T, api *msGroupAPI) *MicrosoftDispatcher {
 			_, _ = io.WriteString(w, `{"CampaignIds":[321],"PartialErrors":[]}`)
 		case "AdGroups":
 			api.adGroups++
+			if api.adGroups == api.failAdGroup && api.ambiguousFail {
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = io.WriteString(w, `{}`)
+				return
+			}
 			if api.adGroups == api.failAdGroup {
 				_, _ = io.WriteString(w, `{"AdGroupIds":[null],"PartialErrors":[{"Index":0,"ErrorCode":"CampaignServiceInvalidAdGroupName","Code":1201}]}`)
 				return
@@ -612,5 +619,47 @@ func TestMicrosoftAdGroups_WriteBidConfirmedFailedGroupWriteFailureIsUnconfirmed
 	writes := msWrites(calls())
 	if len(writes) != 2 || !strings.Contains(writes[1].Body, `"Id":656`) {
 		t.Fatalf("writes = %+v, want 654 then 656 (stopping at the failure)", writes)
+	}
+}
+
+// A later group whose ad group create was AMBIGUOUS (5xx) records no id and is marked
+// unconfirmed; a definite rejection is not.
+func TestMicrosoftAdGroups_AmbiguousLaterGroupIsRecordedUnconfirmed(t *testing.T) {
+	t.Setenv(constants.EnvMicrosoftAdGroupsEnabled, "true")
+	t.Setenv(constants.EnvMicrosoftCreateNegativeKeywordsEnabled, "true")
+	t.Setenv(constants.EnvMicrosoftAudiencesEnabled, "true")
+	for _, ambiguous := range []bool{true, false} {
+		api := &msGroupAPI{failAdGroup: 2, ambiguousFail: ambiguous}
+		d := newMSGroupDispatcher(t, api)
+		camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMicrosoftAds, msGroupConfig(msThreeGroups))
+		if err != nil {
+			t.Fatalf("ambiguous=%v: Dispatch: %v", ambiguous, err)
+		}
+		g := msGroupResult(t, camp).AdGroups[1]
+		if g.Status != microsoft.AdGroupStatusFailed || g.AdGroupID != "" || g.Unconfirmed != ambiguous {
+			t.Errorf("ambiguous=%v: group 2 = %+v", ambiguous, g)
+		}
+	}
+}
+
+// While a later group is unconfirmed with no recorded id, an ad group may exist upstream at the
+// old bid that no write can reach: the bid write is refused (ErrBidUnwritable, nothing written)
+// naming the entry and asking for reconciliation, never a success.
+func TestMicrosoftAdGroups_WriteBidRefusesWhileALaterGroupIsUnconfirmed(t *testing.T) {
+	camp := msMultiGroupCampaign()
+	camp.Result = json.RawMessage(strings.Replace(string(camp.Result),
+		`{"nameSuffix":"B","status":"failed","error":"rejected"}`,
+		`{"nameSuffix":"B","status":"failed","error":"ad group create UNCONFIRMED","unconfirmed":true}`, 1))
+	d, calls := msBudgetDispatcher(t, msBidStrategy("EnhancedCpc"), http.StatusOK, `{"PartialErrors":[]}`)
+	err := writeMSBid(d, camp, 2.35)
+	if !errors.Is(err, domain.ErrBidUnwritable) || !strings.Contains(err.Error(), "entry 2 (B)") || !strings.Contains(err.Error(), "reconcile it") {
+		t.Fatalf("err = %v, want ErrBidUnwritable naming entry 2 (B) and reconciliation", err)
+	}
+	if w := msWrites(calls()); len(w) != 0 {
+		t.Fatalf("writes = %+v, want none", w)
+	}
+	// A definite failure with no id (msMultiGroupCampaign as is) does not block the write.
+	if err := writeMSBid(d, msMultiGroupCampaign(), 2.35); err != nil {
+		t.Fatalf("definite failure: WriteBid = %v", err)
 	}
 }

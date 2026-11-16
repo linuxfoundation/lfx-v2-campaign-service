@@ -1505,7 +1505,10 @@ The snapshot reduces header and values as caller free text. Not verified live; n
 `BusinessName` Microsoft requires beside it (both or neither). `AttachCampaignLogo` runs the image
 extension's sequence for a `LogoAdExtension`: one `AdExtensionsAssociations/Query` filtered to
 `LogoAdExtension` on the campaign (Microsoft allows one logo per level, so a campaign that has one
-gets nothing uploaded or added, with a step; a lookup that cannot answer adds nothing and is a
+gets nothing uploaded or added, with a step, and `existingLogoOutcome` compares it: the read
+(`findCampaignExtensionContents`) carries its `BusinessName` and `BusinessLogo` media id but not
+the image, so another business name is a definite failure and a matching or unreported one is
+UNCONFIRMED; never a clean success, so a reused campaign is `created_degraded` (#613 review); a lookup that cannot answer adds nothing and is a
 definite failure), then `AddMedia` with one `Image` of `MediaType` `Image1x1` (the 1:1 sub type,
 minimum 128x128), `AddAdExtensions` with one `{Type "LogoAdExtension", BusinessLogo <media id>,
 BusinessName}` and `SetAdExtensionsAssociations` at `Campaign` level, each failure classified
@@ -1682,7 +1685,9 @@ refusal, or `NOT_SENT` when the context ended first); `UNCONFIRMED` for every li
 error when an error carries no usable index or the array was truncated, and for all of them on an
 ambiguous call or an unreadable 2xx; `APPLIED` otherwise. A `PartialErrors` entry whose codes
 are both defaults (absent, null, 0 or "", the `audienceErrorCode` rule `indexedErrorItem.isError`
-now shares) is a placeholder, not an error, here and in the conversion-goal picker read. A null or empty `PartialErrors` is no
+now shares) is a placeholder, not an error (the keyword lever's `keywordMutation` treats an
+answer of only explicit zero-code placeholders, `isZeroCodePlaceholder`, as APPLIED, while `[{}]`
+or `[null]` stays UNCONFIRMED), here and in the conversion-goal picker read. A null or empty `PartialErrors` is no
 error, but a 200 that omits the field (`{}`) is `UNCONFIRMED` for every list: it answered nothing
 about the associations (#613 review). The dispatcher (`applyMicrosoftSharedNegativeLists`) records them as
 `CampaignResult.SharedNegativeKeywordLists`; anything but `APPLIED` makes the campaign
@@ -1888,7 +1893,12 @@ groups (`microsoftExtraAdGroups`), so activation never opens a partly built one.
 re-bids, and the keyword lever accepts (one per batch), every distinct group with a CONFIRMED
 `AdGroupID` (`microsoftConfirmedExtraAdGroupIDs`), a `failed` one included: a group whose ad or
 keyword step failed after Microsoft confirmed it still exists at the old bid with its confirmed
-keywords (#613 review). A bid failure after the first group is UNCONFIRMED. The monitor, metrics and keyword report are campaign-level.
+keywords (#613 review). A bid failure after the first group is UNCONFIRMED. A later group whose
+create was ambiguous and confirmed no id is recorded `failed` with `Unconfirmed`; while any is,
+the bid lever refuses with `ErrBidUnwritable` naming the entry to reconcile
+(`microsoftUnaddressedAdGroups`), since an ad group may exist at the old bid that no write can
+reach. The keyword lever needs no such rule: it acts only on a group the caller names, and an id
+the row does not record is already refused. The monitor, metrics and keyword report are campaign-level.
 
 Not verified live. Behind `MICROSOFT_AD_GROUPS_ENABLED` (default off); each per-group field also
 stays behind its single-group flag, and a group's lists need `global_marketing_ops`

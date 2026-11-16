@@ -90,18 +90,37 @@ func TestAttachCampaignLogo_Success(t *testing.T) {
 	}
 }
 
-// A campaign that already has a logo gets nothing uploaded or added (a retry never doubles it).
-func TestAttachCampaignLogo_SkipsWhenAlreadyAssociated(t *testing.T) {
-	c, calls := textExtRecorder(t, &textExtAPI{existing: map[string]string{"LogoAdExtension": "4441"}})
-	r, err := c.AttachCampaignLogo(context.Background(), "321", goodLogo(t))
-	if err != nil || !r.AlreadyAttached || r.AdExtensionID != "4441" || r.MediaID != "" {
-		t.Fatalf("got %+v, %v", r, err)
-	}
-	if strings.Join(paths(calls()), ",") != "AdExtensionsAssociations/Query" {
-		t.Errorf("calls = %v", paths(calls()))
-	}
-	if !strings.Contains(strings.Join(r.Steps, "\n"), "Logo extension already associated with the campaign: 4441 (nothing uploaded)") {
-		t.Errorf("steps = %v", r.Steps)
+// A campaign that already has a logo gets nothing uploaded or added (a retry never doubles it),
+// and the existing logo is compared with the request: the read carries its business name and
+// media id but not the image, so a matching name is UNCONFIRMED (the image cannot be compared),
+// an unreported one is UNCONFIRMED, and a different name is a definite failure. None is a clean
+// success, so the campaign is degraded rather than recorded with the requested logo attached.
+func TestAttachCampaignLogo_ExistingLogoIsComparedNotTrusted(t *testing.T) {
+	for _, tc := range []struct {
+		name, fields, want string
+		unconfirmed        bool
+	}{
+		{"same business name", `"BusinessName":" CNCF ","BusinessLogo":"5551"`, "with the requested business name, but its image (media 5551) cannot be compared", true},
+		{"unreadable", ``, "Microsoft did not report its business name or image", true},
+		{"null business name", `"BusinessName":null,"BusinessLogo":5551`, "Microsoft did not report its business name or image", true},
+		{"different logo", `"BusinessName":"Other Org","BusinessLogo":7777`, "already has a different logo extension (4441, another business name)", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, calls := textExtRecorder(t, &textExtAPI{
+				existing:       map[string]string{"LogoAdExtension": "4441"},
+				existingFields: map[string]string{"LogoAdExtension": tc.fields},
+			})
+			r, err := c.AttachCampaignLogo(context.Background(), "321", goodLogo(t))
+			if err == nil || IsOutcomeUnconfirmed(err) != tc.unconfirmed || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want unconfirmed=%v containing %q", err, tc.unconfirmed, tc.want)
+			}
+			if !r.AlreadyAttached || r.AdExtensionID != "4441" || r.MediaID != "" {
+				t.Errorf("result = %+v", r)
+			}
+			if strings.Join(paths(calls()), ",") != "AdExtensionsAssociations/Query" {
+				t.Errorf("nothing may be uploaded or added beside an existing logo: calls = %v", paths(calls()))
+			}
+		})
 	}
 }
 

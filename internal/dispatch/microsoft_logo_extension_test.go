@@ -133,7 +133,9 @@ func TestMicrosoftLogo_AssetRefusedBeforeAnyMicrosoftCall(t *testing.T) {
 
 // On: the logo is uploaded once as an Image1x1, created as a LogoAdExtension naming that media and
 // the trimmed business name, and associated with the confirmed campaign; the ids are recorded. A
-// retry on the reused campaign, which now has a logo, uploads and adds nothing.
+// retry on the reused campaign, which now has a logo, uploads and adds nothing — and since the
+// association read cannot show the existing logo's image, that logo is UNCONFIRMED and the
+// campaign created_degraded rather than recorded with the requested logo attached.
 func TestMicrosoftLogo_DispatchAttachesAndRetryAddsNone(t *testing.T) {
 	t.Setenv(constants.EnvMicrosoftLogoExtensionEnabled, "true")
 	api := &msTextAPI{}
@@ -167,13 +169,14 @@ func TestMicrosoftLogo_DispatchAttachesAndRetryAddsNone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("retry Dispatch: %v", err)
 	}
-	if api.count("Media", "") != media || api.count("AdExtensions", "") != exts || camp2.Status != campaignStatusCreated {
-		t.Errorf("retry uploaded %d and created %d, status %q; want none and created",
+	if api.count("Media", "") != media || api.count("AdExtensions", "") != exts || camp2.Status != campaignStatusCreatedDegraded {
+		t.Errorf("retry uploaded %d and created %d, status %q; want none and created_degraded",
 			api.count("Media", "")-media, api.count("AdExtensions", "")-exts, camp2.Status)
 	}
 	var blob2 msLogoResultBlob
 	_ = json.Unmarshal(camp2.Result, &blob2)
-	if blob2.MediaID != "" || blob2.ExtensionID != "9001" || !strings.Contains(strings.Join(blob2.Steps, "\n"), "Logo extension already associated with the campaign: 9001") {
+	if blob2.MediaID != "" || blob2.ExtensionID != "9001" || !strings.Contains(strings.Join(blob2.Steps, "\n"), "Logo extension already associated with the campaign: 9001") ||
+		!strings.Contains(strings.Join(blob2.Steps, "\n"), "Logo extension UNCONFIRMED") {
 		t.Errorf("retry result = %+v", blob2)
 	}
 }

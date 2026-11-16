@@ -257,6 +257,12 @@ type adExtensionAssociationsQueryResponse struct {
 				// (findCampaignExtensionContents); every other type leaves them empty.
 				Header string   `json:"Header"`
 				Values []string `json:"Values"`
+				// BusinessName and BusinessLogo (a media id, a long Microsoft may quote) are a
+				// LogoAdExtension's, read so a reused campaign's logo can be compared with the
+				// requested one (AttachCampaignLogo). Raw, so an unexpected shape reads as
+				// unknown for the logo comparison instead of failing every type's lookup.
+				BusinessName json.RawMessage `json:"BusinessName"`
+				BusinessLogo json.RawMessage `json:"BusinessLogo"`
 			} `json:"AdExtension"`
 			AssociationType string       `json:"AssociationType"`
 			EntityId        *json.Number `json:"EntityId"`
@@ -511,10 +517,20 @@ func (c *Client) findCampaignExtension(ctx context.Context, account, campaign js
 	return found, count, err
 }
 
+// existingExtension is what the association read reported of one associated extension: a
+// structured snippet's Header and Values, or a logo's BusinessName (nil when not sent) and
+// BusinessLogo media id ("" when not sent or unusable).
+type existingExtension struct {
+	Header       string
+	Values       []string
+	BusinessName *string
+	BusinessLogo string
+}
+
 // findCampaignExtensionContents is findCampaignExtension that also returns each associated
-// extension's Header and Values as Microsoft reported them (empty when the response carried
-// none), in response order, for the structured snippet comparison.
-func (c *Client) findCampaignExtensionContents(ctx context.Context, account, campaign json.Number, extType, label string) (string, int, []StructuredSnippet, error) {
+// extension's contents as Microsoft reported them, in response order, for the structured
+// snippet and logo comparisons.
+func (c *Client) findCampaignExtensionContents(ctx context.Context, account, campaign json.Number, extType, label string) (string, int, []existingExtension, error) {
 	body, err := c.doRequest(ctx, http.MethodPost, "AdExtensionsAssociations/Query", adExtensionAssociationsQuery{
 		AccountId:       account,
 		AdExtensionType: extType,
@@ -547,7 +563,7 @@ func (c *Client) findCampaignExtensionContents(ctx context.Context, account, cam
 	// would then read as AlreadyAttached. The first valid id is kept and returned only once the
 	// whole response has passed.
 	found, count := "", 0
-	var contents []StructuredSnippet
+	var contents []existingExtension
 	for _, coll := range resp.AdExtensionAssociationCollection {
 		if coll == nil {
 			continue
@@ -572,7 +588,16 @@ func (c *Client) findCampaignExtensionContents(ctx context.Context, account, cam
 				found = id
 			}
 			count++
-			contents = append(contents, StructuredSnippet{Header: a.AdExtension.Header, Values: a.AdExtension.Values})
+			e := existingExtension{Header: a.AdExtension.Header, Values: a.AdExtension.Values}
+			var name string
+			if !isJSONNullRaw(a.AdExtension.BusinessName) && json.Unmarshal(a.AdExtension.BusinessName, &name) == nil {
+				e.BusinessName = &name
+			}
+			var logo json.Number
+			if json.Unmarshal(a.AdExtension.BusinessLogo, &logo) == nil {
+				e.BusinessLogo = numberID(&logo)
+			}
+			contents = append(contents, e)
 		}
 	}
 	return found, count, contents, nil

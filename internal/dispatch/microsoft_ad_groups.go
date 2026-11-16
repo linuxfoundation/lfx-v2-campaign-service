@@ -357,3 +357,35 @@ func microsoftConfirmedExtraAdGroupIDs(raw json.RawMessage, firstAdGroupID strin
 	}
 	return ids
 }
+
+// microsoftUnaddressedAdGroups names, as "entry N (suffix)", every further ad group a
+// multi-ad-group row records as failed with an UNCONFIRMED outcome and no confirmed ad group id
+// (#563 gap 12): an ad group may exist upstream, carrying the campaign's bid, that no lever can
+// address. Empty for a single-group row.
+func microsoftUnaddressedAdGroups(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var blob struct {
+		AdGroups []microsoft.AdGroupResult `json:"adGroups"`
+	}
+	if json.Unmarshal(raw, &blob) != nil {
+		return nil
+	}
+	var out []string
+	for i, g := range blob.AdGroups {
+		if i > 0 && g.Unconfirmed && strings.TrimSpace(g.AdGroupID) == "" {
+			out = append(out, fmt.Sprintf("entry %d (%s)", i+1, clipAdGroupSuffix(g.NameSuffix)))
+		}
+	}
+	return out
+}
+
+// clipAdGroupSuffix bounds a recorded suffix for an error message.
+func clipAdGroupSuffix(s string) string {
+	s = strings.TrimSpace(s)
+	if r := []rune(s); len(r) > 40 {
+		return string(r[:40]) + "…"
+	}
+	return s
+}

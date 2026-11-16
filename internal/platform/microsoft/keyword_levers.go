@@ -658,6 +658,17 @@ func (c *Client) ApplyKeywordActions(ctx context.Context, adGroupID string, acti
 	return out, nil
 }
 
+// isZeroCodePlaceholder reports whether the entry is an EXPLICIT zero-code placeholder: no error
+// (isError is false) yet at least one code field present as a non-null default (0, "" or "0"),
+// e.g. {"Index":0,"Code":0,"ErrorCode":null}. Microsoft answers a clean item that way in a
+// positional array. A null slot, {} or all-null codes are not one: they say nothing.
+func (it indexedErrorItem) isZeroCodePlaceholder() bool {
+	if it.isError() {
+		return false
+	}
+	return rawCodePresent(it.Code) || rawCodePresent(it.ErrorCode)
+}
+
 // anyIndexedError reports whether at least one entry carries an actual code.
 func anyIndexedError(items []indexedErrorItem) bool {
 	for _, it := range items {
@@ -688,12 +699,18 @@ func (c *Client) keywordMutation(ctx context.Context, method, what string, body 
 	if uerr := json.Unmarshal(raw, &resp); uerr != nil || !resp.sawPartialErrors {
 		return nil, &keywordMutationUnconfirmedError{what: what, err: errMalformedKeywordResponse}
 	}
-	// A NON-EMPTY PartialErrors whose every entry is a null or code-less placeholder (`[null]`,
-	// `[{}]`) names no rejection, yet is not the `[]`/null that affirms none: read leniently it
-	// would report every item APPLIED. Fail closed as UpdateCampaignStatus does for the same
-	// shape — the call was answered, so it may have applied, and the outcome is UNCONFIRMED.
+	// A NON-EMPTY PartialErrors that names no rejection is APPLIED only when every entry is an
+	// explicit zero-code placeholder ({"Index":0,"Code":0,"ErrorCode":null}), which is how a
+	// positional array marks a clean item. A null or code-less entry (`[null]`, `[{}]`) is not
+	// the `[]`/null that affirms no error: read leniently it would report every item APPLIED.
+	// Fail closed as UpdateCampaignStatus does for that shape — the call was answered, so it may
+	// have applied, and the outcome is UNCONFIRMED.
 	if len(resp.PartialErrors.Items) > 0 && !anyIndexedError(resp.PartialErrors.Items) {
-		return nil, &keywordMutationUnconfirmedError{what: what, err: errMalformedKeywordResponse}
+		for _, it := range resp.PartialErrors.Items {
+			if !it.isZeroCodePlaceholder() {
+				return nil, &keywordMutationUnconfirmedError{what: what, err: errMalformedKeywordResponse}
+			}
+		}
 	}
 	att := attribute(resp.PartialErrors, n)
 	out := make([]itemOutcome, n)

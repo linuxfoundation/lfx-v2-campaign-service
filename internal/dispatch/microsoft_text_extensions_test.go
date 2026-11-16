@@ -127,13 +127,20 @@ func newMSTextDispatcher(t *testing.T, api *msTextAPI) *MicrosoftDispatcher {
 			api.pending[id] = typ
 			var created struct {
 				AdExtensions []struct {
-					Header string
-					Values []string
+					Header       string
+					Values       []string
+					BusinessName string
+					BusinessLogo json.Number
 				}
 			}
-			if json.Unmarshal(b, &created) == nil && len(created.AdExtensions) == 1 && created.AdExtensions[0].Header != "" {
-				v, _ := json.Marshal(created.AdExtensions[0].Values)
-				api.contents[id] = fmt.Sprintf(`,"Header":%q,"Values":%s`, created.AdExtensions[0].Header, v)
+			if json.Unmarshal(b, &created) == nil && len(created.AdExtensions) == 1 {
+				switch e := created.AdExtensions[0]; {
+				case e.Header != "":
+					v, _ := json.Marshal(e.Values)
+					api.contents[id] = fmt.Sprintf(`,"Header":%q,"Values":%s`, e.Header, v)
+				case e.BusinessName != "":
+					api.contents[id] = fmt.Sprintf(`,"BusinessName":%q,"BusinessLogo":%q`, e.BusinessName, e.BusinessLogo.String())
+				}
 			}
 			_, _ = fmt.Fprintf(w, `{"AdExtensionIdentities":[{"Id":%s,"Version":1}],"NestedPartialErrors":[]}`, id)
 		case "Media":

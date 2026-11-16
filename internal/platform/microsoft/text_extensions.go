@@ -366,7 +366,11 @@ func (c *Client) attachTextExtensionsOfType(ctx context.Context, r *TextExtensio
 		// A structured snippet already there is a success only when it IS the requested one:
 		// a reused campaign holding a different snippet would otherwise read as attached.
 		if extType == adExtensionTypeStructuredSnippet {
-			reportExistingSnippets(r, exts, contents)
+			snippets := make([]StructuredSnippet, len(contents))
+			for i, e := range contents {
+				snippets[i] = StructuredSnippet{Header: e.Header, Values: e.Values}
+			}
+			reportExistingSnippets(r, exts, snippets)
 		}
 		return nil
 	}

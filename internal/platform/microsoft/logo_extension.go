@@ -174,12 +174,57 @@ type addLogoAdExtensionsRequest struct {
 
 // ---- the operation ----------------------------------------------------------
 
+// logoUnconfirmedError is an existing logo that may or may not be the requested one.
+type logoUnconfirmedError struct{ msg string }
+
+func (e *logoUnconfirmedError) Error() string     { return e.msg }
+func (e *logoUnconfirmedError) Unconfirmed() bool { return true }
+
+// existingLogoOutcome decides what a logo already associated with the campaign means for the
+// request, since nothing is added beside it (one logo per campaign). The association read carries
+// the extension's BusinessName and BusinessLogo (a media id), but not the image itself, and the
+// request has bytes, not a media id, so the image cannot be compared:
+//   - an existing logo whose business name differs from the request is a DIFFERENT logo, a
+//     definite "the requested logo is not attached";
+//   - otherwise (the name matches, or was not reported) it MAY be the requested logo, so the
+//     outcome is UNCONFIRMED: verify the image in Microsoft Advertising.
+//
+// Either way the campaign is degraded rather than recorded with the requested logo attached.
+func existingLogoOutcome(id, wantName string, contents []existingExtension) error {
+	nameMatches, nameUnknown := false, len(contents) == 0
+	media := ""
+	for _, e := range contents {
+		switch {
+		case e.BusinessName == nil:
+			nameUnknown = true
+		case strings.TrimSpace(*e.BusinessName) == wantName:
+			nameMatches = true
+			if media == "" {
+				media = e.BusinessLogo
+			}
+		}
+	}
+	switch {
+	case nameMatches:
+		where := "its image"
+		if media != "" {
+			where = "its image (media " + media + ")"
+		}
+		return &logoUnconfirmedError{msg: fmt.Sprintf("microsoft-ads logo extension: the campaign already has logo extension %s with the requested business name, but %s cannot be compared with the requested logo, so none was added — verify the logo in Microsoft Advertising", id, where)}
+	case nameUnknown:
+		return &logoUnconfirmedError{msg: fmt.Sprintf("microsoft-ads logo extension: the campaign already has logo extension %s, but Microsoft did not report its business name or image, so it may not be the requested logo; none was added — verify the logo in Microsoft Advertising", id)}
+	}
+	return fmt.Errorf("microsoft-ads logo extension: the campaign already has a different logo extension (%s, another business name), so the requested logo was not added (one logo per campaign) — replace it in Microsoft Advertising", id)
+}
+
 // AttachCampaignLogo uploads in to the account's media library and attaches it to the campaign as
 // a campaign-level LogoAdExtension, unless the campaign already has one.
 //
-// The result is never nil. A nil error means the campaign now has a logo extension (created here,
-// or pre-existing when AlreadyAttached). A non-nil error means it does not, or may not:
-// IsOutcomeUnconfirmed(err) tells "may have been attached" from a definite failure.
+// The result is never nil. A nil error means the campaign now has the requested logo extension,
+// created here. A non-nil error means it does not, or may not: IsOutcomeUnconfirmed(err) tells
+// "may have been attached" from a definite failure. A pre-existing logo (AlreadyAttached) is never
+// a nil error: existingLogoOutcome reports a different one as definite and one that cannot be
+// compared as UNCONFIRMED.
 func (c *Client) AttachCampaignLogo(ctx context.Context, campaignID string, in LogoInput) (*LogoAttachResult, error) {
 	r := &LogoAttachResult{}
 	if err := c.validateAccountIDs(); err != nil {
@@ -204,7 +249,7 @@ func (c *Client) AttachCampaignLogo(ctx context.Context, campaignID string, in L
 	// 1. Find-first: one logo per campaign, and AddMedia is not content-addressed. A failed read
 	// refuses rather than uploads; only a read was sent, so the failure is definite (%v, not %w,
 	// for the reason AttachCampaignImage gives).
-	existing, _, err := c.findCampaignExtension(ctx, account, campaign, adExtensionTypeLogo, "a logo")
+	existing, _, contents, err := c.findCampaignExtensionContents(ctx, account, campaign, adExtensionTypeLogo, "a logo")
 	if err != nil {
 		return r, fmt.Errorf("microsoft-ads logo extension: could not check the campaign for an existing logo extension, so none was added: %v", err)
 	}
@@ -212,7 +257,7 @@ func (c *Client) AttachCampaignLogo(ctx context.Context, campaignID string, in L
 		r.AdExtensionID = existing
 		r.AlreadyAttached = true
 		r.Steps = append(r.Steps, fmt.Sprintf("Logo extension already associated with the campaign: %s (nothing uploaded)", existing))
-		return r, nil
+		return r, existingLogoOutcome(existing, name, contents)
 	}
 
 	// 2. AddMedia. Not idempotent, so a 429 is not retried.

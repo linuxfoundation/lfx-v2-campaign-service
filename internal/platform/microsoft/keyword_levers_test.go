@@ -609,3 +609,48 @@ func TestAddCampaignNegativeKeywords_SecretBearingCodesAreWithheld(t *testing.T)
 		t.Errorf("item = %+v; want FAILED with the code withheld", out[0])
 	}
 }
+
+// An explicit zero-code placeholder ({"Index":0,"Code":0,"ErrorCode":null}) is how a positional
+// PartialErrors marks a clean item: the pause is APPLIED, and in a combined request it does not
+// block the remove. {} and null entries still say nothing, so they stay UNCONFIRMED.
+func TestApplyKeywordActions_ZeroCodePlaceholderIsApplied(t *testing.T) {
+	const placeholder = `{"PartialErrors":[{"Index":0,"Code":0,"ErrorCode":null}]}`
+	t.Run("pause only", func(t *testing.T) {
+		c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, placeholder })
+		out, err := c.ApplyKeywordActions(context.Background(), "654", []KeywordAction{{AdGroupID: "654", KeywordID: "701", Action: "PAUSE"}})
+		if err != nil || strings.Join(outcomesOf(out), ",") != "APPLIED" {
+			t.Fatalf("got %v, %v; want APPLIED", outcomesOf(out), err)
+		}
+	})
+	t.Run("pause and remove", func(t *testing.T) {
+		c, calls := kwRecorder(t, func(method, _ string) (int, string) {
+			if method == http.MethodPut {
+				return http.StatusOK, placeholder
+			}
+			return http.StatusOK, `{"PartialErrors":[{"Index":0,"Code":0,"ErrorCode":""}]}`
+		})
+		out, err := c.ApplyKeywordActions(context.Background(), "654", []KeywordAction{
+			{AdGroupID: "654", KeywordID: "701", Action: "PAUSE"},
+			{AdGroupID: "654", KeywordID: "702", Action: "REMOVE"},
+		})
+		if err != nil || strings.Join(outcomesOf(out), ",") != "APPLIED,APPLIED" {
+			t.Fatalf("got %v, %v; want APPLIED,APPLIED", outcomesOf(out), err)
+		}
+		if cs := calls(); len(cs) != 2 || cs[1].method != http.MethodDelete {
+			t.Errorf("the remove must be sent after a placeholder-only pause answer: %+v", cs)
+		}
+	})
+	for name, body := range map[string]string{
+		"code-less entry":    `{"PartialErrors":[{}]}`,
+		"all-null codes":     `{"PartialErrors":[{"Index":0,"Code":null,"ErrorCode":null}]}`,
+		"placeholder and {}": `{"PartialErrors":[{"Index":0,"Code":0},{}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, body })
+			_, err := c.ApplyKeywordActions(context.Background(), "654", []KeywordAction{{AdGroupID: "654", KeywordID: "701", Action: "PAUSE"}})
+			if err == nil || !IsOutcomeUnconfirmed(err) {
+				t.Fatalf("err = %v, want UNCONFIRMED", err)
+			}
+		})
+	}
+}

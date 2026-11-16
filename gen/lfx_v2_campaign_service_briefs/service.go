@@ -1581,7 +1581,10 @@ type CampaignCreateInput struct {
 	// LogoAdExtension {BusinessLogo, BusinessName} (AddAdExtensions) and
 	// associated with the campaign (SetAdExtensionsAssociations, Campaign).
 	// Microsoft allows one logo per campaign, so a campaign that already has one
-	// (a retry) gets nothing uploaded or added, with a step. The media and
+	// (a retry) gets nothing uploaded or added, with a step; the read shows that
+	// logo's business name and media id but not its image, so one with another
+	// business name is not attached and one that may be the requested logo is
+	// unconfirmed, and either leaves the campaign created_degraded. The media and
 	// extension ids are recorded as logoMediaId and logoAdExtensionId; a logo that
 	// is not, or may not be, attached leaves the campaign created_degraded with a
 	// step and never fails the job. An asset that does not exist for this brief or
@@ -1643,18 +1646,20 @@ type CampaignCreateInput struct {
 	// group not created (no rollback; repeating the create does not retry them).
 	// The result records every group as adGroups [{nameSuffix, adGroupName,
 	// adGroupId, adGroupReused?, adId, keywordIds, status
-	// created|failed|not_attempted, error?, negativeKeywords?, audiences?}], and
-	// its top-level adGroupId, adId and keywordIds are the first group's. Pause
-	// and resume address every created group (resume opens them all before the
-	// campaign; pause closes the campaign first; a failed group is never opened),
-	// update-campaign-bid re-bids every group whose adGroupId was confirmed, a
-	// failed one included, and keyword actions may name any such group, one ad
-	// group per request. OFF unless MICROSOFT_AD_GROUPS_ENABLED is exactly "true".
-	// A wrong JSON type (null reads as absent), a rule breach, or adGroups while
-	// the flag is off is refused with 400 "invalid campaign config:
-	// microsoftConfig.adGroups..." before any job exists. A group's audienceIds or
-	// excludedAudienceIds need global_marketing_ops (403, or 503 when the check
-	// cannot be made).
+	// created|failed|not_attempted, error?, unconfirmed? (a failed group whose
+	// create was ambiguous and recorded no id), negativeKeywords?, audiences?}],
+	// and its top-level adGroupId, adId and keywordIds are the first group's.
+	// Pause and resume address every created group (resume opens them all before
+	// the campaign; pause closes the campaign first; a failed group is never
+	// opened), update-campaign-bid re-bids every group whose adGroupId was
+	// confirmed, a failed one included (and answers 409, naming the entry to
+	// reconcile, while any group is unconfirmed with no recorded id), and keyword
+	// actions may name any such group, one ad group per request. OFF unless
+	// MICROSOFT_AD_GROUPS_ENABLED is exactly "true". A wrong JSON type (null reads
+	// as absent), a rule breach, or adGroups while the flag is off is refused with
+	// 400 "invalid campaign config: microsoftConfig.adGroups..." before any job
+	// exists. A group's audienceIds or excludedAudienceIds need
+	// global_marketing_ops (403, or 503 when the check cannot be made).
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed
