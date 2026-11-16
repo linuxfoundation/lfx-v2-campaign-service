@@ -277,12 +277,13 @@ func linkedinTargetingEnabled() bool {
 }
 
 // checkTargetingShape refuses a linkedInConfig.targeting whose JSON shape is wrong (#552): an
-// explicit null, a non-object, an include that is not an array of objects of string arrays, or an
-// exclude that is not an object of string arrays, any other key (a misspelled exclude); and, with targeting set, an employerExclusions
-// that is not an array of strings. PreflightCreate decodes the config best-effort,
-// and encoding/json skips a wrong-typed field (an "exclude": [] decodes to nil), so without this a
-// malformed exclude would pass the synchronous check and fail the job later. Anything it cannot
-// attribute to targeting is left to the ordinary decode.
+// explicit null, a non-object, an include that is not an array of objects of string arrays, an
+// exclude that is not an object of string arrays, or any other key (a misspelled exclude); and,
+// with targeting set, an employerExclusions that is not an array of strings (or holds a null).
+// PreflightCreate decodes the config best-effort, and encoding/json skips a wrong-typed field (an
+// "exclude": [] decodes to nil), so without this a malformed exclude would pass the synchronous
+// check and fail the job later. Anything it cannot attribute to targeting is left to the ordinary
+// decode.
 func checkTargetingShape(config json.RawMessage) error {
 	var envelope map[string]json.RawMessage
 	if json.Unmarshal(config, &envelope) != nil {

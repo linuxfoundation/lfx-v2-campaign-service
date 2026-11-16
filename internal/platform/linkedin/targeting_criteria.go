@@ -185,7 +185,10 @@ func cleanFacet(key string, values []string, where string, exclude bool) ([]stri
 // clauses); refusing them inside one ORed clause too is deliberately stricter until a live probe
 // shows that form is accepted. It also refuses staffCountRanges both included and excluded
 // ("targeted either inclusively or exclusively, but not both"), and any value both included
-// and excluded under the same facet.
+// and excluded under the same facet, where audienceMatchingSegments and dynamicSegments count as
+// one facet: both take urn:li:adSegment:<id>, so one segment included under either and excluded
+// under the other is refused too (segKey). Clauses and facets are walked in sorted key order, so
+// the first refusal, and its message, is the same on every attempt.
 func ValidateTargeting(t *Targeting, employerExclusions []string) (*Targeting, error) {
 	if t == nil {
 		return nil, nil
@@ -204,20 +207,20 @@ func ValidateTargeting(t *Targeting, employerExclusions []string) (*Targeting, e
 			return nil, targetingInvalid("%s is empty; every clause needs at least one facet", where)
 		}
 		clean := make(map[string][]string, len(clause))
-		for key, values := range clause {
-			vs, err := cleanFacet(key, values, where, false)
+		for _, key := range sortedKeys(clause) {
+			vs, err := cleanFacet(key, clause[key], where, false)
 			if err != nil {
 				return nil, err
 			}
 			clean[key] = vs
-			included[key] = append(included[key], vs...)
+			included[segKey(key)] = append(included[segKey(key)], vs...)
 		}
 		out.Include = append(out.Include, clean)
 	}
 	if len(t.Exclude) > 0 {
 		out.Exclude = make(map[string][]string, len(t.Exclude))
-		for key, values := range t.Exclude {
-			vs, err := cleanFacet(key, values, "exclude", true)
+		for _, key := range sortedKeys(t.Exclude) {
+			vs, err := cleanFacet(key, t.Exclude[key], "exclude", true)
 			if err != nil {
 				return nil, err
 			}
@@ -236,7 +239,7 @@ func ValidateTargeting(t *Targeting, employerExclusions []string) (*Targeting, e
 	}
 	for _, key := range sortedKeys(out.Exclude) {
 		for _, v := range out.Exclude[key] {
-			if facetContains(key, included[key], v) {
+			if facetContains(key, included[segKey(key)], v) {
 				return nil, targetingInvalid("%s value %s is both included and excluded", key, quoteValue(v))
 			}
 		}
@@ -278,6 +281,20 @@ func targetingEmployerExclusions(raw []string) ([]string, error) {
 		return nil, nil
 	}
 	return cleanFacet("employers", configured, "employerExclusions", true)
+}
+
+// adSegmentNamespace is the key under which ValidateTargeting collects the included values of
+// both segment facets for the include/exclude overlap check.
+const adSegmentNamespace = "adSegment"
+
+// segKey is the overlap-check namespace of a facet key: audienceMatchingSegments and
+// dynamicSegments share adSegmentNamespace, since both take urn:li:adSegment:<id> and one segment
+// is one audience whichever facet names it; every other facet is its own namespace.
+func segKey(key string) string {
+	if key == FacetAudienceMatchingSegments || key == FacetDynamicSegments {
+		return adSegmentNamespace
+	}
+	return key
 }
 
 // employerKey is the id an employer URN names; company and organization URNs of one id are the
@@ -327,20 +344,6 @@ func mergeEmployersCapped(base, extra []string, limit int) (out []string, over b
 		}
 	}
 	return out, false
-}
-
-// SegmentFacetsSet reports whether t names an ad segment anywhere (include or exclude). The
-// create path gates those on global_marketing_ops: a segment is a resource of the ad account.
-func (t *Targeting) SegmentFacetsSet() bool {
-	if t == nil {
-		return false
-	}
-	for _, clause := range t.Include {
-		if len(clause[FacetAudienceMatchingSegments]) > 0 || len(clause[FacetDynamicSegments]) > 0 {
-			return true
-		}
-	}
-	return len(t.Exclude[FacetAudienceMatchingSegments]) > 0 || len(t.Exclude[FacetDynamicSegments]) > 0
 }
 
 func sortedKeys(m map[string][]string) []string {

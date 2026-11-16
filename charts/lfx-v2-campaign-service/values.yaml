@@ -615,9 +615,10 @@ app:
     # been exercised against a live LinkedIn account, and a wrong guess fails
     # after the campaign group exists. Its ad-segment facets also require
     # global_marketing_ops on the project. Set it to exactly "true" in
-    # lfx-v2-argocd once the probe in the PR passes. While off, a create naming
-    # targeting is refused before a job exists. Any value other than "true" is
-    # treated as off, so a typo fails closed.
+    # lfx-v2-argocd once the probe under "Probe before enabling" in
+    # docs/api-catalog.md (LinkedInConfig targeting) passes. While off, a create
+    # naming targeting is refused before a job exists. Any value other than
+    # "true" is treated as off, so a typo fails closed.
     LINKEDIN_ADS_TARGETING_ENABLED:
       value: "false"
 

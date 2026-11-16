@@ -13,6 +13,7 @@ import (
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 )
 
 // MarketingOpsChecker answers whether a user holds global_marketing_ops on a project. A false
@@ -422,7 +423,7 @@ func LinkedInMarketingOpsInputs(config json.RawMessage) []string {
 	if cfg.Targeting == nil {
 		return set
 	}
-	segmentKeys := []string{"audienceMatchingSegments", "dynamicSegments"}
+	segmentKeys := []string{linkedin.FacetAudienceMatchingSegments, linkedin.FacetDynamicSegments}
 	for i, clause := range cfg.Targeting.Include {
 		for _, k := range segmentKeys {
 			if len(clause[k]) > 0 {

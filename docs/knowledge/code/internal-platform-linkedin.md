@@ -1044,7 +1044,8 @@ until it expires. The offset parameters are LinkedIn's documented ones but not v
 duplicates dropped); `CreateCampaign` runs it before the campaign group, and the dispatcher's
 `PreflightCreate` runs it for the synchronous 400.
 
-Once the campaign is ensured — created or reused by name — and before images and dark posts,
+Once the campaign is ensured — created, or reused by name when `Targeting` is not set (with it
+set, a reused campaign stops before this step; see Caller targeting) — and before images and dark posts,
 `associateConversions` sends one `PUT campaignConversions/(campaign:<urn>,conversion:<urn>)` per
 id, with both URNs percent-encoded by `encodeURNForPath` and `noResponseBody` (LinkedIn answers
 204). `pathValidRE` admits `(`, `)` and `,` for that one Rest.li compound key. A PUT on the key is
@@ -1112,6 +1113,15 @@ helper, so what is checked is what is merged. The profile path (`buildTargetingC
 entry with facet keys sorted (so the body is deterministic), and `exclude.or` from the caller's
 excludes plus the runtime config's `EmployerExclusions`. With `Targeting` set, the profile is not
 read at all — `validatePrerequisites` is skipped, but the org and the employer exclusions are
-still validated, since both still reach the wire. `SegmentFacetsSet` reports an ad segment
-anywhere; the create path's role gate (`service.LinkedInMarketingOpsInputs`) is pinned to agree
-with the facet list by `TestEveryLinkedInFacetIsClassifiedForTheMarketingOpsGate`.
+still validated, since both still reach the wire. The create path's role gate
+(`service.LinkedInMarketingOpsInputs`) names the segment facets through
+`FacetAudienceMatchingSegments` and `FacetDynamicSegments`, and is pinned to agree with the facet
+list by `TestEveryLinkedInFacetIsClassifiedForTheMarketingOpsGate`.
+
+`ValidateTargeting` walks each include clause and `Exclude` in sorted key order, so with two bad
+facets the refusal names the same (alphabetically first) one on every attempt. Its "both included
+and excluded" check treats `audienceMatchingSegments` and `dynamicSegments` as one namespace
+(`segKey`): both take `urn:li:adSegment:<id>`, and one segment included under one facet and
+excluded under the other is one audience both targeted and excluded, which would otherwise pass
+and reach the campaign POST after the group exists (#557 review). Pinned by the cross-facet cases
+in `TestValidateTargeting` and by `TestValidateTargeting_RefusalIsDeterministic`.

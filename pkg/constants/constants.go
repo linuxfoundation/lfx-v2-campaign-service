@@ -440,8 +440,9 @@ const (
 	// excludes), which replaces the targeting profile. Only the exact value "true" enables it;
 	// unset or any other value fails closed, and a create naming it is refused before a job
 	// exists. Like EnvGoogleAdsDemographicTargetingEnabled it keeps an UNVERIFIED request shape
-	// off the live ad account until the probe in the field's docs passes. Its ad-segment facets
-	// also require global_marketing_ops on the project (service.LinkedInMarketingOpsInputs).
+	// off the live ad account until the probe in docs/api-catalog.md (LinkedInConfig targeting,
+	// "Probe before enabling") passes. Its ad-segment facets also require global_marketing_ops on
+	// the project (service.LinkedInMarketingOpsInputs).
 	EnvLinkedInAdsTargetingEnabled = "LINKEDIN_ADS_TARGETING_ENABLED"
 
 	// EnvLinkedInAdsConversionsEnabled opts a deployment IN to linkedInConfig.conversions (#552):

@@ -490,7 +490,9 @@ openssl rand -base64 32
   with a 400 before a job exists. Its `audienceMatchingSegments` and
   `dynamicSegments` also require `global_marketing_ops`. The chart sets it to
   `"false"` (`app.environment.LINKEDIN_ADS_TARGETING_ENABLED.value`); enable
-  it per-environment in the ArgoCD overlay once the probe passes.
+  it per-environment in the ArgoCD overlay once the probe under "Probe
+  before enabling" in `docs/api-catalog.md` (LinkedInConfig targeting)
+  passes.
 - `LINKEDIN_ADS_CONVERSIONS_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `linkedInConfig.conversions` (#552), conversion rule ids
   associated with the campaign through Campaign Conversions once it exists.

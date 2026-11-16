@@ -1103,8 +1103,10 @@ synchronous `400` naming the flag).
 "conversions": ["104012", "107620"]
 ```
 
-After the campaign is created (or reused by name) and before the first dark post, each distinct id
-gets one Campaign Conversions record:
+After the campaign is created (or reused by name, when `linkedInConfig.targeting` is not set) and
+before the first dark post, each distinct id gets one Campaign Conversions record. With `targeting`
+set, a campaign reused by name stops before the conversions (see LinkedInConfig targeting), so
+none is associated:
 
 ```
 PUT /rest/campaignConversions/(campaign:urn%3Ali%3AsponsoredCampaign%3A<c>,conversion:urn%3Alla%3AllaPartnerConversion%3A<id>)
@@ -1116,7 +1118,7 @@ client's bounded backoff. A failed association does not stop the create: the row
 `created_degraded`, the result lists `conversionsAssociated` and `conversionsFailed`, and a step
 names each failed id with the HTTP status only, never LinkedIn's text. A campaign this run created
 is PAUSED, so the step says to associate it in Campaign Manager before activating; a campaign
-reused by name keeps its own status, which may be ACTIVE, so the step says it may already be
+reused by name (only without `targeting`) keeps its own status, which may be ACTIVE, so the step says it may already be
 serving without the conversion.
 
 Refused with a synchronous `400 invalid campaign config: linkedInConfig.conversions: …`: a
@@ -1177,18 +1179,46 @@ Campaign Manager and finish it there. The campaign row is left `pending` with th
 answers `a prior dispatch left an incomplete campaign upstream; reconciliation required` without
 contacting LinkedIn. A create without `targeting` reuses the campaign as before.
 
-Refused with a synchronous `400 invalid campaign config: linkedInConfig.targeting: …` before any
-job exists: a `targeting` whose JSON shape is wrong (an unknown key such as a misspelled `exclude`, explicit `null`, `include` not an array of objects of string arrays, `exclude` not an object of string arrays); an unknown facet; a malformed or wrong-namespace value (ids are numeric, no leading
+Refused with a synchronous `400 invalid campaign config: linkedInConfig.targeting…` or
+`400 invalid campaign config: linkedInConfig.employerExclusions…` before any job exists: a
+`targeting` whose JSON shape is wrong (an unknown key such as a misspelled `exclude`, explicit `null`, `include` not an array of objects of string arrays, `exclude` not an object of string arrays); an unknown facet; a malformed or wrong-namespace value (ids are numeric, no leading
 zero); a blank or padded value; an empty clause, empty facet, no clause or more than 10; more than
 100 values in a facet (200 for `employers`, LinkedIn's caps); `groups` or `interfaceLocales` under
-`exclude`; a value both included and excluded; an included employer that is in
-`employerExclusions`, a malformed `employerExclusions` value (held to the `employers` rule, so
+`exclude`; a value both included and excluded (`audienceMatchingSegments` and `dynamicSegments`
+count as one facet here, so one `urn:li:adSegment:<id>` included under either and excluded under
+the other is refused); an `employerExclusions` that is not an array of strings or holds a `null`
+(only when `targeting` is set); an included employer that is in `employerExclusions`, a malformed `employerExclusions` value (held to the `employers` rule, so
 numeric ids with no leading zero, like `exclude.employers`), or more than 200 employers in
 `exclude.employers` once `employerExclusions` is merged (employers compare by id, so
 `urn:li:company:<n>` and `urn:li:organization:<n>` are one employer); `staffCountRanges` both included and excluded;
 `titles` included with included `seniorities` or `jobFunctions`, and `employers` included with
 included `industries` or `staffCountRanges` (LinkedIn forbids ANDing them; refused even inside
 one clause until a live probe shows that is accepted).
+
+##### Probe before enabling
+
+No LinkedIn call was made to build `targeting`, so keep `LINKEDIN_ADS_TARGETING_ENABLED` off until
+this probe passes. Create a PAUSED campaign on a test campaign group in the LF Events ad account (or
+set `status: DRAFT`), then archive it:
+
+```
+POST https://api.linkedin.com/rest/adAccounts/<acct>/adCampaigns
+LinkedIn-Version: <current> ; X-Restli-Protocol-Version: 2.0.0
+{"account":"urn:li:sponsoredAccount:<acct>","campaignGroup":"urn:li:sponsoredCampaignGroup:<test group>",
+ "name":"probe 552 targeting","status":"PAUSED","type":"SPONSORED_UPDATES","objectiveType":"WEBSITE_VISIT",
+ "costType":"CPM","optimizationTargetType":"MAX_CLICK","locale":{"country":"US","language":"en"},
+ "offsiteDeliveryEnabled":false,"politicalIntent":"NOT_POLITICAL",
+ "dailyBudget":{"amount":"10.00","currencyCode":"USD"},"runSchedule":{"start":<now+1d ms>,"end":<now+8d ms>},
+ "targetingCriteria":{"include":{"and":[
+   {"or":{"urn:li:adTargetingFacet:locations":["urn:li:geo:103644278"]}},
+   {"or":{"urn:li:adTargetingFacet:titles":["urn:li:title:<id>"],"urn:li:adTargetingFacet:skills":["urn:li:skill:<id>"]}},
+   {"or":{"urn:li:adTargetingFacet:dynamicSegments":["urn:li:adSegment:<a READY retargeting segment>"]}}]},
+  "exclude":{"or":{"urn:li:adTargetingFacet:audienceMatchingSegments":["urn:li:adSegment:<a READY list>"],
+   "urn:li:adTargetingFacet:employers":["urn:li:company:33275771","urn:li:company:12893459"]}}}}
+```
+
+Expect `201` and an `x-restli-id`. A second probe with `titles` and `seniorities` in the same ORed
+clause would tell whether that stricter refusal can be relaxed.
 
 `audienceMatchingSegments` and `dynamicSegments`, anywhere in `targeting`, name ad segments on the
 ad account, so create-campaigns also requires `global_marketing_ops` on the project for them

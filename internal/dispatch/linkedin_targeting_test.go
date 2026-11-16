@@ -80,6 +80,33 @@ func TestLinkedIn_TargetingRefusedWhileTheFlagIsOff(t *testing.T) {
 	}
 }
 
+// TestLinkedIn_DispatchRefusesMisspelledTargetingKey drives Dispatch itself, the async path's
+// second line of defence after a job exists (#557 review): with the flag on, a misspelled
+// "excldue" decodes leniently into a Targeting with no exclude, passes linkedinTargeting, and
+// would reach the upstream create with a wider audience than asked unless Dispatch runs
+// checkTargetingShape too. PreflightCreate's copy of the check is pinned by
+// TestLinkedIn_TargetingPreflight.
+func TestLinkedIn_DispatchRefusesMisspelledTargetingKey(t *testing.T) {
+	t.Setenv(constants.EnvLinkedInAdsTargetingEnabled, "true")
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
+	defer srv.Close()
+	d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
+	cfg := linkedInTargetingConfig(`{"include":[{"skills":["urn:li:skill:1"]}],"excldue":{"seniorities":["urn:li:seniority:1"]}}`)
+
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+	var nuc interface{ NoUpstreamCreate() bool }
+	if !errors.Is(err, domain.ErrCreateConfigInvalid) || !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+		t.Fatalf("Dispatch = %v, want a not-created config refusal", err)
+	}
+	if !strings.Contains(err.Error(), "linkedInConfig.targeting must be an object") {
+		t.Errorf("Dispatch = %v, want the targeting shape refusal", err)
+	}
+	if n := calls.Load(); n != 0 {
+		t.Errorf("%d LinkedIn requests for a refused create", n)
+	}
+}
+
 func TestLinkedIn_TargetingPreflight(t *testing.T) {
 	t.Setenv(constants.EnvLinkedInAdsTargetingEnabled, "true")
 	d := NewLinkedInDispatcher(fakeConnReader{}, identityEncryptor{})

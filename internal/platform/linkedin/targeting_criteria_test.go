@@ -292,6 +292,9 @@ func TestValidateTargeting(t *testing.T) {
 		{"merged employers at the cap by id", &Targeting{Include: []map[string][]string{{"skills": {"urn:li:skill:1"}}}, Exclude: map[string][]string{"employers": many("urn:li:organization:", 200)}}, "", []string{"urn:li:company:7"}},
 		{"malformed employerExclusions", inc(map[string][]string{"skills": {"urn:li:skill:1"}}), "employerExclusions", []string{"urn:li:skill:1"}},
 		{"value included and excluded", &Targeting{Include: []map[string][]string{{"skills": {"urn:li:skill:1"}}}, Exclude: map[string][]string{"skills": {"urn:li:skill:1"}}}, "both included and excluded", nil},
+		{"segment included as dynamic and excluded as matched", &Targeting{Include: []map[string][]string{{FacetDynamicSegments: {"urn:li:adSegment:5"}}}, Exclude: map[string][]string{FacetAudienceMatchingSegments: {"urn:li:adSegment:5"}}}, "both included and excluded", nil},
+		{"segment included as matched and excluded as dynamic", &Targeting{Include: []map[string][]string{{FacetAudienceMatchingSegments: {"urn:li:adSegment:5"}}}, Exclude: map[string][]string{FacetDynamicSegments: {"urn:li:adSegment:5"}}}, "both included and excluded", nil},
+		{"different segments across the two facets", &Targeting{Include: []map[string][]string{{FacetDynamicSegments: {"urn:li:adSegment:5"}}}, Exclude: map[string][]string{FacetAudienceMatchingSegments: {"urn:li:adSegment:6"}}}, "", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -304,6 +307,35 @@ func TestValidateTargeting(t *testing.T) {
 			}
 			if err == nil || !errors.Is(err, ErrTargetingInvalid) || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("want a refusal containing %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+// TestValidateTargeting_RefusalIsDeterministic pins the sorted walk (#557 review): with two bad
+// facets in one clause, and two in exclude, every attempt names the same, alphabetically first,
+// facet. Ranging over the maps would name either one, varying from call to call.
+func TestValidateTargeting_RefusalIsDeterministic(t *testing.T) {
+	cases := []struct {
+		name string
+		in   *Targeting
+		want string
+	}{
+		{"include clause", &Targeting{Include: []map[string][]string{{
+			"titles": {"urn:li:title:x"}, "skills": {"urn:li:skill:x"}, "industries": {"urn:li:industry:x"},
+		}}}, "include[0].industries"},
+		{"exclude", &Targeting{
+			Include: []map[string][]string{{"skills": {"urn:li:skill:1"}}},
+			Exclude: map[string][]string{"titles": {"urn:li:title:x"}, "seniorities": {"urn:li:seniority:x"}, "employers": {"urn:li:company:x"}},
+		}, "exclude.employers"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for range 50 {
+				_, err := ValidateTargeting(tc.in, nil)
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("want the refusal to name %q every time, got %v", tc.want, err)
+				}
 			}
 		})
 	}
@@ -465,25 +497,5 @@ func TestTargetingEmployerExclusions_MeetTheEmployersRule(t *testing.T) {
 	}
 	if b, _ := json.Marshal(crit); !strings.Contains(string(b), "urn:li:company:01111") {
 		t.Errorf("profile criteria lost the configured exclusion: %s", b)
-	}
-}
-
-func TestTargetingSegmentFacetsSet(t *testing.T) {
-	if (*Targeting)(nil).SegmentFacetsSet() {
-		t.Error("nil targeting names no segment")
-	}
-	plain := &Targeting{Include: []map[string][]string{{"skills": {"urn:li:skill:1"}}}, Exclude: map[string][]string{"seniorities": {"urn:li:seniority:1"}}}
-	if plain.SegmentFacetsSet() {
-		t.Error("facets alone name no segment")
-	}
-	for _, tc := range []*Targeting{
-		{Include: []map[string][]string{{FacetAudienceMatchingSegments: {"urn:li:adSegment:1"}}}},
-		{Include: []map[string][]string{{"skills": {"urn:li:skill:1"}}, {FacetDynamicSegments: {"urn:li:adSegment:1"}}}},
-		{Include: plain.Include, Exclude: map[string][]string{FacetAudienceMatchingSegments: {"urn:li:adSegment:1"}}},
-		{Include: plain.Include, Exclude: map[string][]string{FacetDynamicSegments: {"urn:li:adSegment:1"}}},
-	} {
-		if !tc.SegmentFacetsSet() {
-			t.Errorf("segment not detected in %+v", tc)
-		}
 	}
 }

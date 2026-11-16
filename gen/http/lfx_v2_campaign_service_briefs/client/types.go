@@ -5441,26 +5441,37 @@ type CampaignCreateInputRequestBody struct {
 	// groups and interfaceLocales only under include. Set, it replaces
 	// targetingProfile and the fixed job-function and seniority targeting; the
 	// config's employerExclusions still join exclude.employers. Refused with a 400
-	// before any job exists: an unknown facet, a malformed value, an empty clause
-	// or facet, more than 100 values in a facet (200 for employers), a value both
-	// included and excluded, staffCountRanges both included and excluded, titles
-	// included with seniorities or jobFunctions, employers included with
-	// industries or staffCountRanges, and any targeting while the deployment has
-	// not set LINKEDIN_ADS_TARGETING_ENABLED. audienceMatchingSegments and
-	// dynamicSegments name ad segments on the ad account, so they also require
+	// before any job exists: a targeting with an unknown key (a misspelled
+	// exclude) or the wrong JSON shape, an unknown facet, a malformed value, an
+	// empty clause or facet, more than 100 values in a facet (200 for employers),
+	// a value both included and excluded (audienceMatchingSegments and
+	// dynamicSegments count as one facet here), staffCountRanges both included and
+	// excluded, titles included with seniorities or jobFunctions, employers
+	// included with industries or staffCountRanges, an employerExclusions that is
+	// not an array of strings or holds a null, an included employer that is also
+	// in employerExclusions, more than 200 employers in exclude.employers once
+	// employerExclusions is merged, and any targeting while the deployment has not
+	// set LINKEDIN_ADS_TARGETING_ENABLED. A campaign found by name in the campaign
+	// group is not given targeting: with targeting set, the create stops there,
+	// before any conversion, image, dark post or creative, and fails with the
+	// campaign recorded for reconciliation (linkedin targeting NOT applied to
+	// reused campaign <id>); the row stays pending with the campaign id and
+	// targetingNotApplied in its result, so a repeat answers reconciliation
+	// required instead of success. audienceMatchingSegments and dynamicSegments
+	// name ad segments on the ad account, so they also require
 	// global_marketing_ops on the project (403; 503 when the check cannot be
 	// made). LINKEDIN CONVERSIONS (#552): linkedInConfig takes an optional
 	// `conversions` list of LinkedIn conversion rule ids as numeric strings, e.g.
 	// ["104012"] (at most 20, duplicates dropped). Once the campaign exists
-	// (created or reused by name) each is associated with it by a Campaign
-	// Conversions PUT; a failed association does not stop the create, and the
-	// campaign is then created_degraded with the id in the result's
-	// conversionsFailed and a step to associate it in Campaign Manager (before
-	// activating a campaign this run created PAUSED; a campaign reused by name
-	// keeps its own status and may already be serving). Refused with a 400 before
-	// any job exists: an entry that is not a JSON string, a URN instead of an id,
-	// a non-numeric or zero-padded id, an empty list, more than 20 ids, and any
-	// conversions while the deployment has not set
+	// (created, or reused by name when linkedInConfig.targeting is not set) each
+	// is associated with it by a Campaign Conversions PUT; a failed association
+	// does not stop the create, and the campaign is then created_degraded with the
+	// id in the result's conversionsFailed and a step to associate it in Campaign
+	// Manager (before activating a campaign this run created PAUSED; a campaign
+	// reused by name keeps its own status and may already be serving). Refused
+	// with a 400 before any job exists: an entry that is not a JSON string, a URN
+	// instead of an id, a non-numeric or zero-padded id, an empty list, more than
+	// 20 ids, and any conversions while the deployment has not set
 	// LINKEDIN_ADS_CONVERSIONS_ENABLED. Conversion rules belong to the ad account,
 	// so conversions also require global_marketing_ops on the project (403; 503
 	// when the check cannot be made). REDDIT CONVERSION EVENT (#549):
