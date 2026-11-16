@@ -39,13 +39,13 @@ const (
 
 // VariantAd records one variant's post and ad on a one-ad-per-variant create. Variant is
 // 1-based. Outcome is the promo outcome-table class: PromoAdCreated for a created ad, otherwise
-// the class of the step that failed. PostID is set once the post was authored, AdID once the ad
-// was confirmed.
+// the class of the step that failed, and empty (omitted) on a variant a cancelled create never
+// reached. PostID is set once the post was authored, AdID once the ad was confirmed.
 type VariantAd struct {
 	Variant int          `json:"variant"`
 	PostID  string       `json:"postId,omitempty"`
 	AdID    string       `json:"adId,omitempty"`
-	Outcome PromoOutcome `json:"outcome"`
+	Outcome PromoOutcome `json:"outcome,omitempty"`
 }
 
 // AdPerVariantApplies reports whether a create with these inputs takes the one-ad-per-variant
@@ -206,6 +206,7 @@ func (c *Client) authorVariantPosts(ctx context.Context, accountID string, in Ca
 			if !run.mayHavePost() {
 				return nil, fmt.Errorf("reddit campaign creation aborted during post authoring: %w", ctx.Err())
 			}
+			*steps = append(*steps, variantStep(i+1, row.step(status, hasStatus)))
 			return stopResult(), fmt.Errorf("reddit campaign creation aborted during post authoring for variant %d; earlier variants' posts exist and are not attached to an ad: %w", i+1, ctx.Err())
 		default:
 			*steps = append(*steps, variantStep(i+1, row.step(status, hasStatus)))
@@ -248,7 +249,10 @@ func (c *Client) createVariantAds(ctx context.Context, accountID, adGroupID stri
 				}
 				pr.AdCount = len(pr.AdIDs)
 				pr.VariantAds = run.snapshot()
-				pr.AdWarning = fmt.Sprintf("variant %d: %s", i+1, row.AdWarning)
+				// Name every variant left without a confirmed ad, not only the cancelled one: earlier
+				// failures and later variants whose authored posts never got an ad are unattached too.
+				pr.AdWarning = fmt.Sprintf("variant %d: %s; no confirmed ad for variant(s) %s — verify any UNCONFIRMED post or ad in Reddit Ads Manager BEFORE recreating it, and DELETE any authored post not attached to an ad",
+					i+1, row.AdWarning, joinVariants(run.failed()))
 				if outcome == PromoAdCanceledInFlight {
 					return "", pr, fmt.Errorf("ad creation for variant %d interrupted, outcome UNCONFIRMED: %w", i+1, ctx.Err())
 				}

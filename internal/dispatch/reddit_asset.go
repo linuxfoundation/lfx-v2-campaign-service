@@ -166,7 +166,7 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 	}
 	// One ad per variant (#549 gap 6): the cap and every variant headline, on a config that
 	// decoded cleanly (variants is a plain list, so a mistyped one is the decode failure above).
-	if err := checkRedditAdPerVariant(cfg); err != nil {
+	if err := checkRedditAdPerVariant(cfg, redditAdPerVariantEnabled()); err != nil {
 		return err
 	}
 	// Community and interest resolution (#549 gaps 4 and 8): the one check here that reads

@@ -998,9 +998,14 @@ blank or over-300-character variant headline. Each variant's post and ad failure
 the promo outcome table and its step is prefixed `Variant N:`. A failed variant does not roll back
 the others: the result is a degraded success whose `AdWarning` and final `Variant ads:` step name
 the failed variants. A caller cancellation still stops the create with a partial result naming
-every post and ad already made. A late `ImageURLSource` is called once per post. The result
-carries `AdIDs` (every confirmed ad, variant order; `AdID` stays the first, so readers that know
-only `adId` still see a real ad) and `VariantAds` (`{variant, postId, adId, outcome}`); both are
+every post and ad already made, and its `AdWarning` names every variant left without a confirmed
+ad, not only the cancelled one. A definite refusal of the campaign create after the variants'
+posts were authored is also a partial result (no campaign id, `VariantAds` naming the posts), not
+`(nil, err)`, so the claim is kept and a retry does not author the posts again. A late
+`ImageURLSource` is called once per post. The result carries `AdIDs` (every confirmed ad, variant
+order; `AdID` stays the first, so readers that know only `adId` still see a real ad) and
+`VariantAds` (`{variant, postId, adId, outcome}`, `outcome` omitted on a variant a cancelled
+create never reached); both are
 omitted on a one-ad create. No migration: they live in the campaign row's result blob, like
 Meta's per-variant `AdResult`s. `UpdateCampaignTreeStatus` cascades the status toggle over every
 ad. The monitor, metrics and settings reads are campaign-level, and the bid, keyword, negative

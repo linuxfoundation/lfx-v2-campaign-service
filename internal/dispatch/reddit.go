@@ -315,16 +315,16 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	if err := checkRedditBudgetType(config); err != nil {
 		return nil, notCreated(err)
 	}
-	// One ad per variant (#549 gap 6): the cap and headlines, for any path that skipped
-	// PreflightCreate. The flag is read once here and handed to the client, so the check and the
-	// create agree on the path.
-	adPerVariant := redditAdPerVariantEnabled()
 	// Gender, languages and dayparting (#549 gap 13): the gate and rules, for any path that
 	// skipped PreflightCreate.
 	if err := checkRedditDemographicTargeting(cfg); err != nil {
 		return nil, notCreated(err)
 	}
-	if err := checkRedditAdPerVariant(cfg); err != nil {
+	// One ad per variant (#549 gap 6): the cap and headlines, for any path that skipped
+	// PreflightCreate. The flag is read once here, passed to the check and handed to the client,
+	// so the check and the create agree on the path.
+	adPerVariant := redditAdPerVariantEnabled()
+	if err := checkRedditAdPerVariant(cfg, adPerVariant); err != nil {
 		return nil, notCreated(err)
 	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that

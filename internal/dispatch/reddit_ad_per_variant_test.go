@@ -61,6 +61,26 @@ func TestRedditAdPerVariant_NotCheckedOffOrWithoutAnAuthoredPost(t *testing.T) {
 	}
 }
 
+// The check uses the flag its caller read, not a fresh read of the environment, so Dispatch's
+// check and the client it builds always agree on the path.
+func TestRedditAdPerVariant_CheckUsesThePassedFlag(t *testing.T) {
+	t.Setenv(constants.EnvRedditAdPerVariantEnabled, "true")
+	var env struct {
+		RedditConfig redditConfig `json:"redditConfig"`
+	}
+	if err := json.Unmarshal(adPerVariantCfg(6, ``), &env); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cfg := env.RedditConfig
+	if err := checkRedditAdPerVariant(cfg, false); err != nil {
+		t.Fatalf("passed flag off, environment on: want no refusal, got %v", err)
+	}
+	t.Setenv(constants.EnvRedditAdPerVariantEnabled, "")
+	if err := checkRedditAdPerVariant(cfg, true); err == nil || !strings.Contains(err.Error(), "at most 5") {
+		t.Fatalf("passed flag on, environment off: want the cap refusal, got %v", err)
+	}
+}
+
 // variantDispatchAPI is a Reddit API stand-in counting requests and failing one variant's ad.
 type variantDispatchAPI struct {
 	mu       sync.Mutex
@@ -115,6 +135,8 @@ func TestRedditAdPerVariant_DispatchRefusesBeforeAnyRequest(t *testing.T) {
 	}
 	requirePreCreate(t, err)
 	requireConversionEventRefusal(t, err, "at most 5")
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.requests != 0 {
 		t.Fatalf("%d Reddit requests were sent before the refusal", a.requests)
 	}

@@ -2288,7 +2288,22 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// already have processed. It now takes the unconfirmed branch below. If a caller
 			// cancellation is the cause, surface it as an abort.
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return nil, fmt.Errorf("reddit campaign creation aborted before completion: %w", ctxErr)
+				err = fmt.Errorf("reddit campaign creation aborted before completion: %w", ctxErr)
+			}
+			// One ad per variant (#549 gap 6) authors the variants' posts BEFORE the campaign,
+			// so a definite refusal here can strand them. Return them as a partial result so the
+			// caller keeps the claim and reports the unattached posts instead of authoring them
+			// again on retry.
+			if variants != nil && variants.mayHavePost() {
+				steps = append(steps, "Campaign creation was refused; the variants' promoted posts above exist and are not attached to an ad")
+				return &CampaignResult{
+					Platform:     "reddit-ads",
+					CampaignName: campaignName,
+					AccountID:    c.account.AccountID,
+					RedditURL:    redditAdsManagerURL,
+					Steps:        steps,
+					VariantAds:   variants.snapshot(),
+				}, err
 			}
 			return nil, err
 		}
