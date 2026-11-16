@@ -78,7 +78,7 @@ func (c *Client) checkDetailedTargeting(ctx context.Context, accountID string, t
 	}{{"behaviors", "behavior", t.Behaviors}, {"work_positions", "work position", t.WorkPositions}} {
 		for _, id := range list.ids {
 			refs = append(refs, detailedTargetingRef{Type: list.typ, ID: json.Number(id)})
-			kind[id] = list.field
+			kind[list.typ+"/"+id] = list.field
 		}
 	}
 	encoded, err := json.Marshal(refs)
@@ -95,22 +95,47 @@ func (c *Client) checkDetailedTargeting(ctx context.Context, accountID string, t
 	if err := json.Unmarshal(raw, &page); err != nil || page.Data == nil {
 		return errors.New("meta targeting: the targeting validation read returned no rows, so nothing was created")
 	}
-	rows := make(map[string]targetingValidationRow, len(*page.Data))
+	// Replies are matched on type AND id: the same id may be listed as both a behavior and a work
+	// position, and one reply must never answer for the other. A reply without a type answers only
+	// for an id listed under a single type. Two replies for one (type, id) that disagree on
+	// validity are refused rather than letting their order decide.
+	type refKey struct{ typ, id string }
+	rows := make(map[refKey]targetingValidationRow, len(*page.Data))
 	for _, row := range *page.Data {
-		rows[string(row.ID)] = row
+		k := refKey{strings.TrimSpace(row.Type), string(row.ID)}
+		if prev, dup := rows[k]; dup && !sameValidity(prev.Valid, row.Valid) {
+			return fmt.Errorf("meta targeting: the targeting validation read answered %s %s twice with different results, so nothing was created", k.typ, domain.CallerValue(k.id))
+		}
+		rows[k] = row
+	}
+	listed := map[string]int{}
+	for _, ref := range refs {
+		listed[string(ref.ID)]++
 	}
 	for _, ref := range refs {
 		id := string(ref.ID)
-		row, ok := rows[id]
+		row, ok := rows[refKey{ref.Type, id}]
+		if !ok && listed[id] == 1 {
+			row, ok = rows[refKey{"", id}]
+		}
 		if !ok {
-			return fmt.Errorf("meta targeting: the targeting validation read did not answer for %s %s, so nothing was created", kind[id], domain.CallerValue(id))
+			return fmt.Errorf("meta targeting: the targeting validation read did not answer for %s %s, so nothing was created", kind[ref.Type+"/"+id], domain.CallerValue(id))
 		}
 		if row.Valid == nil {
-			return fmt.Errorf("meta targeting: the targeting validation read did not say whether %s %s is valid, so nothing was created", kind[id], domain.CallerValue(id))
+			return fmt.Errorf("meta targeting: the targeting validation read did not say whether %s %s is valid, so nothing was created", kind[ref.Type+"/"+id], domain.CallerValue(id))
 		}
 		if !*row.Valid {
-			return domain.PreflightRefusalf("meta targeting: %s %s is not a detailed targeting option Meta currently offers this ad account; nothing was created", kind[id], domain.CallerValue(id))
+			return domain.PreflightRefusalf("meta targeting: %s %s is not a detailed targeting option Meta currently offers this ad account; nothing was created", kind[ref.Type+"/"+id], domain.CallerValue(id))
 		}
 	}
 	return nil
+}
+
+// sameValidity reports whether two validation replies agree: both without a `valid` field, or both
+// with the same value.
+func sameValidity(a, b *bool) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }

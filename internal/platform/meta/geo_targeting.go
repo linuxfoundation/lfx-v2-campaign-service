@@ -83,6 +83,7 @@ func (c *Client) checkGeoLocations(ctx context.Context, t *AudienceTargeting, co
 	}
 	var parents []string
 	seen := map[string]bool{}
+	regionCountries := map[string]bool{} // countries of the listed regions, filled before any city is read
 	for _, l := range []struct {
 		kind string
 		keys []string
@@ -107,10 +108,17 @@ func (c *Client) checkGeoLocations(ctx context.Context, t *AudienceTargeting, co
 				return nil, domain.PreflightRefusalf("meta targeting: %s %s is in %s, a market that requires a regional compliance declaration in Meta Ads Manager and is excluded from API targeting; nothing was created", l.kind, domain.CallerValue(key), cc)
 			case targeted[cc]:
 				return nil, domain.PreflightRefusalf("meta targeting: %s %s is in %s, which geoTargets already targets as a whole country; Meta refuses overlapping locations, so remove one; nothing was created", l.kind, domain.CallerValue(key), cc)
+			case l.kind == "city" && regionCountries[cc] && strings.TrimSpace(string(loc.RegionID)) == "":
+				// A listed region shares this city's country, so only the city's region tells
+				// whether they overlap; without it the check cannot be made.
+				return nil, fmt.Errorf("meta targeting: the geo-location lookup named no region for city %s in %s, where targeting.regions lists a region, so their overlap cannot be checked; nothing was created", domain.CallerValue(key), cc)
 			case l.kind == "city" && regions[strings.TrimSpace(string(loc.RegionID))]:
 				return nil, domain.PreflightRefusalf("meta targeting: city %s is in region %s, which targeting.regions already targets; Meta refuses overlapping locations, so remove one; nothing was created", domain.CallerValue(key), domain.CallerValue(string(loc.RegionID)))
 			case dsaTerritories[cc] && !dsaDisclosed:
 				return nil, domain.PreflightRefusalf("meta targeting: %s %s is in %s, an EU territory, so dsaBeneficiary and dsaPayor are required; nothing was created", l.kind, domain.CallerValue(key), cc)
+			}
+			if l.kind == "region" {
+				regionCountries[cc] = true
 			}
 			if !seen[cc] {
 				seen[cc] = true

@@ -1253,7 +1253,9 @@ account preflight and before any write, `checkDetailedTargeting` sends every id 
 `GET /act_<id>/targetingvalidation?targeting_list=[{"type":"behaviors"|"work_positions","id":…}]`
 (ids as JSON numbers, the reference's int64): a row with `valid` false is a refusal; a failed read,
 no `data`, an unanswered id or a row without `valid` is an error. Rows' ids decode from a string or
-a number (`graphID`). Its own flag, `META_BEHAVIOR_TARGETING_ENABLED` (default off), gates both like
+a number (`graphID`). Rows are matched to the request on type AND id, so an id listed as both a
+behavior and a work position gets its own answer for each; a row without a `type` answers only an id
+listed under one type, and two rows for one (type, id) that disagree on `valid` are an error. Its own flag, `META_BEHAVIOR_TARGETING_ENABLED` (default off), gates both like
 the locale flag; not behind `global_marketing_ops`. Not verified live: the reference documents the
 request's `targeting_list` but not the row fields (`id`, `valid` are inferred from the search page's
 validation example), and the `flexible_spec` keys.
@@ -1271,7 +1273,8 @@ missing `data` or a failed read is an error; a key of the other `type`, or a par
 in `metaIneligibleCountries` (the sanctioned-country check), in `regulatedCountries`, already a
 country target (Meta refuses overlapping locations) or a DSA territory without both disclosures is a
 refusal, and so is a city whose `region_id` (decoded through `graphID`) is one of the request's
-regions, the same overlap one level down. Its own flag, `META_REGION_TARGETING_ENABLED` (default off), gates it like the locale flag;
+regions, the same overlap one level down. A city whose country also holds a listed region but whose
+`region_id` is missing or null is an error: the overlap cannot be checked, so nothing is created. Its own flag, `META_REGION_TARGETING_ENABLED` (default off), gates it like the locale flag;
 not behind `global_marketing_ops`. Not built: a city radius (Meta's default radius applies) and zip
 codes. Not verified live: the lookup's answer shape, whether Meta refuses (rather than merges) an
 overlap. The settings readback reports the regions and cities as `regions` / `cities` while

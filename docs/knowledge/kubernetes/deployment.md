@@ -106,10 +106,10 @@ before any job exists.
 `META_LEAD_FORMS_ENABLED` is the same kind of gate, defaulting to `"false"` (#550), for
 `metaConfig.leadFormId` (an existing Instant Form that makes the `leads` objective an
 `OUTCOME_LEADS` lead ad). The form is read and must be an active form of the connection's Page
-before anything is created. It names a resource of the Page the create already uses, so it is not
-behind `global_marketing_ops`. The same flag gates `GET /projects/{p}/meta-ads/lead-forms`, the
-form picker read, which is a `global_marketing_ops` read (it lists the shared LF Page's forms for a
-project without its own connection).
+before anything is created. Naming a form requires `global_marketing_ops` (403 without it, 503
+when the check cannot be made), because the shared LF Page holds every foundation's forms. The
+same flag gates `GET /projects/{p}/meta-ads/lead-forms`, the form picker read, which is also a
+`global_marketing_ops` read.
 
 `META_AUDIENCE_TARGETING_ENABLED` is the same kind of gate for Meta, defaulting to `"false"`
 (#550): it opts a cluster in to `metaConfig.targeting` (age, gender, custom audiences to include

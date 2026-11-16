@@ -197,6 +197,28 @@ func TestCreateCampaign_CityInsideATargetedRegionCreatesNothing(t *testing.T) {
 			t.Fatalf("CreateCampaign: %v", err)
 		}
 	})
+	// A city in a listed region's country whose region_id is missing or null cannot be checked for
+	// overlap, so the read fails before anything is created.
+	for name, cityAnswer := range map[string]string{
+		"missing region_id": strings.Replace(answer, `,"region_id":%s`, "", 1),
+		"null region_id":    strings.Replace(answer, "%s", "null", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			gs := newGeoServer(t, cityAnswer)
+			defer gs.Close()
+			in := metaFieldInput()
+			in.GeoTargets = nil
+			in.Targeting = &AudienceTargeting{Regions: []string{"3847"}, Cities: []string{"2420379"}}
+			res, err := biddingClient(gs.URL, 100).CreateCampaign(context.Background(), in)
+			var refusal *domain.PreflightRefusal
+			if res != nil || err == nil || errors.As(err, &refusal) || !strings.Contains(err.Error(), `named no region for city "2420379" in US`) {
+				t.Fatalf("CreateCampaign = %+v, %v; want the unverifiable-overlap error", res, err)
+			}
+			if _, posts, _ := gs.snapshot(); len(posts) != 0 {
+				t.Fatalf("posts = %v, want none", posts)
+			}
+		})
+	}
 }
 
 // TestCreateCampaign_EUCityWithDisclosures: an EU city is accepted when both DSA disclosures are

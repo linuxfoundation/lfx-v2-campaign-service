@@ -366,8 +366,15 @@ func MetaMarketingOpsInputs(config json.RawMessage) []string {
 		} `json:"targeting"`
 	}
 	_ = json.Unmarshal(raw, &cfg) // a partial decode is still inspected, as for Google
+	// The dispatcher decodes leadFormId into a string, where a later `null` under a case variant
+	// of the key leaves an earlier value in place while the RawMessage above ends as null. Decode it
+	// the dispatcher's way too, so that pair is still gated.
+	var asDispatched struct {
+		LeadFormID string `json:"leadFormId"`
+	}
+	_ = json.Unmarshal(raw, &asDispatched)
 	var set []string
-	if v := strings.TrimSpace(string(cfg.LeadFormID)); v != "" && v != "null" && v != `""` {
+	if v := strings.TrimSpace(string(cfg.LeadFormID)); (v != "" && v != "null" && v != `""`) || strings.TrimSpace(asDispatched.LeadFormID) != "" {
 		set = append(set, "leadFormId")
 	}
 	if cfg.Targeting == nil {

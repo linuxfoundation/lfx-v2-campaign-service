@@ -147,6 +147,35 @@ func TestCreateCampaign_InvalidOrUnverifiableBehaviorCreatesNothing(t *testing.T
 	}
 }
 
+// TestCreateCampaign_SharedIDIsAnsweredPerType: one id listed as both a behavior and a work position
+// is matched to its reply by type, so a valid work-position reply cannot hide an invalid behavior
+// reply, and two disagreeing replies for one type are an error. Either way no POST is sent.
+func TestCreateCampaign_SharedIDIsAnsweredPerType(t *testing.T) {
+	for _, tc := range []struct {
+		name, answer, want string
+		refusal            bool
+	}{
+		{"invalid behavior, valid work position", `{"data":[{"id":"6002714895372","type":"behaviors","valid":false},{"id":"6002714895372","type":"work_positions","valid":true}]}`, `behavior "6002714895372" is not a detailed targeting option`, true},
+		{"disagreeing replies for one type", `{"data":[{"id":"6002714895372","type":"behaviors","valid":true},{"id":"6002714895372","type":"behaviors","valid":false},{"id":"6002714895372","type":"work_positions","valid":true}]}`, "answered behaviors \"6002714895372\" twice with different results", false},
+		{"untyped reply for an id listed twice", `{"data":[{"id":"6002714895372","valid":true}]}`, `did not answer for behavior "6002714895372"`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vs := newValidationServer(t, tc.answer)
+			defer vs.Close()
+			in := metaFieldInput()
+			in.Targeting = &AudienceTargeting{Behaviors: []string{"6002714895372"}, WorkPositions: []string{"6002714895372"}}
+			res, err := biddingClient(vs.URL, 100).CreateCampaign(context.Background(), in)
+			var refusal *domain.PreflightRefusal
+			if res != nil || err == nil || !strings.Contains(err.Error(), tc.want) || errors.As(err, &refusal) != tc.refusal {
+				t.Fatalf("CreateCampaign = %+v, %v; want an error containing %q (refusal %v)", res, err, tc.want, tc.refusal)
+			}
+			if _, posts, _ := vs.snapshot(); len(posts) != 0 {
+				t.Fatalf("posts = %v, want none", posts)
+			}
+		})
+	}
+}
+
 // TestNormalizeAudienceTargeting_BehaviorsAndWorkPositions: the ids are numeric, de-duplicated,
 // capped, count as inclusions and not as the six audience fields.
 func TestNormalizeAudienceTargeting_BehaviorsAndWorkPositions(t *testing.T) {

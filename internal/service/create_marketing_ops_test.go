@@ -393,3 +393,25 @@ type forbiddenSchema struct {
 		} `json:"message"`
 	} `json:"properties"`
 }
+
+// TestMetaMarketingOpsInputs_CaseVariantThenNullLeadForm: encoding/json matches keys
+// case-insensitively, so a form id under "LeadFormId" followed by `"leadFormId": null` leaves the
+// dispatcher's string holding the id while a RawMessage ends as null. The gate must still count it.
+func TestMetaMarketingOpsInputs_CaseVariantThenNullLeadForm(t *testing.T) {
+	for _, cfg := range []string{
+		`{"metaConfig":{"objective":"leads","LeadFormId":"5550001","leadFormId":null}}`,
+		`{"metaConfig":{"objective":"leads","leadFormId":"5550001"}}`,
+	} {
+		if got := MetaMarketingOpsInputs(json.RawMessage(cfg)); len(got) != 1 || got[0] != "leadFormId" {
+			t.Errorf("MetaMarketingOpsInputs(%s) = %v, want [leadFormId]", cfg, got)
+		}
+	}
+	for _, cfg := range []string{
+		`{"metaConfig":{"objective":"leads","leadFormId":null}}`,
+		`{"metaConfig":{"objective":"leads","leadFormId":""}}`,
+	} {
+		if got := MetaMarketingOpsInputs(json.RawMessage(cfg)); len(got) != 0 {
+			t.Errorf("MetaMarketingOpsInputs(%s) = %v, want none", cfg, got)
+		}
+	}
+}
