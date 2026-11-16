@@ -225,6 +225,9 @@ type MicrosoftDispatcher struct {
 	// settingsNow is the settings readback's ReadAt clock; nil means the wall clock. A field only so
 	// tests can pin it.
 	settingsNow func() time.Time
+	// bidNow is the bid write's clock for microsoftUnconfirmedSettleWindow; nil means the wall
+	// clock. A field only so tests can pin it.
+	bidNow func() time.Time
 	// creatives resolves microsoftConfig.imageAssetId to image bytes at dispatch, and assets
 	// bounds the bytes concurrent dispatches hold — the SAME read-only port and process-wide
 	// budget the Meta dispatcher uses. Both bound by registerDispatchers; nil in the

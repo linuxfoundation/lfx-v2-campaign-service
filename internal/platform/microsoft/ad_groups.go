@@ -207,12 +207,7 @@ func validateAdGroups(in CampaignInput, authority string) ([]validatedAdGroup, e
 		}
 		p1, p2, _ := validatePaths(g.Path1, g.Path2)
 		if p1 != "" {
-			shown := displayURL(authority, p1, p2)
-			limit := maxDisplayDomainRunes
-			if hasDoubleWidth(shown) {
-				limit = maxDisplayDomainRunesWide
-			}
-			if n := utf8.RuneCountInString(shown); n > limit {
+			if n, limit, over := displayURLOverflow(authority, p1, p2); over {
 				return nil, &AdGroupError{Entry: entry, Field: "path1", Msg: fmt.Sprintf("the display URL (domain plus path1/path2) is %d characters, exceeding the %d limit; shorten path1/path2", n, limit)}
 			}
 		}

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -126,9 +127,14 @@ func (d *MicrosoftDispatcher) WriteBid(ctx context.Context, projectID string, pl
 	// id is recorded and it is re-bid below; definitely absent, it stops blocking. One that still
 	// cannot be established refuses before any change rather than report a campaign bid that
 	// group may not carry. The reconciled result is persisted with the new bid on success.
-	if unaddressed := reconcileMicrosoftUnaddressedAdGroups(ctx, client, campaign, campaignID, adGroupID); len(unaddressed) > 0 {
+	unresolved, unsettled := reconcileMicrosoftUnaddressedAdGroups(ctx, client, campaign, campaignID, adGroupID, d.microsoftCreateSettled(campaign))
+	if len(unresolved) > 0 {
 		return fmt.Errorf("write microsoft campaign bid: campaign %s has ad group %s whose create was unconfirmed and whose lookup by name could not establish it (the read failed or was unreadable, or the name resolved to an unusable or already-recorded id), so it cannot be re-bid; retry the bid change — it clears once the lookup finds that ad group or confirms it absent — or resolve the ad group in Microsoft Advertising: %w",
-			campaignID, strings.Join(unaddressed, ", "), domain.ErrBidUnwritable)
+			campaignID, strings.Join(unresolved, ", "), domain.ErrBidUnwritable)
+	}
+	if len(unsettled) > 0 {
+		return fmt.Errorf("write microsoft campaign bid: campaign %s has ad group %s whose create was unconfirmed and which is not listed yet, but a timed-out create can still commit, so its absence is not trusted until %s after the campaign row was last written; retry the bid change after that, or once the ad group appears (it is then recorded and re-bid at once): %w",
+			campaignID, strings.Join(unsettled, ", "), microsoftUnconfirmedSettleWindow, domain.ErrBidUnwritable)
 	}
 	extraIDs := microsoftConfirmedExtraAdGroupIDs(campaign.Result, adGroupID)
 	for _, id := range extraIDs {
@@ -170,4 +176,27 @@ func microsoftBidAmountRejected(err error) error {
 		reason: reason,
 		err:    fmt.Errorf("write microsoft campaign bid: %w: %w", err, domain.ErrBidAmountRejected),
 	}
+}
+
+// microsoftUnconfirmedSettleWindow is how long after an UNCONFIRMED ad group create its absence
+// from the campaign's ad group list is trusted. A create that timed out (or answered 5xx) may
+// still commit after the response was lost, so a lookup soon after can miss an ad group that is
+// about to exist; an hour is far beyond any request Microsoft is still processing.
+const microsoftUnconfirmedSettleWindow = time.Hour
+
+// microsoftCreateSettled reports whether the campaign's unconfirmed creates have had
+// microsoftUnconfirmedSettleWindow to settle, measured from the row's UpdatedAt: the row's last
+// write, which is never earlier than the dispatch result that recorded the unconfirmed group
+// (CreatedAt is the claim, BEFORE the create ran, so it could clear too early). A later write
+// only moves UpdatedAt forward, extending the window — the safe direction. An unknown (zero)
+// UpdatedAt is never settled.
+func (d *MicrosoftDispatcher) microsoftCreateSettled(campaign *model.Campaign) bool {
+	if campaign.UpdatedAt.IsZero() {
+		return false
+	}
+	now := time.Now
+	if d.bidNow != nil {
+		now = d.bidNow
+	}
+	return now().Sub(campaign.UpdatedAt) >= microsoftUnconfirmedSettleWindow
 }

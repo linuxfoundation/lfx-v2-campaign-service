@@ -1635,12 +1635,15 @@ type CampaignCreateInput struct {
 	// twin's flag (copy MICROSOFT_AD_COPY_ENABLED, negatives
 	// MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED and sent at the AD GROUP level,
 	// lists MICROSOFT_AUDIENCES_ENABLED, read before anything is created, one read
-	// per group). The single-group keywords, headlines, descriptions, path1,
-	// path2, audienceIds, excludedAudienceIds and audienceBidAdjustment are
-	// refused alongside adGroups; the campaign-level fields (budget, bidding,
-	// cpcBid, dates, searchPartners, the campaign negativeKeywords and the rest)
-	// apply to every group. Groups are built in order. The first group failing is
-	// the single-group failure (the partial campaign is reported and retained); a
+	// per group). A group's display URL (the brief url's domain plus its
+	// path1/path2) must fit Microsoft's 67 characters (33 with a double-width
+	// character), checked against the brief before any job exists. The
+	// single-group keywords, headlines, descriptions, path1, path2, audienceIds,
+	// excludedAudienceIds and audienceBidAdjustment are refused alongside
+	// adGroups; the campaign-level fields (budget, bidding, cpcBid, dates,
+	// searchPartners, the campaign negativeKeywords and the rest) apply to every
+	// group. Groups are built in order. The first group failing is the
+	// single-group failure (the partial campaign is reported and retained); a
 	// later group failing leaves the earlier ones in place, the remaining ones are
 	// still built, and the campaign is created_degraded with a step naming every
 	// group not created (no rollback; repeating the create does not retry them).
@@ -1654,12 +1657,14 @@ type CampaignCreateInput struct {
 	// opened), update-campaign-bid re-bids every group whose adGroupId was
 	// confirmed, a failed one included (a group unconfirmed with no recorded id is
 	// first looked up by its name: found, its id is recorded and it is re-bid;
-	// definitely absent, it stops blocking; both are persisted with the bid; only
-	// when the lookup cannot establish it does the write answer 409 naming the
-	// entry, until a retry resolves it), and keyword actions may name any such
-	// group, one ad group per request. OFF unless MICROSOFT_AD_GROUPS_ENABLED is
-	// exactly "true". A wrong JSON type (null reads as absent), a rule breach, or
-	// adGroups while the flag is off is refused with 400 "invalid campaign config:
+	// definitely absent, it stops blocking once the campaign row was last written
+	// at least 1 hour ago (inside that window, since a timed-out create can still
+	// commit, absence keeps the 409); both are persisted with the bid; only when
+	// the lookup cannot establish it does the write answer 409 naming the entry,
+	// until a retry resolves it), and keyword actions may name any such group, one
+	// ad group per request. OFF unless MICROSOFT_AD_GROUPS_ENABLED is exactly
+	// "true". A wrong JSON type (null reads as absent), a rule breach, or adGroups
+	// while the flag is off is refused with 400 "invalid campaign config:
 	// microsoftConfig.adGroups..." before any job exists. A group's audienceIds or
 	// excludedAudienceIds need global_marketing_ops (403, or 503 when the check
 	// cannot be made).

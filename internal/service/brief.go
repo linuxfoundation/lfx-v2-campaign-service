@@ -760,6 +760,11 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 	if err := orch.PreflightCreate(ctx, p.ProjectID, platforms, config); err != nil {
 		return nil, mapBriefErr(err)
 	}
+	// The brief-dependent half (Microsoft's per-ad-group display URL, #613 review): local, so it
+	// runs after the config-only checks and refuses only a config the brief makes invalid.
+	if err := orch.PreflightCreateBrief(ctx, p.ProjectID, platforms, brief, config); err != nil {
+		return nil, mapBriefErr(err)
+	}
 	// Pass the version we just observed as 'approved'. Start gates job creation on
 	// the brief still being approved at this exact version, so a concurrent replace
 	// (which resets it to draft, bumping version) or archive committing between this

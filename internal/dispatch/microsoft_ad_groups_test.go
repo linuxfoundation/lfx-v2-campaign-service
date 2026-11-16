@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -698,11 +699,42 @@ func TestMicrosoftAdGroups_WriteBidReconcilesAnUnconfirmedLaterGroup(t *testing.
 			t.Errorf("other result fields must be kept: %s", camp.Result)
 		}
 	})
+	// Absence is trusted only once the create has had microsoftUnconfirmedSettleWindow to settle
+	// (measured from the row's UpdatedAt on the dispatcher's pinned clock): a timed-out create may
+	// still commit. Inside the window it keeps the 409 and the flag.
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	const absentList = `{"AdGroups":[{"Id":654,"Name":"LFX | Ad Group"},{"Id":655,"Name":"LFX | Ad Group | C"}]}`
+	t.Run("absent inside the settle window", func(t *testing.T) {
+		camp := msUnconfirmedGroupCampaign()
+		camp.UpdatedAt = now.Add(-microsoftUnconfirmedSettleWindow + time.Minute)
+		d, calls := msBudgetDispatcherRouted(t, msAdGroupLookup(http.StatusOK, absentList),
+			msBidStrategy("EnhancedCpc"), func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"PartialErrors":[]}`) })
+		d.bidNow = func() time.Time { return now }
+		err := writeMSBid(d, camp, 2.35)
+		if !errors.Is(err, domain.ErrBidUnwritable) || !strings.Contains(err.Error(), "entry 2 (B)") || !strings.Contains(err.Error(), "retry the bid change after that, or once the ad group appears") {
+			t.Fatalf("err = %v, want the settle-window 409", err)
+		}
+		if w := msWrites(calls()); len(w) != 0 {
+			t.Fatalf("writes = %+v, want none", w)
+		}
+		if g := msGroupResultBlob(t, camp.Result).AdGroups[1]; !g.Unconfirmed {
+			t.Errorf("group 2 = %+v, want the flag kept inside the window", g)
+		}
+	})
+	t.Run("absent with no recorded update time", func(t *testing.T) {
+		camp := msUnconfirmedGroupCampaign() // UpdatedAt zero: never settled
+		d, _ := msBudgetDispatcherRouted(t, msAdGroupLookup(http.StatusOK, absentList),
+			msBidStrategy("EnhancedCpc"), func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"PartialErrors":[]}`) })
+		if err := writeMSBid(d, camp, 2.35); !errors.Is(err, domain.ErrBidUnwritable) {
+			t.Fatalf("err = %v, want 409", err)
+		}
+	})
 	t.Run("absent", func(t *testing.T) {
 		camp := msUnconfirmedGroupCampaign()
-		d, calls := msBudgetDispatcherRouted(t, msAdGroupLookup(http.StatusOK,
-			`{"AdGroups":[{"Id":654,"Name":"LFX | Ad Group"},{"Id":655,"Name":"LFX | Ad Group | C"}]}`),
+		camp.UpdatedAt = now.Add(-microsoftUnconfirmedSettleWindow)
+		d, calls := msBudgetDispatcherRouted(t, msAdGroupLookup(http.StatusOK, absentList),
 			msBidStrategy("EnhancedCpc"), func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"PartialErrors":[]}`) })
+		d.bidNow = func() time.Time { return now }
 		if err := writeMSBid(d, camp, 2.35); err != nil {
 			t.Fatalf("WriteBid: %v", err)
 		}
@@ -784,5 +816,33 @@ func TestMicrosoftAdGroups_UnreadableLaterGroupCreateIsUnconfirmedAndBlocksTheBi
 	}
 	if w := msWrites(calls()); len(w) != 0 {
 		t.Fatalf("writes = %+v, want none", w)
+	}
+}
+
+// The per-group display URL — the brief's registration host plus that group's path1/path2 — is
+// checked at preflight (PreflightCreateBrief), so an overflow is the synchronous 400 rather than
+// a job failure after the 202. The host alone fits; the paths push it over Microsoft's 67.
+func TestMicrosoftAdGroups_PreflightBriefRefusesADisplayURLOverflow(t *testing.T) {
+	t.Setenv(constants.EnvMicrosoftAdGroupsEnabled, "true")
+	d := newMSAudDispatcher(t, &msAudAPI{})
+	host := strings.Repeat("a", 40) + ".example.org" // 52 characters: fits alone
+	brief := testBrief()
+	brief.URL = "https://" + host + "/register"
+	groups := `[{"nameSuffix":"A","keywords":[{"text":"k","matchType":"Exact"}]},` +
+		`{"nameSuffix":"B","keywords":[{"text":"k2","matchType":"Exact"}],"path1":"abcdefghijklmno","path2":"abcdefghijklmno"}]`
+	err := d.PreflightCreateBrief(context.Background(), "cncf", model.ProviderMicrosoftAds, brief, msGroupConfig(groups))
+	requireConfigInvalid(t, err, "microsoftConfig.adGroups entry 2: path1: the display URL (domain plus path1/path2) is 84 characters, exceeding the 67 limit")
+
+	// Short paths fit; no ad groups, or the gate off, is not applicable.
+	ok := `[{"nameSuffix":"A","keywords":[{"text":"k","matchType":"Exact"}],"path1":"cfp","path2":"now"}]`
+	if err := d.PreflightCreateBrief(context.Background(), "cncf", model.ProviderMicrosoftAds, brief, msGroupConfig(ok)); err != nil {
+		t.Errorf("fitting paths: err = %v", err)
+	}
+	if err := d.PreflightCreateBrief(context.Background(), "cncf", model.ProviderMicrosoftAds, brief, json.RawMessage(`{"microsoftConfig":{"budget":50}}`)); !errors.Is(err, domain.ErrPreflightNotApplicable) {
+		t.Errorf("no ad groups: err = %v, want not applicable", err)
+	}
+	t.Setenv(constants.EnvMicrosoftAdGroupsEnabled, "")
+	if err := d.PreflightCreateBrief(context.Background(), "cncf", model.ProviderMicrosoftAds, brief, msGroupConfig(groups)); !errors.Is(err, domain.ErrPreflightNotApplicable) {
+		t.Errorf("gate off: err = %v, want not applicable", err)
 	}
 }

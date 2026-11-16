@@ -698,22 +698,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// rather than measuring the malformed A-label: a short-but-invalid `xn--` host would
 		// otherwise clear this cap and only fail at AddAds, orphaning the PAUSED campaign and ad
 		// group this whole block exists to prevent. Fail CLOSED, as with the parse failure above.
-		host := u.Hostname()
-		// An IPv6 literal is NOT an IDNA label — ToUnicode fails on it — so skip the decode
-		// entirely rather than fail closed, mirroring canonicalFinalURL's isIPv6 guard.
-		// validateAdURL still accepts IPv6 destinations, so rejecting one here would break a
-		// previously-valid URL with a misleading "not a valid IDNA label" error. Hostname()
-		// already strips the surrounding brackets, leaving the colons that identify it.
-		if !strings.Contains(host, ":") {
-			uni, ierr := idna.Lookup.ToUnicode(host)
-			if ierr != nil {
-				return nil, fmt.Errorf("microsoft-ads composed ad final URL host %q is not a valid IDNA label: %w", host, ierr)
-			}
-			if uni != "" {
-				host = uni
-			}
+		authority, aerr := displayAuthority(u)
+		if aerr != nil {
+			return nil, aerr
 		}
-		authority := authorityForWidth(u, host)
 		limit := maxDisplayDomainRunes
 		if hasDoubleWidth(authority) {
 			limit = maxDisplayDomainRunesWide
@@ -725,12 +713,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// "/Path1/Path2", so a host that fits alone can still overflow once paths are added and
 		// be refused only at AddAds, after the campaign and ad group exist.
 		if path1 != "" {
-			shown := displayURL(authority, path1, path2)
-			pathLimit := maxDisplayDomainRunes
-			if hasDoubleWidth(shown) {
-				pathLimit = maxDisplayDomainRunesWide
-			}
-			if n := utf8.RuneCountInString(shown); n > pathLimit {
+			if n, pathLimit, over := displayURLOverflow(authority, path1, path2); over {
 				// The host is caller-supplied, so it is quoted only through domain.CallerValue: this
 				// sentence reaches the job result verbatim, and a host label can carry a token.
 				return nil, domain.PreflightRefusalf("microsoft-ads ad display URL (domain %s plus path1/path2) is %d characters, exceeding the %d limit; shorten path1/path2",
@@ -2048,6 +2031,71 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 		}
 		if err := c.putStatus(ctx, "Keywords", keywordReq, "keywords"); err != nil {
 			return &partialCascadeError{applied: applied, stage: "keywords", err: err, pausedKeywordStage: true}
+		}
+	}
+	return nil
+}
+
+// displayAuthority is the ad's display authority as Microsoft measures it: the final URL's host
+// decoded to its Unicode (U-label) form (an IPv6 literal is not an IDNA label and is kept as is),
+// plus a non-default port (authorityForWidth). A host that is not a valid IDNA label is an error.
+func displayAuthority(u *url.URL) (string, error) {
+	host := u.Hostname()
+	// An IPv6 literal is NOT an IDNA label — ToUnicode fails on it — so skip the decode
+	// entirely rather than fail closed, mirroring canonicalFinalURL's isIPv6 guard.
+	// validateAdURL still accepts IPv6 destinations, so rejecting one here would break a
+	// previously-valid URL with a misleading "not a valid IDNA label" error. Hostname()
+	// already strips the surrounding brackets, leaving the colons that identify it.
+	if !strings.Contains(host, ":") {
+		uni, ierr := idna.Lookup.ToUnicode(host)
+		if ierr != nil {
+			return "", fmt.Errorf("microsoft-ads composed ad final URL host %q is not a valid IDNA label: %w", host, ierr)
+		}
+		if uni != "" {
+			host = uni
+		}
+	}
+	return authorityForWidth(u, host), nil
+}
+
+// displayURLOverflow measures the display URL (authority plus "/path1/path2") against Microsoft's
+// display limit (the reduced one when it holds a double-width character).
+func displayURLOverflow(authority, path1, path2 string) (n, limit int, over bool) {
+	shown := displayURL(authority, path1, path2)
+	limit = maxDisplayDomainRunes
+	if hasDoubleWidth(shown) {
+		limit = maxDisplayDomainRunesWide
+	}
+	n = utf8.RuneCountInString(shown)
+	return n, limit, n > limit
+}
+
+// ValidateAdGroupDisplayURLs runs, WITHOUT contacting Microsoft, the brief-dependent display URL
+// check CreateCampaign makes for every requested ad group (#563 gap 12): the display domain
+// derived from in.RegistrationURL plus that group's path1/path2 must fit Microsoft's display
+// limit. It lets the create preflight refuse the overflow synchronously instead of the job
+// failing after the 202. Only that check is made: a registration URL that cannot be parsed or
+// decoded, or a domain too long on its own, is left to CreateCampaign (nil here), which reports
+// it. A refusal is an *AdGroupError naming the entry, worded as CreateCampaign's.
+func ValidateAdGroupDisplayURLs(in CampaignInput) error {
+	if len(in.AdGroups) == 0 || validateAdURL(in.RegistrationURL) != nil {
+		return nil
+	}
+	u, err := url.Parse(buildAdFinalURL(in))
+	if err != nil {
+		return nil
+	}
+	authority, err := displayAuthority(u)
+	if err != nil {
+		return nil
+	}
+	for i, g := range in.AdGroups {
+		p1, p2, perr := validatePaths(g.Path1, g.Path2)
+		if perr != nil || p1 == "" {
+			continue
+		}
+		if n, limit, over := displayURLOverflow(authority, p1, p2); over {
+			return &AdGroupError{Entry: i + 1, Field: "path1", Msg: fmt.Sprintf("the display URL (domain plus path1/path2) is %d characters, exceeding the %d limit; shorten path1/path2", n, limit)}
 		}
 	}
 	return nil

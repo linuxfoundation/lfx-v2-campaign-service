@@ -1808,7 +1808,8 @@ enum misspells 35-49 as `ThirtyFiveToFourtyNine`; the public key stays `ThirtyFi
 and `ageRangeWire` sends Microsoft's spelling (the other four adult ranges match the v13
 reference as spelled). The `AddCampaignCriterions` response decode (`boundedGeoIDs` and
 `boundedNestedErrorItems`) retains up to `maxCampaignCriterionResults` (64) ids and error
-collections, covering a 49-window ad schedule; the geographic input limit stays `maxGeoTargets`
+collections, covering a 49-window ad schedule (an entry with both codes explicitly null makes the
+outcome UNCONFIRMED even beside a coded rejection, keeping the returned ids); the geographic input limit stays `maxGeoTargets`
 (30). Its error entries, at the collection and nested `BatchErrors` levels, are classified by
 `nestedErrorState` with `audienceErrorCode`'s rule: a zero-code placeholder is not a rejection, an
 unreadable code is one (never success), and an entry with both codes explicitly null is
@@ -1878,7 +1879,12 @@ suffixes (`ValidateAdGroupNameSuffixes`: 1-40 characters, a letter or digit, no 
 or `|`, unique by the composed name: compared after `sanitizeNamePart` with `strings.EqualFold`,
 so suffixes differing only in case or spacing are refused), each composed name (`composeAdGroupName` plus ` | <suffix>`)
 against the 256-character limit, at least one keyword per group, the copy, and each group's
-display paths against the registration URL's domain.
+display paths against the registration URL's domain. That display check also runs at the create
+preflight (#613 review): `ValidateAdGroupDisplayURLs` (sharing `displayAuthority` and
+`displayURLOverflow` with CreateCampaign) is called by `MicrosoftDispatcher.PreflightCreateBrief`,
+the new optional `service.BriefCreatePreflighter`, which `Orchestrator.PreflightCreateBrief` runs
+after `PreflightCreate` with the loaded brief (fail-open: it refuses only on
+`ErrCreateConfigInvalid`), so an overflow is a synchronous 400.
 
 `createAdGroups` calls `createAdGroupAndAd` once per group, in order, on a per-group copy of the
 input, sharing the campaign-wide bid, flight, language and network. PARTIAL RULES (owner decision:
@@ -1907,7 +1913,11 @@ unreadable body, errNoID; `createAdGroupAndAd` marks its UNCONFIRMED steps with
 the bid lever first reconciles it (`reconcileMicrosoftUnaddressedAdGroups`): `FindAdGroupByName`
 looks up its recorded `adGroupName` under the campaign; found, its id is written into the result
 (`unconfirmed` cleared, status still `failed`) and it is re-bid; definitely absent (a complete,
-readable list without it), the flag is cleared. The reconciled result is persisted with the new
+readable list without it), the flag is cleared — but only after
+`microsoftUnconfirmedSettleWindow` (1 hour) measured from the row's `UpdatedAt` (never earlier
+than the dispatch result that recorded the group; `CreatedAt` is the claim, before the create
+ran), since a timed-out create can still commit; inside it, or with no `UpdatedAt`, absence keeps
+the 409 (the dispatcher's `bidNow` clock is the test seam). The reconciled result is persisted with the new
 bid by update-campaign-bid's `ReplaceCampaign` (absence needs every listed entry to carry a
 readable name: an entry with none, such as `{"Id":656}` or `null`, may be the group, so
 `FindAdGroupByName` reports it unestablished via `lookupNamedEntityCounted`; the create's

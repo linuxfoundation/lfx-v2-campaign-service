@@ -984,7 +984,11 @@ adGroups?: object[]             — Up to 5 ad groups under the campaign instead
                                   character or "|", no leading/trailing space, no URL or
                                   credentials (it is stored and logged as given),
                                   unique ignoring case and spacing; the ad group is named like the single one plus
-                                  " | <nameSuffix>". keywords: at least one. Every per-group field
+                                  " | <nameSuffix>". keywords: at least one. A group's display URL
+                                  (the brief url's domain plus its path1/path2) must fit
+                                  Microsoft's 67 characters (33 with a double-width character),
+                                  checked against the brief before any job exists (a synchronous
+                                  400 naming the entry). Every per-group field
                                   has its single-group twin's rules AND flag: copy behind
                                   MICROSOFT_AD_COPY_ENABLED; negativeKeywords behind
                                   MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED, sent at the AD GROUP
@@ -1013,9 +1017,12 @@ adGroups?: object[]             — Up to 5 ad groups under the campaign instead
                                   confirmed, a failed one included (a failure after the first is
                                   UNCONFIRMED; a group unconfirmed with no id is first looked up by
                                   its recorded name — found, its id is recorded and it is re-bid;
-                                  definitely absent, it stops blocking; both persisted with the
-                                  bid — and only when the lookup cannot establish it is the write
-                                  refused with 409 naming the entry, until a retry resolves it), and
+                                  definitely absent, it stops blocking, but only once the campaign
+                                  row was last written at least 1 hour ago (a timed-out create can
+                                  still commit; inside that window absence keeps the 409); both
+                                  persisted with the bid — and when the lookup cannot establish it
+                                  the write is refused with 409 naming the entry, until a retry
+                                  resolves it), and
                                   keyword actions may name any such group, one
                                   per request. The
                                   monitor and reports are campaign-level and unaffected. OFF unless

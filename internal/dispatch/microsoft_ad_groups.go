@@ -16,6 +16,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
@@ -402,7 +403,8 @@ type microsoftAdGroupFinder interface {
 //   - found: its id is recorded (adGroupId set, unconfirmed cleared; status stays failed, since
 //     its ad and keywords are still unknown), so the caller re-bids it with the rest;
 //   - definitely absent (a complete, readable list without it, every entry of which has a
-//     readable name — FindAdGroupByName refuses to call it absent otherwise): unconfirmed is cleared, so it
+//     readable name — FindAdGroupByName refuses to call it absent otherwise) AND the create old
+//     enough to have settled (absentClears): unconfirmed is cleared, so it
 //     no longer blocks — there is no ad group to re-bid;
 //   - otherwise (the lookup failed, the list was unreadable, the name matched an entry with no
 //     usable id, the id is one another entry already records, or no name was recorded) it stays
@@ -412,14 +414,19 @@ type microsoftAdGroupFinder interface {
 // (update-campaign-bid's ReplaceCampaign, which writes the result column) records them; on any
 // failure nothing is persisted and the next write reconciles again. Fields of the result this
 // function does not know are preserved.
-func reconcileMicrosoftUnaddressedAdGroups(ctx context.Context, client microsoftAdGroupFinder, campaign *model.Campaign, campaignID, firstAdGroupID string) []string {
+//
+// absentClears says whether a definitely-absent group may be cleared: only once the create has
+// had microsoftUnconfirmedSettleWindow to settle, since a timed-out create can commit after the
+// lookup. Inside the window an absent group is returned in unsettled instead (unresolved stays
+// for lookups that could not answer); a found group is recorded either way.
+func reconcileMicrosoftUnaddressedAdGroups(ctx context.Context, client microsoftAdGroupFinder, campaign *model.Campaign, campaignID, firstAdGroupID string, absentClears bool) (unresolved, unsettled []string) {
 	if len(microsoftUnaddressedAdGroups(campaign.Result)) == 0 {
-		return nil
+		return nil, nil
 	}
 	var top map[string]json.RawMessage
 	var entries []map[string]json.RawMessage
 	if json.Unmarshal(campaign.Result, &top) != nil || json.Unmarshal(top["adGroups"], &entries) != nil {
-		return microsoftUnaddressedAdGroups(campaign.Result)
+		return microsoftUnaddressedAdGroups(campaign.Result), nil
 	}
 	var typed []microsoft.AdGroupResult
 	_ = json.Unmarshal(top["adGroups"], &typed)
@@ -429,7 +436,6 @@ func reconcileMicrosoftUnaddressedAdGroups(ctx context.Context, client microsoft
 			known[id] = true
 		}
 	}
-	var unresolved []string
 	changed := false
 	for i, g := range typed {
 		if i == 0 || i >= len(entries) || !g.Unconfirmed || strings.TrimSpace(g.AdGroupID) != "" {
@@ -440,6 +446,8 @@ func reconcileMicrosoftUnaddressedAdGroups(ctx context.Context, client microsoft
 		switch {
 		case err != nil:
 			unresolved = append(unresolved, label)
+		case !found && !absentClears:
+			unsettled = append(unsettled, label)
 		case !found:
 			delete(entries[i], "unconfirmed")
 			changed = true
@@ -463,5 +471,37 @@ func reconcileMicrosoftUnaddressedAdGroups(ctx context.Context, client microsoft
 			}
 		}
 	}
-	return unresolved
+	return unresolved, unsettled
+}
+
+var _ service.BriefCreatePreflighter = (*MicrosoftDispatcher)(nil)
+
+// PreflightCreateBrief implements service.BriefCreatePreflighter: the brief-dependent half of
+// the create preflight. Each requested ad group's display URL — the brief's registration host
+// plus that group's path1/path2 — is measured with microsoft.ValidateAdGroupDisplayURLs, the
+// check CreateCampaign makes, so an overflow is the synchronous 400 rather than a job failure
+// after the 202. Local only; ErrPreflightNotApplicable when no ad group is requested or the
+// gate is off (PreflightCreate has already refused adGroups then).
+func (d *MicrosoftDispatcher) PreflightCreateBrief(_ context.Context, _ string, _ model.Provider, brief *model.CampaignBrief, config json.RawMessage) error {
+	var cfg microsoftConfig
+	_ = unmarshalPlatformConfig(config, "microsoftConfig", &cfg)
+	if brief == nil || len(cfg.AdGroups) == 0 || !microsoftAdGroupsEnabled() {
+		return domain.ErrPreflightNotApplicable
+	}
+	bf, err := decodeBriefFields(brief)
+	if err != nil {
+		return domain.ErrPreflightNotApplicable
+	}
+	in := microsoft.CampaignInput{
+		EventName: bf.EventName, EventSlug: brief.EventSlug, Project: brief.ProjectID,
+		RegistrationURL: bf.RegistrationURL, AdGroups: microsoftAdGroupInputs(cfg.AdGroups),
+	}
+	if err := microsoft.ValidateAdGroupDisplayURLs(in); err != nil {
+		var gErr *microsoft.AdGroupError
+		if errors.As(err, &gErr) {
+			return microsoftAdGroupInvalid("%s entry %d: %s: %s", microsoft.FieldAdGroups, gErr.Entry, gErr.Field, gErr.Msg)
+		}
+		return microsoftAdGroupInvalid("%s: invalid", microsoft.FieldAdGroups)
+	}
+	return nil
 }

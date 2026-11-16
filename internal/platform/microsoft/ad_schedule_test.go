@@ -252,3 +252,37 @@ func TestCreateCampaign_CriterionErrorEntriesUseTheDefaultCodeRule(t *testing.T)
 		}
 	}
 }
+
+// An entry whose codes are both explicitly null makes the outcome UNCONFIRMED even beside a
+// coded rejection (which alone would be a definite partial failure), and the ids that were
+// returned are kept for reconciliation — for the ad schedule and the bid adjustments alike.
+func TestCreateCampaign_CriterionBothNullBesideARejectionIsUnconfirmed(t *testing.T) {
+	for _, step := range []struct {
+		name string
+		in   func() CampaignInput
+		n    int
+		ids  func(*CampaignResult) []string
+	}{
+		{"ad schedule", scheduleCreateInput, 2, func(r *CampaignResult) []string { return r.AdScheduleCriterionIDs }},
+		{"bid adjustments", bidAdjustmentCreateInput, 5, func(r *CampaignResult) []string { return r.BidAdjustmentCriterionIDs }},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			ids := make([]string, step.n)
+			for i := range ids {
+				ids[i] = strconv.Itoa(7000 + i)
+			}
+			ids[0] = "null" // the rejected one
+			body := `{"CampaignCriterionIds":[` + strings.Join(ids, ",") + `],"NestedPartialErrors":[` +
+				`{"Code":1032,"ErrorCode":"X","Index":0},{"Code":null,"ErrorCode":null,"Index":1}]}`
+			a := &targetingAPI{failCriterion: 2, criterionStatus: http.StatusOK, criterionBody: body}
+			c := newTargetingClient(t, a)
+			res, err := c.CreateCampaign(context.Background(), step.in())
+			if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
+				t.Fatalf("err = %v, want UNCONFIRMED", err)
+			}
+			if res == nil || len(step.ids(res)) != step.n-1 {
+				t.Fatalf("recorded ids = %v, want the %d returned", step.ids(res), step.n-1)
+			}
+		})
+	}
+}

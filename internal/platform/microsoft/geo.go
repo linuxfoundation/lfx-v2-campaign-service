@@ -1104,10 +1104,18 @@ func (c *Client) postCampaignCriterions(ctx context.Context, campaignID, what, n
 		return nil, fmt.Errorf("microsoft-ads %s returned a truncated error array for campaign %s, so the outcome cannot be classified: %w", what, campaignID, errNoID)
 	}
 	anyErr, unreadable := nestedErrorState(resp.NestedPartialErrors.Items)
-	if !anyErr && unreadable {
-		// An entry whose codes are both explicitly null says neither "rejected" nor "clean":
-		// the criteria may or may not all be attached.
-		return nil, fmt.Errorf("microsoft-ads %s returned an error entry with no readable code for campaign %s, so the outcome cannot be classified: %w", what, campaignID, errNoID)
+	if unreadable {
+		// An entry whose codes are both explicitly null says neither "rejected" nor "clean", so
+		// the outcome is UNCONFIRMED — even beside a coded rejection, which would otherwise read
+		// as a definite partial failure. The ids that WERE returned are kept, so the caller
+		// records them for reconciliation.
+		created := make([]string, 0, len(resp.CampaignCriterionIds))
+		for _, raw := range resp.CampaignCriterionIds {
+			if id := numberID(raw); id != "" {
+				created = append(created, id)
+			}
+		}
+		return created, fmt.Errorf("microsoft-ads %s returned an error entry with no readable code for campaign %s (%d of %d %s returned an id), so the outcome cannot be classified: %w", what, campaignID, len(created), n, noun, errNoID)
 	}
 	if anyErr {
 		created := make([]string, 0, len(resp.CampaignCriterionIds))
