@@ -1488,8 +1488,8 @@ campaign already has a snippet (then none is added, with a step), and each snipp
 the image extension. When the campaign already has snippets, the lookup's `Header`/`Values`
 (`findCampaignExtensionContents`) decide the outcome (`reportExistingSnippets`): a requested
 snippet counts as present only when an existing one has its header and every one of its values;
-otherwise it is counted Failed, or Unconfirmed when an existing snippet came back without its
-contents, so a reused campaign holding a different snippet is degraded, not a clean create. `ValidateStructuredSnippets` holds the rules before any request: at most 10
+otherwise it is counted Failed, or Unconfirmed when an existing snippet that may be it came back
+unreadable (no recognized header, or the requested header with missing, null or empty `Values`), so a reused campaign holding a different snippet is degraded, not a clean create. `ValidateStructuredSnippets` holds the rules before any request: at most 10
 snippets (this service's cap, as for Google); `Header` one of Microsoft's 13 English headers,
 matched ignoring case and inner-space runs and sent in Microsoft's spelling, each once; 3-10
 `Values`, each trimmed, 1-25 characters (12 with a double-width character), no control character,
@@ -1678,7 +1678,9 @@ negatives: ONE `POST SharedEntityAssociations/Set` with an association per list 
 `FAILED` with the code for a `PartialErrors` entry naming the index (or every list on a definite
 refusal, or `NOT_SENT` when the context ended first); `UNCONFIRMED` for every list without its own
 error when an error carries no usable index or the array was truncated, and for all of them on an
-ambiguous call or an unreadable 2xx; `APPLIED` otherwise. A null or empty `PartialErrors` is no
+ambiguous call or an unreadable 2xx; `APPLIED` otherwise. A `PartialErrors` entry whose codes
+are both defaults (absent, null, 0 or "", the `audienceErrorCode` rule `indexedErrorItem.isError`
+now shares) is a placeholder, not an error, here and in the conversion-goal picker read. A null or empty `PartialErrors` is no
 error, but a 200 that omits the field (`{}`) is `UNCONFIRMED` for every list: it answered nothing
 about the associations (#613 review). The dispatcher (`applyMicrosoftSharedNegativeLists`) records them as
 `CampaignResult.SharedNegativeKeywordLists`; anything but `APPLIED` makes the campaign
@@ -1789,7 +1791,10 @@ and the campaign-criterion path already has the fail-closed outcome rules. On a 
 created, `createBidAdjustmentCriterions` sends them in one `AddCampaignCriterions` call
 (`CriterionType: Targets`) of `BiddableCampaignCriterion` entries with a `BidMultiplier`, right
 after the ad schedule and before the ad group, through `postCampaignCriterions` and
-`criterionStepError`. The three keys join the fields that stop a create on a campaign found by
+`criterionStepError`. Microsoft requires all three `DeviceCriterion` types in the same add, so
+`bidAdjustmentCriteria` expands any device request to Computers, Smartphones and Tablets (an
+unrequested one at 0, no change); every result is checked and every id recorded, and the step
+names the requested adjustments plus the devices sent at +0% (#613 review). The three keys join the fields that stop a create on a campaign found by
 name. The ids are recorded as `BidAdjustmentCriterionIDs`.
 
 The dispatcher (`internal/dispatch/microsoft_bid_adjustments.go`) refuses a value that is not an

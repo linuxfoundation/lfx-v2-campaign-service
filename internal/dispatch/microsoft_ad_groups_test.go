@@ -578,3 +578,39 @@ func TestMicrosoftAdGroups_ToggleActivateSkipsAConfirmedFailedGroup(t *testing.T
 		}
 	}
 }
+
+// A later group recorded failed after its ad and some keywords were created (a later keyword
+// failed) has a confirmed ad group id, so the bid lever writes it; when that write fails
+// ambiguously the bid write is UNCONFIRMED naming that group, never a success.
+func TestMicrosoftAdGroups_WriteBidConfirmedFailedGroupWriteFailureIsUnconfirmed(t *testing.T) {
+	camp := msMultiGroupCampaign()
+	camp.Result = json.RawMessage(strings.Replace(string(camp.Result),
+		`{"nameSuffix":"B","status":"failed","error":"rejected"}`,
+		`{"nameSuffix":"B","adGroupId":"656","adId":"989","keywordIds":["703"],"status":"failed","error":"keyword 2 rejected"}`, 1))
+	// The helper has already read the PUT body, so the writes are told apart by order: 654 is
+	// first, 656 second (asserted below).
+	var (
+		mu sync.Mutex
+		n  int
+	)
+	d, calls := msBudgetDispatcherWith(t, msBidStrategy("EnhancedCpc"), func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		n++
+		if n == 2 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	})
+	err := writeMSBid(d, camp, 2.35)
+	var u interface{ Unconfirmed() bool }
+	if !errors.As(err, &u) || !u.Unconfirmed() || !strings.Contains(err.Error(), "the outcome for ad group 656 is unconfirmed") {
+		t.Fatalf("err = %v, want an unconfirmed bid write naming ad group 656", err)
+	}
+	writes := msWrites(calls())
+	if len(writes) != 2 || !strings.Contains(writes[1].Body, `"Id":656`) {
+		t.Fatalf("writes = %+v, want 654 then 656 (stopping at the failure)", writes)
+	}
+}

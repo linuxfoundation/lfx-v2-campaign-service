@@ -89,7 +89,11 @@ func TestMicrosoftBidAdjustments_DispatchSendsThem(t *testing.T) {
 	if !strings.Contains(body, `"Criterion":{"Type":"DeviceCriterion","DeviceName":"Tablets"}`) || !strings.Contains(body, `"Multiplier":-100`) {
 		t.Errorf("criterion body = %s", body)
 	}
-	if !strings.Contains(string(camp.Result), `"bidAdjustmentCriterionIds":["8001"]`) {
+	// Microsoft requires every device in one add: the other two go at 0.
+	if strings.Count(body, `"Type":"DeviceCriterion"`) != 3 {
+		t.Errorf("want all three devices sent, body = %s", body)
+	}
+	if !strings.Contains(string(camp.Result), `"bidAdjustmentCriterionIds":["8001","8002","8003"]`) {
 		t.Errorf("result = %s", camp.Result)
 	}
 }

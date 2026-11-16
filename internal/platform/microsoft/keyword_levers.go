@@ -354,9 +354,14 @@ func outputCode(c string) string {
 	return withheldErrorCode
 }
 
-// isError reports whether the entry carries an actual code (a null placeholder does not).
+// isError reports whether the entry carries an actual code (a null or zero-code placeholder does
+// not).
 func (it indexedErrorItem) isError() bool {
-	return rawCodePresent(it.ErrorCode) || rawCodePresent(it.Code)
+	// One rule with audienceErrorCode: an item is an error unless BOTH codes are defaults
+	// (absent, null, 0 or ""), so a zero-code placeholder such as
+	// {"Index":0,"Code":0,"ErrorCode":null} is not a refusal, while an unreadable code still is.
+	present, _ := audienceErrorCode(it.ErrorCode, it.Code)
+	return present
 }
 
 // indexedErrors streams a BatchError array, retaining at most maxIndexedErrorItems entries and

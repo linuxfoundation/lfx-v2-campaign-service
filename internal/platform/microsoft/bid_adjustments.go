@@ -24,6 +24,10 @@ import (
 //     segment; they do not narrow who is reached, except a device at -100, which stops serving on
 //     that device.
 //   - BidMultiplier range: -100 through 900 for a device, -90 through 900 otherwise.
+//   - DeviceCriterion: "you must include all three device types (Computers, Smartphones and
+//     Tablets) in the same add request". So when any device is requested all three are sent
+//     (bidAdjustmentCriteria), an unrequested one at 0 (no change); all three results are checked
+//     and recorded, while the step and the caller's adjustments name only the requested ones.
 //
 // They are set on the CAMPAIGN (the issue sketched the ad group): the one ad group this service
 // creates inherits them, and the campaign-criterion path already has the fail-closed outcome
@@ -166,9 +170,40 @@ type msGenderCriterion struct {
 	GenderType string `json:"GenderType"`
 }
 
+// bidAdjustmentCriteria returns the criteria to SEND for the validated adjustments: the same list
+// with every device Microsoft requires alongside a requested one added at 0%, in device enum
+// order, so a request for any device carries Computers, Smartphones and Tablets. filled names the
+// devices added (empty when no device was requested, or all three were).
+func bidAdjustmentCriteria(adjustments []BidAdjustment) (sent []BidAdjustment, filled []string) {
+	requested := map[string]BidAdjustment{}
+	for _, a := range adjustments {
+		if a.CriterionType == criterionTypeDevice {
+			requested[a.Segment] = a
+		}
+	}
+	if len(requested) == 0 {
+		return adjustments, nil
+	}
+	for _, n := range deviceNames {
+		if a, ok := requested[n]; ok {
+			sent = append(sent, a)
+			continue
+		}
+		sent = append(sent, BidAdjustment{CriterionType: criterionTypeDevice, Segment: n})
+		filled = append(filled, n)
+	}
+	for _, a := range adjustments {
+		if a.CriterionType != criterionTypeDevice {
+			sent = append(sent, a)
+		}
+	}
+	return sent, filled
+}
+
 // createBidAdjustmentCriterions attaches every adjustment as a BiddableCampaignCriterion with
 // its BidMultiplier, in ONE AddCampaignCriterions call with the outcome rules of
-// postCampaignCriterions.
+// postCampaignCriterions. adjustments is what to send (bidAdjustmentCriteria's output), so every
+// device criterion Microsoft requires is in the one call and every result is checked.
 func (c *Client) createBidAdjustmentCriterions(ctx context.Context, campaignID string, adjustments []BidAdjustment) ([]string, error) {
 	crits := make([]msTargetCampaignCriterion, 0, len(adjustments))
 	for _, a := range adjustments {

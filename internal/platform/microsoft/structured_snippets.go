@@ -164,23 +164,30 @@ func (c *Client) AttachCampaignStructuredSnippets(ctx context.Context, campaignI
 // reportExistingSnippets compares the requested snippets with those already associated with the
 // campaign (contents, as the association lookup reported them) when none is added. A requested
 // snippet is present when an existing one has the same header (ignoring case and spacing) and
-// every requested value (compared as textfold keys). A missing one is Failed when every existing
-// snippet's contents were reported, since it is then known not to be there, and Unconfirmed
-// when some existing snippet came back without a header, which may be it.
+// every requested value (compared as textfold keys). A missing one is Failed when the existing
+// snippets' contents rule it out, and Unconfirmed when one that may be it came back unreadable:
+// a snippet without a recognized header (it could be any), or one with the requested header but
+// missing, null or empty Values (Microsoft did not say which values it holds).
 func reportExistingSnippets(r *TextExtensionsResult, requested []msTextAdExtension, contents []StructuredSnippet) {
-	unreadable := false
+	unknownHeader := false
 	for _, e := range contents {
 		if canonicalSnippetHeader(e.Header) == "" {
-			unreadable = true
+			unknownHeader = true
 		}
 	}
 	for i, want := range requested {
 		if snippetPresent(want, contents) {
 			continue
 		}
+		unreadable := unknownHeader
+		for _, e := range contents {
+			if canonicalSnippetHeader(e.Header) == want.Header && len(e.Values) == 0 {
+				unreadable = true
+			}
+		}
 		if unreadable {
 			r.Unconfirmed++
-			r.Steps = append(r.Steps, fmt.Sprintf("Structured snippet extension %d (%s) UNCONFIRMED: the campaign already has structured snippets whose contents Microsoft did not report, so none was added — verify in Microsoft Advertising", i, want.Header))
+			r.Steps = append(r.Steps, fmt.Sprintf("Structured snippet extension %d (%s) UNCONFIRMED: the campaign already has structured snippets whose contents Microsoft did not fully report, so none was added — verify in Microsoft Advertising", i, want.Header))
 			continue
 		}
 		r.Failed++

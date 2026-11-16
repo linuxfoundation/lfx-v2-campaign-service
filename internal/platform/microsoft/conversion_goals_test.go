@@ -112,6 +112,14 @@ func TestListConversionGoals(t *testing.T) {
 			t.Errorf("%s: err = %v, want ErrConversionGoalsMalformed", body, err)
 		}
 	}
+	// A zero-code placeholder (both codes defaults) is not a partial error, so the list stands.
+	for _, pe := range []string{`[{"Index":0,"Code":0,"ErrorCode":null}]`, `[{"Index":0,"Code":0,"ErrorCode":""}]`, `[null]`} {
+		body := `{"ConversionGoals":[{"Id":5001,"Name":"Registration","Status":"Active"}],"PartialErrors":` + pe + `}`
+		c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, body })
+		if goals, err := c.ListConversionGoals(context.Background()); err != nil || len(goals) != 1 {
+			t.Errorf("%s: goals = %+v, err = %v; a zero-code placeholder is not an error", pe, goals, err)
+		}
+	}
 }
 
 func TestValidateBiddingScheme_MaxConversions(t *testing.T) {

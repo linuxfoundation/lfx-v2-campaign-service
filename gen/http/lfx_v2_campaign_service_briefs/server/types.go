@@ -5697,27 +5697,30 @@ type CampaignCreateInputRequestBody struct {
 	// (any casing, each segment once) to a whole percent: -100..900 for a device
 	// (-100 stops serving on it), -90..900 for an age range or gender. They are
 	// set on the CAMPAIGN as biddable DeviceCriterion, AgeCriterion and
-	// GenderCriterion entries with a BidMultiplier, in one AddCampaignCriterions
-	// call right after the ad schedule and before the ad group, under the
-	// fail-closed rules of the other campaign criteria (a failed, partial or
-	// unconfirmed attach stops the create before the ad group with the PAUSED
-	// campaign reported and retained; a create that finds its campaign by name
-	// stops before the ad group). OFF unless MICROSOFT_BID_ADJUSTMENTS_ENABLED is
-	// exactly "true". A value that is not an object of numbers (a null field reads
-	// as absent; a null segment value is refused), an unknown or repeated segment,
-	// an out-of-range or fractional percent, or any of the three while the flag is
-	// off is refused with 400 "invalid campaign config: microsoftConfig.<field>:
-	// ..." before any job exists. Not role-gated. MICROSOFT SHARED NEGATIVE
-	// KEYWORD LISTS (#563): microsoftConfig takes `sharedNegativeKeywordListIds`,
-	// at most 20 decimal ids of EXISTING account-level negative keyword lists
-	// (each the canonical spelling of a positive int64, no repeat). Before
-	// anything is created one GetSharedEntities read (NegativeKeywordList, Account
-	// scope) must hold every id as a negative keyword list, or the job fails with
-	// nothing created. After the campaign is confirmed (created or reused by name)
-	// they are associated with it in one SetSharedEntityAssociations call; the
-	// per-list outcome (APPLIED, FAILED, UNCONFIRMED) is recorded as
-	// sharedNegativeKeywordLists in the result, and anything but APPLIED leaves
-	// the campaign created_degraded with a step, never failing the job. OFF unless
+	// GenderCriterion entries with a BidMultiplier (Microsoft requires all three
+	// devices in one add, so any device adjustment sends Computers, Smartphones
+	// and Tablets, an unrequested one at 0, and records all three ids), in one
+	// AddCampaignCriterions call right after the ad schedule and before the ad
+	// group, under the fail-closed rules of the other campaign criteria (a failed,
+	// partial or unconfirmed attach stops the create before the ad group with the
+	// PAUSED campaign reported and retained; a create that finds its campaign by
+	// name stops before the ad group). OFF unless
+	// MICROSOFT_BID_ADJUSTMENTS_ENABLED is exactly "true". A value that is not an
+	// object of numbers (a null field reads as absent; a null segment value is
+	// refused), an unknown or repeated segment, an out-of-range or fractional
+	// percent, or any of the three while the flag is off is refused with 400
+	// "invalid campaign config: microsoftConfig.<field>: ..." before any job
+	// exists. Not role-gated. MICROSOFT SHARED NEGATIVE KEYWORD LISTS (#563):
+	// microsoftConfig takes `sharedNegativeKeywordListIds`, at most 20 decimal ids
+	// of EXISTING account-level negative keyword lists (each the canonical
+	// spelling of a positive int64, no repeat). Before anything is created one
+	// GetSharedEntities read (NegativeKeywordList, Account scope) must hold every
+	// id as a negative keyword list, or the job fails with nothing created. After
+	// the campaign is confirmed (created or reused by name) they are associated
+	// with it in one SetSharedEntityAssociations call; the per-list outcome
+	// (APPLIED, FAILED, UNCONFIRMED) is recorded as sharedNegativeKeywordLists in
+	// the result, and anything but APPLIED leaves the campaign created_degraded
+	// with a step, never failing the job. OFF unless
 	// MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED is exactly "true". A wrong JSON type
 	// (null reads as absent), a rule breach, or the list while the flag is off is
 	// refused with 400 "invalid campaign config:

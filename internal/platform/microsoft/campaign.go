@@ -1151,12 +1151,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// The device, age and gender bid adjustments (#563 gap 8) follow, fail-closed with the rest of
 	// the campaign criteria: a device at -100 that did not land would serve on that device.
 	if len(adjustments) > 0 {
-		ids, berr := c.createBidAdjustmentCriterions(ctx, campaignID, adjustments)
+		sent, filled := bidAdjustmentCriteria(adjustments)
+		ids, berr := c.createBidAdjustmentCriterions(ctx, campaignID, sent)
 		adjustmentCriterionIDs = ids
 		if berr != nil {
-			return campaignPartial(), criterionStepError(campaignID, "bid adjustments", "would bid without the requested device, age and gender adjustments if enabled", len(ids), len(adjustments), berr)
+			return campaignPartial(), criterionStepError(campaignID, "bid adjustments", "would bid without the requested device, age and gender adjustments if enabled", len(ids), len(sent), berr)
 		}
-		steps = append(steps, fmt.Sprintf("Bid adjustments attached: %d criteria (%s)", len(ids), bidAdjustmentLabel(adjustments)))
+		step := fmt.Sprintf("Bid adjustments attached: %d criteria (%s)", len(ids), bidAdjustmentLabel(adjustments))
+		if len(filled) > 0 {
+			step += fmt.Sprintf("; %s sent at +0%% because Microsoft requires all three devices in one request", strings.Join(filled, ", "))
+		}
+		steps = append(steps, step)
 	}
 	if len(extra.Languages) > 0 {
 		steps = append(steps, fmt.Sprintf("Campaign languages set: %s (the ad group carries no language of its own, so these apply)", strings.Join(extra.Languages, ", ")))

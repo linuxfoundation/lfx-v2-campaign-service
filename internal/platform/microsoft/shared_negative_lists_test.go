@@ -128,6 +128,8 @@ func TestAttachCampaignSharedNegativeKeywordLists_Outcomes(t *testing.T) {
 	}{
 		{"one refused", http.StatusOK, `{"PartialErrors":[{"Index":1,"Code":1234,"ErrorCode":"CampaignServiceSharedEntityInvalid"}]}`, "4001=APPLIED:,4002=FAILED:CampaignServiceSharedEntityInvalid", false},
 		{"zero-code placeholder", http.StatusOK, `{"PartialErrors":[{"Index":0,"Code":null,"ErrorCode":null}]}`, "4001=APPLIED:,4002=APPLIED:", false},
+		{"numeric zero-code placeholder", http.StatusOK, `{"PartialErrors":[{"Index":0,"Code":0,"ErrorCode":null}]}`, "4001=APPLIED:,4002=APPLIED:", false},
+		{"empty-string placeholder", http.StatusOK, `{"PartialErrors":[{"Index":1,"Code":0,"ErrorCode":""}]}`, "4001=APPLIED:,4002=APPLIED:", false},
 		{"unattributable", http.StatusOK, `{"PartialErrors":[{"Code":1234,"ErrorCode":"X"}]}`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", false},
 		{"out of range index", http.StatusOK, `{"PartialErrors":[{"Index":7,"ErrorCode":"X"}]}`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", false},
 		{"unreadable 2xx", http.StatusOK, `not json`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", true},

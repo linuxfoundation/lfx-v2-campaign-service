@@ -183,7 +183,13 @@ func newMSAudDispatcher(t *testing.T, api *msAudAPI) *MicrosoftDispatcher {
 		case "Keywords":
 			_, _ = io.WriteString(w, `{"KeywordIds":[1111],"PartialErrors":[]}`)
 		case "CampaignCriterions":
-			_, _ = io.WriteString(w, `{"CampaignCriterionIds":[8001],"NestedPartialErrors":[]}`)
+			// One id per criterion sent (8001, 8002, ...), so a multi-criterion call is answered
+			// in full.
+			ids := []string{"8001"}
+			for i := 2; i <= strings.Count(string(b), `"CampaignId"`); i++ {
+				ids = append(ids, fmt.Sprint(8000+i))
+			}
+			_, _ = fmt.Fprintf(w, `{"CampaignCriterionIds":[%s],"NestedPartialErrors":[]}`, strings.Join(ids, ","))
 		case "AdGroupCriterions":
 			api.mu.Lock()
 			api.critCalls++

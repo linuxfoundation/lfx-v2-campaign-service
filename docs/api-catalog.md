@@ -861,12 +861,18 @@ genderBidAdjustments?: object     Device keys Computers, Smartphones, Tablets, -
                                   DeviceCriterion / AgeCriterion / GenderCriterion and a
                                   BidMultiplier, in one call right after the ad schedule and before
                                   the ad group; the ids are recorded as bidAdjustmentCriterionIds.
+                                  Microsoft requires all three devices in one add, so any device
+                                  adjustment sends Computers, Smartphones and Tablets, an
+                                  unrequested one at 0 (no change); every result is checked and
+                                  all three ids are recorded, and the step names the requested
+                                  ones and the devices sent at +0%.
                                   Fail-closed like the other campaign criteria (a failed, partial
                                   or unconfirmed attach stops the create before the ad group); a
                                   create that finds its campaign by name stops before the ad
                                   group. OFF unless MICROSOFT_BID_ADJUSTMENTS_ENABLED is exactly
-                                  "true". A value that is not an object of numbers (null reads as
-                                  absent), an unknown or repeated segment, an out-of-range or
+                                  "true". A value that is not an object of numbers (a null field
+                                  reads as absent; a null segment value is refused), an unknown or
+                                  repeated segment, an out-of-range or
                                   fractional percent, or any of them while the flag is off is a
                                   synchronous 400 "invalid campaign config:
                                   microsoftConfig.<field>: ..." before any job exists. Not

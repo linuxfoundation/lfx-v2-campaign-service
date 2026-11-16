@@ -210,3 +210,29 @@ func TestAttachCampaignStructuredSnippets_RefusesBeforeAnyRequest(t *testing.T) 
 		t.Errorf("calls = %v, want none", calls())
 	}
 }
+
+// A recognized header whose Values are absent, null or empty may be the requested snippet, so the
+// outcome is UNCONFIRMED, not a definite failure; a different header still rules it out.
+func TestAttachCampaignStructuredSnippets_ExistingHeaderWithoutValuesIsUnconfirmed(t *testing.T) {
+	for name, fields := range map[string]string{
+		"absent": `"Header":"Courses"`,
+		"null":   `"Header":"Courses","Values":null`,
+		"empty":  `"Header":"courses","Values":[]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			api := &textExtAPI{
+				existing:       map[string]string{"StructuredSnippetAdExtension": "4441"},
+				existingFields: map[string]string{"StructuredSnippetAdExtension": fields},
+			}
+			c, _ := textExtRecorder(t, api)
+			r, err := c.AttachCampaignStructuredSnippets(context.Background(), "321", goodSnippets())
+			// Courses may be there (UNCONFIRMED); Degree programs is ruled out (FAILED).
+			if err != nil || !r.Degraded() || r.Unconfirmed != 1 || r.Failed != 1 {
+				t.Fatalf("got %+v, %v", r, err)
+			}
+			if !strings.Contains(strings.Join(r.Steps, "\n"), "Structured snippet extension 0 (Courses) UNCONFIRMED") {
+				t.Errorf("steps = %v", r.Steps)
+			}
+		})
+	}
+}
