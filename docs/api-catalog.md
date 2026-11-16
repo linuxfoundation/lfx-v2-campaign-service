@@ -1516,7 +1516,9 @@ budgetUsd: number                — the budget, as before. With lifetimeBudget,
 lifetimeBudget?: boolean         — true → budgetUsd is a lifetime total (totalBudget);
                                   false/absent → budgetUsd is the daily amount (dailyBudget).
 dailyCapUsd?: number             — OPTIONAL daily spending cap beside a LIFETIME budget, in USD.
-                                  Sent as the campaign's dailyBudget next to its totalBudget.
+                                  Sent as the campaign's dailyBudget next to its totalBudget,
+                                  on LinkedIn's continuous schedule: the campaign gets a start
+                                  and NO end, and the event's campaign group carries the end.
                                   Refused with a synchronous 400 before any job exists when it:
                                   - is set without lifetimeBudget: true (on a daily budget,
                                     budgetUsd already is the daily amount);
@@ -1530,12 +1532,31 @@ dailyCapUsd?: number             — OPTIONAL daily spending cap beside a LIFETI
                                   nothing. Omitted: a lifetime budget with no cap, as before.
 ```
 
-- **Not yet verified live.** The two-field shape follows LinkedIn's campaign schema, which
-  documents both amounts. The first live LinkedIn create (cs#579) will confirm it.
+- **Schedule.** LinkedIn documents both budgets together only as "a Daily Budget and a Total
+  Budget with a Continuous Schedule" (Lifetime Pacing), so a capped campaign is sent with
+  `runSchedule.start` and no `end`. The end date moves to the campaign group, and LinkedIn stops
+  the campaign when the group ends. A campaign without a cap keeps its own end, as before.
+- **Shared campaign group.** The group is shared by every campaign of the event, so two guards
+  keep a capped campaign ending on its own end date. Each refuses the create
+  before anything is written, and the reason is the platform's error in the job result:
+  - a capped create that reuses a group ending LATER than the campaign, or never, is refused
+    ("Set the campaign group's end to … in Campaign Manager, or drop dailyCapUsd"). A group
+    ending earlier is widened to exactly the campaign's end;
+  - any create that would widen a group holding a capped campaign (both budgets, no end, not
+    cancelled or removed) is refused, because widening the group would extend that campaign.
+    The check is one `adCampaigns` search of the group, made only when a widening write is about
+    to happen; a failed search is an error, with nothing written.
+
+  A hand edit of the group's end in Campaign Manager is not guarded.
+- **Monitor.** The account monitor paces a capped campaign with no end against
+  min(cap × window days, total), not the total spread over the flight to date.
+- **Not yet verified live.** The two-field shape and the continuous schedule follow LinkedIn's
+  documentation. The first live LinkedIn create (cs#579) will confirm them.
 - **Recorded:** the campaign row records the lifetime total as its budget, and the config
   snapshot carries `dailyCapUsd`.
 - **Readback:** the settings readback reports such a campaign's budget fields `unknown`, because
-  one recorded amount cannot describe two upstream amounts.
+  one recorded amount cannot describe two upstream amounts. Its `end_date` is `unknown` too: the
+  campaign has no end of its own.
 - **Editing** (`PATCH .../budget`): a `lifetime` amount change writes `totalBudget` alone and
   leaves the cap in force. It is refused (400) when the new total is below the cap. A `daily`
   change is 409: change the cap in LinkedIn Campaign Manager.

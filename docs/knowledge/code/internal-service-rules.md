@@ -210,6 +210,13 @@ field would offer a knob a caller could turn with no effect.
 
 The account monitors' money thresholds — the placeholder daily budget (≤ about 1 USD;
 Google, Microsoft and X), the high average CPC (> about 5 USD; Google and Microsoft) and
+LinkedIn pacing (`linkedinExpectedSpend`) handles a campaign with BOTH budgets (#584): with no
+end, the window expects min(cap × window days, total); with an end, the smaller of the lifetime
+and daily expectations. Pacing a capped, no-end campaign against its whole total over the
+flight to date would read it as badly underspending. Pinned by
+`TestLinkedinPacingPct_LifetimeWithDailyCap` and
+`TestLinkedinExpectedSpend_CappedNoEndNeverExceedsTotal`.
+
 LinkedIn's paused-with-real-budget line (> about 10 USD lifetime, `pausedRealTotalBudgetMinUSD`,
 or > about 1 USD a day, the placeholder line read from the other side) — live once in
 `monitor_shared.go` (`placeholderBudgetMaxUSD`, `highAvgCpcUSD`, `isPlaceholderBudget`,

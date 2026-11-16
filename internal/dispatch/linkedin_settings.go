@@ -57,7 +57,9 @@ const (
 //
 // DATES. The create path sends runSchedule.start as the start day at 00:00 UTC, nudged to
 // "now + buffer" when that day has begun (toMs), and runSchedule.end as 23:59:59.999 UTC of the
-// end day. Both are compared as UTC dates; the start goes through compareNudgedStart.
+// end day — except on a two-budget campaign (#584), sent with no end, whose end_date therefore
+// reads `unknown`; its campaign group carries the end. Both are compared as UTC dates; the start
+// goes through compareNudgedStart.
 //
 // PROVENANCE. Unknown provenance fails closed before any credential is resolved (409); a
 // recorded account other than the connection's is a mismatch (409). The read is account-scoped

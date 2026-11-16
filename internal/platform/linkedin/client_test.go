@@ -672,7 +672,8 @@ func TestCreateCampaign_LifetimeBudgetUsesTotalBudget(t *testing.T) {
 }
 
 // TestCreateCampaign_LifetimeBudgetWithDailyCap pins #584 at the wire: a lifetime budget with a
-// cap sends BOTH totalBudget and dailyBudget, and a refused cap sends nothing at all, so no
+// cap sends BOTH totalBudget and dailyBudget on LinkedIn's continuous schedule (a start and NO
+// end; the campaign group carries the end), and a refused cap sends nothing at all, so no
 // campaign group is left behind.
 func TestCreateCampaign_LifetimeBudgetWithDailyCap(t *testing.T) {
 	var mu sync.Mutex
@@ -720,12 +721,28 @@ func TestCreateCampaign_LifetimeBudgetWithDailyCap(t *testing.T) {
 	mu.Lock()
 	total, _ := campaignBody["totalBudget"].(map[string]any)
 	daily, _ := campaignBody["dailyBudget"].(map[string]any)
+	schedule, _ := campaignBody["runSchedule"].(map[string]any)
 	mu.Unlock()
+	if _, hasEnd := schedule["end"]; hasEnd || schedule["start"] == nil {
+		t.Errorf("runSchedule = %v, want a start and no end: LinkedIn pairs both budgets with a continuous schedule", schedule)
+	}
 	if total["amount"] != "1000.00" || total["currencyCode"] != "USD" {
 		t.Errorf("totalBudget = %v, want 1000.00 USD", total)
 	}
 	if daily["amount"] != "20.00" || daily["currencyCode"] != "USD" {
 		t.Errorf("dailyBudget = %v, want the 20.00 USD cap", daily)
+	}
+
+	// Without a cap a lifetime campaign keeps its own end, as before #584.
+	if _, err := c.CreateCampaign(context.Background(), input(0, true)); err != nil {
+		t.Fatalf("CreateCampaign without a cap: %v", err)
+	}
+	mu.Lock()
+	uncapped, _ := campaignBody["runSchedule"].(map[string]any)
+	_, uncappedDaily := campaignBody["dailyBudget"]
+	mu.Unlock()
+	if uncapped["end"] == nil || uncappedDaily {
+		t.Errorf("uncapped lifetime body runSchedule = %v, dailyBudget present = %v; want an end and no dailyBudget", uncapped, uncappedDaily)
 	}
 
 	for _, tc := range []struct {

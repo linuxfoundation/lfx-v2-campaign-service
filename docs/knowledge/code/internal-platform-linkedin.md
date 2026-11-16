@@ -453,6 +453,25 @@ refuses a lifetime total below an existing cap. Both return `budgetAmountError`,
 `BudgetAmountReason` surfaces their sentence as a 400. The shape is not yet verified against a
 live account (cs#579).
 
+A capped campaign is sent on LinkedIn's continuous schedule: `runSchedule.start` and NO `end`
+(Create and Manage Campaigns, Lifetime Pacing: "Use a Daily Budget and a Total Budget with a
+Continuous Schedule"; since 2020 a total plus a daily budget on a fixed schedule is not
+accepted). The end moves to the campaign group, which is shared by the event's campaigns, so
+`ensureCampaignGroupCoversEnd` takes a `capped` flag and guards it (`group_capped.go`, ported
+from Misha Rautela's #584 branch):
+- capped and the reused group ends later, or never: refused with
+  `ErrCampaignGroupScheduleConflict`; ending earlier, it is widened to exactly the campaign's end;
+- before the FIRST widening write of any create, `findUnboundedCappedCampaignInGroup` searches
+  the group's campaigns (`adCampaigns` `q=search` by group URN, fail-closed on an untrusted page)
+  and refuses the widening when one carries both budgets and no end, skipping CANCELED, REMOVED,
+  DELETED and PENDING_DELETION.
+
+Before any write the refusal is a `PreflightRefusal` carrying `ErrCreateConfigInvalid`;
+`CreateCampaign` returns it as `(nil, err)`. After this call's own write (another writer moved
+the end past the campaign's in between) it is a plain error. A hand edit of the group in
+Campaign Manager is not guarded. Pinned by `group_capped_test.go` and
+`TestCreateCampaign_LifetimeBudgetWithDailyCap` (no `end`; an uncapped lifetime keeps it).
+
 `GetCampaignBudget(ctx, campaignID)` reads the campaign under the resolved account
 (`adAccounts/{acct}/adCampaigns/{id}`, numeric ids only) and returns a `CampaignBudget` carrying
 `DailyBudget`, `TotalBudget`, `CurrencyCode` and `Status`. An **absent** field stays `nil`
