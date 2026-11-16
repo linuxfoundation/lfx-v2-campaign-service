@@ -120,7 +120,7 @@ func TestCreateCampaign_AutomaticBiddingIsWebsiteVisitMaxClick(t *testing.T) {
 	if _, has := b["unitCost"]; has {
 		t.Fatalf("an automatic campaign must not send unitCost: %v", b["unitCost"])
 	}
-	if !strings.Contains(res.CampaignName, "| LinkedIn | Traffic |") {
+	if !strings.Contains(res.CampaignName, "| NA | Traffic |") {
 		t.Errorf("campaign name %q lacks the Traffic objective segment", res.CampaignName)
 	}
 	costType, target := b["costType"].(string), b["optimizationTargetType"].(string)
@@ -150,7 +150,7 @@ func TestCreateCampaign_SubCentManualBidIsRefusedBeforeAnyPost(t *testing.T) {
 // is reused only when its objectiveType is the one this bidding strategy creates (or is
 // unreported); a reported mismatch aborts rather than reuse it or create a duplicate beside it.
 func TestFindCampaignByNameInGroup_RefusesAnObjectiveMismatch(t *testing.T) {
-	const name = "Events | KubeCon | LinkedIn | Traffic | Prospecting | Static | tlf | MoFU"
+	const name = "Events | KubeCon | NA | Traffic | Prospecting | Static | tlf | MoFU"
 	for label, tc := range map[string]struct {
 		reported string
 		wantID   string
@@ -185,7 +185,7 @@ func TestFindCampaignByNameInGroup_RefusesAnObjectiveMismatch(t *testing.T) {
 // reused with its existing bidding — no campaign POST, BidApplied false and the warning step, so
 // the dispatcher records no bid.
 func TestCreateCampaign_ReusedCampaignDoesNotApplyTheBid(t *testing.T) {
-	const name = "Events | KubeCon | LinkedIn | Conversions | Prospecting | Static | CNCF | MoFU"
+	const name = "Events | KubeCon | NA | Conversions | Prospecting | Static | CNCF | MoFU"
 	var mu sync.Mutex
 	campaignPosts := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

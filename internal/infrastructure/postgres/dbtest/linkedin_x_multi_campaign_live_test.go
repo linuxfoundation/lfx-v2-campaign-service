@@ -196,7 +196,7 @@ func TestLiveLinkedInXSecondCampaignThroughTheOrchestrator(t *testing.T) {
 				`"targetingProfiles":[{"id":"cloud-native","label":"Cloud Native","skills":["urn:li:skill:1"]}],` +
 				`"variants":[{"introText":"Join us — it's great and long enough","headline":"KubeCon 2099"}]}}`,
 			(*liveNamedWire).linkedInDispatcher,
-			"Events | KubeCon NA 2026 | LinkedIn | Traffic | ", " | Static | "},
+			"Events | KubeCon NA 2026 | NA | Traffic | ", " | Static | "},
 		{model.ProviderTwitterAds,
 			`{"twitterConfig":{"budgetAmount":500,"startDate":"2099-03-01","endDate":"2099-03-10","tweetId":"1234567890"}}`,
 			(*liveNamedWire).twitterDispatcher,
@@ -212,7 +212,7 @@ func TestLiveLinkedInXSecondCampaignThroughTheOrchestrator(t *testing.T) {
 			stage1, stage2   string
 		}{
 			{"labelled", labels(model.FunnelStageTop, model.TacticProspecting), labels(model.FunnelStageMid, model.TacticRetargeting),
-				"Prospecting prospecting", "Prospecting retargeting #2", "ToFU", "MoFU", "top", "mid"},
+				"Prospecting prospecting", "Retargeting #2", "ToFU", "MoFU", "top", "mid"},
 			{"unlabelled", model.CampaignLabels{}, model.CampaignLabels{}, "Prospecting", "Prospecting #2", "MoFU", "MoFU", "", ""},
 		} {
 			t.Run(string(tc.provider)+"/"+sc.name, func(t *testing.T) {

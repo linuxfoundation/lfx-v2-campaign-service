@@ -27,12 +27,12 @@ func TestBuildCampaignName_LabelTokens(t *testing.T) {
 		stage, tactic, slotToken string
 		want                     string
 	}{
-		{"unlabelled slot 1: the legacy name", "", "", "", "Events | KubeCon | LinkedIn | Traffic | Prospecting | Static | cncf | MoFU"},
-		{"labelled slot 1", "ToFU", "prospecting", "", "Events | KubeCon | LinkedIn | Traffic | Prospecting prospecting | Static | cncf | ToFU"},
-		{"labelled slot 2", "BoFU", "retargeting", "#2", "Events | KubeCon | LinkedIn | Traffic | Prospecting retargeting #2 | Static | cncf | BoFU"},
-		{"unlabelled slot 2: only the slot token", "", "", "#2", "Events | KubeCon | LinkedIn | Traffic | Prospecting #2 | Static | cncf | MoFU"},
-		{"tactic without a stage keeps the legacy funnel", "", "competitor", "", "Events | KubeCon | LinkedIn | Traffic | Prospecting competitor | Static | cncf | MoFU"},
-		{"pipe-injected tokens cannot add a segment", "To|FU", " keyword | BoFU ", "#2 | x", "Events | KubeCon | LinkedIn | Traffic | Prospecting keyword - BoFU #2 - x | Static | cncf | To-FU"},
+		{"unlabelled slot 1", "", "", "", "Events | KubeCon | Global | Traffic | Prospecting | Static | cncf | MoFU"},
+		{"labelled slot 1", "ToFU", "prospecting", "", "Events | KubeCon | Global | Traffic | Prospecting prospecting | Static | cncf | ToFU"},
+		{"labelled slot 2", "BoFU", "retargeting", "#2", "Events | KubeCon | Global | Traffic | Retargeting #2 | Static | cncf | BoFU"},
+		{"unlabelled slot 2: only the slot token", "", "", "#2", "Events | KubeCon | Global | Traffic | Prospecting #2 | Static | cncf | MoFU"},
+		{"tactic without a stage keeps the legacy funnel", "", "competitor", "", "Events | KubeCon | Global | Traffic | Prospecting competitor | Static | cncf | MoFU"},
+		{"pipe-injected tokens cannot add a segment", "To|FU", " keyword | BoFU ", "#2 | x", "Events | KubeCon | Global | Traffic | Prospecting keyword - BoFU #2 - x | Static | cncf | To-FU"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			in := CampaignInput{StageToken: tc.stage, Tactic: tc.tactic, SlotToken: tc.slotToken}
@@ -57,7 +57,7 @@ func TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest(t *testing.T
 		in.EventName = event
 		return in
 	}
-	overhead := utf8.RuneCountInString(buildCampaignName("", "Traffic", "tlf", CampaignInput{}))
+	overhead := utf8.RuneCountInString(buildCampaignName("", "Traffic", "tlf", newInput("")))
 	atTheBound := strings.Repeat("E", maxNameLen-overhead)
 
 	run := func(in CampaignInput) (int32, *CampaignResult, error) {
@@ -74,7 +74,7 @@ func TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest(t *testing.T
 	}
 
 	t.Run("control: an unlabelled name at the bound reaches LinkedIn", func(t *testing.T) {
-		if got := utf8.RuneCountInString(buildCampaignName(atTheBound, "Traffic", "tlf", CampaignInput{})); got != maxNameLen {
+		if got := utf8.RuneCountInString(buildCampaignName(atTheBound, "Traffic", "tlf", newInput(atTheBound))); got != maxNameLen {
 			t.Fatalf("fixture: unlabelled name is %d characters, want %d", got, maxNameLen)
 		}
 		if n, _, err := run(newInput(atTheBound)); n == 0 {
@@ -86,7 +86,7 @@ func TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest(t *testing.T
 		mutate  func(*CampaignInput)
 		wantLen int
 	}{
-		{"labelled slot 2", func(in *CampaignInput) { in.StageToken, in.Tactic, in.SlotToken = "MoFU", "retargeting", "#2" }, maxNameLen + len(" retargeting #2")},
+		{"labelled slot 2", func(in *CampaignInput) { in.StageToken, in.Tactic, in.SlotToken = "MoFU", "retargeting", "#2" }, maxNameLen + len("Retargeting #2") - len("Prospecting")},
 		{"labelled slot 1, tactic only", func(in *CampaignInput) { in.Tactic = "keyword" }, maxNameLen + len(" keyword")},
 		{"unlabelled slot 2", func(in *CampaignInput) { in.SlotToken = "#2" }, maxNameLen + len(" #2")},
 	} {
@@ -125,13 +125,13 @@ func TestBuildUTMURL_SlotTokenIsEscaped(t *testing.T) {
 		t.Fatalf("URL %q has a fragment; the slot token must be escaped inside utm_term", got)
 	}
 	q := u.Query()
-	if term := q.Get("utm_term"); term != "events_kubecon_linkedin_traffic_prospecting-retargeting-#2_static_cncf_mofu" {
+	if term := q.Get("utm_term"); term != "events_kubecon_global_traffic_retargeting-#2_static_cncf_mofu" {
 		t.Errorf("utm_term = %q", term)
 	}
 	if q.Get("utm_content") != "variant-1" || q.Get("utm_campaign") != "hs1" {
 		t.Errorf("UTM params after the term were lost: %q", got)
 	}
-	if want := "https://events.example.org/kc?utm_campaign=hs1&utm_content=variant-1&utm_medium=paid-social&utm_source=linkedin&utm_term=events_kubecon_linkedin_traffic_prospecting_static_cncf_mofu"; BuildUTMURL("https://events.example.org/kc", "hs1", legacy, 1) != want {
+	if want := "https://events.example.org/kc?utm_campaign=hs1&utm_content=variant-1&utm_medium=paid-social&utm_source=linkedin&utm_term=events_kubecon_global_traffic_prospecting_static_cncf_mofu"; BuildUTMURL("https://events.example.org/kc", "hs1", legacy, 1) != want {
 		t.Errorf("legacy UTM URL changed: %q", BuildUTMURL("https://events.example.org/kc", "hs1", legacy, 1))
 	}
 }

@@ -211,7 +211,7 @@ type cs4Platform struct {
 
 func cs4Platforms(li *liWire, x *xWire) []cs4Platform {
 	return []cs4Platform{
-		{model.ProviderLinkedInAds, "Events | KubeCon NA 2026 | LinkedIn | Traffic | ", " | Static | cncf | ",
+		{model.ProviderLinkedInAds, "Events | KubeCon NA 2026 | NA | Traffic | ", " | Static | cncf | ",
 			func(t *testing.T, ctx context.Context, brief *model.CampaignBrief) (*model.Campaign, error) {
 				return li.dispatcher(t).Dispatch(ctx, brief, model.ProviderLinkedInAds, linkedInMultiCfg)
 			}},
@@ -250,7 +250,7 @@ func TestLinkedInX_NamesComeFromTheClaimedRow(t *testing.T) {
 		{"labelled row, slot 1: stage and tactic, no slot token", model.FirstSlotVersion,
 			stagedRow(stagePtr(model.FunnelStageTop), tacticPtr(model.TacticProspecting)), "Prospecting prospecting", "ToFU"},
 		{"labelled row, slot 2: stage, tactic and the slot token", 2,
-			stagedRow(stagePtr(model.FunnelStageMid), tacticPtr(model.TacticRetargeting)), "Prospecting retargeting #2", "MoFU"},
+			stagedRow(stagePtr(model.FunnelStageMid), tacticPtr(model.TacticRetargeting)), "Retargeting #2", "MoFU"},
 		{"stage without a tactic, slot 3", 3, stagedRow(stagePtr(model.FunnelStageLower), nil), "Prospecting #3", "BoFU"},
 		{"tactic without a stage keeps the legacy funnel", 2, stagedRow(nil, tacticPtr(model.TacticLookalike)), "Prospecting lookalike #2", "MoFU"},
 		{"content-promotion is written content-promo (keeps the pipeline's Motion parser off it)", 2,
@@ -369,7 +369,7 @@ func TestLinkedInX_OverlongLabelledNameIsRefusedBeforeAnyRequest(t *testing.T) {
 		event    int
 		dispatch func(t *testing.T, ctx context.Context, brief *model.CampaignBrief) (camp *model.Campaign, requests int, err error)
 	}{
-		{model.ProviderLinkedInAds, 255 - len("Events |  | LinkedIn | Traffic | Prospecting | Static | cncf | MoFU"),
+		{model.ProviderLinkedInAds, 255 - len("Events |  | NA | Traffic | Prospecting | Static | cncf | MoFU"),
 			func(t *testing.T, ctx context.Context, brief *model.CampaignBrief) (*model.Campaign, int, error) {
 				w := &liWire{}
 				camp, err := w.dispatcher(t).Dispatch(ctx, brief, model.ProviderLinkedInAds, linkedInMultiCfg)

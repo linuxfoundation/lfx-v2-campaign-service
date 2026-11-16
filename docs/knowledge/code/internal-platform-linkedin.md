@@ -958,13 +958,25 @@ in the group (it now returns `(id, reused, err)`), with a "bid NOT applied to re
 
 ## Campaign name (multi-campaign cs-4)
 
-`buildCampaignName` composes the data pipeline's 8-segment name, `Events | <event> | LinkedIn |
+`buildCampaignName` composes the data pipeline's 8-segment name, `Events | <event> | <region> |
 <Objective> | Prospecting | Static | <project> | MoFU`, checked against `maxNameLen` (255) before
 the first request. Three `CampaignInput` fields, which the dispatcher reads from the CLAIMED row
 (never the request), change it for a labelled or later-slot campaign without adding a segment:
 `StageToken` (ToFU / MoFU / BoFU) replaces the fixed `MoFU`, and `Tactic` and `SlotToken` (`#<n>`
-from slot 2 on) are appended to the Targeting segment (`Prospecting retargeting #2`). All three
-empty composes the legacy name byte for byte. The composed name is also the key
+from slot 2 on) shape the Targeting segment (`targetingSegment`: `Retargeting` for the retargeting
+tactic, else `Prospecting <tactic>`, plus the slot token, e.g. `Retargeting #2`).
+
+**#587 region and targeting.** The Region segment is `linkedinRegion`: the first geo target's region
+from `linkedinGeoRegion` (every `geoResolveMap` URN mapped to Meta's and Reddit's NA / EMEA / APAC /
+India vocabulary), else `Global`. It replaced the literal `LinkedIn`, which lf-dbt's
+`parse_campaign_name` cannot read as a region; `Retargeting` replaced `Prospecting retargeting`,
+which its `%PROSPECT%`-first match filed as Prospecting. Because every name changed, `CreateCampaign`
+looks up `legacyCampaignName` (the pre-#587 shape, byte for byte) in a REUSED campaign group before
+`createSponsoredCampaign`, and when it exists passes that name on, so a retry spanning the change
+reuses the earlier campaign (step "Found campaign … under its earlier name"). A new group cannot
+hold one and skips the lookup. `utm_term` follows the name, so it changes for new campaigns only;
+lf-dbt maps each campaign's `utm_term` from the platform's own URL report, so attribution stays
+consistent per campaign. The composed name is also the key
 `createSponsoredCampaign` reuses a campaign by (`findCampaignByNameInGroup`, inside the event's
 campaign group, which every slot shares because the group name carries no token): slot 2's name
 differs from slot 1's, so it never finds slot 1's campaign and never has its creatives created

@@ -5652,9 +5652,10 @@ type CampaignCreateInputRequestBody struct {
 	// campaign carries the stage and the tactic in its budget and campaign names
 	// (and, on Search, its ad group name); a Reddit, Meta, LinkedIn or X campaign
 	// keeps its 8-segment name, with the stage in the funnel segment and the
-	// tactic in the targeting segment (`Intent retargeting` on Reddit and Meta,
-	// `Prospecting retargeting` on LinkedIn and X). An unlabelled campaign keeps
-	// the names it has always had.
+	// tactic in the targeting segment (`Intent retargeting` on Reddit and Meta; on
+	// LinkedIn and X the segment is `Retargeting` for the retargeting tactic and
+	// `Prospecting <tactic>` otherwise, #587). An unlabelled campaign keeps the
+	// names it has always had.
 	FunnelStage *string `form:"funnel_stage,omitempty" json:"funnel_stage,omitempty" xml:"funnel_stage,omitempty"`
 	// How the campaign(s) this request creates pursue their stage, from a
 	// controlled list (free text is refused because the label can reach campaign
