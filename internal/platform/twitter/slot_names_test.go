@@ -29,7 +29,7 @@ func TestBuildTwitterCampaignName_LabelTokens(t *testing.T) {
 	}{
 		{"unlabelled slot 1: the legacy name", "", "", "", head + "Prospecting | Promoted Post | cncf | MoFU"},
 		{"labelled slot 1", "ToFU", "prospecting", "", head + "Prospecting prospecting | Promoted Post | cncf | ToFU"},
-		{"labelled slot 2", "BoFU", "retargeting", "#2", head + "Prospecting retargeting #2 | Promoted Post | cncf | BoFU"},
+		{"labelled slot 2", "BoFU", "retargeting", "#2", head + "Retargeting #2 | Promoted Post | cncf | BoFU"},
 		{"unlabelled slot 2: only the slot token", "", "", "#2", head + "Prospecting #2 | Promoted Post | cncf | MoFU"},
 		{"tactic without a stage keeps the legacy funnel", "", "lookalike", "", head + "Prospecting lookalike | Promoted Post | cncf | MoFU"},
 		{"pipe-injected tokens cannot add a segment", "To|FU", " keyword | BoFU ", "#2 | x", head + "Prospecting keyword - BoFU #2 - x | Promoted Post | cncf | To-FU"},
@@ -97,7 +97,7 @@ func TestCreateCampaign_OverlongLabelledNameRefusedBeforeAnyRequest(t *testing.T
 		mutate  func(*CampaignInput)
 		wantLen int
 	}{
-		{"labelled slot 2", func(in *CampaignInput) { in.StageToken, in.Tactic, in.SlotToken = "MoFU", "retargeting", "#2" }, maxEntityNameLen + len(" retargeting #2")},
+		{"labelled slot 2", func(in *CampaignInput) { in.StageToken, in.Tactic, in.SlotToken = "MoFU", "retargeting", "#2" }, maxEntityNameLen + len("Retargeting #2") - len("Prospecting")},
 		{"labelled slot 1, tactic only", func(in *CampaignInput) { in.Tactic = "keyword" }, maxEntityNameLen + len(" keyword")},
 		{"unlabelled slot 2", func(in *CampaignInput) { in.SlotToken = "#2" }, maxEntityNameLen + len(" #2")},
 	} {

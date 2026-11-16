@@ -585,15 +585,16 @@ segments, segment 8 ∈ {ToFU, MoFU, BoFU}), `TestRedditMeta_Slot2NeverBindsSlot
 `TestLiveRedditMetaSecondCampaignThroughTheOrchestrator`.
 
 **LinkedIn and X (cs-4).** Both names are the same 8-segment contract —
-LinkedIn `Events | <event> | LinkedIn | <Objective> | Prospecting | Static | <project> | MoFU`, X
+LinkedIn `Events | <event> | <region> | <Objective> | Prospecting | Static | <project> | MoFU`, X
 `Events | <event> | Global | Awareness | Prospecting | Promoted Post | <project> | MoFU` — and
 `LinkedInDispatcher` and `TwitterDispatcher` set `CampaignInput.StageToken`, `Tactic` and
 `SlotToken` exactly as Reddit and Meta do (claimed row's labels via
 `model.CampaignLabels.NameTokens`, slot via `model.SlotNameToken`). The client builders
 (`linkedin.buildCampaignName`, `buildTwitterCampaignName`) put the stage token in segment 8 in
-place of the legacy `MoFU` (a tactic-only row keeps `MoFU`) and append the tactic and `#<n>` to
-the `Prospecting` Targeting segment (`Prospecting retargeting #2`); an unlabelled slot-1 row
-composes its legacy name byte for byte, and the group name (`Events | <event> | <project>`) and
+place of the legacy `MoFU` (a tactic-only row keeps `MoFU`) and compose the Targeting segment as
+`Retargeting` for the retargeting tactic, else `Prospecting <tactic>`, plus `#<n>` (#587; e.g.
+`Retargeting #2`); an unlabelled slot-1 X row composes the same name as before (LinkedIn's region
+segment changed for every row in #587, with a legacy-name fallback on reuse), and the group name (`Events | <event> | <project>`) and
 X's line-item name carry no token. The difference from Reddit and Meta is that both clients REUSE
 a campaign by that composed name on create: LinkedIn's `findCampaignByNameInGroup` (inside the
 event's shared campaign group) and X's `findCampaignByName`, which runs on every create. Because

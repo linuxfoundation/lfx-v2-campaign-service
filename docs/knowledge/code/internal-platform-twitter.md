@@ -1557,8 +1557,11 @@ Global | Awareness | Prospecting | Promoted Post | <project> | MoFU`, checked by
 Three `CampaignInput` fields, which the dispatcher reads from the CLAIMED row (never the request),
 change it for a labelled or later-slot campaign without adding a segment: `StageToken` (ToFU /
 MoFU / BoFU) replaces the fixed `MoFU`, and `Tactic` and `SlotToken` (`#<n>` from slot 2 on) are
-appended to the Targeting segment (`Prospecting retargeting #2`). All three empty composes the
-legacy name byte for byte. The composed name is also the key `findCampaignByName` reuses a
+shape the Targeting segment (`targetingSegment`: `Retargeting` for the retargeting tactic since
+#587, else `Prospecting <tactic>`, plus the slot token, e.g. `Retargeting #2`). All three empty
+composes the same name as before. `CreateCampaign` falls back to `legacyTwitterCampaignName` (the
+pre-#587 `Prospecting retargeting` shape) when the new name finds nothing, and reuses that campaign
+under its earlier name, so a retry spanning the change does not create a second campaign. The composed name is also the key `findCampaignByName` reuses a
 campaign by on EVERY create: slot 2's name differs from slot 1's, so it never finds slot 1's
 campaign; its line item is then created (and looked up by name) under slot 2's own campaign, and
 the promoted tweet attaches to that line item. The line-item name carries no token: it is scoped

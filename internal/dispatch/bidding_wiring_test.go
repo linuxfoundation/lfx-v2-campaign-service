@@ -217,7 +217,7 @@ func TestLinkedIn_DispatchManualBiddingReachesTheCampaign(t *testing.T) {
 		t.Fatalf("Dispatch: %v", err)
 	}
 	body := log.get("adCampaigns")
-	for _, want := range []string{`"objectiveType":"WEBSITE_CONVERSION"`, `"costType":"CPC"`, `"optimizationTargetType":"NONE"`, `"unitCost":{"amount":"4.50","currencyCode":"USD"}`, `| LinkedIn | Conversions |`} {
+	for _, want := range []string{`"objectiveType":"WEBSITE_CONVERSION"`, `"costType":"CPC"`, `"optimizationTargetType":"NONE"`, `"unitCost":{"amount":"4.50","currencyCode":"USD"}`, `| NA | Conversions |`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("campaign body %s lacks %s", body, want)
 		}
@@ -269,7 +269,7 @@ func TestLinkedIn_DispatchAutomaticBiddingIsWebsiteVisitMaxClick(t *testing.T) {
 				t.Fatalf("Dispatch: %v", err)
 			}
 			body := log.get("adCampaigns")
-			for _, want := range []string{`"objectiveType":"WEBSITE_VISIT"`, `"optimizationTargetType":"MAX_CLICK"`, `"costType":"CPM"`, `| LinkedIn | Traffic |`} {
+			for _, want := range []string{`"objectiveType":"WEBSITE_VISIT"`, `"optimizationTargetType":"MAX_CLICK"`, `"costType":"CPM"`, `| NA | Traffic |`} {
 				if !strings.Contains(body, want) {
 					t.Errorf("campaign body %s lacks %s", body, want)
 				}
@@ -328,7 +328,7 @@ func TestTwitter_DispatchReusedLineItemRecordsNoBid(t *testing.T) {
 }
 
 func TestLinkedIn_DispatchReusedCampaignRecordsNoBid(t *testing.T) {
-	const name = "Events | KubeCon NA 2026 | LinkedIn | Conversions | Prospecting | Static | cncf | MoFU"
+	const name = "Events | KubeCon NA 2026 | NA | Conversions | Prospecting | Static | cncf | MoFU"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
