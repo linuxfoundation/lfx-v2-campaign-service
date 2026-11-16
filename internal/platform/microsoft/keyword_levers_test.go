@@ -709,3 +709,35 @@ func TestApplyKeywordActions_PlaceholderIndexOutsideRequestIsUnconfirmed(t *test
 		t.Fatalf("got %v, %v; want FAILED,UNCONFIRMED", got, err)
 	}
 }
+
+// An entry with explicitly null codes names no outcome for its keyword, so beside another
+// keyword's real rejection it is UNCONFIRMED, not APPLIED. A null slot in a fully positional
+// array beside a coded entry is padding (APPLIED); a null-only array answers nothing.
+func TestApplyKeywordActions_UnreadableEntriesAreUnconfirmed(t *testing.T) {
+	two := []KeywordAction{
+		{AdGroupID: "654", KeywordID: "701", Action: "PAUSE"},
+		{AdGroupID: "654", KeywordID: "703", Action: "PAUSE"},
+	}
+	for name, tc := range map[string]struct{ body, want string }{
+		"all-null beside a rejection":   {`{"PartialErrors":[{"Index":0,"Code":1234,"ErrorCode":"X"},{"Index":1,"Code":null,"ErrorCode":null}]}`, "FAILED,UNCONFIRMED"},
+		"Code null beside a rejection":  {`{"PartialErrors":[{"Index":0,"Code":1234,"ErrorCode":"X"},{"Index":1,"Code":null}]}`, "FAILED,UNCONFIRMED"},
+		"{} beside a rejection":         {`{"PartialErrors":[{"Index":0,"Code":1234,"ErrorCode":"X"},{}]}`, "FAILED,UNCONFIRMED"},
+		"positional null padding":       {`{"PartialErrors":[{"Index":0,"Code":1234,"ErrorCode":"X"},null]}`, "FAILED,APPLIED"},
+		"placeholder with null padding": {`{"PartialErrors":[{"Index":0,"Code":0},null]}`, "APPLIED,APPLIED"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, tc.body })
+			out, err := c.ApplyKeywordActions(context.Background(), "654", two)
+			if got := strings.Join(outcomesOf(out), ","); got != tc.want {
+				t.Fatalf("got %v, %v; want %s", got, err, tc.want)
+			}
+		})
+	}
+	for _, body := range []string{`{"PartialErrors":[null]}`, `{"PartialErrors":[null,null]}`} {
+		c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, body })
+		out, err := c.ApplyKeywordActions(context.Background(), "654", two)
+		if err == nil || !IsOutcomeUnconfirmed(err) {
+			t.Fatalf("%s: got %v, %v; want UNCONFIRMED", body, outcomesOf(out), err)
+		}
+	}
+}

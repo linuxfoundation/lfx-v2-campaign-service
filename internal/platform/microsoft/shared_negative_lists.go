@@ -245,7 +245,7 @@ func (c *Client) AttachCampaignSharedNegativeKeywordLists(ctx context.Context, c
 				code = withheldErrorCode
 			}
 			out[i].Outcome, out[i].ErrorCode = OutcomeFailed, code
-		case att.unattributable:
+		case att.unconfirmed[i], att.unattributable:
 			out[i].Outcome = OutcomeUnconfirmed
 		default:
 			out[i].Outcome = OutcomeApplied

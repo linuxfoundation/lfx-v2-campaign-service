@@ -322,6 +322,9 @@ type indexedErrorItem struct {
 	Index     *int            `json:"Index"`
 	Code      json.RawMessage `json:"Code"`
 	ErrorCode json.RawMessage `json:"ErrorCode"`
+	// null records that the array slot itself was the JSON literal null (not {}), the only
+	// shape attribute accepts as positional padding.
+	null bool
 }
 
 // code renders the item's machine-readable code, symbolic first.
@@ -385,8 +388,14 @@ func (b *indexedErrors) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("expected a JSON array of errors")
 	}
 	for dec.More() {
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return err
+		}
 		var it indexedErrorItem
-		if err := dec.Decode(&it); err != nil {
+		if isJSONNullRaw(raw) {
+			it.null = true
+		} else if err := json.Unmarshal(raw, &it); err != nil {
 			return err
 		}
 		if len(b.Items) < maxIndexedErrorItems {
@@ -405,35 +414,63 @@ type attribution struct {
 	byIndex map[int]string
 	// errored records every index an error was attributed to.
 	errored map[int]bool
+	// unconfirmed records every index an UNREADABLE entry named (see attribute): the item's
+	// outcome is unknown, so it is never reported applied. errored takes precedence.
+	unconfirmed map[int]bool
 	// unattributable is set when an error carried no usable index, an index outside the
-	// request, or the array was truncated — or when a zero-code placeholder (or any entry with
-	// an index) named no slot of the request. Then NO un-named item can be proven applied.
+	// request, or the array was truncated — or when a zero-code placeholder or an unreadable
+	// entry named no slot of the request. Then NO un-named item can be proven applied.
 	unattributable bool
 }
 
 func attribute(errs indexedErrors, n int) attribution {
-	a := attribution{byIndex: map[int]string{}, errored: map[int]bool{}, unattributable: errs.Truncated}
+	a := attribution{byIndex: map[int]string{}, errored: map[int]bool{}, unconfirmed: map[int]bool{}, unattributable: errs.Truncated}
+	// POSITIONAL PADDING is a null slot in a fully positional array: exactly one entry per
+	// request item, at least one of them coded (an error or a zero-code placeholder), and not
+	// truncated. That is the null-padded shape geo.go reads for NestedPartialErrors. A
+	// code-less-only array ([null], [{}]) is not one — it answers nothing about any item, unlike
+	// the null or [] that affirms no error.
+	coded := false
+	for _, it := range errs.Items {
+		if it.isError() || it.isZeroCodePlaceholder() {
+			coded = true
+			break
+		}
+	}
+	positional := coded && !errs.Truncated && len(errs.Items) == n
 	for _, it := range errs.Items {
 		outOfRange := it.Index == nil || *it.Index < 0 || *it.Index >= n
-		if !it.isError() {
+		switch {
+		case it.isError():
+			if outOfRange {
+				a.unattributable = true
+				continue
+			}
+			if !a.errored[*it.Index] {
+				a.byIndex[*it.Index] = it.code()
+			}
+			a.errored[*it.Index] = true
+		case it.isZeroCodePlaceholder():
 			// A zero-code placeholder marks a clean item AT ITS INDEX, so it is evidence only
 			// about a slot of this request. One with no index, or one naming a slot outside the
-			// request (or any entry naming such a slot), cannot be matched to the items it
-			// claims to clear: the array is not the positional answer this request expects, so
-			// no un-named item is proven applied.
-			if (it.isZeroCodePlaceholder() || it.Index != nil) && outOfRange {
+			// request, cannot be matched to the items it claims to clear: no un-named item is
+			// proven applied.
+			if outOfRange {
 				a.unattributable = true
 			}
-			continue
+		case it.null && positional:
+			// Padding: the slot's item had no error.
+		default:
+			// UNREADABLE: an entry that names no outcome — codes explicitly null
+			// (codePairUnreadable), {} or an index with no code, or a null slot outside a
+			// positional array. The item it names is UNCONFIRMED; naming none, it may be any
+			// item's.
+			if outOfRange {
+				a.unattributable = true
+				continue
+			}
+			a.unconfirmed[*it.Index] = true
 		}
-		if outOfRange {
-			a.unattributable = true
-			continue
-		}
-		if !a.errored[*it.Index] {
-			a.byIndex[*it.Index] = it.code()
-		}
-		a.errored[*it.Index] = true
 	}
 	return a
 }
@@ -679,6 +716,22 @@ func (it indexedErrorItem) isZeroCodePlaceholder() bool {
 	return rawCodePresent(it.Code) || rawCodePresent(it.ErrorCode)
 }
 
+// codePairUnreadable reports whether a code pair names NO outcome although a code field was
+// sent: neither code is an error or a non-null default (so it is not a refusal and not a
+// zero-code placeholder), yet at least one is the explicit JSON null — {"Code":null},
+// {"ErrorCode":null} or both null. A pair with neither key is not this: whether an absent pair
+// is padding is each decoder's decision (geo.go: always; attribute: only a null slot in a
+// positional array).
+func codePairUnreadable(errorCode, code json.RawMessage) bool {
+	if present, _ := audienceErrorCode(errorCode, code); present {
+		return false
+	}
+	if (rawCodePresent(errorCode) && !isJSONNullRaw(errorCode)) || (rawCodePresent(code) && !isJSONNullRaw(code)) {
+		return false
+	}
+	return isJSONNullRaw(errorCode) || isJSONNullRaw(code)
+}
+
 // anyIndexedError reports whether at least one entry carries an actual code.
 func anyIndexedError(items []indexedErrorItem) bool {
 	for _, it := range items {
@@ -716,15 +769,12 @@ func (c *Client) keywordMutation(ctx context.Context, method, what string, body 
 	// Fail closed as UpdateCampaignStatus does for that shape — the call was answered, so it may
 	// have applied, and the outcome is UNCONFIRMED.
 	// A placeholder clears only the slot it names, so one with no index or an index outside
-	// this request's n items is not that affirmation either.
-	if len(resp.PartialErrors.Items) > 0 && !anyIndexedError(resp.PartialErrors.Items) {
-		for _, it := range resp.PartialErrors.Items {
-			if !it.isZeroCodePlaceholder() || it.Index == nil || *it.Index < 0 || *it.Index >= n {
-				return nil, &keywordMutationUnconfirmedError{what: what, err: errMalformedKeywordResponse}
-			}
-		}
-	}
+	// this request's n items is not that affirmation either; a null slot is accepted only as
+	// positional padding (attribute).
 	att := attribute(resp.PartialErrors, n)
+	if len(resp.PartialErrors.Items) > 0 && !anyIndexedError(resp.PartialErrors.Items) && (att.unattributable || len(att.unconfirmed) > 0) {
+		return nil, &keywordMutationUnconfirmedError{what: what, err: errMalformedKeywordResponse}
+	}
 	out := make([]itemOutcome, n)
 	for i := range out {
 		switch {
@@ -733,7 +783,7 @@ func (c *Client) keywordMutation(ctx context.Context, method, what string, body 
 			out[i] = itemOutcome{OutcomeUnconfirmed, att.byIndex[i]}
 		case att.errored[i]:
 			out[i] = itemOutcome{OutcomeFailed, att.byIndex[i]}
-		case att.unattributable:
+		case att.unconfirmed[i], att.unattributable:
 			// An error Microsoft did not pin to an index may be this item's.
 			out[i] = itemOutcome{OutcomeUnconfirmed, ""}
 		default:

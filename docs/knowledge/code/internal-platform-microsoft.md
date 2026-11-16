@@ -1693,7 +1693,12 @@ or `[null]` stays UNCONFIRMED), here and in the conversion-goal picker read. A p
 clears only the slot it names: one with no index or an index outside the request (or any entry
 naming an out-of-range index) makes `attribute` unattributable, so every list without its own
 error is UNCONFIRMED, and `keywordMutation` treats such a placeholder-only answer as UNCONFIRMED
-as a whole (#613 review). A null or empty `PartialErrors` is no
+as a whole (#613 review). An UNREADABLE entry — codes explicitly null (`codePairUnreadable`), `{}`
+or an index with no code — makes the item it names UNCONFIRMED (every un-named item when it names
+none), keeping known failures. The only padding is a JSON `null` slot in a fully positional array:
+exactly one entry per request item, at least one of them coded, not truncated. So a
+code-less-only array (`[null]`, `[{}]`) is UNCONFIRMED, and so is an indexed all-null entry beside
+another item's rejection (#613 review). A null or empty `PartialErrors` is no
 error, but a 200 that omits the field (`{}`) is `UNCONFIRMED` for every list: it answered nothing
 about the associations (#613 review). The dispatcher (`applyMicrosoftSharedNegativeLists`) records them as
 `CampaignResult.SharedNegativeKeywordLists`; anything but `APPLIED` makes the campaign
@@ -1812,12 +1817,12 @@ enum misspells 35-49 as `ThirtyFiveToFourtyNine`; the public key stays `ThirtyFi
 and `ageRangeWire` sends Microsoft's spelling (the other four adult ranges match the v13
 reference as spelled). The `AddCampaignCriterions` response decode (`boundedGeoIDs` and
 `boundedNestedErrorItems`) retains up to `maxCampaignCriterionResults` (64) ids and error
-collections, covering a 49-window ad schedule (an entry with both codes explicitly null makes the
+collections, covering a 49-window ad schedule (an entry with an explicitly null code and no other — `{"Code":null}`, `{"ErrorCode":null}` or both null, `codePairUnreadable` — makes the
 outcome UNCONFIRMED even beside a coded rejection, keeping the returned ids); the geographic input limit stays `maxGeoTargets`
 (30). Its error entries, at the collection and nested `BatchErrors` levels, are classified by
 `nestedErrorState` with `audienceErrorCode`'s rule: a zero-code placeholder is not a rejection, an
-unreadable code is one (never success), and an entry with both codes explicitly null is
-UNCONFIRMED; the ad schedule, bid adjustments and geo criteria all share it (#613 review). The three keys join the fields that stop a create on a campaign found by
+unreadable code is one (never success), and an entry with an explicitly null code and no other is
+UNCONFIRMED, while a key-less pair or null slot is index-aligned padding; the ad schedule, bid adjustments and geo criteria all share it (#613 review). The three keys join the fields that stop a create on a campaign found by
 name. The ids are recorded as `BidAdjustmentCriterionIDs`.
 
 The dispatcher (`internal/dispatch/microsoft_bid_adjustments.go`) refuses a value that is not an

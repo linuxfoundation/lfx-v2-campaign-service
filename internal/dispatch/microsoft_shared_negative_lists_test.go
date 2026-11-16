@@ -204,6 +204,9 @@ func TestMicrosoftSharedNegativeLists_AssociationShortfallDegrades(t *testing.T)
 		{"200 without PartialErrors", http.StatusOK, `{}`, "0 associated, 0 failed, 2 unconfirmed"},
 		// A zero-code placeholder naming no slot of the two-list request clears nothing.
 		{"placeholder index out of range", http.StatusOK, `{"PartialErrors":[{"Index":7,"Code":0}]}`, "0 associated, 0 failed, 2 unconfirmed"},
+		// A code-less-only array, or an indexed all-null entry, names no outcome.
+		{"null-only PartialErrors", http.StatusOK, `{"PartialErrors":[null]}`, "0 associated, 0 failed, 2 unconfirmed"},
+		{"indexed all-null entry", http.StatusOK, `{"PartialErrors":[{"Index":1,"Code":null,"ErrorCode":null}]}`, "1 associated, 0 failed, 1 unconfirmed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := &msSharedAPI{setStatus: tc.status, setBody: tc.body}

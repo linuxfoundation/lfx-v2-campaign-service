@@ -781,17 +781,20 @@ func (b *boundedNestedErrorItems) UnmarshalJSON(data []byte) error {
 // collection level and for each nested BatchErrors entry: an entry is an error unless BOTH codes
 // are defaults (absent, null, 0 or ""), and a present code this client cannot read is still an
 // error. So a zero-code placeholder ({"Code":0,"ErrorCode":null}) is not a rejection and an
-// unreadable code ({"Code":true}) is never read as success. unreadable reports an entry whose
-// codes are BOTH explicitly null (the isZeroCodePlaceholder rule): it names neither an error nor
-// a clean slot, so a caller must not read it as success. An absent code or a null slot (an
-// index-aligned array's padding) is neither.
+// unreadable code ({"Code":true}) is never read as success. unreadable reports an entry with an
+// explicitly null code and no other (codePairUnreadable: {"Code":null}, {"ErrorCode":null} or
+// both null — the complement of isZeroCodePlaceholder among non-errors): it names neither an
+// error nor a clean slot, so a caller must not read it as success. A pair with NEITHER key and a
+// null slot are padding here, unlike in attribute's PartialErrors: NestedPartialErrors is
+// index-aligned and null-padded on the wire, so a key-less slot is the documented shape of a
+// clean criterion rather than an entry that says nothing.
 func nestedErrorState(items []msNestedErrorCollection) (anyErr, unreadable bool) {
 	classify := func(errorCode, code json.RawMessage) {
 		if present, _ := audienceErrorCode(errorCode, code); present {
 			anyErr = true
 			return
 		}
-		if isJSONNullRaw(errorCode) && isJSONNullRaw(code) {
+		if codePairUnreadable(errorCode, code) {
 			unreadable = true
 		}
 	}

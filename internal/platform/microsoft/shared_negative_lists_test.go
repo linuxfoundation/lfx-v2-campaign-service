@@ -127,7 +127,19 @@ func TestAttachCampaignSharedNegativeKeywordLists_Outcomes(t *testing.T) {
 		err    bool
 	}{
 		{"one refused", http.StatusOK, `{"PartialErrors":[{"Index":1,"Code":1234,"ErrorCode":"CampaignServiceSharedEntityInvalid"}]}`, "4001=APPLIED:,4002=FAILED:CampaignServiceSharedEntityInvalid", false},
-		{"zero-code placeholder", http.StatusOK, `{"PartialErrors":[{"Index":0,"Code":null,"ErrorCode":null}]}`, "4001=APPLIED:,4002=APPLIED:", false},
+		// An entry naming an index with explicitly null codes names no outcome for that list.
+		{"indexed all-null entry", http.StatusOK, `{"PartialErrors":[{"Index":0,"Code":null,"ErrorCode":null}]}`, "4001=UNCONFIRMED:,4002=APPLIED:", false},
+		{"indexed Code null only", http.StatusOK, `{"PartialErrors":[{"Index":1,"Code":null}]}`, "4001=APPLIED:,4002=UNCONFIRMED:", false},
+		// A code-less-only array answers nothing about any list.
+		{"null-only array", http.StatusOK, `{"PartialErrors":[null]}`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", false},
+		{"all-null positional array", http.StatusOK, `{"PartialErrors":[null,null]}`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", false},
+		{"key-less-only array", http.StatusOK, `{"PartialErrors":[{}]}`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", false},
+		// Positional padding: a null slot in an array with one entry per list, beside a coded one.
+		{"refusal with positional null padding", http.StatusOK, `{"PartialErrors":[{"Index":0,"Code":1234,"ErrorCode":"X"},null]}`, "4001=FAILED:X,4002=APPLIED:", false},
+		{"refusal beside {}", http.StatusOK, `{"PartialErrors":[{"Index":0,"Code":1234,"ErrorCode":"X"},{}]}`, "4001=FAILED:X,4002=UNCONFIRMED:", false},
+		{"refusal beside an indexed all-null entry", http.StatusOK, `{"PartialErrors":[{"Index":0,"Code":1234,"ErrorCode":"X"},{"Index":1,"Code":null,"ErrorCode":null}]}`, "4001=FAILED:X,4002=UNCONFIRMED:", false},
+		// A null slot in an array that is not one-per-list is not padding.
+		{"null slot in a longer array", http.StatusOK, `{"PartialErrors":[{"Index":1,"Code":1234,"ErrorCode":"X"},null,null]}`, "4001=UNCONFIRMED:,4002=FAILED:X", false},
 		{"numeric zero-code placeholder", http.StatusOK, `{"PartialErrors":[{"Index":0,"Code":0,"ErrorCode":null}]}`, "4001=APPLIED:,4002=APPLIED:", false},
 		{"empty-string placeholder", http.StatusOK, `{"PartialErrors":[{"Index":1,"Code":0,"ErrorCode":""}]}`, "4001=APPLIED:,4002=APPLIED:", false},
 		// A quoted "0" is the same default as 0 (isDefaultCode).

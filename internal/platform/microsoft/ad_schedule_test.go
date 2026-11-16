@@ -235,6 +235,12 @@ func TestCreateCampaign_CriterionErrorEntriesUseTheDefaultCodeRule(t *testing.T)
 			{"unreadable collection code", `[{"Code":true,"ErrorCode":null,"Index":0}]`, true, false},
 			{"unreadable nested code", `[{"BatchErrors":[{"Code":{"x":1},"Index":0}]}]`, true, false},
 			{"both codes explicitly null", `[{"Code":null,"ErrorCode":null,"Index":0}]`, true, true},
+			// One explicitly null code with the other absent says no more than both null.
+			{"Code null, ErrorCode absent", `[{"Code":null,"Index":0}]`, true, true},
+			{"ErrorCode null, Code absent", `[{"ErrorCode":null,"Index":0}]`, true, true},
+			{"nested Code null only", `[{"BatchErrors":[{"Code":null,"Index":0}]}]`, true, true},
+			// Neither key, or a null slot, is index-aligned padding here.
+			{"key-less padding", `[{"Index":0},null,{"BatchErrors":[{},null]}]`, false, false},
 		} {
 			t.Run(step.name+"/"+tc.name, func(t *testing.T) {
 				a := &targetingAPI{failCriterion: 2, criterionStatus: http.StatusOK,
@@ -282,6 +288,34 @@ func TestCreateCampaign_CriterionBothNullBesideARejectionIsUnconfirmed(t *testin
 			}
 			if res == nil || len(step.ids(res)) != step.n-1 {
 				t.Fatalf("recorded ids = %v, want the %d returned", step.ids(res), step.n-1)
+			}
+		})
+	}
+}
+
+// An entry with ONE explicitly null code and the other absent is as unreadable as both null:
+// beside a coded rejection the outcome is UNCONFIRMED, not a definite partial failure. A pair
+// with neither key beside the same rejection is padding, so that stays a definite partial.
+func TestCreateCampaign_CriterionSingleNullBesideARejectionIsUnconfirmed(t *testing.T) {
+	for _, tc := range []struct {
+		name, entry string
+		unconfirmed bool
+	}{
+		{"Code null, ErrorCode absent", `{"Code":null,"Index":1}`, true},
+		{"ErrorCode null, Code absent", `{"ErrorCode":null,"Index":1}`, true},
+		{"nested Code null", `{"BatchErrors":[{"Code":null,"Index":1}]}`, true},
+		{"key-less padding", `{"Index":1}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"CampaignCriterionIds":[null,7001],"NestedPartialErrors":[{"Code":1032,"ErrorCode":"X","Index":0},` + tc.entry + `]}`
+			a := &targetingAPI{failCriterion: 2, criterionStatus: http.StatusOK, criterionBody: body}
+			c := newTargetingClient(t, a)
+			res, err := c.CreateCampaign(context.Background(), scheduleCreateInput())
+			if err == nil || strings.Contains(err.Error(), "UNCONFIRMED") != tc.unconfirmed {
+				t.Fatalf("err = %v, want unconfirmed=%v", err, tc.unconfirmed)
+			}
+			if res == nil || len(res.AdScheduleCriterionIDs) != 1 {
+				t.Fatalf("recorded ids = %v, want the one returned", res.AdScheduleCriterionIDs)
 			}
 		})
 	}
