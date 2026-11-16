@@ -11,13 +11,22 @@ Package utils provides OpenTelemetry SDK setup utilities.
 
 ## Dependency security baseline
 
-The OpenTelemetry stable SDK and OTLP trace/metric exporters are pinned to
-`v1.45.0`, the log SDK and exporters to `v0.21.0`, and the Prometheus exporter to
-the matching `v0.67.0` release in `go.mod`. These releases fix endpoint URL
+The whole OpenTelemetry set moves together on one upstream release train, so
+the exporters always match the SDK they wrap. On the `v1.47.0` train: the stable
+API, SDK and OTLP trace/metric exporters, and — now that the log API and SDK
+are stable — `otel/log` and `otel/sdk/log`, are `v1.47.0`; the OTLP log
+exporters (`otlploggrpc`, `otlploghttp`) are `v0.23.0` and the Prometheus
+exporter `v0.69.0`; contrib `otelhttp` is `v0.72.0` and the Jaeger propagator
+`v1.47.0`. `v1.47.0` of `otel/sdk/log` fixes the `AttributeValueLengthLimit`
+bypass (Dependabot alert #24); the earlier baseline fixed endpoint URL
 disclosure in exporter configuration logs (GHSA-8wmf-6v46-5gfg), log gRPC
 exporter environment TLS certificate handling (GHSA-w34q-cm8f-9c5x), and log
 batch processor busy-spinning when its export buffer is full
 (GHSA-hjf4-fphr-2h65).
+
+The global logger provider is installed with `otel.SetLoggerProvider`; the
+`go.opentelemetry.io/otel/log/global` package is deprecated as of `v1.47.0`
+and staticcheck (SA1019) fails lint on it.
 
 Resource initialization imports semantic conventions `v1.43.0`, matching the
 SDK's default resource schema URL. `TestNewResource_NoSchemaConflict` checks
