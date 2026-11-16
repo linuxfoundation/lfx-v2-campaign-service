@@ -401,7 +401,8 @@ type microsoftAdGroupFinder interface {
 // composed ad group name under the campaign:
 //   - found: its id is recorded (adGroupId set, unconfirmed cleared; status stays failed, since
 //     its ad and keywords are still unknown), so the caller re-bids it with the rest;
-//   - definitely absent (a complete, readable list without it): unconfirmed is cleared, so it
+//   - definitely absent (a complete, readable list without it, every entry of which has a
+//     readable name — FindAdGroupByName refuses to call it absent otherwise): unconfirmed is cleared, so it
 //     no longer blocks — there is no ad group to re-bid;
 //   - otherwise (the lookup failed, the list was unreadable, the name matched an entry with no
 //     usable id, the id is one another entry already records, or no name was recorded) it stays

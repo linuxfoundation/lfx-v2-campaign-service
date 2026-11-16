@@ -718,6 +718,11 @@ func TestMicrosoftAdGroups_WriteBidReconcilesAnUnconfirmedLaterGroup(t *testing.
 		"list omitted":     msAdGroupLookup(http.StatusOK, `{}`),
 		"name with no id":  msAdGroupLookup(http.StatusOK, `{"AdGroups":[{"Id":null,"Name":"LFX | Ad Group | B"}]}`),
 		"already-recorded": msAdGroupLookup(http.StatusOK, `{"AdGroups":[{"Id":655,"Name":"LFX | Ad Group | B"}]}`),
+		// No name matched, but an entry has no readable name, so it may be the group sought:
+		// absence is not proven.
+		"id-only entry": msAdGroupLookup(http.StatusOK, `{"AdGroups":[{"Id":654,"Name":"LFX | Ad Group"},{"Id":656}]}`),
+		"null entry":    msAdGroupLookup(http.StatusOK, `{"AdGroups":[{"Id":654,"Name":"LFX | Ad Group"},null]}`),
+		"null name":     msAdGroupLookup(http.StatusOK, `{"AdGroups":[{"Id":656,"Name":null}]}`),
 	} {
 		t.Run(name, func(t *testing.T) {
 			camp := msUnconfirmedGroupCampaign()
@@ -732,6 +737,9 @@ func TestMicrosoftAdGroups_WriteBidReconcilesAnUnconfirmedLaterGroup(t *testing.
 			}
 			if string(camp.Result) != before {
 				t.Errorf("an unresolved lookup must not change the result: %s", camp.Result)
+			}
+			if g := msGroupResultBlob(t, camp.Result).AdGroups[1]; !g.Unconfirmed || g.AdGroupID != "" {
+				t.Errorf("group 2 = %+v, want the unconfirmed flag kept", g)
 			}
 		})
 	}

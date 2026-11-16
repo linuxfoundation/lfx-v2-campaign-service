@@ -1908,7 +1908,10 @@ the bid lever first reconciles it (`reconcileMicrosoftUnaddressedAdGroups`): `Fi
 looks up its recorded `adGroupName` under the campaign; found, its id is written into the result
 (`unconfirmed` cleared, status still `failed`) and it is re-bid; definitely absent (a complete,
 readable list without it), the flag is cleared. The reconciled result is persisted with the new
-bid by update-campaign-bid's `ReplaceCampaign` (the BidWriter contract now allows the adapter to
+bid by update-campaign-bid's `ReplaceCampaign` (absence needs every listed entry to carry a
+readable name: an entry with none, such as `{"Id":656}` or `null`, may be the group, so
+`FindAdGroupByName` reports it unestablished via `lookupNamedEntityCounted`; the create's
+find-first keeps `lookupNamedEntity`, since Microsoft's duplicate-name refusal backs it) (the BidWriter contract now allows the adapter to
 update `campaign.Result`), and dropped on any error. Only a lookup that cannot establish it (a
 failed or unreadable read, a match with no usable id, an id another entry records, no recorded
 name) keeps the `ErrBidUnwritable` refusal naming the entry, which a later retry can clear. The keyword lever needs no such rule: it acts only on a group the caller names, and an id

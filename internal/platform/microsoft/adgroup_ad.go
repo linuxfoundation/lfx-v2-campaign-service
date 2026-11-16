@@ -755,38 +755,46 @@ func isDuplicateAdGroupPartial(items []msErrorItem) bool {
 // (idempotent, retried on 429); the response carries the full set for the campaign in
 // one response (not paged), so the single-shot read can't miss a match.
 func (c *Client) findAdGroupByName(ctx context.Context, campaignID, name string) (string, error) {
+	id, _, err := c.findAdGroupByNameCounted(ctx, campaignID, name)
+	return id, err
+}
+
+// findAdGroupByNameCounted is findAdGroupByName that also reports how many listed ad groups had
+// no readable name (lookupNamedEntityCounted).
+func (c *Client) findAdGroupByNameCounted(ctx context.Context, campaignID, name string) (string, int, error) {
 	req := queryAdGroupsRequest{CampaignId: json.Number(campaignID)}
 	body, err := c.doRequest(ctx, http.MethodPost, "AdGroups/QueryByCampaignId", req, true)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	// STREAM the AdGroups array by name (see lookupNamedEntity) rather than Unmarshaling the
 	// whole set: a malformed up-to-8-MiB body packed with `{}` entries would otherwise amplify
 	// into tens of MiB per concurrent create. The omitted/null-vs-present distinction is
 	// preserved and validated (a truncated array fails closed), mirroring lookupCampaignByName.
-	id, matched, present, err := lookupNamedEntity(body, "AdGroups", name)
+	id, matched, present, unnamed, err := lookupNamedEntityCounted(body, "AdGroups", name)
 	if err != nil {
-		return "", fmt.Errorf("decode AdGroups/QueryByCampaignId response (%v): %w", err, errNoID)
+		return "", 0, fmt.Errorf("decode AdGroups/QueryByCampaignId response (%v): %w", err, errNoID)
 	}
 	if !present {
 		// The response OMITTED (or nulled, or truncated) the AdGroups field: we cannot confirm
 		// the ad group is absent, and a blind create could duplicate. Fail closed as UNCONFIRMED.
-		return "", fmt.Errorf("AdGroups/QueryByCampaignId response omitted the AdGroups field; cannot confirm ad group %q is absent: %w", name, errNoID)
+		return "", 0, fmt.Errorf("AdGroups/QueryByCampaignId response omitted the AdGroups field; cannot confirm ad group %q is absent: %w", name, errNoID)
 	}
 	if matched && id == "" {
 		// The name matched (ad-group names are case-insensitively unique under a campaign) but
 		// the id is null/unparseable: the group almost certainly exists. Reporting "" (absent)
 		// would issue POST /AdGroups and create a DUPLICATE. errNoID → UNCONFIRMED.
-		return "", fmt.Errorf("ad group %q found with no usable id: %w", name, errNoID)
+		return "", 0, fmt.Errorf("ad group %q found with no usable id: %w", name, errNoID)
 	}
-	return id, nil
+	return id, unnamed, nil
 }
 
 // FindAdGroupByName looks up the ad group named name under the campaign with one
 // GetAdGroupsByCampaignId read (findAdGroupByName). found=false with a nil error means a
-// complete, readable list held no such name — it is DEFINITELY absent. Any error (the read
-// failed, the list was omitted, truncated or unreadable, or the name matched an entry with no
-// usable id) means it could not be established either way. Used by the bid write to reconcile
+// complete, readable list, EVERY entry of which carried a readable name, held no such name — it
+// is DEFINITELY absent. Any error (the read failed, the list was omitted, truncated or
+// unreadable, the name matched an entry with no usable id, or no entry matched while some entry
+// had no readable name) means it could not be established either way. Used by the bid write to reconcile
 // a further ad group whose create was UNCONFIRMED (#563 gap 12).
 func (c *Client) FindAdGroupByName(ctx context.Context, campaignID, name string) (id string, found bool, err error) {
 	if !idRE.MatchString(campaignID) {
@@ -795,9 +803,14 @@ func (c *Client) FindAdGroupByName(ctx context.Context, campaignID, name string)
 	if strings.TrimSpace(name) == "" {
 		return "", false, errors.New("microsoft-ads ad group lookup: no ad group name to look up")
 	}
-	id, err = c.findAdGroupByName(ctx, campaignID, name)
+	id, unnamed, err := c.findAdGroupByNameCounted(ctx, campaignID, name)
 	if err != nil {
 		return "", false, err
+	}
+	if id == "" && unnamed > 0 {
+		// Absence is proven only by a complete list whose every entry has a readable name: an
+		// entry without one ({"Id":656}, null) may be the ad group sought.
+		return "", false, fmt.Errorf("AdGroups/QueryByCampaignId returned %d ad group(s) with no readable name, so ad group %q cannot be confirmed absent: %w", unnamed, name, errNoID)
 	}
 	return id, id != "", nil
 }
@@ -809,6 +822,21 @@ func (c *Client) FindAdGroupByName(ctx context.Context, campaignID, name string)
 // closed array. A truncated/unterminated array errors (fail closed), and an omitted/null field
 // yields present=false. Shared by findAdGroupByName; mirrors lookupCampaignByName exactly.
 func lookupNamedEntity(body []byte, field, name string) (id string, matched, present bool, err error) {
+	id, matched, present, _, err = lookupNamedEntityCounted(body, field, name)
+	return id, matched, present, err
+}
+
+// lookupNamedEntityCounted is lookupNamedEntity that also counts the array's entries with no
+// readable name (a null entry, or a missing, null or empty Name). The create's find-first does
+// not need the count: a name it could not see there is caught by Microsoft's duplicate-name
+// refusal on the create, which the create then reconciles. A caller that must PROVE absence
+// from the list (FindAdGroupByName) does: an unnamed entry may be the one it is looking for.
+func lookupNamedEntityCounted(body []byte, field, name string) (id string, matched, present bool, unnamed int, err error) {
+	id, matched, present, err = lookupNamedEntityInto(body, field, name, &unnamed)
+	return id, matched, present, unnamed, err
+}
+
+func lookupNamedEntityInto(body []byte, field, name string, unnamed *int) (id string, matched, present bool, err error) {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	tok, err := dec.Token()
 	if err != nil {
@@ -845,6 +873,9 @@ func lookupNamedEntity(body []byte, field, name string) (id string, matched, pre
 			}
 			if derr := dec.Decode(&e); derr != nil {
 				return "", false, false, derr
+			}
+			if strings.TrimSpace(e.Name) == "" {
+				*unnamed++
 			}
 			if matched || !strings.EqualFold(e.Name, name) {
 				continue
