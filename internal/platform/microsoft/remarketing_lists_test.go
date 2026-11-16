@@ -53,15 +53,20 @@ func TestListRemarketingLists_EmptyAccount(t *testing.T) {
 // Every answer this client cannot believe is refused whole, with no rows.
 func TestListRemarketingLists_RefusesAnUnbelievableAnswer(t *testing.T) {
 	for name, body := range map[string]string{
-		"no array":       `{}`,
-		"null array":     `{"Audiences":null}`,
-		"null entry":     `{"Audiences":[null]}`,
-		"no id":          `{"Audiences":[{"Type":"RemarketingList","Name":"x"}]}`,
-		"bad id":         `{"Audiences":[{"Id":"012","Type":"RemarketingList"}]}`,
-		"repeated id":    `{"Audiences":[{"Id":1,"Type":"RemarketingList"},{"Id":1,"Type":"RemarketingList"}]}`,
-		"other type":     `{"Audiences":[{"Id":1,"Type":"InMarket"}]}`,
-		"partial error":  `{"Audiences":[{"Id":1,"Type":"RemarketingList"}],"PartialErrors":[{"Code":4119,"ErrorCode":"X","Index":0}]}`,
-		"not json shape": `[]`,
+		"no array":          `{}`,
+		"null array":        `{"Audiences":null}`,
+		"null entry":        `{"Audiences":[null]}`,
+		"no id":             `{"Audiences":[{"Type":"RemarketingList","Name":"x"}]}`,
+		"bad id":            `{"Audiences":[{"Id":"012","Type":"RemarketingList"}]}`,
+		"repeated id":       `{"Audiences":[{"Id":1,"Type":"RemarketingList"},{"Id":1,"Type":"RemarketingList"}]}`,
+		"other type":        `{"Audiences":[{"Id":1,"Type":"InMarket"}]}`,
+		"partial error":     `{"Audiences":[{"Id":1,"Type":"RemarketingList"}],"PartialErrors":[{"Code":4119,"ErrorCode":"X","Index":0}]}`,
+		"not json shape":    `[]`,
+		"bad search size":   `{"Audiences":[{"Id":1,"Type":"RemarketingList","SearchSize":"12k"}]}`,
+		"fractional size":   `{"Audiences":[{"Id":1,"Type":"RemarketingList","SearchSize":1.5}]}`,
+		"negative size":     `{"Audiences":[{"Id":1,"Type":"RemarketingList","SearchSize":"-3"}]}`,
+		"bad duration":      `{"Audiences":[{"Id":1,"Type":"RemarketingList","MembershipDuration":"thirty"}]}`,
+		"duration overflow": `{"Audiences":[{"Id":1,"Type":"RemarketingList","MembershipDuration":99999999999}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, body })
@@ -88,5 +93,29 @@ func TestListRemarketingLists_UpstreamFailure(t *testing.T) {
 	c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusBadRequest, `{"Code":1001}` })
 	if _, err := c.ListRemarketingLists(context.Background()); err == nil || !strings.Contains(err.Error(), "remarketing list read failed") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// Microsoft's REST JSON sends a long as a quoted string: SearchSize "12000" (and a quoted
+// MembershipDuration) is read like the bare number, and null is absent.
+func TestListRemarketingLists_QuotedAndNumericLongs(t *testing.T) {
+	c, _ := kwRecorder(t, func(string, string) (int, string) {
+		return http.StatusOK, `{"Audiences":[` +
+			`{"Id":1,"Type":"RemarketingList","MembershipDuration":"30","SearchSize":"12000"},` +
+			`{"Id":2,"Type":"RemarketingList","MembershipDuration":540,"SearchSize":9007199254740993},` +
+			`{"Id":3,"Type":"RemarketingList","MembershipDuration":null,"SearchSize":null}]}`
+	})
+	rows, err := c.ListRemarketingLists(context.Background())
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("got (%+v, %v)", rows, err)
+	}
+	if r := rows[0]; r.SearchSize == nil || *r.SearchSize != 12000 || r.MembershipDuration == nil || *r.MembershipDuration != 30 {
+		t.Errorf("quoted row = %+v", r)
+	}
+	if r := rows[1]; r.SearchSize == nil || *r.SearchSize != 9007199254740993 || r.MembershipDuration == nil || *r.MembershipDuration != 540 {
+		t.Errorf("numeric row = %+v", r)
+	}
+	if r := rows[2]; r.SearchSize != nil || r.MembershipDuration != nil {
+		t.Errorf("null row = %+v", r)
 	}
 }

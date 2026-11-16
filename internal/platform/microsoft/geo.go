@@ -694,9 +694,17 @@ type createCampaignCriterionsResponse struct {
 	NestedPartialErrors  boundedNestedErrorItems `json:"NestedPartialErrors"`
 }
 
-// boundedGeoIDs is boundedNumberIDs bounded by maxGeoTargets. Every id matters here (one per
-// requested country), so the 16-item error-array bound would silently truncate a 30-country
-// request — the same defect boundedKeywordIDs exists to avoid.
+// maxCampaignCriterionResults bounds what one AddCampaignCriterions response decode retains,
+// ids and nested error collections alike. It must cover the largest criterion call this client
+// sends: an ad schedule of MaxAdSchedules (49) windows, more than the geographic calls (at most
+// maxGeoTargets, 30) or the device-expanded bid adjustments (at most 3 + 5 + 2). It bounds the
+// DECODE only; the geographic input limit stays maxGeoTargets.
+const maxCampaignCriterionResults = 64
+
+// boundedGeoIDs is boundedNumberIDs bounded by maxCampaignCriterionResults. Every id matters
+// here (one per criterion sent), so a smaller bound would silently truncate a full call — a
+// 31-49 window ad schedule read as short, so UNCONFIRMED, on every success — the same defect
+// boundedKeywordIDs exists to avoid.
 type boundedGeoIDs []*json.Number
 
 func (b *boundedGeoIDs) UnmarshalJSON(data []byte) error {
@@ -716,7 +724,7 @@ func (b *boundedGeoIDs) UnmarshalJSON(data []byte) error {
 		if err := dec.Decode(&n); err != nil {
 			return err
 		}
-		if len(*b) < maxGeoTargets {
+		if len(*b) < maxCampaignCriterionResults {
 			*b = append(*b, n)
 		}
 	}
@@ -757,7 +765,10 @@ func (b *boundedNestedErrorItems) UnmarshalJSON(data []byte) error {
 		if rawCodePresent(it.Code) || rawCodePresent(it.ErrorCode) || it.BatchErrors.AnyErrors {
 			b.AnyErrors = true
 		}
-		if len(b.Items) < maxDecodedErrorItems {
+		// Retained up to maxCampaignCriterionResults, not maxDecodedErrorItems: the array can be
+		// positional (one slot per criterion, null-padded), and a 49-criterion call must not read
+		// as truncated, so UNCONFIRMED, merely because its placeholders outnumber 16.
+		if len(b.Items) < maxCampaignCriterionResults {
 			b.Items = append(b.Items, it)
 			continue
 		}
@@ -1071,7 +1082,7 @@ func (c *Client) postCampaignCriterions(ctx context.Context, campaignID, what, n
 	}
 
 	// A TRUNCATED error array is NOT evidence of success. boundedNestedErrorItems retains
-	// maxDecodedErrorItems entries while this call sends up to maxGeoTargets, so a rejection
+	// maxCampaignCriterionResults entries, at least as many as any call sends, so a rejection
 	// past the cap was DISCARDED during decode and the surviving prefix can read as clean.
 	// Absence of a rejection in a truncated array is not absence of a rejection — refusing
 	// beats reporting an untargeted campaign as targeted. (Same invariant the keyword path

@@ -57,8 +57,9 @@ const (
 	criterionTypeGender = "GenderCriterion"
 )
 
-// The accepted segment names in Microsoft's spelling and send order. Age is the five adult
-// ranges; Unknown is not offered.
+// The accepted segment names and send order. Age is the five adult ranges; Unknown is not offered
+// (nor the overlapping ThirtyFiveToFiftyFour / FiftyFiveAndAbove). The public age keys are
+// spelled correctly; msAgeRangeWire translates the one Microsoft misspells.
 var (
 	deviceNames = []string{"Computers", "Smartphones", "Tablets"}
 	ageRanges   = []string{"EighteenToTwentyFour", "TwentyFiveToThirtyFour", "ThirtyFiveToFortyNine", "FiftyToSixtyFour", "SixtyFiveAndAbove"}
@@ -155,6 +156,23 @@ func ValidateBidAdjustments(in BidAdjustments) ([]BidAdjustment, error) {
 	return out, nil
 }
 
+// msAgeRangeWire maps a public age key to Microsoft's AgeRange enum spelling. The v13 AgeRange
+// reference spells 35-49 "ThirtyFiveToFourtyNine" (sic, "Fourty"); the other four adult ranges
+// are spelled as this service spells them (checked against
+// learn.microsoft.com/en-us/advertising/campaign-management-service/agerange?view=bingads-13).
+// The caller-facing key stays ThirtyFiveToFortyNine; only the criterion sent carries the
+// misspelling.
+var msAgeRangeWire = map[string]string{
+	"ThirtyFiveToFortyNine": "ThirtyFiveToFourtyNine",
+}
+
+func ageRangeWire(segment string) string {
+	if w, ok := msAgeRangeWire[segment]; ok {
+		return w
+	}
+	return segment
+}
+
 type msDeviceCriterion struct {
 	Type       string `json:"Type"`
 	DeviceName string `json:"DeviceName"`
@@ -212,7 +230,7 @@ func (c *Client) createBidAdjustmentCriterions(ctx context.Context, campaignID s
 		case criterionTypeDevice:
 			crit = msDeviceCriterion{Type: a.CriterionType, DeviceName: a.Segment}
 		case criterionTypeAge:
-			crit = msAgeCriterion{Type: a.CriterionType, AgeRange: a.Segment}
+			crit = msAgeCriterion{Type: a.CriterionType, AgeRange: ageRangeWire(a.Segment)}
 		default:
 			crit = msGenderCriterion{Type: a.CriterionType, GenderType: a.Segment}
 		}

@@ -198,3 +198,31 @@ func TestBidAdjustmentCriteria(t *testing.T) {
 		})
 	}
 }
+
+// Microsoft's AgeRange enum spells 35-49 "ThirtyFiveToFourtyNine" (sic): the public key
+// ThirtyFiveToFortyNine is sent in that spelling, and the other ranges as given.
+func TestCreateCampaign_AgeRangeWireSpelling(t *testing.T) {
+	a := &targetingAPI{}
+	c := newTargetingClient(t, a)
+	in := bidAdjustmentCreateInput()
+	in.BidAdjustments = BidAdjustments{Age: map[string]float64{
+		"thirtyfivetofortynine": 10, "EighteenToTwentyFour": 1, "TwentyFiveToThirtyFour": 2, "FiftyToSixtyFour": 3, "SixtyFiveAndAbove": 4,
+	}}
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	b := a.bodyOf("CampaignCriterions", 2)
+	for _, wire := range []string{"EighteenToTwentyFour", "TwentyFiveToThirtyFour", "ThirtyFiveToFourtyNine", "FiftyToSixtyFour", "SixtyFiveAndAbove"} {
+		if !strings.Contains(b, `"AgeRange":"`+wire+`"`) {
+			t.Errorf("body lacks AgeRange %s: %s", wire, b)
+		}
+	}
+	if strings.Contains(b, "ThirtyFiveToFortyNine") {
+		t.Errorf("the public spelling reached Microsoft: %s", b)
+	}
+	// The step names the caller's key, not the wire spelling.
+	if !strings.Contains(strings.Join(res.Steps, "\n"), "ThirtyFiveToFortyNine +10%") {
+		t.Errorf("steps = %v", res.Steps)
+	}
+}

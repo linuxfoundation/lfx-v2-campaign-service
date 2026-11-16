@@ -8,7 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"strconv"
+	"strings"
 )
 
 // ---------------------------------------------------------------------------
@@ -51,13 +54,38 @@ type listRemarketingListsRequest struct {
 }
 
 type msRemarketingList struct {
-	Id                 *json.Number `json:"Id"`
-	Type               string       `json:"Type"`
-	Name               string       `json:"Name"`
-	Description        string       `json:"Description"`
-	Scope              string       `json:"Scope"`
-	MembershipDuration *int         `json:"MembershipDuration"`
-	SearchSize         *int64       `json:"SearchSize"`
+	Id          *json.Number `json:"Id"`
+	Type        string       `json:"Type"`
+	Name        string       `json:"Name"`
+	Description string       `json:"Description"`
+	Scope       string       `json:"Scope"`
+	// MembershipDuration (an int) and SearchSize (a long) are decoded raw: Microsoft's REST JSON
+	// sends a long as a quoted string ("12000"), and may quote either, so both spellings are
+	// accepted and validated by wholeNumberField rather than failing the whole answer.
+	MembershipDuration json.RawMessage `json:"MembershipDuration"`
+	SearchSize         json.RawMessage `json:"SearchSize"`
+}
+
+// wholeNumberField reads an optional non-negative whole number sent as a JSON number (12000) or a
+// quoted one ("12000"), at most max. Absent or null is (nil, true); anything else that is not
+// such a number (a fraction, a negative, text, an overflow) is (nil, false).
+func wholeNumberField(raw json.RawMessage, max int64) (*int64, bool) {
+	if len(raw) == 0 || isJSONNullRaw(raw) {
+		return nil, true
+	}
+	var n json.Number
+	if json.Unmarshal(raw, &n) != nil {
+		return nil, false
+	}
+	s := strings.TrimSpace(n.String())
+	if s == "" || strings.HasPrefix(s, "+") {
+		return nil, false
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || v < 0 || v > max {
+		return nil, false
+	}
+	return &v, true
 }
 
 type listRemarketingListsResponse struct {
@@ -122,9 +150,22 @@ func (c *Client) ListRemarketingLists(ctx context.Context) ([]RemarketingList, e
 		if a.Type != audienceTypeRemarketingList {
 			return nil, fmt.Errorf("%w: position %d is not a remarketing list", ErrRemarketingListsMalformed, i+1)
 		}
+		size, ok := wholeNumberField(a.SearchSize, math.MaxInt64)
+		if !ok {
+			return nil, fmt.Errorf("%w: position %d has an unreadable SearchSize", ErrRemarketingListsMalformed, i+1)
+		}
+		dur64, ok := wholeNumberField(a.MembershipDuration, math.MaxInt32)
+		if !ok {
+			return nil, fmt.Errorf("%w: position %d has an unreadable MembershipDuration", ErrRemarketingListsMalformed, i+1)
+		}
+		var dur *int
+		if dur64 != nil {
+			d := int(*dur64)
+			dur = &d
+		}
 		out = append(out, RemarketingList{
 			ID: id, Name: a.Name, Description: a.Description, Scope: a.Scope,
-			MembershipDuration: a.MembershipDuration, SearchSize: a.SearchSize,
+			MembershipDuration: dur, SearchSize: size,
 		})
 	}
 	return out, nil

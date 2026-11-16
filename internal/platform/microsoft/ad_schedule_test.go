@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -156,5 +157,52 @@ func TestCreateCampaign_AdScheduleOnAReusedCampaignStops(t *testing.T) {
 		if p == "Campaigns" || p == "CampaignCriterions" || p == "AdGroups" {
 			t.Fatalf("a mutation was sent to a reused campaign: %v", calls)
 		}
+	}
+}
+
+// fullWeekSchedule is seven windows on each of the seven days: MaxAdSchedules (49).
+func fullWeekSchedule() []AdSchedule {
+	out := make([]AdSchedule, 0, MaxAdSchedules)
+	for _, d := range scheduleDays {
+		for h := 0; h < MaxAdSchedulesPerDay; h++ {
+			out = append(out, AdSchedule{Day: d, StartHour: h, EndHour: h + 1})
+		}
+	}
+	return out
+}
+
+// A 49-window schedule that Microsoft accepts in full is CONFIRMED: every id survives the decode
+// (the criterion response bound covers MaxAdSchedules, not just the 30 geo targets), including
+// when NestedPartialErrors is positional and null-padded to one slot per window.
+func TestCreateCampaign_FullWeekAdScheduleIsConfirmed(t *testing.T) {
+	ids := make([]string, MaxAdSchedules)
+	nulls := make([]string, MaxAdSchedules)
+	for i := range ids {
+		ids[i] = strconv.Itoa(7000 + i)
+		nulls[i] = "null"
+	}
+	for name, body := range map[string]string{
+		"plain":           "",
+		"positional null": `{"CampaignCriterionIds":[` + strings.Join(ids, ",") + `],"NestedPartialErrors":[` + strings.Join(nulls, ",") + `]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := &targetingAPI{}
+			if body != "" {
+				a.failCriterion, a.criterionStatus, a.criterionBody = 2, http.StatusOK, body
+			}
+			c := newTargetingClient(t, a)
+			in := scheduleCreateInput()
+			in.AdSchedules = fullWeekSchedule()
+			res, err := c.CreateCampaign(context.Background(), in)
+			if err != nil {
+				t.Fatalf("CreateCampaign: %v", err)
+			}
+			if n := len(res.AdScheduleCriterionIDs); n != MaxAdSchedules {
+				t.Fatalf("schedule ids = %d, want %d", n, MaxAdSchedules)
+			}
+			if !strings.Contains(strings.Join(res.Steps, "\n"), "Ad schedule attached: 49 day-time criteria") {
+				t.Errorf("steps = %v", res.Steps)
+			}
+		})
 	}
 }

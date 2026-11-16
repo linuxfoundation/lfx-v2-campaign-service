@@ -1642,7 +1642,9 @@ the call `CheckRemarketingLists` makes, `POST Audiences/QueryByIds` with `Type: 
 but with `AudienceIds: null`, which v13 documents as "every audience of the type". There is no
 paging, so the answer is complete. It is a read, retried on 429. Each row carries `Id`, `Name`,
 `Description`, `Scope`, and `MembershipDuration` and `SearchSize` when sent (nil otherwise, never
-0). An answer this client cannot believe is `ErrRemarketingListsMalformed` with no rows, and the
+0). Both are decoded raw and read by `wholeNumberField`, which accepts a JSON number or a quoted
+one (Microsoft's REST JSON quotes a long: `"SearchSize":"12000"`); a fraction, a negative, text or
+an overflow (MembershipDuration above int32) makes the answer unbelievable (#613 review). An answer this client cannot believe is `ErrRemarketingListsMalformed` with no rows, and the
 service answers 503 with nothing partial: no `Audiences` array, a null entry, an id that is not the
 canonical spelling of a positive int64 or repeats, an entry of another type (the filter was not
 applied), more than 5,000 entries, or any partial error with a present code. A zero or null
@@ -1794,7 +1796,13 @@ after the ad schedule and before the ad group, through `postCampaignCriterions` 
 `criterionStepError`. Microsoft requires all three `DeviceCriterion` types in the same add, so
 `bidAdjustmentCriteria` expands any device request to Computers, Smartphones and Tablets (an
 unrequested one at 0, no change); every result is checked and every id recorded, and the step
-names the requested adjustments plus the devices sent at +0% (#613 review). The three keys join the fields that stop a create on a campaign found by
+names the requested adjustments plus the devices sent at +0% (#613 review). Microsoft's `AgeRange`
+enum misspells 35-49 as `ThirtyFiveToFourtyNine`; the public key stays `ThirtyFiveToFortyNine`
+and `ageRangeWire` sends Microsoft's spelling (the other four adult ranges match the v13
+reference as spelled). The `AddCampaignCriterions` response decode (`boundedGeoIDs` and
+`boundedNestedErrorItems`) retains up to `maxCampaignCriterionResults` (64) ids and error
+collections, covering a 49-window ad schedule; the geographic input limit stays `maxGeoTargets`
+(30). The three keys join the fields that stop a create on a campaign found by
 name. The ids are recorded as `BidAdjustmentCriterionIDs`.
 
 The dispatcher (`internal/dispatch/microsoft_bid_adjustments.go`) refuses a value that is not an

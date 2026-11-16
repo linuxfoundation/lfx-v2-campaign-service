@@ -856,7 +856,9 @@ ageBidAdjustments?: object        (any casing, each segment once) to a whole per
 genderBidAdjustments?: object     Device keys Computers, Smartphones, Tablets, -100..900 (-100
                                   stops serving on that device). Age keys EighteenToTwentyFour,
                                   TwentyFiveToThirtyFour, ThirtyFiveToFortyNine, FiftyToSixtyFour,
-                                  SixtyFiveAndAbove; gender keys Male, Female; both -90..900. Set
+                                  SixtyFiveAndAbove (ThirtyFiveToFortyNine is sent in Microsoft's
+                                  AgeRange spelling, ThirtyFiveToFourtyNine); gender keys Male,
+                                  Female; both -90..900. Set
                                   on the CAMPAIGN as BiddableCampaignCriterion with a
                                   DeviceCriterion / AgeCriterion / GenderCriterion and a
                                   BidMultiplier, in one call right after the ad schedule and before
