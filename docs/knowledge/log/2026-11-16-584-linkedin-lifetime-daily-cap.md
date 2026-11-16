@@ -1,6 +1,6 @@
 # 2026-11-16 — #584 a LinkedIn lifetime budget can carry a daily cap
 
-**Feature** — LF often runs a LinkedIn ad set with a lifetime budget and a daily cap (OSS Japan
+**Creation** — LF often runs a LinkedIn ad set with a lifetime budget and a daily cap (OSS Japan
 2026: $1,000 lifetime, $20 daily). campaign-service sent `dailyBudget` or `totalBudget`, never both.
 
 - Request: optional `linkedInConfig.dailyCapUsd`, valid only with `lifetimeBudget: true`. The

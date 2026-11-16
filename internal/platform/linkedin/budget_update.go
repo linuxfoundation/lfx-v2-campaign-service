@@ -273,7 +273,7 @@ func (c *Client) GetCampaignBudget(ctx context.Context, campaignID string) (*Cam
 }
 
 // UpdateCampaignBudget sets a campaign's budget amount on the platform. lifetime selects which
-// of the two mutually exclusive fields is written (totalBudget vs dailyBudget); the caller is
+// amount field is written (totalBudget vs dailyBudget; a $set of one leaves the other in force, which is what keeps a lifetime campaign's daily cap, #584); the caller is
 // responsible for having established that this matches the campaign's CURRENT pacing model —
 // this function writes what it is told.
 //

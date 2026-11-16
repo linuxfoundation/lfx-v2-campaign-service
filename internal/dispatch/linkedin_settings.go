@@ -45,10 +45,12 @@ const (
 //     linkedinRecordedObjective), so a row with a recorded strategy has a recorded objective. A
 //     row without one (legacy, adopted) reads `unknown`, never a guessed objective.
 //
-// BUDGET. The create path sets exactly one of dailyBudget/totalBudget in USD, so a campaign
-// reporting one is compared as that type. One reporting BOTH (LinkedIn allows a daily budget
-// with a lifetime cap) or NEITHER (e.g. under a campaign group's DYNAMIC budget optimization,
-// where the group's budget is shared) leaves both budget fields `unknown`; so does a non-USD or
+// BUDGET. The create path sets dailyBudget or totalBudget in USD, or totalBudget plus a
+// dailyBudget cap when linkedInConfig.dailyCapUsd is set (#584). A campaign reporting one is
+// compared as that type. One reporting BOTH (a lifetime budget with a daily cap, which the
+// row's single recorded amount cannot describe) or NEITHER (e.g. under a campaign group's DYNAMIC
+// budget optimization, where the group's budget is shared) leaves both budget fields `unknown`;
+// so does a non-USD or
 // unreadable amount. Amounts are read EXACTLY as micro-units — never through a float — and
 // rendered by the same function as every other reader, so a sub-cent amount cannot round into
 // equality with the recorded one.

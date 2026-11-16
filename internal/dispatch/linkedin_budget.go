@@ -28,8 +28,9 @@ import (
 //     cannot be attached to a second campaign, so the shared-budget refusal that dominates the
 //     Google path has no analogue and is deliberately absent rather than forgotten. Meta is
 //     the platform where that guard reappears, in the CBO form.
-//   - The two amount fields ARE still mutually exclusive in practice, and which one a campaign
-//     uses is the pacing model. So the pacing-match guard below is the same guard Google makes,
+//   - Which amount field a campaign carries is its pacing model: totalBudget present means
+//     lifetime pacing, and a dailyBudget beside it is a daily CAP (#584); dailyBudget alone
+//     means daily pacing. So the pacing-match guard below is the same guard Google makes,
 //     reached through a different fact.
 //
 // NOTHING IS MUTATED UNTIL EVERY GUARD HAS PASSED, so a caller seeing any refusal below knows
@@ -122,7 +123,7 @@ func (d *LinkedInDispatcher) WriteBudget(ctx context.Context, projectID string, 
 		return fmt.Errorf("write linkedin campaign budget: campaign %s has a lifetime budget with a daily cap, so only its lifetime amount can be changed here; change the daily cap in LinkedIn Campaign Manager: %w",
 			campaign.PlatformCampaignID, domain.ErrBudgetUnwritable)
 	case !hasDaily && !hasTotal:
-		return fmt.Errorf("write linkedin campaign budget: campaign %s reports no budget at all, so which of the two mutually exclusive amount fields to write cannot be established: %w",
+		return fmt.Errorf("write linkedin campaign budget: campaign %s reports no budget at all, so which amount field to write cannot be established: %w",
 			campaign.PlatformCampaignID, domain.ErrBudgetUnwritable)
 	}
 	upstreamType := model.BudgetDaily
