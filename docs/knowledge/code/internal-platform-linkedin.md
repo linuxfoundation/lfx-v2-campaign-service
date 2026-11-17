@@ -1044,7 +1044,8 @@ until it expires. The offset parameters are LinkedIn's documented ones but not v
 duplicates dropped); `CreateCampaign` runs it before the campaign group, and the dispatcher's
 `PreflightCreate` runs it for the synchronous 400.
 
-Once the campaign is ensured — created or reused by name — and before images and dark posts,
+Once the campaign is ensured — created, or reused by name when `Targeting` is not set (with it
+set, a reused campaign stops before this step; see Caller targeting) — and before images and dark posts,
 `associateConversions` sends one `PUT campaignConversions/(campaign:<urn>,conversion:<urn>)` per
 id, with both URNs percent-encoded by `encodeURNForPath` and `noResponseBody` (LinkedIn answers
 204). `pathValidRE` admits `(`, `)` and `,` for that one Rest.li compound key. A PUT on the key is
@@ -1056,3 +1057,71 @@ conversion. Each failure is a step naming the
 id and only the HTTP status or transport class (`associationFailureClass`), never LinkedIn's text,
 and the split lands on every later result through `withConversions` as `ConversionsAssociated` /
 `ConversionsFailed`; the dispatcher reports a non-empty `ConversionsFailed` as `created_degraded`.
+
+## Caller targeting (`targeting_criteria.go`, #552)
+
+`CampaignInput.Targeting` carries `linkedInConfig.targeting`, the caller's own `targetingCriteria`
+in LinkedIn's shape (Targeting Criteria Facet URNs, li-lms-2026-10). `ValidateTargeting` is the
+one authority on it and makes no request, so the dispatcher's `PreflightCreate` (a synchronous
+400) and `CreateCampaign` (a pre-flight refusal before the campaign group) share it. Each
+facet key has a full value pattern (numeric ids with no leading zero; `staffCountRanges` is the
+closed set of LinkedIn's nine ranges); `groups` and `interfaceLocales` are include-only, as
+LinkedIn's "Special Note" says. Duplicates in a list are dropped on a copy; the caller's value is
+not mutated.
+
+The two documented combination bans — titles with seniorities or job functions, employers with
+industries or company sizes — are refused whenever both are INCLUDED, not only when they sit in
+separate (ANDed) clauses. The docs forbid only ANDing them; refusing the ORed form too is
+deliberately stricter until a live probe shows LinkedIn accepts it.
+
+`ValidateTargeting` also takes the config's `EmployerExclusions` and checks them MERGED with
+`exclude.employers` — well formed, within the 200-employer cap, and not naming an included
+employer — because the build merges them after the campaign group exists, and a rule the merge
+could break must be refused before it. Employers compare by id (`trailingID`), so a company and
+an organization URN of one id are one employer — `cleanFacet` de-duplicates `employers` by that id
+too, keeping the first URN, so the per-list 200 cap counts the identities the merge and the wire
+count, not their spellings.
+
+A campaign `createSponsoredCampaign` REUSES by name is not given `Targeting` — it reaches only the
+body of a campaign this run creates, and the found campaign's `targetingCriteria` are not read
+back. So with `Targeting` set, `CreateCampaign` stops right after the campaign is ensured, before
+conversions, images, dark posts and creatives, and returns a partial result (group, campaign id
+and name, no creative) with a `targeting NOT applied to reused campaign` error for reconciliation,
+the conservative choice Microsoft makes for its create-time-only targeting
+(`internal/platform/microsoft/campaign.go`). A profile create (no `Targeting`) still reuses the
+campaign and attaches creatives: its criteria derive from the service's own profile, and that
+retry path predates #552. Pinned by
+`TestCreateCampaign_ReusedCampaignWithTargetingStopsBeforeCreatives`.
+
+That partial sets `CampaignResult.TargetingNotApplied`. A campaign id with no creative would
+otherwise read as `created_degraded` in the dispatcher, a status the orchestrator preserves and
+REUSES, so a repeated request would report success for targeting never applied. The dispatcher
+stamps the flagged partial `pending` instead (see internal-dispatch), keeping the campaign id for
+repair.
+
+On the targeting path the config's `employerExclusions` are read through
+`targetingEmployerExclusions`: `validFacets` (non-blank, trimmed, company or organization
+namespace) and then `cleanFacet`'s `employers` rule, so a configured exclusion meets the bar
+`exclude.employers` does. `validFacets` alone took any digits, so `urn:li:company:01111` passed
+and, compared by string id, escaped the overlap check beside an included
+`urn:li:organization:1111`. `ValidateTargeting` and `buildCustomTargetingCriteria` share the
+helper, so what is checked is what is merged. The profile path (`buildTargetingCriteria`,
+`validatePrerequisites`) still reads the list through `validFacets` alone, unchanged. Pinned by
+`TestTargetingEmployerExclusions_MeetTheEmployersRule`.
+
+`buildCustomTargetingCriteria` renders the geo clause first, then one `include.and` clause per
+entry with facet keys sorted (so the body is deterministic), and `exclude.or` from the caller's
+excludes plus the runtime config's `EmployerExclusions`. With `Targeting` set, the profile is not
+read at all — `validatePrerequisites` is skipped, but the org and the employer exclusions are
+still validated, since both still reach the wire. The create path's role gate
+(`service.LinkedInMarketingOpsInputs`) names the segment facets through
+`FacetAudienceMatchingSegments` and `FacetDynamicSegments`, and is pinned to agree with the facet
+list by `TestEveryLinkedInFacetIsClassifiedForTheMarketingOpsGate`.
+
+`ValidateTargeting` walks each include clause and `Exclude` in sorted key order, so with two bad
+facets the refusal names the same (alphabetically first) one on every attempt. Its "both included
+and excluded" check treats `audienceMatchingSegments` and `dynamicSegments` as one namespace
+(`segKey`): both take `urn:li:adSegment:<id>`, and one segment included under one facet and
+excluded under the other is one audience both targeted and excluded, which would otherwise pass
+and reach the campaign POST after the group exists (#557 review). Pinned by the cross-facet cases
+in `TestValidateTargeting` and by `TestValidateTargeting_RefusalIsDeterministic`.

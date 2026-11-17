@@ -157,20 +157,22 @@ type Service interface {
 	// authorization service unavailable). The gateway admits every
 	// campaign_manager, which includes foundation executive directors, and those
 	// resources belong to the Google Ads account every foundation shares. The same
-	// check, made once with the Google one, covers linkedInConfig.conversions
-	// (#552): conversion rules on the LinkedIn ad account, and the LF system
-	// account is the fallback connection of every project without its own. META
-	// CREATIVE OPTIONS: metaConfig.callToAction outside its allow-list,
-	// metaConfig.conversionEvent outside its allow-list or on an objective other
-	// than conversions, or either one while its deployment flag
-	// (META_CALL_TO_ACTION_ENABLED, META_CONVERSION_EVENT_ENABLED) is not "true",
-	// is a synchronous 400 "invalid campaign config: metaConfig.callToAction..."
-	// or "invalid campaign config: metaConfig.conversionEvent...". Likewise
-	// metaConfig.optimizationGoal outside LINK_CLICKS and LANDING_PAGE_VIEWS, on
-	// an objective other than traffic, LANDING_PAGE_VIEWS with manual bidding, or
-	// the field while META_OPTIMIZATION_GOAL_ENABLED is not "true", is a
-	// synchronous 400. So is a metaConfig.frequencyCap on an objective other than
-	// awareness, with maxImpressions or intervalDays outside 1-90, or while
+	// check, made once with the Google one, covers linkedInConfig.targeting
+	// audienceMatchingSegments and dynamicSegments, included or excluded, and
+	// linkedInConfig.conversions (#552): they name ad segments and conversion
+	// rules on the LinkedIn ad account, and the LF system account is the fallback
+	// connection of every project without its own. META CREATIVE OPTIONS:
+	// metaConfig.callToAction outside its allow-list, metaConfig.conversionEvent
+	// outside its allow-list or on an objective other than conversions, or either
+	// one while its deployment flag (META_CALL_TO_ACTION_ENABLED,
+	// META_CONVERSION_EVENT_ENABLED) is not "true", is a synchronous 400 "invalid
+	// campaign config: metaConfig.callToAction..." or "invalid campaign config:
+	// metaConfig.conversionEvent...". Likewise metaConfig.optimizationGoal outside
+	// LINK_CLICKS and LANDING_PAGE_VIEWS, on an objective other than traffic,
+	// LANDING_PAGE_VIEWS with manual bidding, or the field while
+	// META_OPTIMIZATION_GOAL_ENABLED is not "true", is a synchronous 400. So is a
+	// metaConfig.frequencyCap on an objective other than awareness, with
+	// maxImpressions or intervalDays outside 1-90, or while
 	// META_FREQUENCY_CAP_ENABLED is not "true". So is a metaConfig.adSchedule
 	// (days 0-6 and whole-hour startMinute/endMinute in the ad account's time
 	// zone) on a daily budget (Meta schedules only lifetime budgets), with invalid
@@ -1313,120 +1315,151 @@ type CampaignCreateInput struct {
 	// character, a non-numeric instagramUserId, and any of the three with a
 	// non-string JSON type (null counts as absent) are refused here with a 400,
 	// before any job exists. An absent instagramUserId is not refused, but Meta
-	// will not publish an Instagram placement without it. LINKEDIN CONVERSIONS
-	// (#552): linkedInConfig takes an optional `conversions` list of LinkedIn
-	// conversion rule ids as numeric strings, e.g. ["104012"] (at most 20,
-	// duplicates dropped). Once the campaign exists (created or reused by name)
-	// each is associated with it by a Campaign Conversions PUT; a failed
-	// association does not stop the create, and the campaign is then
-	// created_degraded with the id in the result's conversionsFailed and a step to
-	// associate it in Campaign Manager (before activating a campaign this run
-	// created PAUSED; a campaign reused by name keeps its own status and may
-	// already be serving). Refused with a 400 before any job exists: an entry that
-	// is not a JSON string, a URN instead of an id, a non-numeric or zero-padded
-	// id, an empty list, more than 20 ids, and any conversions while the
-	// deployment has not set LINKEDIN_ADS_CONVERSIONS_ENABLED. Conversion rules
-	// belong to the ad account, so conversions also require global_marketing_ops
-	// on the project (403; 503 when the check cannot be made). REDDIT CONVERSION
-	// EVENT (#549): redditConfig.conversionEvent names the pixel event a
-	// conversions campaign optimizes toward, sent as the campaign's and the ad
-	// group's optimization_goal: PURCHASE, SIGN_UP, LEAD, PAGE_VISIT,
-	// VIEW_CONTENT, ADD_TO_CART, ADD_TO_WISHLIST or SEARCH, case-insensitive.
-	// Omitted means PURCHASE, as before. It is accepted only with objective
-	// conversions (also the default when objective is omitted) and only while the
-	// deployment sets REDDIT_CONVERSION_EVENT_ENABLED to "true". An unknown value,
-	// another objective, an explicit null, an empty or non-string value, a case
-	// variant of the key, or the field while the flag is off is refused
-	// synchronously with 400 "invalid campaign config:
-	// redditConfig.conversionEvent: ..." before any job exists. REDDIT EXCLUSIONS
-	// (#549): redditConfig takes `excludedSubreddits` (subreddit names, an
-	// optional r/ prefix stripped, each 2-21 letters, digits or underscores, at
-	// most 100, case-insensitive duplicates dropped) and `excludedGeoTargets` (ISO
-	// 3166-1 alpha-2 country codes, at most 50, uppercased and de-duplicated),
-	// sent as the ad group's targeting.excluded_communities and
-	// targeting.excluded_geolocations on every ad-group attempt (the retry that
-	// drops rejected communities and interests keeps them). A name also in
-	// `subreddits`, or a code also targeted (geoTargets, or the US default when
-	// geoTargets is empty), is refused. Both are OFF unless
-	// REDDIT_TARGETING_EXCLUSIONS_ENABLED is exactly "true" on the deployment. A
-	// blank or invalid entry, an overlap, a list over its cap, a value that is not
-	// an array of strings (null reads as absent), or either list while the flag is
-	// off, is refused with 400 "invalid campaign config: redditConfig.<field>:
-	// ..." before any job exists. REDDIT PLACEMENTS (#549): redditConfig takes
-	// `placements` (FEED, COMMENTS_PAGE), `platforms` (DESKTOP, MOBILE_NATIVE,
-	// MOBILE_WEB) and `expandTargeting` (boolean), sent as the ad group's
-	// targeting.locations, targeting.platforms and targeting.expand_targeting on
-	// every ad-group attempt. Values are case-insensitive, de-duplicated and sent
-	// upper-case in that fixed order. Omitted (or an empty list) keeps the
-	// long-standing default: both placements, platforms ALL, expansion true; ALL
-	// is not an accepted entry. All three are OFF unless
-	// REDDIT_PLACEMENT_TARGETING_ENABLED is exactly "true". A blank or unknown
-	// entry, a list that is not an array of strings or an expandTargeting that is
-	// not a boolean (null reads as absent), or any of the three set while the flag
-	// is off (expandTargeting: true included), is refused with 400 "invalid
+	// will not publish an Instagram placement without it. LINKEDIN TARGETING
+	// (#552): linkedInConfig takes an optional `targeting` object, {"include":
+	// [{<facet>: [urn, ...], ...}, ...], "exclude": {<facet>: [urn, ...]}}, sent
+	// as the campaign's targetingCriteria: each include entry (1 to 10) is one
+	// ANDed clause whose facets are ORed, after the geoTargets clause, and exclude
+	// is ORed. Facets: skills, groups, industries, titles, seniorities,
+	// jobFunctions, employers, staffCountRanges, interfaceLocales, interests,
+	// audienceMatchingSegments and dynamicSegments, with LinkedIn's URN values
+	// (urn:li:skill:<id>, urn:li:interest:<id>, urn:li:adSegment:<id>, ...);
+	// groups and interfaceLocales only under include. Set, it replaces
+	// targetingProfile and the fixed job-function and seniority targeting; the
+	// config's employerExclusions still join exclude.employers. Refused with a 400
+	// before any job exists: a targeting with an unknown key (a misspelled
+	// exclude) or the wrong JSON shape, an unknown facet, a malformed value, an
+	// empty clause or facet, more than 100 values in a facet (200 for employers),
+	// a value both included and excluded (audienceMatchingSegments and
+	// dynamicSegments count as one facet here), staffCountRanges both included and
+	// excluded, titles included with seniorities or jobFunctions, employers
+	// included with industries or staffCountRanges, an employerExclusions that is
+	// not an array of strings or holds a null, an included employer that is also
+	// in employerExclusions, more than 200 employers in exclude.employers once
+	// employerExclusions is merged, and any targeting while the deployment has not
+	// set LINKEDIN_ADS_TARGETING_ENABLED. A campaign found by name in the campaign
+	// group is not given targeting: with targeting set, the create stops there,
+	// before any conversion, image, dark post or creative, and fails with the
+	// campaign recorded for reconciliation (linkedin targeting NOT applied to
+	// reused campaign <id>); the row stays pending with the campaign id and
+	// targetingNotApplied in its result, so a repeat answers reconciliation
+	// required instead of success. audienceMatchingSegments and dynamicSegments
+	// name ad segments on the ad account, so they also require
+	// global_marketing_ops on the project (403; 503 when the check cannot be
+	// made). LINKEDIN CONVERSIONS (#552): linkedInConfig takes an optional
+	// `conversions` list of LinkedIn conversion rule ids as numeric strings, e.g.
+	// ["104012"] (at most 20, duplicates dropped). Once the campaign exists
+	// (created, or reused by name when linkedInConfig.targeting is not set) each
+	// is associated with it by a Campaign Conversions PUT; a failed association
+	// does not stop the create, and the campaign is then created_degraded with the
+	// id in the result's conversionsFailed and a step to associate it in Campaign
+	// Manager (before activating a campaign this run created PAUSED; a campaign
+	// reused by name keeps its own status and may already be serving). Refused
+	// with a 400 before any job exists: an entry that is not a JSON string, a URN
+	// instead of an id, a non-numeric or zero-padded id, an empty list, more than
+	// 20 ids, and any conversions while the deployment has not set
+	// LINKEDIN_ADS_CONVERSIONS_ENABLED. Conversion rules belong to the ad account,
+	// so conversions also require global_marketing_ops on the project (403; 503
+	// when the check cannot be made). REDDIT CONVERSION EVENT (#549):
+	// redditConfig.conversionEvent names the pixel event a conversions campaign
+	// optimizes toward, sent as the campaign's and the ad group's
+	// optimization_goal: PURCHASE, SIGN_UP, LEAD, PAGE_VISIT, VIEW_CONTENT,
+	// ADD_TO_CART, ADD_TO_WISHLIST or SEARCH, case-insensitive. Omitted means
+	// PURCHASE, as before. It is accepted only with objective conversions (also
+	// the default when objective is omitted) and only while the deployment sets
+	// REDDIT_CONVERSION_EVENT_ENABLED to "true". An unknown value, another
+	// objective, an explicit null, an empty or non-string value, a case variant of
+	// the key, or the field while the flag is off is refused synchronously with
+	// 400 "invalid campaign config: redditConfig.conversionEvent: ..." before any
+	// job exists. REDDIT EXCLUSIONS (#549): redditConfig takes
+	// `excludedSubreddits` (subreddit names, an optional r/ prefix stripped, each
+	// 2-21 letters, digits or underscores, at most 100, case-insensitive
+	// duplicates dropped) and `excludedGeoTargets` (ISO 3166-1 alpha-2 country
+	// codes, at most 50, uppercased and de-duplicated), sent as the ad group's
+	// targeting.excluded_communities and targeting.excluded_geolocations on every
+	// ad-group attempt (the retry that drops rejected communities and interests
+	// keeps them). A name also in `subreddits`, or a code also targeted
+	// (geoTargets, or the US default when geoTargets is empty), is refused. Both
+	// are OFF unless REDDIT_TARGETING_EXCLUSIONS_ENABLED is exactly "true" on the
+	// deployment. A blank or invalid entry, an overlap, a list over its cap, a
+	// value that is not an array of strings (null reads as absent), or either list
+	// while the flag is off, is refused with 400 "invalid campaign config:
+	// redditConfig.<field>: ..." before any job exists. REDDIT PLACEMENTS (#549):
+	// redditConfig takes `placements` (FEED, COMMENTS_PAGE), `platforms` (DESKTOP,
+	// MOBILE_NATIVE, MOBILE_WEB) and `expandTargeting` (boolean), sent as the ad
+	// group's targeting.locations, targeting.platforms and
+	// targeting.expand_targeting on every ad-group attempt. Values are
+	// case-insensitive, de-duplicated and sent upper-case in that fixed order.
+	// Omitted (or an empty list) keeps the long-standing default: both placements,
+	// platforms ALL, expansion true; ALL is not an accepted entry. All three are
+	// OFF unless REDDIT_PLACEMENT_TARGETING_ENABLED is exactly "true". A blank or
+	// unknown entry, a list that is not an array of strings or an expandTargeting
+	// that is not a boolean (null reads as absent), or any of the three set while
+	// the flag is off (expandTargeting: true included), is refused with 400
+	// "invalid campaign config: redditConfig.<field>: ..." before any job exists.
+	// REDDIT DAILY BUDGET (#549): redditConfig.budgetType is the pacing of
+	// budgetUsd: "lifetime" (the default, goal_type LIFETIME_SPEND, as before) or
+	// "daily" (goal_type DAILY_SPEND, so budgetUsd is a per-day cap),
+	// case-insensitive; the campaign row records the same budget_type. It is
+	// accepted only while the deployment sets REDDIT_DAILY_BUDGET_ENABLED to
+	// "true". An unknown value, an explicit null, an empty or non-string value, a
+	// case variant of the key, or the field (either value) while the flag is off
+	// is refused synchronously with 400 "invalid campaign config:
+	// redditConfig.budgetType: ..." before any job exists. REDDIT GENDER, LANGUAGE
+	// AND DAYPARTING (#549): redditConfig.gender ("female" or "male", sent as the
+	// ad group's targeting.gender), redditConfig.languages (ISO 639-1 codes from
+	// Reddit's enum, sent as targeting.languages) and redditConfig.schedule
+	// ([{startDay, startHour, endDay, endHour}], days 0-6 from Sunday and hours
+	// 0-23, at most 50 windows, sent as the campaign's schedule, which replaces
+	// every ad group's under campaign budget optimization) are accepted only while
+	// the deployment sets REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED to "true". A
+	// wrong JSON type, an unknown or blank value, a schedule window that is
+	// incomplete, out of range, starts where it ends or repeats another, or any of
+	// the three while the flag is off is refused synchronously with 400 "invalid
 	// campaign config: redditConfig.<field>: ..." before any job exists. REDDIT
-	// DAILY BUDGET (#549): redditConfig.budgetType is the pacing of budgetUsd:
-	// "lifetime" (the default, goal_type LIFETIME_SPEND, as before) or "daily"
-	// (goal_type DAILY_SPEND, so budgetUsd is a per-day cap), case-insensitive;
-	// the campaign row records the same budget_type. It is accepted only while the
-	// deployment sets REDDIT_DAILY_BUDGET_ENABLED to "true". An unknown value, an
-	// explicit null, an empty or non-string value, a case variant of the key, or
-	// the field (either value) while the flag is off is refused synchronously with
-	// 400 "invalid campaign config: redditConfig.budgetType: ..." before any job
-	// exists. REDDIT GENDER, LANGUAGE AND DAYPARTING (#549): redditConfig.gender
-	// ("female" or "male", sent as the ad group's targeting.gender),
-	// redditConfig.languages (ISO 639-1 codes from Reddit's enum, sent as
-	// targeting.languages) and redditConfig.schedule ([{startDay, startHour,
-	// endDay, endHour}], days 0-6 from Sunday and hours 0-23, at most 50 windows,
-	// sent as the campaign's schedule, which replaces every ad group's under
-	// campaign budget optimization) are accepted only while the deployment sets
-	// REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED to "true". A wrong JSON type, an
-	// unknown or blank value, a schedule window that is incomplete, out of range,
-	// starts where it ends or repeats another, or any of the three while the flag
-	// is off is refused synchronously with 400 "invalid campaign config:
-	// redditConfig.<field>: ..." before any job exists. REDDIT ONE AD PER VARIANT
-	// (#549): while the deployment sets REDDIT_AD_PER_VARIANT_ENABLED to "true", a
-	// create that authors its post (redditConfig.imageUrl or imageAssetId, no
-	// postUrl) with 2 to 5 redditConfig.variants authors one promoted post (that
-	// variant's headline, utm_content=variant-N) and one ad per variant; the
-	// campaign result records every ad id as adIds (adId stays the first) and
-	// variantAds, a failed variant leaves the others in place and marks the
-	// campaign created_degraded with a step naming the failed variants, and the
-	// status toggle cascades over every ad. More than 5 variants, or a blank or
-	// over-300-character variant headline, is refused synchronously with 400
-	// "invalid campaign config: redditConfig.variants...: ..." before any job
-	// exists. X TARGETING (#564): twitterConfig takes `geoTargets` (ISO 3166-1
-	// alpha-2 country codes, at most 50, uppercased and de-duplicated) and
-	// `languages` (X language values such as en, at most 20, lowercased and
-	// de-duplicated). Before anything is created each country is resolved with X's
-	// GET targeting_criteria/locations (location_type COUNTRIES, exactly one
-	// country-level entry required) and the languages are checked against GET
-	// targeting_criteria/languages; the new line item then gets one LOCATION or
-	// LANGUAGE criterion (operator EQ) per value, after the line item and before
-	// the promoted tweet. A value X does not offer, or a lookup that cannot be
-	// read, fails the job with nothing created; a criterion that fails stops the
-	// create before any tweet, with the PAUSED campaign and line item reported.
-	// Such a partial create is retained: repeating the request answers
-	// reconciliation required rather than re-dispatching, so an operator completes
-	// the targeting in X Ads Manager. When a create does find its line item by
-	// name, it changes that line item's targeting only if X reports it PAUSED,
-	// adding just the missing criteria before the tweet; otherwise, or if its
-	// status or criteria cannot be read, it stops before the tweet. twitterConfig
-	// also takes `keywords` (broad keywords, each trimmed, 1-80 characters with no
-	// control character, case-insensitive duplicates dropped, at most 60) and
-	// `interestIds` (X interest ids, 1-19 digits, each listed by GET
-	// targeting_criteria/interests, which is walked to its end before anything is
-	// created; at most 60), sent as BROAD_KEYWORD and INTEREST criteria (operator
-	// EQ) after the languages, with the same failure and reuse rules (#564 gap 4).
-	// All four are OFF unless TWITTER_CREATE_TARGETING_ENABLED is exactly "true".
-	// A blank or malformed entry, a list over its cap, a value that is not an
-	// array of strings (null reads as absent), or any list while the flag is off,
-	// is refused with 400 "invalid campaign config: twitterConfig.<field>: ..."
-	// before any job exists. X CUSTOM AUDIENCES (#564): twitterConfig takes
-	// `customAudienceIds` and `excludedCustomAudienceIds`, arrays of X custom
-	// audience ids (list-twitter-ads-custom-audiences offers them) to target and
-	// to exclude, sent as CUSTOM_AUDIENCE targeting criteria on the new line item
-	// with operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
+	// ONE AD PER VARIANT (#549): while the deployment sets
+	// REDDIT_AD_PER_VARIANT_ENABLED to "true", a create that authors its post
+	// (redditConfig.imageUrl or imageAssetId, no postUrl) with 2 to 5
+	// redditConfig.variants authors one promoted post (that variant's headline,
+	// utm_content=variant-N) and one ad per variant; the campaign result records
+	// every ad id as adIds (adId stays the first) and variantAds, a failed variant
+	// leaves the others in place and marks the campaign created_degraded with a
+	// step naming the failed variants, and the status toggle cascades over every
+	// ad. More than 5 variants, or a blank or over-300-character variant headline,
+	// is refused synchronously with 400 "invalid campaign config:
+	// redditConfig.variants...: ..." before any job exists. X TARGETING (#564):
+	// twitterConfig takes `geoTargets` (ISO 3166-1 alpha-2 country codes, at most
+	// 50, uppercased and de-duplicated) and `languages` (X language values such as
+	// en, at most 20, lowercased and de-duplicated). Before anything is created
+	// each country is resolved with X's GET targeting_criteria/locations
+	// (location_type COUNTRIES, exactly one country-level entry required) and the
+	// languages are checked against GET targeting_criteria/languages; the new line
+	// item then gets one LOCATION or LANGUAGE criterion (operator EQ) per value,
+	// after the line item and before the promoted tweet. A value X does not offer,
+	// or a lookup that cannot be read, fails the job with nothing created; a
+	// criterion that fails stops the create before any tweet, with the PAUSED
+	// campaign and line item reported. Such a partial create is retained:
+	// repeating the request answers reconciliation required rather than
+	// re-dispatching, so an operator completes the targeting in X Ads Manager.
+	// When a create does find its line item by name, it changes that line item's
+	// targeting only if X reports it PAUSED, adding just the missing criteria
+	// before the tweet; otherwise, or if its status or criteria cannot be read, it
+	// stops before the tweet. twitterConfig also takes `keywords` (broad keywords,
+	// each trimmed, 1-80 characters with no control character, case-insensitive
+	// duplicates dropped, at most 60) and `interestIds` (X interest ids, 1-19
+	// digits, each listed by GET targeting_criteria/interests, which is walked to
+	// its end before anything is created; at most 60), sent as BROAD_KEYWORD and
+	// INTEREST criteria (operator EQ) after the languages, with the same failure
+	// and reuse rules (#564 gap 4). All four are OFF unless
+	// TWITTER_CREATE_TARGETING_ENABLED is exactly "true". A blank or malformed
+	// entry, a list over its cap, a value that is not an array of strings (null
+	// reads as absent), or any list while the flag is off, is refused with 400
+	// "invalid campaign config: twitterConfig.<field>: ..." before any job exists.
+	// X CUSTOM AUDIENCES (#564): twitterConfig takes `customAudienceIds` and
+	// `excludedCustomAudienceIds`, arrays of X custom audience ids
+	// (list-twitter-ads-custom-audiences offers them) to target and to exclude,
+	// sent as CUSTOM_AUDIENCE targeting criteria on the new line item with
+	// operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
 	// given; at most 60 per list; no id twice and none in both lists. geoTargets,
 	// languages, keywords, interestIds, customAudienceIds and
 	// excludedCustomAudienceIds together may name at most 60 criteria per create,
