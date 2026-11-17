@@ -478,12 +478,13 @@ type Service interface {
 	// because it lists campaigns of every foundation in the account. Answers 400
 	// unless LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is on, and 400 for an account
 	// the system row cannot address (nothing is sent). A missing or unusable LF
-	// system LinkedIn connection is 500, an operator's fault, and an expired
-	// system credential is 503. The campaign list pages LinkedIn's search finder
-	// 100 at a time, up to 50 pages, and fails with 503 beyond that or on a page
-	// it cannot trust: a repeated key, a campaign without a valid id, a non-blank
-	// name or an ACTIVE or PAUSED status, or a campaign listed twice. A pure read:
-	// nothing is persisted.
+	// system LinkedIn connection is 500, an operator's fault, and so is an expired
+	// or revoked LF system token or a rejected LF application credential: only an
+	// operator can reconnect the LF row. A transient LinkedIn failure is 503. The
+	// campaign list pages LinkedIn's search finder 100 at a time, up to 50 pages,
+	// and fails with 503 beyond that or on a page it cannot trust: a repeated key,
+	// a campaign without a valid id, a non-blank name or an ACTIVE or PAUSED
+	// status, or a campaign listed twice. A pure read: nothing is persisted.
 	ListLinkedinAdsAdoptableCampaigns(context.Context, *ListLinkedinAdsAdoptableCampaignsPayload) (res *LinkedinAdsAdoptableCampaigns, err error)
 	// Report the LinkedIn ad account and organization a create for {project_id}
 	// actually uses, and the accounts linkedInConfig.adAccountId may name (#581),

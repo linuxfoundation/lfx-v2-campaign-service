@@ -3589,8 +3589,13 @@ uses the same resolver and `linkedin.Client.ListAccountCampaignRefs` (the monito
 campaign walk, no analytics). Unlike the monitor, which tolerates an untrusted page, that read refuses
 the whole list with `linkedin.ErrUntrustworthyCampaignList` (503 through the default discovery arm)
 when a page repeats a key or a row lacks a valid id, a non-blank name or an ACTIVE/PAUSED status, or
-an id repeats. Pinned by `TestLinkedIn_AdoptFromASystemAccount`,
-`TestLinkedIn_AdoptFromASystemAccountRefusals`, `TestLinkedIn_ListAdoptableCampaigns` and
+an id repeats. Both paths pass every connection-defect return through `res.systemScoped` (the
+list via `linkedInLookupError`, the lookup inline): an expired or revoked LF token or a rejected LF
+application credential on the system row is `ErrSystemConnectionNotUsable` (500, the operator's),
+never the bare `ErrConnectionNotUsable` that adopt-campaign answers with the project-repair 409; on
+the project's own row the call is a no-op. Pinned by `TestLinkedIn_AdoptFromASystemAccount`,
+`TestLinkedIn_AdoptFromASystemAccountRefusals`, `TestLinkedIn_ListAdoptableCampaigns`,
+`TestLinkedIn_AdoptLookupSystemCredentialRejected` and
 `TestListAccountCampaignRefs_RefusesUntrustworthyCandidates`.
 
 ## Forced-primary mode: the system account as the account of record

@@ -65,15 +65,20 @@ func (d *LinkedInDispatcher) LookupCampaign(ctx context.Context, projectID strin
 		return nil, err
 	}
 	accountID := strings.TrimSpace(res.accountID)
+	// res.systemScoped on every connection-defect return below: with account_id the row is the LF
+	// system row, and an expired LF token or a rejected application credential is the operator's
+	// fault (ErrSystemConnectionNotUsable, 500), never the project's 409 "repair your connection".
+	// It is a no-op on the project's own row, so it is applied unconditionally, as
+	// linkedInLookupError does for the adoptable-campaign list.
 	if !linkedin.ValidAccountID(accountID) {
-		return nil, adoptionAccountIDUnusable(platform, projectID)
+		return nil, res.systemScoped(adoptionAccountIDUnusable(platform, projectID))
 	}
 	client := d.cachedLinkedInClient(projectID, platform, res, creds, accountID)
 
 	settings, err := client.GetCampaignSettings(ctx, platformCampaignID)
 	if err != nil {
 		if linkedinConnectionDefect(err) {
-			return nil, linkedinExpiry(fmt.Errorf("look up linkedin campaign: %w", err))
+			return nil, res.systemScoped(linkedinExpiry(fmt.Errorf("look up linkedin campaign: %w", err)))
 		}
 		return nil, fmt.Errorf("look up linkedin campaign: %w", err)
 	}
