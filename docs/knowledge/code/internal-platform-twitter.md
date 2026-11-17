@@ -1728,7 +1728,7 @@ letters or digits, drops duplicates and caps the list at 10; it counts toward th
 per-create cap. Every value must be listed by `GET targeting_criteria/platforms` before anything is
 created; the check shares `resolveListedValues` with the conversation topics, and the criterion
 sends X's spelling. Same default-off `TWITTER_CREATE_TARGETING_ENABLED` flag; not role-gated. Not
-verified live. Devices, age and gender followed; see the next section.
+verified live. Devices, age and gender followed; see "Create-time devices, age and gender" below.
 
 ## Create-time audience expansion (`CampaignInput.AudienceExpansion`, #564 gap 11)
 

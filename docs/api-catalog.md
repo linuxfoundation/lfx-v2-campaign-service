@@ -3735,7 +3735,9 @@ excludedCustomAudienceIds?: string[]
                                   `invalid campaign config: twitterConfig.<field>: …`, as is a
                                   value that is not an array of strings (null reads as absent).
                                   ALL THE TARGETING LISTS TOGETHER (`geoTargets`, `languages`,
-                                  `keywords`, `interestIds`, `conversationTopics`, `platforms`, `devices`, `ageBucket`, `gender`, `followerLookalikeUserIds`, `customAudienceIds`,
+                                  `keywords`, `interestIds`, `conversationTopics`, `platforms`,
+                                  `devices`, `ageBucket`, `gender`, `followerLookalikeUserIds`,
+                                  `customAudienceIds`,
                                   `excludedCustomAudienceIds`, counted after de-duplication) may
                                   name at most 60 criteria per create: each is
                                   a separate X write paced at one per second inside the two-minute
