@@ -159,6 +159,9 @@ func TestPlanGrantInstallRefusesFlagsThatCannotTakeEffect(t *testing.T) {
 		"grants-only with row flags": {provider: li, raw: []string{"1:2"}, only: true, rowFlags: true, want: "need a credential run"},
 		"malformed grant":            {provider: li, raw: []string{"12"}, want: "account:org"},
 		"clear on another provider":  {provider: model.ProviderMetaAds, clear: true, want: "linkedin-ads only"},
+		"clear with grants":          {provider: li, raw: []string{"1:2"}, clear: true, want: "opposite things"},
+		"non-numeric grant id":       {provider: li, raw: []string{"abc:123"}, want: "bare LinkedIn number"},
+		"duplicate grant":            {provider: li, raw: []string{"1:2", "1:3"}, want: "more than once"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := planGrantInstall(tc.provider, tc.raw, tc.clear, tc.only, tc.rowFlags)

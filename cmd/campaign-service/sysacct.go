@@ -252,7 +252,8 @@ func (g *grantList) Set(v string) error {
 }
 
 // planGrantInstall checks the grant flags against each other and the provider before anything
-// is read or opened, and parses each -linkedin-grant. rowFlags reports whether the run also asks
+// is read or opened, and parses and shape-checks each -linkedin-grant, so an input fault never
+// follows a credential write. rowFlags reports whether the run also asks
 // to change the row itself (-account-id, -clear-account-id, -config), which a grants-only run
 // cannot do: it writes no credential, and InstallSystemCredentials is the only writer of those.
 func planGrantInstall(provider model.Provider, raw []string, clear, grantsOnly, rowFlags bool) ([]model.LinkedInAccountGrant, error) {
@@ -265,6 +266,9 @@ func planGrantInstall(provider model.Provider, raw []string, clear, grantsOnly, 
 	if grantsOnly && rowFlags {
 		return nil, errors.New("-grants-only changes grants alone; -account-id, -clear-account-id and -config need a credential run")
 	}
+	if clear && len(raw) > 0 {
+		return nil, errors.New("-clear-linkedin-grants and -linkedin-grant ask for opposite things; supply one")
+	}
 	grants := make([]model.LinkedInAccountGrant, 0, len(raw))
 	for _, v := range raw {
 		g, err := bootstrap.ParseLinkedInGrant(v)
@@ -272,6 +276,12 @@ func planGrantInstall(provider model.Provider, raw []string, clear, grantsOnly, 
 			return nil, err
 		}
 		grants = append(grants, g)
+	}
+	// The shape rules (numeric ids, label bound, control characters, duplicates) need no row, so
+	// they run here, before a credential run writes anything. An empty row pair skips only the
+	// checks against the row's own account, which InstallLinkedInGrants repeats with the row.
+	if err := bootstrap.ValidateLinkedInGrants(grants, "", ""); err != nil {
+		return nil, err
 	}
 	return grants, nil
 }
