@@ -153,12 +153,12 @@ type credsSource struct {
 	// the forced path gates on Provider.IsPaidAds(), so email resolution is untouched
 	// even with the flag on.
 	//
-	// The account-monitor endpoints do NOT consult this flag. Google Ads' resolves through
-	// resolveExisting (resolveGoogleAdsMonitorClient, #591), keyed on the monitored customer, so
-	// it behaves the same with the flag on or off: a project on the system account monitors the
-	// system customer, scoped to its own recorded campaigns. The others resolve the project's own
-	// connection only (resolveOwned*) — an account-monitor read must never answer with another
-	// tenant's spend, and theirs are not all campaign-scoped. On those, with the flag on, a project with
+	// The account-monitor endpoints do NOT consult this flag. Google Ads' (#591), Meta's and
+	// Reddit's (#615) resolve through resolveExisting (monitorResolver), keyed on the monitored
+	// account, so they behave the same with the flag on or off: a project on the system account
+	// monitors the system account, scoped to its own recorded campaigns. LinkedIn's resolves the
+	// project's own connection only (resolveOwned*) — an account-monitor read must never answer
+	// with another tenant's spend, and LinkedIn's is not campaign-scoped. On it, with the flag on, a project with
 	// no connection of its own gets the monitor endpoint's ordinary no-connection 404 rather
 	// than falling through to the system account the create path uses; a project WITH its own
 	// connection resolves credentials for its own account, which will not see campaigns living
@@ -269,6 +269,36 @@ type credsResolver func(ctx context.Context, projectID string, provider model.Pr
 func (s *credsSource) existingResolver(creationAccountID string) credsResolver {
 	return func(ctx context.Context, projectID string, provider model.Provider) (*resolved, error) {
 		return s.resolveExisting(ctx, projectID, provider, creationAccountID)
+	}
+}
+
+// monitorResolver is the credential rule for the account-monitor reads that are reduced to the
+// project's own recorded campaigns: Google Ads (#591), Meta and Reddit (#615). It resolves
+// through resolveExisting with the monitored accountID as the creation account — the project's
+// own row when it is configured for accountID, otherwise the LF system row when THAT is, and
+// otherwise the project's own row again, so its own guards answer as they did before.
+//
+// One rule is added on top: the LF system credential reads only the account the LF system row is
+// configured for. resolveExisting hands back the system row when the project has no connection
+// of its own whatever accountID names, and no other account can hold a campaign this service
+// created on the system account. That case is noOwnConnection (404), decided before any client
+// is built, so nothing is sent upstream.
+//
+// What makes lending the shared credential safe at all is the caller, not this function:
+// Orchestrator.ReadAccountCampaignMetrics reduces the read to the campaigns this service
+// recorded for the project (scopeAccountMonitor, filterMonitorRows), answers an empty scope
+// without calling the dispatcher, and refuses a campaign recorded under another account with a
+// 409. A monitor whose dispatcher is not an AccountMonitorScoper must not use this resolver.
+func (s *credsSource) monitorResolver(accountID string) credsResolver {
+	return func(ctx context.Context, projectID string, provider model.Provider) (*resolved, error) {
+		res, err := s.resolveExisting(ctx, projectID, provider, accountID)
+		if err != nil {
+			return nil, err
+		}
+		if res.fromSystem && !matchesAccount(res.accountID, accountID) {
+			return nil, noOwnConnection(projectID, provider)
+		}
+		return res, nil
 	}
 }
 

@@ -1236,26 +1236,6 @@ func TestReddit_ListAccountCampaignMetrics_RejectsInvalidDays(t *testing.T) {
 	}
 }
 
-// TestReddit_ListAccountCampaignMetrics_RefusesSystemFallback pins round-17 review's finding
-// that round-16's fix was incomplete: resolveMonitorClient's accountID-equality check alone did
-// NOT close the credential-scope gap for Reddit, because a caller who supplied the shared LF
-// system account's id satisfied that check and was served its campaigns. scopedConnReader is
-// configured with a valid connection ONLY under model.SystemProjectID, and the requested
-// accountID matches that connection's own account — so if the fallback were still consulted,
-// both the credential resolution AND the equality check would succeed. A passing test here
-// proves the fallback itself is refused before the equality check ever runs.
-func TestReddit_ListAccountCampaignMetrics_RefusesSystemFallback(t *testing.T) {
-	d := NewRedditDispatcher(&scopedConnReader{
-		rows: map[string]*model.Connection{model.SystemProjectID: activeRedditConn(goodRedditCreds)},
-	}, identityEncryptor{})
-
-	_, err := d.ListAccountCampaignMetrics(context.Background(), "cncf", model.ProviderRedditAds, "t2_acct", 30)
-	if !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("err = %v, want domain.ErrNotFound — the read must refuse the system row and "+
-			"report the project as having no connection of its own", err)
-	}
-}
-
 // TestReddit_ListAccountCampaignMetrics_RejectsMismatchedAccount pins round-18 review's fix:
 // a well-formed account id that simply isn't the one the project's own connection resolves to
 // must surface as domain.ErrAccountNotManagedByConnection, not domain.ErrConnectionNotUsable —
