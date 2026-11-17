@@ -753,8 +753,20 @@ campaigns. `LinkedInDispatcher` implements `service.AccountMonitorScoper` and
   its default account or a grant (a grant-scoped copy). The system credential naming any other
   account keeps the 404; a project's own connection naming another account keeps
   `ErrAccountNotManagedByConnection`.
-- `MonitorScopeForAccount` refuses a recorded campaign from another account, an unrecorded one, and
-  a malformed id. `account_id` is optional; omitted, it is the one account the campaigns record.
+- `MonitorScopeForAccount` refuses a recorded campaign from another account and a malformed id.
+  `account_id` is optional; omitted, it is the one account the campaigns record.
+- A campaign that records no creation account (created before accounts were stamped) depends on
+  the connection serving the read (#628), through `service.AccountMonitorConnectionScoper`:
+  `MonitorScoperForConnection` resolves the read's credential once, before the scope is judged and
+  again for the post-read revalidation. On the project's OWN connection such a campaign is kept, as
+  belonging to that connection's account: `requireLinkedInManagedAccount` has proven the account
+  is `account_id`, and that is what the monitor assumed before #581, when it read the own account
+  whole. On the LF system row (and whenever the credential cannot be resolved) it is omitted and
+  logged, not a 409: the shared credential cannot prove the id is this project's, and the response
+  has no field to report omitted campaigns in. A recorded mismatch still fails either way.
+  Omitting `account_id` when no live campaign records one stays a 409
+  (`MonitorAccountForScope` has no ctx to resolve a connection); a caller on its own connection
+  names its account, as it had to before #581.
 - The method declares `AccountMonitorScopeConflictError` (409) and `classifyMonitorError` answers it.
 - Behaviour change for a project with its OWN LinkedIn connection: its monitor now shows only the
   campaigns this service recorded for it, not every campaign on its account. Hand-built campaigns

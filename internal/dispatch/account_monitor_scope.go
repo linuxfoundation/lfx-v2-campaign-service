@@ -4,8 +4,10 @@
 package dispatch
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -146,17 +148,74 @@ func (d *LinkedInDispatcher) MonitorScopePrecheck(accountID string) error {
 	return nil
 }
 
-// MonitorScopeForAccount implements service.AccountMonitorScoper for LinkedIn (#581). The monitor
-// is campaign-scoped because one LF system credential now serves several foundations' ad
-// accounts (its default and its grants): an account-wide read through it would show one
-// foundation another's campaigns. A campaign recorded under a different account than accountID
-// fails the read, and so does one that records none (requireRecordedMonitorProvenance): a
-// LinkedIn campaign id read on another foundation's account must never be reported as this
-// project's.
+// MonitorScopeForAccount implements service.AccountMonitorScoper for LinkedIn (#581) with the
+// LF system row's rule, the one that applies whenever the orchestrator has not been told the read
+// is served by the project's own connection (MonitorScoperForConnection). The monitor is
+// campaign-scoped because one LF system credential serves several foundations' ad accounts (its
+// default and its grants): an account-wide read through it would show one foundation another's
+// campaigns. A campaign recorded under a different account than accountID fails the read
+// (ErrCampaignAccountMismatch). One that records no account is OMITTED and logged rather than
+// failing the whole monitor: on the shared credential its id cannot be proven to be this
+// project's, and the response has no field to report it in.
 func (d *LinkedInDispatcher) MonitorScopeForAccount(scope []model.ProjectCampaignScope, accountID string) ([]string, error) {
+	return linkedInMonitorScope(scope, accountID, false, "")
+}
+
+var _ service.AccountMonitorConnectionScoper = (*LinkedInDispatcher)(nil)
+
+// MonitorScoperForConnection implements service.AccountMonitorConnectionScoper for LinkedIn
+// (#628). When projectID's read of accountID resolves to the project's OWN connection, a live
+// campaign that records no creation account is kept, as belonging to that connection's account:
+// requireLinkedInManagedAccount has proven the account is accountID, and that is what the monitor
+// assumed before #581 when it read the project's own account whole. Campaigns created before
+// account stamping therefore keep appearing for a project on its own connection.
+//
+// When the read resolves to the LF system row, the returned scoper is the system rule
+// (MonitorScopeForAccount) with projectID for its log line. A resolution failure returns nil,
+// which keeps the system rule; the read then reports the failure itself.
+func (d *LinkedInDispatcher) MonitorScoperForConnection(ctx context.Context, projectID, accountID string) service.AccountMonitorScoper {
+	res, _, _, err := d.resolveLinkedInMonitorCredentials(ctx, projectID, model.ProviderLinkedInAds, accountID)
+	if err != nil || res == nil {
+		return nil
+	}
+	return linkedInMonitorScoper{d: d, own: !res.fromSystem, projectID: projectID}
+}
+
+// linkedInMonitorScoper is the LinkedIn monitor scope bound to the connection that serves one
+// read: own is true for the project's own connection, false for the LF system row.
+type linkedInMonitorScoper struct {
+	d         *LinkedInDispatcher
+	own       bool
+	projectID string
+}
+
+func (s linkedInMonitorScoper) MonitorScopePrecheck(accountID string) error {
+	return s.d.MonitorScopePrecheck(accountID)
+}
+
+func (s linkedInMonitorScoper) MonitorScopeForAccount(scope []model.ProjectCampaignScope, accountID string) ([]string, error) {
+	return linkedInMonitorScope(scope, accountID, s.own, s.projectID)
+}
+
+// linkedInMonitorScope is the LinkedIn monitor's scope rule. A recorded campaign from another
+// account, or a malformed id, fails it either way. An unrecorded campaign is kept on the project's
+// own connection (ownConnection) and omitted, with a log line, on the LF system row.
+func linkedInMonitorScope(scope []model.ProjectCampaignScope, accountID string, ownConnection bool, projectID string) ([]string, error) {
 	const op = "read linkedin account monitor"
-	ids, err := linkedInScopeForAccount(scope, accountID, op)
-	return requireRecordedMonitorProvenance(op, "linkedin ad account", scope, linkedInCreationAccountID, ids, err)
+	if ownConnection {
+		return linkedInScopeForAccount(scope, accountID, op)
+	}
+	recorded := make([]model.ProjectCampaignScope, 0, len(scope))
+	for _, s := range scope {
+		if linkedInCreationAccountID(&model.Campaign{PlatformCampaignID: s.PlatformCampaignID, Result: s.Result}) != "" {
+			recorded = append(recorded, s)
+		}
+	}
+	if omitted := len(scope) - len(recorded); omitted > 0 {
+		slog.Warn("linkedin account monitor: campaigns that record no creation account omitted from a read on the LF system credential",
+			"project_id", projectID, "account_id", accountID, "omitted", omitted, "of", len(scope))
+	}
+	return linkedInScopeForAccount(recorded, accountID, op)
 }
 
 var _ service.AccountMonitorDefaulter = (*LinkedInDispatcher)(nil)
@@ -190,7 +249,7 @@ func (d *LinkedInDispatcher) MonitorAccountForScope(scope []model.ProjectCampaig
 
 // linkedInScopeForAccount returns the scope's campaign ids when every entry that records a
 // creation account records accountID, and refuses the whole scope otherwise (an unrecorded entry
-// passes here; the monitor's requireRecordedMonitorProvenance refuses it). Ids are checked for
+// passes here; linkedInMonitorScope drops it first when the LF system row serves the read). Ids are checked for
 // LinkedIn's canonical shape, so a stored id the platform cannot read is ErrAudienceScopeInvalid.
 func linkedInScopeForAccount(scope []model.ProjectCampaignScope, accountID, op string) ([]string, error) {
 	want := strings.TrimSpace(accountID)

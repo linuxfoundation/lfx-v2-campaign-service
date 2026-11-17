@@ -4044,8 +4044,11 @@ pacingLabel: string             — underspending | normal | constrained | overs
   Google Ads, Meta, Reddit and X (the `{provider}` row above predates this and still lists LinkedIn as
   account-scoped): only campaigns this service recorded for the project are returned. `account_id`
   is optional; omitted, it is the account the project's campaigns were created under. A live
-  recorded campaign created under a different account, or recording none, is `409`
-  (`AccountMonitorScopeConflictError`). The system credential reads only its own account or a
+  recorded campaign created under a different account is `409`
+  (`AccountMonitorScopeConflictError`). A campaign that records no account (created before
+  accounts were recorded) is shown on the project's own connection, as that connection's account,
+  and omitted (logged) on the system credential; omitting `account_id` when no live campaign
+  records one is still `409`. The system credential reads only its own account or a
   grant; any other account, for a project with no usable connection of its own, is `404`.
   Audience insights resolve the same way.
 

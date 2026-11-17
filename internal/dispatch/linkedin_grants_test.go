@@ -34,6 +34,38 @@ func TestVerifyLinkedInGrant(t *testing.T) {
 			t.Fatal("VerifyLinkedInGrant accepted an account whose page is another org's")
 		}
 	})
+	// A grant is refused unless LinkedIn itself names orgID for the account: no reference, a
+	// person-scoped one or a malformed one states no organization, and the connection test's
+	// permissive nil for those must not reach the installer.
+	for name, elem := range map[string]string{
+		"missing reference":       `{"id":123456789}`,
+		"empty reference":         `{"id":123456789,"reference":""}`,
+		"person-scoped reference": `{"id":123456789,"reference":"urn:li:person:AbCdEf"}`,
+		"malformed reference":     `{"id":123456789,"reference":"urn:li:organization:98765x"}`,
+		"mismatched reference":    `{"id":123456789,"reference":"urn:li:organization:111111111"}`,
+	} {
+		t.Run(name+" refuses", func(t *testing.T) {
+			srv := linkedInAccountsServer(t, &requestRecorder{}, elem)
+			err := VerifyLinkedInGrant(ctx, []byte(goodLinkedInCreds), "123456789", "987654321", linkedin.WithBaseURL(srv.URL))
+			if err == nil {
+				t.Fatal("VerifyLinkedInGrant accepted a pairing LinkedIn does not state")
+			}
+		})
+	}
+	// The connection test keeps its permissive reading of the same responses.
+	for name, elem := range map[string]string{
+		"missing reference":       `{"id":123456789}`,
+		"person-scoped reference": `{"id":123456789,"reference":"urn:li:person:AbCdEf"}`,
+		"malformed reference":     `{"id":123456789,"reference":"urn:li:organization:98765x"}`,
+	} {
+		t.Run(name+" stays inconclusive for the connection test", func(t *testing.T) {
+			srv := linkedInAccountsServer(t, &requestRecorder{}, elem)
+			c := linkedin.NewClient(linkedin.Credentials{AccessToken: "tok"}, linkedin.RuntimeConfig{}, linkedin.WithBaseURL(srv.URL))
+			if err := c.VerifyAccountOrgReference(ctx, "123456789", "987654321"); err != nil {
+				t.Fatalf("VerifyAccountOrgReference = %v, want the permissive nil", err)
+			}
+		})
+	}
 	for name, plaintext := range map[string]string{"not json": "nope", "no token": `{"AccessToken":"  "}`} {
 		t.Run(name, func(t *testing.T) {
 			if err := VerifyLinkedInGrant(ctx, []byte(plaintext), "1", "2"); err == nil {

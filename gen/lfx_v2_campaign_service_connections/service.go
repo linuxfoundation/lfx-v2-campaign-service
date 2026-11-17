@@ -787,25 +787,28 @@ type Service interface {
 	// account read is filtered to them before rules and totals. A project with no
 	// campaigns recorded on the platform gets an empty monitor without any
 	// upstream call. A recorded campaign created under a different account than
-	// account_id, or recording none, fails the read with 409 rather than returning
-	// a partial picture. Campaigns deleted in this service stay in the monitor,
-	// because a local delete does not stop the upstream campaign, unless it does
-	// not record account_id as the customer it was created under or another
-	// project has since taken it over; such a campaign is omitted, never a 409.
-	// account_id is the account to read; omitted, it is the account this project's
-	// campaigns were created under, read from this service's own records: the
-	// response's account_id names it, and an empty account_id with no campaigns
-	// means the project has none recorded on the platform (answered without any
-	// upstream call). Live campaigns created under more than one account, or none
-	// recording one, fail with 409 whether or not account_id is given, until they
-	// are re-dispatched or reconciled onto one account. account_id is read with
-	// the project's own connection when that is configured for it, or when the
-	// shared LF system credential is not; otherwise with the LF system credential,
-	// which is the account campaigns are created in when a project has no
-	// connection of its own (or has disconnected it). The LF system credential
-	// reads only the account it is configured for: a project with no usable
-	// connection of its own, naming any other account, gets a 404. A pure read:
-	// nothing is persisted.
+	// account_id fails the read with 409 rather than returning a partial picture.
+	// A campaign that records no account (one created before accounts were
+	// recorded) is shown when the project's own connection serves the read, as
+	// belonging to that connection's account, and omitted when the LF system
+	// credential serves it, since that credential is shared between foundations.
+	// Campaigns deleted in this service stay in the monitor, because a local
+	// delete does not stop the upstream campaign, unless it does not record
+	// account_id as the customer it was created under or another project has since
+	// taken it over; such a campaign is omitted, never a 409. account_id is the
+	// account to read; omitted, it is the account this project's campaigns were
+	// created under, read from this service's own records: the response's
+	// account_id names it, and an empty account_id with no campaigns means the
+	// project has none recorded on the platform (answered without any upstream
+	// call). Live campaigns created under more than one account, or none recording
+	// one, fail with 409 whether or not account_id is given, until they are
+	// re-dispatched or reconciled onto one account. account_id is read with the
+	// project's own connection when that is configured for it, or when the shared
+	// LF system credential is not; otherwise with the LF system credential, which
+	// is the account campaigns are created in when a project has no connection of
+	// its own (or has disconnected it). The LF system credential reads only the
+	// account it is configured for: a project with no usable connection of its
+	// own, naming any other account, gets a 404. A pure read: nothing is persisted.
 	MonitorGoogleAdsAccount(context.Context, *MonitorGoogleAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read this project's own campaigns on a LinkedIn Ads account, live from the
 	// platform, with pacing and action items derived by this service's ported rule
@@ -815,23 +818,27 @@ type Service interface {
 	// operator-installed grants), so the account read is filtered to them before
 	// rules and totals. A project with no campaigns recorded on the platform gets
 	// an empty monitor without any upstream call. A recorded campaign created
-	// under a different account than account_id, or recording none, fails the read
-	// with 409 rather than returning a partial picture. Campaigns deleted in this
-	// service stay in the monitor, because a local delete does not stop the
-	// upstream campaign, unless it does not record account_id as the account it
-	// was created under or another project has since taken it over; such a
-	// campaign is omitted, never a 409. account_id is the account to read;
-	// omitted, it is the account this project's campaigns were created under, read
-	// from this service's own records: the response's account_id names it, and an
-	// empty account_id with no campaigns means the project has none recorded on
-	// the platform (answered without any upstream call). Live campaigns created
-	// under more than one account, or none recording one, fail with 409 whether or
-	// not account_id is given. account_id is read with the project's own
-	// connection when that is configured for it (a project's own connection reads
-	// only its own account), otherwise with the LF system credential when
-	// account_id is the system row's account or one of its grants. Any other
-	// account, for a project with no usable connection of its own, is a 404. A
-	// pure read: nothing is persisted.
+	// under a different account than account_id fails the read with 409 rather
+	// than returning a partial picture. A campaign that records no account (one
+	// created before accounts were recorded) is shown when the project's own
+	// connection serves the read, as belonging to that connection's account, and
+	// omitted when the LF system credential serves it, since that credential is
+	// shared between foundations. Campaigns deleted in this service stay in the
+	// monitor, because a local delete does not stop the upstream campaign, unless
+	// it does not record account_id as the account it was created under or another
+	// project has since taken it over; such a campaign is omitted, never a 409.
+	// account_id is the account to read; omitted, it is the account this project's
+	// campaigns were created under, read from this service's own records: the
+	// response's account_id names it, and an empty account_id with no campaigns
+	// means the project has none recorded on the platform (answered without any
+	// upstream call). Live campaigns created under more than one account fail with
+	// 409 whether or not account_id is given, and so does omitting account_id when
+	// no live campaign records one (name the account instead). account_id is read
+	// with the project's own connection when that is configured for it (a
+	// project's own connection reads only its own account), otherwise with the LF
+	// system credential when account_id is the system row's account or one of its
+	// grants. Any other account, for a project with no usable connection of its
+	// own, is a 404. A pure read: nothing is persisted.
 	MonitorLinkedinAdsAccount(context.Context, *MonitorLinkedinAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read this project's own campaigns on a Meta Ads account, live from the
 	// platform, with pacing and action items derived by this service's ported rule
@@ -891,34 +898,37 @@ type Service interface {
 	// shared across foundations, so the account read is filtered to them before
 	// rules and totals. A project with no campaigns recorded on the platform gets
 	// an empty monitor without any upstream call. A recorded campaign created
-	// under a different account than account_id, or recording none, fails the read
-	// with 409 rather than returning a partial picture. Campaigns deleted in this
-	// service stay in the monitor, because a local delete does not stop the
-	// upstream campaign, unless it does not record account_id as the account it
-	// was created under, its stored id is not one the platform can read, or
-	// another project has since taken it over; such a campaign is omitted, never a
-	// 409. The campaign list (names, statuses, budgets, and flights from the line
-	// items) is read live; delivery metrics come from X's asynchronous stats jobs
-	// — X's synchronous stats are capped at 7 days per request — so they are
-	// served from the last report that finished — see metrics_as_of and
-	// metrics_pending — while the next one builds. The first read for an account
-	// and window therefore returns campaigns with fetch_failed=true and
-	// metrics_pending=true. Conversions are never reported for X. Saved reports
-	// are cached platform data, not a record of anything this service did; the
-	// saved report covers the whole account, and only the response is scoped. The
-	// scope refusals carry reason campaign_account_mismatch (a recorded campaign
-	// belongs to another account or records none) or campaign_scope_invalid (a
-	// recorded campaign id the platform cannot read). Two account states are also
-	// refused with 409 rather than served metrics that would be wrong: more than
-	// 200 campaigns active in the window on the whole shared account, every
-	// project's campaigns counted and not only this project's (reason
-	// account_too_many_active_campaigns — one report covers at most ten X stats
-	// jobs of 20 campaigns), and an account timezone whose local midnight is not a
-	// whole UTC hour, such as Asia/Kolkata (reason account_timezone_unsupported —
-	// X accepts whole-hour window bounds only, so the account's own days cannot be
-	// queried exactly). A 90-day window that crosses a DST fall-back covers the
-	// trailing 89 whole local days, because 90 such days are 90 days and an hour,
-	// over X's 90-day limit.
+	// under a different account than account_id fails the read with 409 rather
+	// than returning a partial picture. A campaign that records no account (one
+	// created before accounts were recorded) is shown when the project's own
+	// connection serves the read, as belonging to that connection's account, and
+	// omitted when the LF system credential serves it, since that credential is
+	// shared between foundations. Campaigns deleted in this service stay in the
+	// monitor, because a local delete does not stop the upstream campaign, unless
+	// it does not record account_id as the account it was created under, its
+	// stored id is not one the platform can read, or another project has since
+	// taken it over; such a campaign is omitted, never a 409. The campaign list
+	// (names, statuses, budgets, and flights from the line items) is read live;
+	// delivery metrics come from X's asynchronous stats jobs — X's synchronous
+	// stats are capped at 7 days per request — so they are served from the last
+	// report that finished — see metrics_as_of and metrics_pending — while the
+	// next one builds. The first read for an account and window therefore returns
+	// campaigns with fetch_failed=true and metrics_pending=true. Conversions are
+	// never reported for X. Saved reports are cached platform data, not a record
+	// of anything this service did; the saved report covers the whole account, and
+	// only the response is scoped. The scope refusals carry reason
+	// campaign_account_mismatch (a recorded campaign belongs to another account or
+	// records none) or campaign_scope_invalid (a recorded campaign id the platform
+	// cannot read). Two account states are also refused with 409 rather than
+	// served metrics that would be wrong: more than 200 campaigns active in the
+	// window on the whole shared account, every project's campaigns counted and
+	// not only this project's (reason account_too_many_active_campaigns — one
+	// report covers at most ten X stats jobs of 20 campaigns), and an account
+	// timezone whose local midnight is not a whole UTC hour, such as Asia/Kolkata
+	// (reason account_timezone_unsupported — X accepts whole-hour window bounds
+	// only, so the account's own days cannot be queried exactly). A 90-day window
+	// that crosses a DST fall-back covers the trailing 89 whole local days,
+	// because 90 such days are 90 days and an hour, over X's 90-day limit.
 	MonitorTwitterAdsAccount(context.Context, *MonitorTwitterAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read the statistics of the HubSpot marketing emails THIS SERVICE created for
 	// the project and sent within the trailing `days` (today inclusive, UTC), with
