@@ -752,7 +752,13 @@ type Service interface {
 	// delete does not stop the upstream campaign, unless it was recorded under a
 	// different account than account_id, its stored id is not one the platform can
 	// read, or another project has since taken it over; such a campaign is
-	// omitted, never a 409. A pure read: nothing is persisted.
+	// omitted, never a 409. account_id is read with the project's own connection
+	// when that is configured for it, or when the shared LF system credential is
+	// not; otherwise with the LF system credential, which is the account campaigns
+	// are created in when a project has no connection of its own (or has
+	// disconnected it). The LF system credential reads only the account it is
+	// configured for: a project with no usable connection of its own, naming any
+	// other account, gets a 404. A pure read: nothing is persisted.
 	MonitorMetaAdsAccount(context.Context, *MonitorMetaAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read this project's own campaigns on a Reddit Ads account, live from the
 	// platform, with pacing and action items derived by this service's ported rule
@@ -766,7 +772,13 @@ type Service interface {
 	// delete does not stop the upstream campaign, unless it does not record
 	// account_id as the account it was created under, its stored id is not one the
 	// platform can read, or another project has since taken it over; such a
-	// campaign is omitted, never a 409. A pure read: nothing is persisted.
+	// campaign is omitted, never a 409. account_id is read with the project's own
+	// connection when that is configured for it, or when the shared LF system
+	// credential is not; otherwise with the LF system credential, which is the
+	// account campaigns are created in when a project has no connection of its own
+	// (or has disconnected it). The LF system credential reads only the account it
+	// is configured for: a project with no usable connection of its own, naming
+	// any other account, gets a 404. A pure read: nothing is persisted.
 	MonitorRedditAdsAccount(context.Context, *MonitorRedditAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read every live campaign on a Microsoft Advertising account with pacing and
 	// action items derived by this service's rule engine. Account-scoped, not

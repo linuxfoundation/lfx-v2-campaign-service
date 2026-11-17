@@ -227,10 +227,12 @@ func TestResolverIdentity_Meta(t *testing.T) {
 			_, _ = d(r).LookupCampaign(riCtx, resolverIdentityProject, p, "1001")
 		}},
 		{"ProbeConnection", idOwned, func(r connReader, _ *model.Campaign) { _ = d(r).ProbeConnection(riCtx, resolverIdentityProject, p) }},
-		{"ReadAccountMonitor", idOwned, func(r connReader, _ *model.Campaign) {
+		// #615: the monitor is reduced to the project's recorded campaigns, so it resolves like an
+		// operation on them, bound to the monitored account (credsSource.monitorResolver).
+		{"ReadAccountMonitor", idExisting, func(r connReader, _ *model.Campaign) {
 			_, _ = d(r).ReadAccountMonitor(riCtx, resolverIdentityProject, p, acct, 7)
 		}},
-		{"ListAccountCampaignMetrics", idOwned, func(r connReader, _ *model.Campaign) {
+		{"ListAccountCampaignMetrics", idExisting, func(r connReader, _ *model.Campaign) {
 			_, _ = d(r).ListAccountCampaignMetrics(riCtx, resolverIdentityProject, p, acct, 7)
 		}},
 	})
@@ -317,10 +319,12 @@ func TestResolverIdentity_Reddit(t *testing.T) {
 			_, _ = d(r).LookupCampaign(riCtx, resolverIdentityProject, p, "1001")
 		}},
 		{"ProbeConnection", idOwned, func(r connReader, _ *model.Campaign) { _ = d(r).ProbeConnection(riCtx, resolverIdentityProject, p) }},
-		{"ReadAccountMonitor", idOwned, func(r connReader, _ *model.Campaign) {
+		// #615: the monitor is reduced to the project's recorded campaigns, so it resolves like an
+		// operation on them, bound to the monitored account (credsSource.monitorResolver).
+		{"ReadAccountMonitor", idExisting, func(r connReader, _ *model.Campaign) {
 			_, _ = d(r).ReadAccountMonitor(riCtx, resolverIdentityProject, p, acct, 7)
 		}},
-		{"ListAccountCampaignMetrics", idOwned, func(r connReader, _ *model.Campaign) {
+		{"ListAccountCampaignMetrics", idExisting, func(r connReader, _ *model.Campaign) {
 			_, _ = d(r).ListAccountCampaignMetrics(riCtx, resolverIdentityProject, p, acct, 7)
 		}},
 	})

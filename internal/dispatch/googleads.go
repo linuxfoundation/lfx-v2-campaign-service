@@ -2687,14 +2687,12 @@ func (d *GoogleAdsDispatcher) googleAdsDiscoveryClientFor(projectID string, res 
 // system row is configured for. resolveExisting hands back the fallback row when neither scope
 // matches accountID, and the shared credential reaches more customers than the one LF creates
 // campaigns in, none of which can hold a campaign this service created on the system account.
-// That case keeps the 404 a project without a connection of its own got before.
+// That case keeps the 404 a project without a connection of its own got before. The rule lives in
+// credsSource.monitorResolver, which Meta's and Reddit's monitors share (#615).
 func (d *GoogleAdsDispatcher) resolveGoogleAdsMonitorClient(ctx context.Context, projectID string, platform model.Provider, accountID string) (*googleads.Client, error) {
-	res, err := d.creds.resolveExisting(ctx, projectID, platform, accountID)
+	res, err := d.creds.monitorResolver(accountID)(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
-	}
-	if res.fromSystem && !matchesAccount(res.accountID, accountID) {
-		return nil, noOwnConnection(projectID, platform)
 	}
 	return d.googleAdsDiscoveryClientFor(projectID, res)
 }
