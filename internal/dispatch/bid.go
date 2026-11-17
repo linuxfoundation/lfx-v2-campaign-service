@@ -34,21 +34,3 @@ func (e *rejectedBidAmountError) Unwrap() error { return e.err }
 
 // BidAmountReason returns the client-safe explanation of why the bid was refused.
 func (e *rejectedBidAmountError) BidAmountReason() string { return e.reason }
-
-// settlingBidWriteError marks a bid write refused for a TEMPORARY reason, with the platform
-// unchanged, and carries the one sentence safe to hand back to the caller. err wraps
-// domain.ErrBidUnwritable, so every ErrBidUnwritable caller keeps matching; reason is authored
-// by this service (which entry is blocking, and from when a retry can succeed), never upstream
-// text. The service detects it through BidSettlingReason and answers a 409 that says the
-// refusal is temporary rather than ErrBidUnwritable's "check the campaign" text, which does not
-// describe a refusal that clears on its own.
-type settlingBidWriteError struct {
-	reason string
-	err    error
-}
-
-func (e *settlingBidWriteError) Error() string { return e.err.Error() }
-func (e *settlingBidWriteError) Unwrap() error { return e.err }
-
-// BidSettlingReason returns the client-safe explanation of the temporary refusal.
-func (e *settlingBidWriteError) BidSettlingReason() string { return e.reason }

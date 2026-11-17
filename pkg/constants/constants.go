@@ -334,16 +334,6 @@ const (
 	// them, notably that a device criterion can be ADDED to a new campaign.
 	EnvMicrosoftBidAdjustmentsEnabled = "MICROSOFT_BID_ADJUSTMENTS_ENABLED"
 
-	// EnvMicrosoftRemarketingListsEnabled opts a deployment IN to the remarketing-list picker read
-	// (#563 gap 4 follow-up, GET /projects/{project_id}/microsoft-ads/remarketing-lists): every
-	// remarketing list on the account a Microsoft create for the project uses, live from
-	// GetAudiencesByIds. Only the exact value "true" enables it; unset or any other value answers
-	// the read 400 "not supported" before Microsoft is contacted. The read lists every
-	// foundation's lists on the shared account, so the gateway admits only global_marketing_ops to
-	// it; the flag keeps an UNVERIFIED read (from the v13 reference) off until a live call confirms
-	// it.
-	EnvMicrosoftRemarketingListsEnabled = "MICROSOFT_REMARKETING_LISTS_ENABLED"
-
 	// EnvMicrosoftSharedNegativeListsEnabled opts a deployment IN to
 	// microsoftConfig.sharedNegativeKeywordListIds (#563 gap 9): existing account-level negative
 	// keyword lists, verified by a GetSharedEntities read before anything is created and associated
@@ -371,27 +361,6 @@ const (
 	// names no account resource; the flag keeps an UNVERIFIED request shape (from the v13
 	// reference) off the shared account until a live create confirms it.
 	EnvMicrosoftLogoExtensionEnabled = "MICROSOFT_LOGO_EXTENSION_ENABLED"
-
-	// EnvMicrosoftConversionGoalsEnabled opts a deployment IN to microsoftConfig.conversionGoalIds
-	// and the conversion bidding strategies (bidding.strategy "maxConversions" and "targetCpa")
-	// (#563 gap 7): EXISTING conversion goals verified with one GetConversionGoalsByIds read before
-	// anything is created and set as the new campaign's GoalIds, and a MaxConversions bid strategy
-	// with an optional TargetCpa. Only the exact value "true" enables it; unset or any other value
-	// fails closed, and a create naming any of it is refused with a 400 before any job exists (and
-	// again at dispatch). The goals belong to the shared account, so conversionGoalIds also needs
-	// global_marketing_ops. It keeps an UNVERIFIED request shape (from the v13 reference) off the
-	// shared account until a live create confirms it.
-	EnvMicrosoftConversionGoalsEnabled = "MICROSOFT_CONVERSION_GOALS_ENABLED"
-
-	// EnvMicrosoftAdGroupsEnabled opts a deployment IN to microsoftConfig.adGroups (#563 gap 12):
-	// up to five ad groups under one Microsoft campaign, each with its own name suffix, keywords,
-	// negative keywords, remarketing lists and ad copy. Only the exact value "true" enables it;
-	// unset or any other value fails closed, and a create naming it is refused with a 400 before
-	// any job exists (and again at dispatch). Each per-group field also stays behind its own
-	// single-group flag (ad copy, negatives, remarketing lists) and the lists behind
-	// global_marketing_ops. It keeps an UNVERIFIED multi-ad-group create off the shared account
-	// until a live create confirms it.
-	EnvMicrosoftAdGroupsEnabled = "MICROSOFT_AD_GROUPS_ENABLED"
 
 	// EnvMicrosoftAdExtensionsEnabled opts a deployment IN to microsoftConfig.sitelinks and
 	// microsoftConfig.callouts (#563), created at create time as SitelinkAdExtension and

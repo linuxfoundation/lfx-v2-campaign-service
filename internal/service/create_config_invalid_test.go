@@ -5,7 +5,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -43,52 +42,5 @@ func TestMapBriefErr_CreateConfigInvalidIs400WithItsMessage(t *testing.T) {
 	}
 	if bad.Code != "400" || bad.Message != "invalid campaign config: "+msg {
 		t.Fatalf("400 body = %+v", bad)
-	}
-}
-
-// briefPreflightStub is a dispatcher with only the brief-dependent pre-check.
-type briefPreflightStub struct {
-	err      error
-	gotBrief *model.CampaignBrief
-}
-
-func (s *briefPreflightStub) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
-	return nil, errors.New("unused")
-}
-
-func (s *briefPreflightStub) PreflightCreateBrief(_ context.Context, _ string, _ model.Provider, brief *model.CampaignBrief, _ json.RawMessage) error {
-	s.gotBrief = brief
-	return s.err
-}
-
-// PreflightCreateBrief hands the brief to the dispatcher, refuses on ErrCreateConfigInvalid
-// (records no upstream call: the check is local) and is fail-open on anything else.
-func TestOrchestrator_PreflightCreateBrief_RefusesOnlyConfigInvalid(t *testing.T) {
-	brief := &model.CampaignBrief{ID: "b1", ProjectID: "proj-1"}
-	for name, tc := range map[string]struct {
-		err    error
-		refuse bool
-	}{
-		"config invalid": {fmt.Errorf("%w: microsoftConfig.adGroups entry 2: path1: too long", ErrCreateConfigInvalid), true},
-		"not applicable": {ErrPreflightNotApplicable, false},
-		"other error":    {errors.New("boom"), false},
-		"clean":          {nil, false},
-	} {
-		t.Run(name, func(t *testing.T) {
-			rec := &recordingMetrics{}
-			stub := &briefPreflightStub{err: tc.err}
-			orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderMicrosoftAds: stub})
-			orch.SetMetrics(rec)
-			err := orch.PreflightCreateBrief(context.Background(), "proj-1", []model.Provider{model.ProviderMicrosoftAds}, brief, nil)
-			if errors.Is(err, ErrCreateConfigInvalid) != tc.refuse || (!tc.refuse && err != nil) {
-				t.Fatalf("err = %v, want refuse=%v", err, tc.refuse)
-			}
-			if stub.gotBrief != brief {
-				t.Errorf("the brief did not reach the dispatcher")
-			}
-			if got := rec.upstreamCalls(); len(got) != 0 {
-				t.Errorf("a local check recorded %d upstream calls", len(got))
-			}
-		})
 	}
 }

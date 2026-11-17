@@ -179,17 +179,7 @@ type CampaignInput struct {
 	// default for a Search campaign, EnhancedCpc). See msBiddingScheme for why a manual bid is
 	// EnhancedCpc and not ManualCpc. MaxClicks with a CpcBid is refused before anything is sent:
 	// under it "you don't need to set ad group or keyword bids", so the bid would be ignored.
-	// BidSchemeMaxConversions (#563 gap 7) is the conversion-based strategy, sent with TargetCPA
-	// when that is non-zero; it needs ConversionGoalIDs, and a CpcBid is refused with it.
 	BiddingScheme string
-	// TargetCPA is the MaxConversions target cost per acquisition (#563 gap 7), in the account
-	// currency's major units; zero sends none. Only with BidSchemeMaxConversions.
-	TargetCPA float64
-	// ConversionGoalIDs are EXISTING conversion goals set as the new campaign's GoalIds (#563 gap
-	// 7, conversion_goals.go), checked by CheckConversionGoals before CreateCampaign is called.
-	// Applied only to a campaign this run creates; a campaign found by name keeps its goals and
-	// a warning step says so. Empty sends none, as before.
-	ConversionGoalIDs []string
 	// GeoTargets are ISO 3166-1 alpha-2 country codes the campaign should serve in
 	// (LFXV2-3279), attached as CAMPAIGN-level location criteria. Optional at this layer: an
 	// empty list creates the campaign with NO location criteria, which is what this client
@@ -239,14 +229,6 @@ type CampaignInput struct {
 	// under the same fail-closed rules. Applied only to a campaign this run creates. Empty sends
 	// none, as before.
 	BidAdjustments BidAdjustments
-	// AdGroups (#563 gap 12, ad_groups.go) asks for up to MaxAdGroups ad groups, each with its
-	// own name suffix, keywords and ad copy; Keywords, Headlines, Descriptions, Path1 and Path2
-	// above are then unused (the dispatcher refuses them alongside AdGroups). Empty keeps the
-	// single ad group exactly as before.
-	AdGroups []AdGroupInput
-	// adGroupNameSuffix, set by createAdGroups on its per-group copy of the input, becomes the
-	// ad group name's last segment. Empty composes the single-group name unchanged.
-	adGroupNameSuffix string
 }
 
 // CampaignResult reports what CreateCampaign created (or found). The campaign NAME
@@ -318,13 +300,6 @@ type CampaignResult struct {
 	// BidAdjustmentCriterionIDs are the device, age and gender criteria THIS RUN attached (#563
 	// gap 8), in send order.
 	BidAdjustmentCriterionIDs []string `json:"bidAdjustmentCriterionIds,omitempty"`
-	// ConversionGoalIDs are the conversion goals THIS RUN set as the campaign's GoalIds (#563 gap
-	// 7). Empty on a campaign found by name, which keeps the goals it has.
-	ConversionGoalIDs []string `json:"conversionGoalIds,omitempty"`
-	// AdGroups is every requested ad group's outcome, in request order, when the create asked for
-	// microsoftConfig.adGroups (#563 gap 12); omitted on the single-group path. The top-level
-	// AdGroupName/AdGroupID/AdID/KeywordIDs are its first entry's.
-	AdGroups []AdGroupResult `json:"adGroups,omitempty"`
 	// AlreadyExisted is true ONLY when this run created NOTHING — i.e. the campaign, the ad
 	// group, AND the ad were all matched as pre-existing (by name / by destination) and no
 	// create was issued at any level. If ANY level was created this run, it is false, even
@@ -404,9 +379,6 @@ type msCampaign struct {
 	// Languages is the campaign's ad languages (#563), omitted unless the caller sent
 	// microsoftConfig.languages; the ad group then carries no Language of its own.
 	Languages []string `json:"Languages,omitempty"`
-	// GoalIds are the existing conversion goals the campaign tracks and bids toward (#563 gap 7),
-	// omitted unless the caller sent microsoftConfig.conversionGoalIds.
-	GoalIds []json.Number `json:"GoalIds,omitempty"`
 }
 
 // msBiddingScheme is the campaign's BiddingScheme as the REST JSON names it: a polymorphic object
@@ -427,15 +399,8 @@ type msCampaign struct {
 // automatically sets your bids in real time to get as many clicks as possible within your budget."
 // It needs no conversion tracking, unlike MaxConversions, which this service's campaigns cannot
 // assume. https://learn.microsoft.com/en-us/advertising/campaign-management-service/maxclicksbiddingscheme
-//
-// MAXCONVERSIONS (#563 gap 7) is sent only when the caller names existing conversion goals, with
-// TargetCpa when a target CPA was asked for (TargetCpaBiddingScheme is retired for new campaigns
-// and Microsoft converts it to MaxConversions with the target anyway). MaxCpc is not sent: "not
-// supported for non-portfolio campaigns".
-// https://learn.microsoft.com/en-us/advertising/campaign-management-service/maxconversionsbiddingscheme
 type msBiddingScheme struct {
-	Type      string   `json:"Type"`
-	TargetCpa *float64 `json:"TargetCpa,omitempty"`
+	Type string `json:"Type"`
 }
 
 // BidSchemeMaxClicks is the automatic campaign bid strategy the create path sends.
@@ -443,29 +408,8 @@ const BidSchemeMaxClicks = "MaxClicks"
 
 // validateBiddingScheme checks the requested campaign scheme against the ad-group bid, before
 // anything is sent. "" keeps the pre-LFXV2-2665 body (no scheme, Microsoft's EnhancedCpc default).
-func validateBiddingScheme(scheme string, cpcBidSet bool, targetCPA float64, goals int) (*msBiddingScheme, error) {
-	if targetCPA != 0 && scheme != BidSchemeMaxConversions {
-		return nil, fmt.Errorf("microsoft-ads: a target CPA is sent only with the MaxConversions bid strategy")
-	}
+func validateBiddingScheme(scheme string, cpcBidSet bool) (*msBiddingScheme, error) {
 	switch scheme {
-	case BidSchemeMaxConversions:
-		if cpcBidSet {
-			return nil, fmt.Errorf("microsoft-ads: an ad group CpcBid cannot be combined with the MaxConversions bid strategy, which sets every bid")
-		}
-		if goals == 0 {
-			// Without a goal the strategy has nothing to optimize toward; the dispatcher refuses
-			// this first, and the client refuses it again rather than send it.
-			return nil, fmt.Errorf("microsoft-ads: the MaxConversions bid strategy needs at least one conversion goal")
-		}
-		if math.IsNaN(targetCPA) || math.IsInf(targetCPA, 0) || targetCPA < 0 {
-			return nil, fmt.Errorf("microsoft-ads: the target CPA must be a finite number greater than zero")
-		}
-		out := &msBiddingScheme{Type: BidSchemeMaxConversions}
-		if targetCPA > 0 {
-			t := targetCPA
-			out.TargetCpa = &t
-		}
-		return out, nil
 	case "":
 		return nil, nil
 	case BidSchemeEnhancedCpc:
@@ -681,7 +625,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, domain.WrapPreflightRefusal(fmt.Errorf("microsoft-ads campaign ad copy invalid: %w", err))
 	}
 	in.Path1, in.Path2 = path1, path2
-	var adGroups []validatedAdGroup
 	u, perr := url.Parse(finalURL)
 	if perr != nil {
 		return nil, fmt.Errorf("microsoft-ads could not parse the composed ad final URL to validate its display domain: %w", perr)
@@ -698,10 +641,22 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// rather than measuring the malformed A-label: a short-but-invalid `xn--` host would
 		// otherwise clear this cap and only fail at AddAds, orphaning the PAUSED campaign and ad
 		// group this whole block exists to prevent. Fail CLOSED, as with the parse failure above.
-		authority, aerr := displayAuthority(u)
-		if aerr != nil {
-			return nil, aerr
+		host := u.Hostname()
+		// An IPv6 literal is NOT an IDNA label — ToUnicode fails on it — so skip the decode
+		// entirely rather than fail closed, mirroring canonicalFinalURL's isIPv6 guard.
+		// validateAdURL still accepts IPv6 destinations, so rejecting one here would break a
+		// previously-valid URL with a misleading "not a valid IDNA label" error. Hostname()
+		// already strips the surrounding brackets, leaving the colons that identify it.
+		if !strings.Contains(host, ":") {
+			uni, ierr := idna.Lookup.ToUnicode(host)
+			if ierr != nil {
+				return nil, fmt.Errorf("microsoft-ads composed ad final URL host %q is not a valid IDNA label: %w", host, ierr)
+			}
+			if uni != "" {
+				host = uni
+			}
 		}
+		authority := authorityForWidth(u, host)
 		limit := maxDisplayDomainRunes
 		if hasDoubleWidth(authority) {
 			limit = maxDisplayDomainRunesWide
@@ -713,20 +668,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// "/Path1/Path2", so a host that fits alone can still overflow once paths are added and
 		// be refused only at AddAds, after the campaign and ad group exist.
 		if path1 != "" {
-			if n, pathLimit, over := displayURLOverflow(authority, path1, path2); over {
+			shown := displayURL(authority, path1, path2)
+			pathLimit := maxDisplayDomainRunes
+			if hasDoubleWidth(shown) {
+				pathLimit = maxDisplayDomainRunesWide
+			}
+			if n := utf8.RuneCountInString(shown); n > pathLimit {
 				// The host is caller-supplied, so it is quoted only through domain.CallerValue: this
 				// sentence reaches the job result verbatim, and a host label can carry a token.
 				return nil, domain.PreflightRefusalf("microsoft-ads ad display URL (domain %s plus path1/path2) is %d characters, exceeding the %d limit; shorten path1/path2",
 					domain.CallerValue(authority), n, pathLimit)
 			}
 		}
-		// The requested ad groups (#563 gap 12): each group's keywords, copy and display paths are
-		// checked here too, before anything exists, against the same display domain.
-		groups, gerr := validateAdGroups(in, authority)
-		if gerr != nil {
-			return nil, domain.PreflightRefusalf("invalid microsoftConfig.%s", gerr.Error())
-		}
-		adGroups = groups
 	}
 	// Validate caller-supplied ad copy up front too (over-count / over-long headlines or
 	// descriptions), so a bad copy input fails cleanly before the campaign is created rather
@@ -747,16 +700,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, domain.WrapPreflightRefusal(fmt.Errorf("microsoft-ads campaign bid invalid: %w", err))
 	}
-	biddingScheme, err := validateBiddingScheme(in.BiddingScheme, cpcBidSet, in.TargetCPA, len(in.ConversionGoalIDs))
+	biddingScheme, err := validateBiddingScheme(in.BiddingScheme, cpcBidSet)
 	if err != nil {
 		return nil, domain.WrapPreflightRefusal(fmt.Errorf("microsoft-ads campaign bid strategy invalid: %w", err))
-	}
-	if err := ValidateConversionGoalIDs(in.ConversionGoalIDs); err != nil {
-		return nil, domain.PreflightRefusalf("invalid microsoftConfig.%s", err.Error())
-	}
-	var goalIDs []json.Number
-	for _, id := range in.ConversionGoalIDs {
-		goalIDs = append(goalIDs, json.Number(id))
 	}
 	// Geo codes are shape-checked here (pure, offline) and RESOLVED to numeric LocationIds
 	// below, before the first mutating call. Splitting the two is deliberate: this half needs
@@ -860,7 +806,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	var (
 		campaignID     string
 		alreadyExisted bool
-		appliedGoalIDs []string
 	)
 	if existingID != "" {
 		steps = append(steps, fmt.Sprintf("Campaign already exists by name: %s (not re-created)", existingID))
@@ -889,7 +834,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				TimeZone:      timeZone,
 				BiddingScheme: biddingScheme,
 				Languages:     extra.Languages,
-				GoalIds:       goalIDs,
 			}},
 		}
 		respBody, err := c.doRequest(ctx, http.MethodPost, "Campaigns", req, false)
@@ -937,22 +881,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		} else {
 			steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, Search, %.2f/day daily budget in account currency)", campaignID, in.Budget))
 			if biddingScheme != nil {
-				if biddingScheme.TargetCpa != nil {
-					steps = append(steps, fmt.Sprintf("Campaign bid strategy: %s (target CPA %s in the account currency)", biddingScheme.Type, strconv.FormatFloat(*biddingScheme.TargetCpa, 'f', -1, 64)))
-				} else {
-					steps = append(steps, fmt.Sprintf("Campaign bid strategy: %s", biddingScheme.Type))
-				}
-			}
-			if len(goalIDs) > 0 {
-				appliedGoalIDs = append([]string(nil), in.ConversionGoalIDs...)
-				steps = append(steps, fmt.Sprintf("Campaign conversion goals set: %s", strings.Join(in.ConversionGoalIDs, ", ")))
+				steps = append(steps, fmt.Sprintf("Campaign bid strategy: %s", biddingScheme.Type))
 			}
 		}
-	}
-	// A campaign found by name keeps the goals it has: GoalIds is set only on Add, and changing
-	// what a possibly live campaign tracks is not a retry's call.
-	if alreadyExisted && len(in.ConversionGoalIDs) > 0 {
-		steps = append(steps, fmt.Sprintf("Warning: conversion goals NOT applied to reused campaign %s; its existing goals are unchanged — verify them in Microsoft Advertising", campaignID))
 	}
 
 	// campaignPartial carries the campaign id + name (and accumulates ad-group/ad ids as
@@ -972,7 +903,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		r.RadiusCriterionIDs = radiusCriterionIDs
 		r.AdScheduleCriterionIDs = scheduleCriterionIDs
 		r.BidAdjustmentCriterionIDs = adjustmentCriterionIDs
-		r.ConversionGoalIDs = appliedGoalIDs
 		return r
 	}
 
@@ -1158,10 +1088,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// guarantees nothing is orphaned.
 	tgt := targeting{keywords: keywords, cpcBid: cpcBid, cpcBidSet: cpcBidSet, flight: flightDates, campaignLanguages: len(extra.Languages) > 0,
 		network: adGroupNetwork(in.SearchPartners)}
-	if len(adGroups) > 0 {
-		// Several ad groups (#563 gap 12): each built as the single one is, in request order.
-		return c.createAdGroups(ctx, in, adGroups, campaignID, alreadyExisted, &steps, campaignPartial, tgt)
-	}
 	return c.createAdGroupAndAd(ctx, in, campaignID, alreadyExisted, &steps, campaignPartial, tgt)
 }
 
@@ -2031,71 +1957,6 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 		}
 		if err := c.putStatus(ctx, "Keywords", keywordReq, "keywords"); err != nil {
 			return &partialCascadeError{applied: applied, stage: "keywords", err: err, pausedKeywordStage: true}
-		}
-	}
-	return nil
-}
-
-// displayAuthority is the ad's display authority as Microsoft measures it: the final URL's host
-// decoded to its Unicode (U-label) form (an IPv6 literal is not an IDNA label and is kept as is),
-// plus a non-default port (authorityForWidth). A host that is not a valid IDNA label is an error.
-func displayAuthority(u *url.URL) (string, error) {
-	host := u.Hostname()
-	// An IPv6 literal is NOT an IDNA label — ToUnicode fails on it — so skip the decode
-	// entirely rather than fail closed, mirroring canonicalFinalURL's isIPv6 guard.
-	// validateAdURL still accepts IPv6 destinations, so rejecting one here would break a
-	// previously-valid URL with a misleading "not a valid IDNA label" error. Hostname()
-	// already strips the surrounding brackets, leaving the colons that identify it.
-	if !strings.Contains(host, ":") {
-		uni, ierr := idna.Lookup.ToUnicode(host)
-		if ierr != nil {
-			return "", fmt.Errorf("microsoft-ads composed ad final URL host %q is not a valid IDNA label: %w", host, ierr)
-		}
-		if uni != "" {
-			host = uni
-		}
-	}
-	return authorityForWidth(u, host), nil
-}
-
-// displayURLOverflow measures the display URL (authority plus "/path1/path2") against Microsoft's
-// display limit (the reduced one when it holds a double-width character).
-func displayURLOverflow(authority, path1, path2 string) (n, limit int, over bool) {
-	shown := displayURL(authority, path1, path2)
-	limit = maxDisplayDomainRunes
-	if hasDoubleWidth(shown) {
-		limit = maxDisplayDomainRunesWide
-	}
-	n = utf8.RuneCountInString(shown)
-	return n, limit, n > limit
-}
-
-// ValidateAdGroupDisplayURLs runs, WITHOUT contacting Microsoft, the brief-dependent display URL
-// check CreateCampaign makes for every requested ad group (#563 gap 12): the display domain
-// derived from in.RegistrationURL plus that group's path1/path2 must fit Microsoft's display
-// limit. It lets the create preflight refuse the overflow synchronously instead of the job
-// failing after the 202. Only that check is made: a registration URL that cannot be parsed or
-// decoded, or a domain too long on its own, is left to CreateCampaign (nil here), which reports
-// it. A refusal is an *AdGroupError naming the entry, worded as CreateCampaign's.
-func ValidateAdGroupDisplayURLs(in CampaignInput) error {
-	if len(in.AdGroups) == 0 || validateAdURL(in.RegistrationURL) != nil {
-		return nil
-	}
-	u, err := url.Parse(buildAdFinalURL(in))
-	if err != nil {
-		return nil
-	}
-	authority, err := displayAuthority(u)
-	if err != nil {
-		return nil
-	}
-	for i, g := range in.AdGroups {
-		p1, p2, perr := validatePaths(g.Path1, g.Path2)
-		if perr != nil || p1 == "" {
-			continue
-		}
-		if n, limit, over := displayURLOverflow(authority, p1, p2); over {
-			return &AdGroupError{Entry: i + 1, Field: "path1", Msg: fmt.Sprintf("the display URL (domain plus path1/path2) is %d characters, exceeding the %d limit; shorten path1/path2", n, limit)}
 		}
 	}
 	return nil

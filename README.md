@@ -401,16 +401,6 @@ openssl rand -base64 32
   flag keeps shapes no live create has sent off the shared account. The chart
   sets it to `"false"`
   (`app.environment.MICROSOFT_BID_ADJUSTMENTS_ENABLED.value`).
-- `MICROSOFT_REMARKETING_LISTS_ENABLED` (default unset, i.e. OFF) — opts a
-  deployment IN to the remarketing-list picker read (#563,
-  `GET /projects/{project_id}/microsoft-ads/remarketing-lists`): every
-  remarketing list on the account a Microsoft create uses, for picking
-  `microsoftConfig.audienceIds` / `excludedAudienceIds`. Only the exact value
-  `true` enables it; anything else answers the read 400 "not supported" before
-  Microsoft is contacted. It lists every foundation's lists on the shared
-  account, so the gateway admits only `global_marketing_ops` to the route. The
-  chart sets it to `"false"`
-  (`app.environment.MICROSOFT_REMARKETING_LISTS_ENABLED.value`).
 - `MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `microsoftConfig.sharedNegativeKeywordListIds` (#563):
   existing account-level negative keyword lists, verified by a
@@ -438,28 +428,6 @@ openssl rand -base64 32
   image names no account resource; the flag keeps a shape no live create has
   sent off the shared account. The chart sets it to `"false"`
   (`app.environment.MICROSOFT_LOGO_EXTENSION_ENABLED.value`).
-- `MICROSOFT_CONVERSION_GOALS_ENABLED` (default unset, i.e. OFF) — opts a
-  deployment IN to `microsoftConfig.conversionGoalIds` and the conversion
-  bidding strategies `bidding.strategy` `"maxConversions"` and `"targetCpa"`
-  (#563 gap 7), plus the conversion-goal picker read
-  (`GET /projects/{project_id}/microsoft-ads/conversion-goals`). The goals must
-  already exist on the shared account (marketing ops owns the UET tag and the
-  goals); one `GetConversionGoalsByIds` read verifies them before anything is
-  created, and they are set as the new campaign's `GoalIds`. Only the exact
-  value `true` enables it; anything else fails closed, a create naming any of
-  it is refused with a 400 before any job exists, and the picker answers 400.
-  The goals belong to the shared account, so `conversionGoalIds` also needs
-  `global_marketing_ops`. The chart sets it to `"false"`
-  (`app.environment.MICROSOFT_CONVERSION_GOALS_ENABLED.value`).
-- `MICROSOFT_AD_GROUPS_ENABLED` (default unset, i.e. OFF) — opts a deployment
-  IN to `microsoftConfig.adGroups` (#563 gap 12): up to five ad groups under
-  one Microsoft campaign, each with its own name suffix, keywords, negative
-  keywords, remarketing lists and ad copy. Each per-group field also stays
-  behind its single-group flag, and a group's remarketing lists need
-  `global_marketing_ops`. Only the exact value `true` enables it; anything else
-  fails closed, and a create naming it is refused with a 400 before any job
-  exists. The chart sets it to `"false"`
-  (`app.environment.MICROSOFT_AD_GROUPS_ENABLED.value`).
 - `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.demandGenAudience`, one
   existing Google Ads Audience on a Demand Gen ad group (#459). Only the

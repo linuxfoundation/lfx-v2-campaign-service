@@ -31,10 +31,6 @@ var microsoftGatedFields = map[string]bool{
 	"excludedAudienceIds": true,
 	// #563 gap 9: shared negative keyword lists are existing resources of the shared account.
 	"sharedNegativeKeywordListIds": true,
-	// #563 gap 7: conversion goals are existing resources of the shared account.
-	"conversionGoalIds": true,
-	// #563 gap 12: an adGroups entry may carry remarketing lists of the shared account.
-	"adGroups": true,
 }
 
 // microsoftUngatedFields are every other microsoftConfig key, each deliberately outside the check:
@@ -90,12 +86,6 @@ func TestMicrosoftSharedAccountInputDetectionAgreesWithTheCreateGate(t *testing.
 		`{"microsoftConfig":{"sharedNegativeKeywordListIds":["4001"]}}`,
 		`{"microsoftConfig":{"SHAREDNEGATIVEKEYWORDLISTIDS":["4001"],"audienceIds":["1"]}}`,
 		`{"microsoftConfig":{"sharedNegativeKeywordListIds":[]}}`,
-		`{"microsoftConfig":{"conversionGoalIds":["5001"]}}`,
-		`{"microsoftConfig":{"CONVERSIONGOALIDS":["5001"],"audienceIds":["1"]}}`,
-		`{"microsoftConfig":{"conversionGoalIds":[]}}`,
-		`{"microsoftConfig":{"adGroups":[{"nameSuffix":"A"},{"nameSuffix":"B","audienceIds":["1"],"excludedAudienceIds":["2"]}]}}`,
-		`{"microsoftConfig":{"ADGROUPS":[{"AUDIENCEIDS":["1"]}],"conversionGoalIds":["5"]}}`,
-		`{"microsoftConfig":{"adGroups":[{"nameSuffix":"A","audienceIds":[]}]}}`,
 	} {
 		var cfg microsoftConfig
 		_ = unmarshalPlatformConfig([]byte(raw), "microsoftConfig", &cfg)
@@ -108,17 +98,6 @@ func TestMicrosoftSharedAccountInputDetectionAgreesWithTheCreateGate(t *testing.
 		}
 		if len(cfg.SharedNegativeKeywordListIDs) > 0 {
 			sent = append(sent, "sharedNegativeKeywordListIds")
-		}
-		if len(cfg.ConversionGoalIDs) > 0 {
-			sent = append(sent, "conversionGoalIds")
-		}
-		for i, g := range cfg.AdGroups {
-			if len(g.AudienceIDs) > 0 {
-				sent = append(sent, fmt.Sprintf("adGroups entry %d audienceIds", i+1))
-			}
-			if len(g.ExcludedAudienceIDs) > 0 {
-				sent = append(sent, fmt.Sprintf("adGroups entry %d excludedAudienceIds", i+1))
-			}
 		}
 		gate := service.MicrosoftMarketingOpsInputs(json.RawMessage(raw))
 		if !slices.Equal(gate, sent) {

@@ -58,16 +58,10 @@ type biddingConfig struct {
 	// BidAmount is a pointer so "absent" and "0" are different facts: an automatic request that
 	// names any amount, zero included, is refused rather than silently dropped.
 	BidAmount *float64 `json:"bidAmount"`
-	// TargetCpa is the target cost per acquisition of microsoftConfig's "targetCpa" strategy (#563
-	// gap 7), in the account currency's major units. Accepted by microsoftConfig only:
-	// checkBiddingShape refuses the key on every other platform, and resolveBidding refuses it on
-	// any path that reaches it, so only microsoftBidPlan, which handles the conversion strategies
-	// before resolveBidding, ever reads it.
-	TargetCpa *float64 `json:"targetCpa"`
 
-	// strategyPresent / bidAmountPresent / targetCpaPresent: the key appeared in the JSON (with
-	// any value, null included). Set by UnmarshalJSON only.
-	strategyPresent, bidAmountPresent, targetCpaPresent bool
+	// strategyPresent / bidAmountPresent: the key appeared in the JSON (with any value, null
+	// included). Set by UnmarshalJSON only.
+	strategyPresent, bidAmountPresent bool
 }
 
 // UnmarshalJSON decodes the bidding object keeping field presence and JSON type: a present
@@ -81,9 +75,7 @@ func (b *biddingConfig) UnmarshalJSON(data []byte) error {
 	}
 	// Exact keys only, as checkBiddingShape enforces: a case variant ("Strategy") or an unknown key
 	// would otherwise be silently ignored, and the campaign created automatic without the cap.
-	// targetCpa is admitted here for every platform; checkBiddingShape, which knows the config
-	// key, refuses it outside microsoftConfig before this decode runs on the create path.
-	if msg := biddingKeyProblem(fields, true); msg != "" {
+	if msg := biddingKeyProblem(fields); msg != "" {
 		return fmt.Errorf("bidding: %s", msg)
 	}
 	*b = biddingConfig{}
@@ -105,16 +97,6 @@ func (b *biddingConfig) UnmarshalJSON(data []byte) error {
 			b.BidAmount = &n
 		}
 	}
-	if v, ok := fields["targetCpa"]; ok {
-		b.targetCpaPresent = true
-		if !isJSONNull(v) {
-			var n float64
-			if err := json.Unmarshal(v, &n); err != nil {
-				return fmt.Errorf("bidding.targetCpa must be a number")
-			}
-			b.TargetCpa = &n
-		}
-	}
 	return nil
 }
 
@@ -132,9 +114,6 @@ func (b biddingConfig) MarshalJSON() ([]byte, error) {
 	if b.BidAmount != nil {
 		out["bidAmount"] = *b.BidAmount
 	}
-	if b.TargetCpa != nil {
-		out["targetCpa"] = *b.TargetCpa
-	}
 	return json.Marshal(out)
 }
 
@@ -143,11 +122,6 @@ func (b biddingConfig) MarshalJSON() ([]byte, error) {
 const (
 	biddingStrategyAutomatic = "automatic"
 	biddingStrategyManual    = "manual"
-	// biddingStrategyMaxConversions and biddingStrategyTargetCpa are microsoftConfig's conversion
-	// strategies (#563 gap 7), accepted only there and only with conversionGoalIds; see
-	// microsoftConversionPlan.
-	biddingStrategyMaxConversions = "maxConversions"
-	biddingStrategyTargetCpa      = "targetCpa"
 )
 
 // maxCreateBid is the contract's ceiling for a starting bid, the same 1,000,000 the bid lever
@@ -164,11 +138,6 @@ type bidPlan struct {
 	strategy model.BiddingStrategy
 	// amount is the manual starting bid in the account currency's major units; zero for automatic.
 	amount float64
-	// conversions marks microsoftConfig's conversion strategies (#563 gap 7, maxConversions and
-	// targetCpa): the campaign bids MaxConversions toward its conversion goals. Recorded as
-	// automatic, since the platform sets every bid; targetCPA is the target (zero for none).
-	conversions bool
-	targetCPA   float64
 }
 
 // manual reports whether the plan creates a manual max-CPC campaign.
@@ -218,11 +187,6 @@ func resolveBidding(key string, cfg *biddingConfig) (bidPlan, error) {
 	// explicit null bidAmount, is a mistake the caller must fix — never read as "automatic".
 	if cfg.strategyPresent && cfg.Strategy == "" {
 		return bidPlan{}, biddingInvalid(key, "strategy must be \"automatic\" or \"manual\"; an empty or null strategy is refused — omit the field for the automatic default")
-	}
-	// targetCpa belongs to microsoftConfig's conversion strategies, which microsoftBidPlan resolves
-	// before calling here; on any other path it is a field this strategy does not take.
-	if cfg.targetCpaPresent {
-		return bidPlan{}, biddingInvalid(key, "targetCpa is only accepted by microsoftConfig with strategy \"targetCpa\"")
 	}
 	if cfg.bidAmountPresent && cfg.BidAmount == nil {
 		return bidPlan{}, biddingInvalid(key, "bidAmount must be a number; null is refused — omit bidAmount for automatic bidding, or send the bid for manual")
@@ -321,7 +285,7 @@ func checkBiddingShape(config json.RawMessage, key string) error {
 	if json.Unmarshal(raw, &fields) != nil {
 		return biddingInvalid(key, "bidding must be an object, {\"strategy\": \"automatic\" | \"manual\", \"bidAmount\": number}")
 	}
-	if msg := biddingKeyProblem(fields, key == microsoftConfigKey); msg != "" {
+	if msg := biddingKeyProblem(fields); msg != "" {
 		return biddingInvalid(key, "%s", msg)
 	}
 	if v, ok := fields["strategy"]; ok {
@@ -336,30 +300,17 @@ func checkBiddingShape(config json.RawMessage, key string) error {
 			return biddingInvalid(key, "bidAmount must be a number (for example 1.25), not null, a string or other JSON type")
 		}
 	}
-	if v, ok := fields["targetCpa"]; ok {
-		var n float64
-		if isJSONNull(v) || json.Unmarshal(v, &n) != nil {
-			return biddingInvalid(key, "targetCpa must be a number (for example 25), not null, a string or other JSON type")
-		}
-	}
 	return nil
 }
 
-// biddingFields are the only keys a bidding object may carry, spelled exactly. targetCpa is
-// microsoftConfig's alone (#563 gap 7); see biddingKeyProblem.
-var biddingFields = []string{"strategy", "bidAmount", "targetCpa"}
-
-// microsoftConfigKey is the config key whose bidding object may carry targetCpa.
-const microsoftConfigKey = "microsoftConfig"
+// biddingFields are the only keys a bidding object may carry, spelled exactly.
+var biddingFields = []string{"strategy", "bidAmount"}
 
 // biddingKeyProblem refuses any key of a bidding object that is not exactly "strategy" or
 // "bidAmount" (PR #332 review): a case variant names the field the caller meant ("use
 // \"strategy\""), and anything else is an unknown field. Without this, `{"Strategy":"manual",
 // "BidAmount":1.25}` decoded to an empty object — automatic bidding, no cap.
-//
-// allowTargetCpa admits "targetCpa" (microsoftConfig only, #563 gap 7); otherwise it is an unknown
-// field, as before it existed.
-func biddingKeyProblem(fields map[string]json.RawMessage, allowTargetCpa bool) string {
+func biddingKeyProblem(fields map[string]json.RawMessage) string {
 	keys := make([]string, 0, len(fields))
 	for k := range fields {
 		keys = append(keys, k)
@@ -368,9 +319,6 @@ func biddingKeyProblem(fields map[string]json.RawMessage, allowTargetCpa bool) s
 	for _, k := range keys {
 		known := false
 		for _, f := range biddingFields {
-			if f == "targetCpa" && !allowTargetCpa {
-				continue
-			}
 			if k == f {
 				known = true
 				break
@@ -380,9 +328,6 @@ func biddingKeyProblem(fields map[string]json.RawMessage, allowTargetCpa bool) s
 			}
 		}
 		if !known {
-			if allowTargetCpa {
-				return fmt.Sprintf("unknown bidding field %s; bidding accepts only \"strategy\", \"bidAmount\" and \"targetCpa\"", quoteKey(k))
-			}
 			return fmt.Sprintf("unknown bidding field %s; bidding accepts only \"strategy\" and \"bidAmount\"", quoteKey(k))
 		}
 	}

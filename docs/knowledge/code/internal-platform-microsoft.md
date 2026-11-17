@@ -1637,40 +1637,6 @@ Not verified live: no Microsoft call was made. The dispatcher keeps all three fi
 `MICROSOFT_AUDIENCES_ENABLED` (default off). The lists belong to the shared LF account, so they
 also need `global_marketing_ops` (`service.MicrosoftMarketingOpsInputs`).
 
-## Remarketing-list picker read (`remarketing_lists.go`, #563 gap 4 follow-up)
-
-`ListRemarketingLists` is the read behind `GET /projects/{project_id}/microsoft-ads/remarketing-lists`
-(`list-microsoft-ads-remarketing-lists`), for picking `audienceIds` / `excludedAudienceIds`. It is
-the call `CheckRemarketingLists` makes, `POST Audiences/QueryByIds` with `Type: "RemarketingList"`,
-but with `AudienceIds: null`, which v13 documents as "every audience of the type". There is no
-paging, so the answer is complete. It is a read, retried on 429. Each row carries `Id`, `Name`,
-`Description`, `Scope`, and `MembershipDuration` and `SearchSize` when sent (nil otherwise, never
-0). Both are decoded raw and read by `wholeNumberField`, which accepts a JSON number or a quoted
-one (Microsoft's REST JSON quotes a long: `"SearchSize":"12000"`); a fraction, a negative, text or
-an overflow (MembershipDuration above int32) makes the answer unbelievable (#613 review). An answer this client cannot believe is `ErrRemarketingListsMalformed` with no rows, and the
-service answers 503 with nothing partial: no `Audiences` array, a null entry, an id that is not the
-canonical spelling of a positive int64 or repeats, an entry of another type (the filter was not
-applied), more than 5,000 entries, or any partial error with a present code. A zero or null
-placeholder code is not an error (`audienceErrorCode`). The body is streamed
-(`decodeCappedList`, client.go), so the 5,000-row cap refuses the answer at the first row past it,
-before the rest is read or allocated. The decoder, shared with the conversion-goal picker, also
-refuses a `PartialErrors` entry that is a non-null object naming no outcome (`{}`,
-`{"Code":null}`), since it does not establish a complete read; a JSON `null` slot and an explicit
-zero-code placeholder still pass. After the capped scan it applies `decodeTrusted`'s identity check
-(`identityjson.Check`) to the whole body, so a key declared twice under the decoder's case fold
-(`PartialErrors` then `partialerrors`, or a row's `Id` twice) is refused rather than resolved to
-its last value (#613 review).
-
-The dispatcher (`internal/dispatch/microsoft_remarketing_lists.go`,
-`ListMicrosoftRemarketingLists`) answers `ErrTargetingLookupUnsupported` (400 "not supported")
-before resolving anything unless `MICROSOFT_REMARKETING_LISTS_ENABLED` is exactly `"true"`, then
-resolves credentials as a create does (`creds.resolve`, LF system fallback included) and validates
-them with `validateMicrosoftConnection`, so every listed id is one a create for the project can
-send. The service (`internal/service/microsoft_ads_lookups.go`) sorts by name ignoring case, then
-id, and records the upstream call only when Microsoft was contacted. The shared LF account holds
-every foundation's lists, so the route is in the gateway's `marketing-ops-api` rule
-(`global_marketing_ops`), like the Reddit and X custom-audience pickers. Not verified live.
-
 ## Shared negative keyword lists at create (`shared_negative_lists.go`, #563 gap 9)
 
 `microsoftConfig.sharedNegativeKeywordListIds` associates EXISTING account-level negative keyword
@@ -1695,7 +1661,7 @@ ambiguous call or an unreadable 2xx; `APPLIED` otherwise. A `PartialErrors` entr
 are both defaults (absent, null, 0, "" or the quoted "0" — `isDefaultCode` — the
 `audienceErrorCode` rule `indexedErrorItem.isError` now shares) is a placeholder, not an error (the keyword lever's `keywordMutation` treats an
 answer of only explicit zero-code placeholders, `isZeroCodePlaceholder`, as APPLIED, while `[{}]`
-or `[null]` stays UNCONFIRMED), here and in the conversion-goal picker read. A placeholder
+or `[null]` stays UNCONFIRMED). A placeholder
 clears only the slot it names: one with no index or an index outside the request (or any entry
 naming an out-of-range index) makes `attribute` unattributable, so every list without its own
 error is UNCONFIRMED, and `keywordMutation` treats such a placeholder-only answer as UNCONFIRMED
@@ -1792,8 +1758,8 @@ The ids are recorded as `AdScheduleCriterionIDs`.
 The windows run in the Microsoft Advertising ACCOUNT's time zone, not `CampaignInput.TimeZone`:
 the create omits `AdScheduleUseSearcherTimeZone`, and Microsoft then reads day-time criteria in
 the account's zone. The hours are sent as given, never translated; the comments, the result step
-("in the Microsoft Advertising account's time zone, not the campaign's"), the API catalog and the
-design text all say so (#613 review).
+("in the Microsoft Advertising account's time zone, not the campaign's") and the API catalog
+say so (#613 review).
 
 The dispatcher (`internal/dispatch/microsoft_ad_schedule.go`) decodes the hours as `*float64`, so a
 missing hour (0 is midnight) or a fractional one is refused on its own, refuses an explicit
@@ -1836,118 +1802,3 @@ object of numbers, checking each raw segment value for null first (encoding/json
 null as 0, a real adjustment), and any of the three while `MICROSOFT_BID_ADJUSTMENTS_ENABLED` is off. Not
 verified live. In particular it is unconfirmed whether Microsoft accepts an ADD of a device
 criterion on a new campaign; a refusal would stop the create, fail-closed. Not role-gated.
-
-## Conversion goals and conversion bidding at create (`conversion_goals.go`, #563 gap 7)
-
-`microsoftConfig.conversionGoalIds` names EXISTING conversion goals on the shared account; this
-service creates no UET tag and no goal (marketing ops owns both). `ValidateConversionGoalIDs`
-holds the pure rules: at most 20, each the canonical spelling of a positive int64, no repeat.
-
-`CheckConversionGoals` runs BEFORE anything is created, after the shared-list check: ONE
-`POST ConversionGoals/QueryByIds` (`GetConversionGoalsByIds`) with every id and
-`ConversionGoalTypes` set to every type, space-delimited (the monitor's precedent for a flags
-enum). `ConversionGoals` must be index-aligned with the request; a null entry (Microsoft's "not
-retrieved") or a goal whose status is not `Active` (an allow-list: `Paused`, `InActive`, `Deleted` or any
-later status) is a `PreflightRefusal` naming the id. An
-answer that cannot be believed (no array, a different length, an entry naming another goal) is a
-plain error. Partial errors are not attributed: Microsoft documents that they do not follow the
-request order, and the null entry already refuses the id. Either way nothing is created.
-
-The ids are then sent as the new campaign's `GoalIds` (`msCampaign.GoalIds`). A campaign found by
-name keeps its goals (a warning step); only goals THIS RUN set are recorded as
-`CampaignResult.ConversionGoalIDs`.
-
-`microsoftConfig.bidding` gains `strategy` `"maxConversions"` and `"targetCpa"` (with
-`bidding.targetCpa`), resolved by the dispatcher's `microsoftConversionPlan` before the generic
-`resolveBidding` (which still refuses both strategies, and the `targetCpa` key, on every other
-platform; `checkBiddingShape` refuses the key outside `microsoftConfig`). Both are sent as
-`BidSchemeMaxConversions` (`{"Type":"MaxConversions","TargetCpa":…}`, no `MaxCpc`): Microsoft
-retired `TargetCpaBiddingScheme` for new campaigns and converts it to MaxConversions with the
-target. `validateBiddingScheme` refuses MaxConversions with a `CpcBid` or with no goal, and a
-target CPA under any other scheme. They are recorded as `automatic` bidding, so the bid lever
-answers 409, as for MaxClicks.
-
-`ListConversionGoals` is the picker read (`GET /projects/{project_id}/microsoft-ads/conversion-goals`,
-the same call with no ids): every goal on the account, or `ErrConversionGoalsMalformed` (503) for
-a null entry, an unusable or repeated id, more than 5,000 rows (streamed with `decodeCappedList`,
-so refused at the first row past the cap), any partial error, a `PartialErrors` entry naming no
-outcome, or a key declared twice (the decoder's rules, described under the remarketing-list picker).
-
-Not verified live, in particular `Campaign.GoalIds` (the reference describes it only as "A list of
-goal IDs") and the JSON spelling of the `ConversionGoalTypes` flags. Everything is behind
-`MICROSOFT_CONVERSION_GOALS_ENABLED` (default off; a 400 while off, re-checked in Dispatch; the
-picker answers 400). `conversionGoalIds` also needs `global_marketing_ops`
-(`service.MicrosoftMarketingOpsInputs`, pinned to the dispatcher by
-`TestMicrosoftSharedAccountInputDetectionAgreesWithTheCreateGate`), and the picker route is on the
-gateway's `marketing-ops-api` rule.
-
-## Multiple ad groups at create (`ad_groups.go`, #563 gap 12)
-
-`microsoftConfig.adGroups` builds 1-5 ad groups under the campaign instead of the single one, each
-with its own `nameSuffix`, keywords and responsive search ad copy (`AdGroupInput`); the
-dispatcher attaches each group's negatives (ad-group level, `AddAdGroupNegativeKeywords`,
-EntityType `AdGroup`) and remarketing lists afterwards. With no `AdGroups` the client takes the
-single-group path unchanged: the same `createAdGroupAndAd` call, the same ad group name, and no
-`adGroups` key in the result.
-
-`validateAdGroups` runs inside CreateCampaign's up-front checks, before anything exists: the
-suffixes (`ValidateAdGroupNameSuffixes`: 1-40 characters, a letter or digit, no control character
-or `|`, unique by the composed name: compared after `sanitizeNamePart` with `strings.EqualFold`,
-so suffixes differing only in case or spacing are refused), each composed name (`composeAdGroupName` plus ` | <suffix>`)
-against the 256-character limit, at least one keyword per group, the copy, and each group's
-display paths against the registration URL's domain. That display check also runs at the create
-preflight (#613 review): `ValidateAdGroupDisplayURLs` (sharing `displayAuthority` and
-`displayURLOverflow` with CreateCampaign) is called by `MicrosoftDispatcher.PreflightCreateBrief`,
-the new optional `service.BriefCreatePreflighter`, which `Orchestrator.PreflightCreateBrief` runs
-after `PreflightCreate` with the loaded brief (fail-open: it refuses only on
-`ErrCreateConfigInvalid`), so an overflow is a synchronous 400.
-
-`createAdGroups` calls `createAdGroupAndAd` once per group, in order, on a per-group copy of the
-input, sharing the campaign-wide bid, flight, language and network. PARTIAL RULES (owner decision:
-degraded success, no rollback): the first group failing returns today's partial and error; a later
-group failing is recorded (`AdGroupResult.Status` `failed`, with the error), the remaining groups
-are still built unless the context ended (`not_attempted`), and the result is returned without an
-error; `FailedAdGroups` names them and the dispatcher marks the campaign `created_degraded` with
-one step. A later group whose `AdGroupID` equals an earlier group's (it resolved to that ad group
-by name, which the suffix check should already prevent) is recorded `failed` the same way, never
-`created`, so the toggle, bid and keyword levers cannot address one ad group twice. The top-level `AdGroupID`/`AdID`/`KeywordIDs` are the first group's; `BidApplied`,
-`FlightApplied` and `AlreadyExisted` hold only when they hold for every group.
-
-`UpdateAdGroupChildrenStatus` sets one further group's ad group, ad and keywords without the
-campaign. The dispatcher's toggle activates every further created group (narrowed to its live
-keywords) BEFORE `UpdateCampaignAndChildrenStatus` opens the gate, and pauses them AFTER the gate
-is closed (a failure there is logged; delivery is already stopped); it addresses only `created`
-groups (`microsoftExtraAdGroups`), so activation never opens a partly built one. Once any
-further group has activated, every later failure (a keyword read, a no-live-keyword refusal, a
-definite rejection of a later group or of the first group) is a partial toggle, returned as
-`unconfirmedToggleError` without the `ErrCampaignNotProvisioned` sentinel. The service then holds
-the lock for its cooldown and does not say nothing changed. An already-active campaign reaches
-this loop too, so an activated group may already be serving. The bid lever
-re-bids, and the keyword lever accepts (one per batch), every distinct group with a CONFIRMED
-`AdGroupID` (`microsoftConfirmedExtraAdGroupIDs`), a `failed` one included: a group whose ad or
-keyword step failed after Microsoft confirmed it still exists at the old bid with its confirmed
-keywords (#613 review). A bid failure after the first group is UNCONFIRMED. A later group whose
-create was ambiguous and confirmed no id (a timeout, a 5xx, or an accepted create with an
-unreadable body, errNoID; `createAdGroupAndAd` marks its UNCONFIRMED steps with
-`hierarchyStepUnconfirmedError` so `IsOutcomeUnconfirmed` agrees) is recorded `failed` with
-`Unconfirmed`; while any is,
-the bid lever first reconciles it (`reconcileMicrosoftUnaddressedAdGroups`): `FindAdGroupByName`
-looks up its recorded `adGroupName` under the campaign; found, its id is written into the result
-(`unconfirmed` cleared, status still `failed`) and it is re-bid; definitely absent (a complete,
-readable list without it), the flag is cleared — but only after
-`microsoftUnconfirmedSettleWindow` (1 hour) measured from the row's `UpdatedAt` (never earlier
-than the dispatch result that recorded the group; `CreatedAt` is the claim, before the create
-ran), since a timed-out create can still commit; inside it, or with no `UpdatedAt`, absence keeps
-the 409 (the dispatcher's `bidNow` clock is the test seam). The reconciled result is persisted with the new
-bid by update-campaign-bid's `ReplaceCampaign` (absence needs every listed entry to carry a
-readable name: an entry with none, such as `{"Id":656}` or `null`, may be the group, so
-`FindAdGroupByName` reports it unestablished via `lookupNamedEntityCounted`; the create's
-find-first keeps `lookupNamedEntity`, since Microsoft's duplicate-name refusal backs it) (the BidWriter contract now allows the adapter to
-update `campaign.Result`), and dropped on any error. Only a lookup that cannot establish it (a
-failed or unreadable read, a match with no usable id, an id another entry records, no recorded
-name) keeps the `ErrBidUnwritable` refusal naming the entry, which a later retry can clear. The keyword lever needs no such rule: it acts only on a group the caller names, and an id
-the row does not record is already refused. The monitor, metrics and keyword report are campaign-level.
-
-Not verified live. Behind `MICROSOFT_AD_GROUPS_ENABLED` (default off); each per-group field also
-stays behind its single-group flag, and a group's lists need `global_marketing_ops`
-(`service.MicrosoftMarketingOpsInputs` names them `adGroups entry N audienceIds`).
