@@ -171,14 +171,20 @@ var _ service.AccountMonitorConnectionScoper = (*LinkedInDispatcher)(nil)
 // account stamping therefore keep appearing for a project on its own connection.
 //
 // When the read resolves to the LF system row, the returned scoper is the system rule
-// (MonitorScopeForAccount) with projectID for its log line. A resolution failure returns nil,
-// which keeps the system rule; the read then reports the failure itself.
-func (d *LinkedInDispatcher) MonitorScoperForConnection(ctx context.Context, projectID, accountID string) service.AccountMonitorScoper {
+// (MonitorScopeForAccount) with projectID for its log line. A resolution failure is returned as
+// ReadAccountMonitor would return it (resolveLinkedInMonitorCredentials' error, unchanged), so the
+// orchestrator fails the read with it: keeping the system rule instead would omit every campaign
+// that records no account, and a scope left empty that way answers an empty monitor before the
+// read can report the broken connection or the wrong account.
+func (d *LinkedInDispatcher) MonitorScoperForConnection(ctx context.Context, projectID, accountID string) (service.AccountMonitorScoper, error) {
 	res, _, _, err := d.resolveLinkedInMonitorCredentials(ctx, projectID, model.ProviderLinkedInAds, accountID)
-	if err != nil || res == nil {
-		return nil
+	if err != nil {
+		return nil, err
 	}
-	return linkedInMonitorScoper{d: d, own: !res.fromSystem, projectID: projectID}
+	if res == nil {
+		return nil, fmt.Errorf("read linkedin account monitor: credential resolution for project %s returned no connection and no error", projectID)
+	}
+	return linkedInMonitorScoper{d: d, own: !res.fromSystem, projectID: projectID}, nil
 }
 
 // linkedInMonitorScoper is the LinkedIn monitor scope bound to the connection that serves one

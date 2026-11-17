@@ -468,24 +468,33 @@ type AccountMonitorScoper interface {
 
 // AccountMonitorConnectionScoper is an OPTIONAL capability of an AccountMonitorScoper whose scope
 // rule depends on which connection will serve the read (LinkedIn, #628). MonitorScoperForConnection
-// returns the scoper to apply to projectID's read of accountID, or nil to keep the dispatcher's
-// own MonitorScopeForAccount. It may resolve a credential but must not call the platform, and it
-// returns no error: a connection it cannot resolve keeps the dispatcher's own (stricter) rule, and
-// the read itself then reports why the connection is unusable.
+// returns the scoper to apply to projectID's read of accountID, or a nil scoper with a nil error to
+// keep the dispatcher's own MonitorScopeForAccount. It may resolve a credential but must not call
+// the platform.
+//
+// A credential it cannot resolve is an ERROR, returned as the dispatcher's own monitor read would
+// return it (no connection, connection not usable, account not managed by the connection), and the
+// orchestrator fails the read with it. Falling back to the dispatcher's stricter rule instead hid
+// the failure whenever that rule omitted every campaign: the empty scope answered an empty monitor
+// before the read could report the broken connection, so it looked like zero campaigns and spend.
 type AccountMonitorConnectionScoper interface {
-	MonitorScoperForConnection(ctx context.Context, projectID, accountID string) AccountMonitorScoper
+	MonitorScoperForConnection(ctx context.Context, projectID, accountID string) (AccountMonitorScoper, error)
 }
 
 // monitorScoperFor is platform's AccountMonitorScoper for projectID's read of accountID: the
 // connection-specific one when the dispatcher offers it (AccountMonitorConnectionScoper),
-// otherwise the dispatcher itself.
-func (o *Orchestrator) monitorScoperFor(ctx context.Context, base AccountMonitorScoper, projectID, accountID string) AccountMonitorScoper {
+// otherwise the dispatcher itself. The connection scoper's resolution error is returned unchanged.
+func (o *Orchestrator) monitorScoperFor(ctx context.Context, base AccountMonitorScoper, projectID, accountID string) (AccountMonitorScoper, error) {
 	if cs, ok := base.(AccountMonitorConnectionScoper); ok {
-		if s := cs.MonitorScoperForConnection(ctx, projectID, accountID); s != nil {
-			return s
+		s, err := cs.MonitorScoperForConnection(ctx, projectID, accountID)
+		if err != nil {
+			return nil, err
+		}
+		if s != nil {
+			return s, nil
 		}
 	}
-	return base
+	return base, nil
 }
 
 // AccountMonitorDefaulter is an OPTIONAL capability of an AccountMonitorScoper: name the account a
@@ -3182,7 +3191,7 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 // unless the scoper refuses it (a different recorded account; on Google Ads, Reddit and X, also an
 // unrecorded one, and on LinkedIn's system row an unrecorded one is omitted; an id the platform
 // cannot read). The scoper is the connection-specific one when the dispatcher offers it
-// (monitorScoperFor). A refused one is dropped and logged, never a 409: a deleted row
+// (monitorScoperFor), and that connection failing to resolve fails the read. A refused one is dropped and logged, never a 409: a deleted row
 // cannot be re-dispatched or reconciled, so a 409 on it would have no remedy.
 func (o *Orchestrator) scopeAccountMonitor(ctx context.Context, projectID string, platform model.Provider, accountID string) (ids map[string]bool, scoped bool, err error) {
 	scoper, ok := o.dispatchers[platform].(AccountMonitorScoper)
@@ -3204,8 +3213,12 @@ func (o *Orchestrator) scopeAccountMonitor(ctx context.Context, projectID string
 	}
 	if len(scope) > 0 || len(deleted) > 0 {
 		// Only with something to judge: a project with no campaigns gets its empty monitor
-		// without a credential being resolved.
-		scoper = o.monitorScoperFor(ctx, scoper, projectID, accountID)
+		// without a credential being resolved. A credential that cannot be resolved fails the
+		// read here, before a scope its fallback rule might empty could answer an empty monitor.
+		scoper, err = o.monitorScoperFor(ctx, scoper, projectID, accountID)
+		if err != nil {
+			return nil, true, err
+		}
 	}
 	ids = make(map[string]bool, len(scope))
 	if len(scope) > 0 {
@@ -3295,7 +3308,10 @@ func (o *Orchestrator) revalidateAccountMonitorScope(ctx context.Context, projec
 	if !ok {
 		return nil, fmt.Errorf("revalidate account monitor scope: %s has no monitor scoper", platform)
 	}
-	scoper := o.monitorScoperFor(ctx, base, projectID, accountID)
+	scoper, err := o.monitorScoperFor(ctx, base, projectID, accountID)
+	if err != nil {
+		return nil, err
+	}
 	ids := make(map[string]bool, len(initial))
 	for _, entry := range scope {
 		if !initial[entry.PlatformCampaignID] {

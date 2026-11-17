@@ -3554,8 +3554,10 @@ grant, and only to a campaign-scoped read (see the account-monitor architecture 
 
 It also implements `service.AccountMonitorConnectionScoper` (#628): `MonitorScoperForConnection`
 resolves the read's credential, and on the project's own connection keeps a campaign that records
-no creation account (as that connection's account); on the system row, or when the credential
-cannot be resolved, `linkedInMonitorScope` omits and logs it. Pinned by
+no creation account (as that connection's account); on the system row `linkedInMonitorScope` omits
+and logs it. When the credential cannot be resolved it returns `resolveLinkedInMonitorCredentials`'
+error unchanged, the one `ReadAccountMonitor` would return, and the orchestrator fails the read
+with it rather than judging the scope by the system rule. Pinned by
 `TestLinkedInMonitorScopeByConnection`.
 
 Pinned by `TestLinkedIn_PauseReachesACampaignInAGrantedAccount`,
