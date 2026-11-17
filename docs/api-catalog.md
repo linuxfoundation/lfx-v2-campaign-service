@@ -1212,6 +1212,9 @@ adGroups?: object[]             — Up to 5 ad groups under the campaign instead
                                   adGroupId, adGroupReused?, adId, keywordIds, status
                                   created|failed|not_attempted, error?, unconfirmed? (a failed
                                   group whose create was ambiguous and recorded no id),
+                                  stepUnconfirmed? (a failed group whose ad group id was recorded
+                                  but whose ad or keyword step was ambiguous: they may exist, so
+                                  verify in Microsoft Advertising before adding them),
                                   negativeKeywords?, audiences?}]; the top-level adGroupId/adId/keywordIds are the
                                   first group's. Pause/resume address every created group (resume
                                   opens each group, with its live keywords, before the campaign;
