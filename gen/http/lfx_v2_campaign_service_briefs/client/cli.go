@@ -1686,6 +1686,92 @@ func BuildRemoveKeywordTargetingPayload(lfxV2CampaignServiceBriefsRemoveKeywordT
 	return v, nil
 }
 
+// BuildAddKeywordTargetingPayload builds the payload for the
+// lfx-v2-campaign-service-briefs add-keyword-targeting endpoint from CLI flags.
+func BuildAddKeywordTargetingPayload(lfxV2CampaignServiceBriefsAddKeywordTargetingBody *string, lfxV2CampaignServiceBriefsAddKeywordTargetingProjectID *string, lfxV2CampaignServiceBriefsAddKeywordTargetingBriefID *string, lfxV2CampaignServiceBriefsAddKeywordTargetingCampaignID *string, lfxV2CampaignServiceBriefsAddKeywordTargetingBearerToken *string) (*lfxv2campaignservicebriefs.AddKeywordTargetingPayload, error) {
+	var err error
+	var body AddKeywordTargetingRequestBody
+	{
+		if lfxV2CampaignServiceBriefsAddKeywordTargetingBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*lfxV2CampaignServiceBriefsAddKeywordTargetingBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"keywords\": [\n         \"kubernetes\",\n         \"cloud native\"\n      ]\n   }'")
+		}
+		if body.Keywords == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("keywords", "body"))
+		}
+		if len(body.Keywords) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.keywords", body.Keywords, len(body.Keywords), 1, true))
+		}
+		if len(body.Keywords) > 20 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.keywords", body.Keywords, len(body.Keywords), 20, false))
+		}
+		for _, e := range body.Keywords {
+			if utf8.RuneCountInString(e) < 1 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("body.keywords[*]", e, utf8.RuneCountInString(e), 1, true))
+			}
+			if utf8.RuneCountInString(e) > 200 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("body.keywords[*]", e, utf8.RuneCountInString(e), 200, false))
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var projectID string
+	{
+		if lfxV2CampaignServiceBriefsAddKeywordTargetingProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceBriefsAddKeywordTargetingProjectID
+	}
+	var briefID string
+	{
+		if lfxV2CampaignServiceBriefsAddKeywordTargetingBriefID == nil {
+			return nil, fmt.Errorf("missing required flag --brief-id")
+		}
+		briefID = *lfxV2CampaignServiceBriefsAddKeywordTargetingBriefID
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var campaignID string
+	{
+		if lfxV2CampaignServiceBriefsAddKeywordTargetingCampaignID == nil {
+			return nil, fmt.Errorf("missing required flag --campaign-id")
+		}
+		campaignID = *lfxV2CampaignServiceBriefsAddKeywordTargetingCampaignID
+		err = goa.MergeErrors(err, goa.ValidateFormat("campaign_id", campaignID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceBriefsAddKeywordTargetingBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceBriefsAddKeywordTargetingBearerToken
+		}
+	}
+	v := &lfxv2campaignservicebriefs.AddKeywordTargetingPayload{}
+	if body.Keywords != nil {
+		v.Keywords = make([]string, len(body.Keywords))
+		for i, val := range body.Keywords {
+			v.Keywords[i] = val
+		}
+	} else {
+		v.Keywords = []string{}
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.CampaignID = campaignID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildListMetaAdSetsPayload builds the payload for the
 // lfx-v2-campaign-service-briefs list-meta-ad-sets endpoint from CLI flags.
 func BuildListMetaAdSetsPayload(lfxV2CampaignServiceBriefsListMetaAdSetsProjectID *string, lfxV2CampaignServiceBriefsListMetaAdSetsBriefID *string, lfxV2CampaignServiceBriefsListMetaAdSetsCampaignID *string, lfxV2CampaignServiceBriefsListMetaAdSetsWindow *string, lfxV2CampaignServiceBriefsListMetaAdSetsBearerToken *string) (*lfxv2campaignservicebriefs.ListMetaAdSetsPayload, error) {

@@ -11,6 +11,7 @@ import (
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
 )
 
 // keywordTargetingPlatform reports whether a campaign's platform carries keywords as TARGETING
@@ -124,6 +125,63 @@ func (s *BriefService) RemoveKeywordTargeting(ctx context.Context, p *briefs.Rem
 	return &briefs.KeywordTargetingRemovals{CampaignID: p.CampaignID, Results: results, AppliedCount: applied}, nil
 }
 
+// AddKeywordTargeting adds POSITIVE broad keywords to the keyword targeting of an X campaign's one
+// line item (#564 gap 12): the counterpart of RemoveKeywordTargeting, with its guards and its
+// persistence rule — nothing is persisted, so no campaign write lock, no If-Match, no ETag and no
+// index event (the X dispatcher serializes adds per line item itself). Role gating is the
+// removal's: campaign_manager, at the gateway (the route nests under /briefs/**).
+func (s *BriefService) AddKeywordTargeting(ctx context.Context, p *briefs.AddKeywordTargetingPayload) (*briefs.KeywordTargetingAdditions, error) {
+	_, campaignRepo, _, orch, err := s.ready()
+	if err != nil {
+		return nil, err
+	}
+	existing, gerr := campaignRepo.GetCampaign(ctx, p.ProjectID, p.BriefID, p.CampaignID)
+	if gerr != nil {
+		return nil, mapBriefErr(gerr)
+	}
+	if existing.Platform != model.ProviderTwitterAds {
+		return nil, &briefs.BadRequestError{Code: "400", Message: "adding keyword targeting applies to X campaigns only"}
+	}
+	// The create-time keyword rules (#574), applied here so the 400 names the problem before
+	// anything is contacted; the adapter applies them again. TargetingError text names the
+	// entry index, never the caller's keyword.
+	keywords, nerr := twitter.NormalizeKeywordAdditions(p.Keywords)
+	if nerr != nil {
+		var te *twitter.TargetingError
+		if errors.As(nerr, &te) {
+			return nil, &briefs.BadRequestError{Code: "400", Message: "the keyword additions are not valid: " + te.Error()}
+		}
+		return nil, &briefs.BadRequestError{Code: "400", Message: keywordAdditionsInvalidMessage}
+	}
+
+	outcomes, aerr := orch.AddKeywordTargeting(ctx, p.ProjectID, existing.Platform, existing, keywords)
+	if aerr != nil {
+		return nil, s.classifyKeywordTargetingError(ctx, "add", p.ProjectID, p.BriefID, p.CampaignID, existing.Platform, aerr)
+	}
+	results := make([]*briefs.KeywordTargetingAdditionResult, 0, len(outcomes))
+	applied := 0
+	for i, o := range outcomes {
+		outcome := o.Outcome
+		switch outcome {
+		case model.KeywordOutcomeApplied, model.KeywordOutcomeAlreadyPresent, model.KeywordOutcomeFailed, model.KeywordOutcomeUnconfirmed:
+		default:
+			// An outcome the adapter did not name is not evidence of success.
+			outcome = model.KeywordOutcomeUnconfirmed
+		}
+		// The keyword is the one this request sent at that position, not the adapter's echo.
+		r := &briefs.KeywordTargetingAdditionResult{Keyword: keywords[i], Outcome: outcome, ErrorCode: optionalString(o.ErrorCode)}
+		if outcome == model.KeywordOutcomeApplied || outcome == model.KeywordOutcomeAlreadyPresent {
+			r.CriterionID = optionalString(o.CriterionID)
+			applied++
+		}
+		results = append(results, r)
+	}
+	return &briefs.KeywordTargetingAdditions{CampaignID: p.CampaignID, Results: results, AppliedCount: applied}, nil
+}
+
+// keywordAdditionsInvalidMessage is the 400 for an add batch the adapter refuses as invalid.
+const keywordAdditionsInvalidMessage = "the keyword additions are not valid: send 1 to 20 distinct keywords, each 1-80 characters after trimming with no control character"
+
 // keywordTargetingPlatformLabel names the platform in a caller-facing message.
 func keywordTargetingPlatformLabel(platform model.Provider) string {
 	if platform == model.ProviderTwitterAds {
@@ -134,15 +192,35 @@ func keywordTargetingPlatformLabel(platform model.Provider) string {
 
 // classifyKeywordTargetingError maps an orchestrator failure onto this service's error set. The
 // arms and their order are classifyKeywordActionError's, plus the targeting-specific
-// refusals. verb is "read" or "remove". Adapter text is logged, never returned.
+// refusals. verb is "read", "remove" or "add". Adapter text is logged, never returned.
 func (s *BriefService) classifyKeywordTargetingError(ctx context.Context, verb, projectID, briefID, campaignID string, platform model.Provider, aerr error) error {
 	logFields := []any{"project_id", projectID, "brief_id", briefID, "campaign_id", campaignID, "platform", platform, "op", verb + "_keyword_targeting"}
 	var unconfirmed interface{ Unconfirmed() bool }
 	failed := "the keyword targeting could not be read"
-	if verb == "remove" {
+	nothing := "nothing was removed"
+	switch verb {
+	case "remove":
 		failed = "the keywords could not be removed"
+	case "add":
+		failed = "the keywords could not be added"
+		nothing = "nothing was added"
 	}
 	switch {
+	case verb == "add" && errors.Is(aerr, domain.ErrKeywordTargetingInvalid):
+		slog.WarnContext(ctx, "keyword targeting addition refused as invalid; nothing was changed",
+			append(logFields, "error", safeErrSummary(aerr))...)
+		return &briefs.BadRequestError{Code: "400", Message: keywordAdditionsInvalidMessage}
+	case errors.Is(aerr, domain.ErrKeywordTargetingLimit):
+		slog.WarnContext(ctx, "keyword targeting addition refused: the line item's targeting criteria cap",
+			append(logFields, "error", safeErrSummary(aerr))...)
+		return &briefs.ConflictError{Code: "409", Message: "the line item would hold more than 60 targeting criteria, counting those it already has — nothing was added; remove criteria first or add fewer keywords"}
+	case verb == "add" && errors.As(aerr, &unconfirmed) && unconfirmed.Unconfirmed():
+		slog.WarnContext(ctx, "keyword targeting addition is UNCONFIRMED (the platform may or may not reflect it)",
+			append(logFields, "error", safeErrSummary(aerr))...)
+		return &briefs.ConnServiceUnavailableError{
+			Code:    "503",
+			Message: "the keyword additions are unconfirmed — they may or may not have been applied on the ad platform; read the keyword targeting again before retrying",
+		}
 	case errors.Is(aerr, domain.ErrKeywordTargetingUnsupported):
 		return &briefs.BadRequestError{Code: "400", Message: "keyword targeting changes are not supported or not enabled for this campaign's platform"}
 	case errors.Is(aerr, domain.ErrKeywordTargetingInvalid):
@@ -157,6 +235,9 @@ func (s *BriefService) classifyKeywordTargetingError(ctx context.Context, verb, 
 	case errors.Is(aerr, domain.ErrKeywordTargetingChanged):
 		return &briefs.ConflictError{Code: "409", Message: "the ad group's targeting changed since it was read — nothing was removed; read the keyword targeting again and resend with its revision"}
 	case errors.Is(aerr, domain.ErrKeywordTargetingWriteInProgress):
+		if verb == "add" {
+			return &briefs.ConflictError{Code: "409", Message: "another change to this line item's keyword targeting is still in progress — " + nothing + "; read the keyword targeting again and resend"}
+		}
 		return &briefs.ConflictError{Code: "409", Message: "another change to this ad group's keyword targeting is still in progress — nothing was removed; read the keyword targeting again and resend with its revision"}
 	case errors.Is(aerr, domain.ErrKeywordTargetingWouldEmpty):
 		return &briefs.ConflictError{Code: "409", Message: "this would remove every keyword, which stops keyword targeting and widens delivery — nothing was removed; keep at least one keyword, or remove the last one in the ad platform"}
