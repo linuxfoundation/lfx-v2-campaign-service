@@ -264,6 +264,8 @@ func TestAddNegativeKeywords_RedditAndXErrorMapping(t *testing.T) {
 		{"stale revision", model.ProviderRedditAds, domain.ErrKeywordTargetingChanged, &briefs.ConflictError{}, "changed since it was read"},
 		{"write in progress", model.ProviderRedditAds, fmt.Errorf("x: %w", domain.ErrKeywordTargetingWriteInProgress), &briefs.ConflictError{}, "still in progress — nothing was added"},
 		{"over the limit", model.ProviderRedditAds, domain.ErrNegativeKeywordLimit, &briefs.ConflictError{}, "limit"},
+		{"x criteria cap", model.ProviderTwitterAds, fmt.Errorf("x: %w", domain.ErrKeywordTargetingLimit), &briefs.ConflictError{}, "more than 60 targeting criteria"},
+		{"x write in progress", model.ProviderTwitterAds, fmt.Errorf("x: %w", domain.ErrKeywordTargetingWriteInProgress), &briefs.ConflictError{}, "line item's keyword targeting is still in progress"},
 		{"unaddressable", model.ProviderTwitterAds, domain.ErrKeywordTargetingUnaddressable, &briefs.ConflictError{}, "cannot be addressed"},
 		{"provenance", model.ProviderTwitterAds, errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch), &briefs.ConflictError{}, "re-dispatched"},
 		{"no reddit connection", model.ProviderRedditAds, domain.ErrNotFound, &briefs.NotFoundError{}, "reddit ads"},

@@ -149,6 +149,11 @@ func RemoveKeywordTargetingLfxV2CampaignServiceBriefsPath(projectID string, brie
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/keyword-targeting/removals", projectID, briefID, campaignID)
 }
 
+// AddKeywordTargetingLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service add-keyword-targeting HTTP endpoint.
+func AddKeywordTargetingLfxV2CampaignServiceBriefsPath(projectID string, briefID string, campaignID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/keyword-targeting/additions", projectID, briefID, campaignID)
+}
+
 // ListMetaAdSetsLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service list-meta-ad-sets HTTP endpoint.
 func ListMetaAdSetsLfxV2CampaignServiceBriefsPath(projectID string, briefID string, campaignID string) string {
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/meta-ad-sets", projectID, briefID, campaignID)

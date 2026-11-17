@@ -5,9 +5,23 @@ package twitter
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+// TestNormalizeKeywordAdditions_CollapsesWhitespace: the service sizes its answer from this list
+// and the dispatcher sends from it, so whitespace-equivalent keywords must already be one here.
+// Otherwise the service expects more outcomes than the dispatcher returns and answers 503.
+func TestNormalizeKeywordAdditions_CollapsesWhitespace(t *testing.T) {
+	got, err := NormalizeKeywordAdditions([]string{"cloud native", "Cloud  Native", "ebpf", "cloud native"})
+	if err != nil {
+		t.Fatalf("NormalizeKeywordAdditions: %v", err)
+	}
+	if want := []string{"cloud native", "ebpf"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("NormalizeKeywordAdditions = %q, want %q", got, want)
+	}
+}
 
 // TestNormalizeTweetVariants_RefusesCopyOverTheCap: copy over X's cap on its own, or with no URL
 // of its own and too long once the destination URL is appended, is refused at preflight rather
@@ -44,5 +58,27 @@ func TestNormalizeWebsiteCardHeadline_RefusesCredentialLinks(t *testing.T) {
 	}
 	if h, err := NormalizeWebsiteCardHeadline("KubeCon NA: register at events.example"); err != nil || h == "" {
 		t.Fatalf("plain headline = %q, %v; want accepted", h, err)
+	}
+}
+
+// TestPositiveKeyword_MissingOperatorIsEQ: the read, the removal and the add lever share one
+// predicate, so a keyword X lists without operator_type is visible, removable and present.
+func TestPositiveKeyword_MissingOperatorIsEQ(t *testing.T) {
+	for _, tc := range []struct {
+		c          TargetingCriterion
+		pos, broad bool
+	}{
+		{TargetingCriterion{TargetingType: TargetingBroadKeyword, TargetingValue: "ebpf"}, true, true},
+		{TargetingCriterion{TargetingType: TargetingBroadKeyword, TargetingValue: "ebpf", OperatorType: OperatorEQ}, true, true},
+		{TargetingCriterion{TargetingType: TargetingBroadKeyword, TargetingValue: "ebpf", OperatorType: "NE"}, false, false},
+		{TargetingCriterion{TargetingType: TargetingBroadKeyword, TargetingValue: "ebpf", Deleted: true}, false, false},
+		{TargetingCriterion{TargetingType: "PHRASE_KEYWORD", TargetingValue: "ebpf"}, true, false},
+	} {
+		if got := tc.c.PositiveKeyword(); got != tc.pos {
+			t.Errorf("%+v PositiveKeyword = %v, want %v", tc.c, got, tc.pos)
+		}
+		if got := tc.c.PositiveBroadKeyword(); got != tc.broad {
+			t.Errorf("%+v PositiveBroadKeyword = %v, want %v", tc.c, got, tc.broad)
+		}
 	}
 }

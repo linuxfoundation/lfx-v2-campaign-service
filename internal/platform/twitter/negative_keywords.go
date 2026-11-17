@@ -6,7 +6,6 @@ package twitter
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -57,35 +56,52 @@ func (t TargetingCriterion) NegativeKeyword() bool {
 // this keyword (compared with textfold, the key the dispatcher's already-present lookup uses); any
 // other 2xx is UNCONFIRMED.
 func (c *Client) CreateNegativeKeywordCriterion(ctx context.Context, lineItemID, targetingType, keyword string) (string, error) {
-	if _, _, err := c.lineItemPath(lineItemID); err != nil {
-		return "", err
-	}
-	lineItemID = strings.TrimSpace(lineItemID)
 	switch targetingType {
 	case TargetingBroadKeyword, TargetingPhraseKeyword, TargetingExactKeyword:
 	default:
 		return "", fmt.Errorf("twitter: negative keyword: unsupported targeting type %q", targetingType)
 	}
+	return c.createKeywordCriterion(ctx, lineItemID, OperatorNE, targetingType, keyword, "negative keyword", "the negated keyword sent")
+}
+
+// CreateKeywordCriterion adds one POSITIVE broad keyword to a line item (#564 gap 12): the same
+// POST accounts/:account_id/targeting_criteria as CreateNegativeKeywordCriterion, with
+// operator_type=EQ and targeting_type=BROAD_KEYWORD — the criterion the create path sends for
+// twitterConfig.keywords. Paced, sent once and classified exactly as the negative add is; the
+// echo must report a live BROAD_KEYWORD criterion of this line item for this keyword, with
+// operator_type EQ or none (X's single-create example omits it, and EQ is its default).
+func (c *Client) CreateKeywordCriterion(ctx context.Context, lineItemID, keyword string) (string, error) {
+	return c.createKeywordCriterion(ctx, lineItemID, OperatorEQ, TargetingBroadKeyword, keyword, "keyword", "the keyword sent")
+}
+
+// createKeywordCriterion is the one keyword-criterion POST behind CreateNegativeKeywordCriterion
+// and CreateKeywordCriterion. what names the criterion in errors; mismatch is the echo-mismatch
+// wording.
+func (c *Client) createKeywordCriterion(ctx context.Context, lineItemID, operator, targetingType, keyword, what, mismatch string) (string, error) {
+	if _, _, err := c.lineItemPath(lineItemID); err != nil {
+		return "", err
+	}
+	lineItemID = strings.TrimSpace(lineItemID)
 	if strings.TrimSpace(keyword) == "" {
-		return "", errors.New("twitter: negative keyword: empty keyword")
+		return "", fmt.Errorf("twitter: %s: empty keyword", what)
 	}
 	if err := c.pace(ctx); err != nil {
-		return "", fmt.Errorf("twitter: create negative keyword on line item %s aborted before it was sent: %w: %w", lineItemID, ErrWriteNotSent, err)
+		return "", fmt.Errorf("twitter: create %s on line item %s aborted before it was sent: %w: %w", what, lineItemID, ErrWriteNotSent, err)
 	}
 	resp, err := c.doRequest(ctx, http.MethodPost, "targeting_criteria", map[string]string{
 		"line_item_id":    lineItemID,
-		"operator_type":   OperatorNE,
+		"operator_type":   operator,
 		"targeting_type":  targetingType,
 		"targeting_value": keyword,
 	}, false /* sent once: a 429 is unconfirmed, never retried */)
 	if err != nil {
 		if ProbeNotSent(err) {
-			return "", fmt.Errorf("twitter: create negative keyword on line item %s was not sent: %w: %w", lineItemID, ErrWriteNotSent, err)
+			return "", fmt.Errorf("twitter: create %s on line item %s was not sent: %w: %w", what, lineItemID, ErrWriteNotSent, err)
 		}
-		return "", fmt.Errorf("twitter: create negative keyword on line item %s: %w", lineItemID, err)
+		return "", fmt.Errorf("twitter: create %s on line item %s: %w", what, lineItemID, err)
 	}
 	unconfirmed := func(why string) error {
-		return &transportError{Method: http.MethodPost, Path: "targeting criteria", err: fmt.Errorf("negative keyword on line item %s: %s", lineItemID, why)}
+		return &transportError{Method: http.MethodPost, Path: "targeting criteria", err: fmt.Errorf("%s on line item %s: %s", what, lineItemID, why)}
 	}
 	if resp == nil || len(resp.Data) == 0 || string(resp.Data) == "null" {
 		return "", unconfirmed("acknowledged without the created criterion")
@@ -104,8 +120,8 @@ func (c *Client) CreateNegativeKeywordCriterion(ctx context.Context, lineItemID,
 		return "", unconfirmed("acknowledged without a usable criterion id")
 	case tc.LineItemID != lineItemID:
 		return "", unconfirmed("acknowledged under another line item")
-	case tc.TargetingType != targetingType || tc.OperatorType != OperatorNE || tc.Deleted:
-		return "", unconfirmed("acknowledged as a criterion other than the negated keyword sent")
+	case tc.TargetingType != targetingType || !echoedOperator(tc.OperatorType, operator) || tc.Deleted:
+		return "", unconfirmed("acknowledged as a criterion other than " + mismatch)
 	case !textfold.Equal(tc.TargetingValue, keyword):
 		return "", unconfirmed("acknowledged for another keyword")
 	}
