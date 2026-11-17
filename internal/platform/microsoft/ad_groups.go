@@ -86,16 +86,54 @@ type AdGroupResult struct {
 	Audiences        []AudienceOutcome        `json:"audiences,omitempty"`
 }
 
-// FailedAdGroups names, in request order, every requested ad group that was not created
-// ("entry N (suffix)"). Empty on the single-group path.
+// FailedAdGroups names, in request order, every requested ad group that was not created and
+// does NOT exist upstream as an ad group of its own ("entry N (suffix)"): no ad group id was
+// confirmed, or the one recorded is an earlier entry's (it resolved into that group). A failed
+// entry whose own ad group Microsoft confirmed is IncompleteAdGroups', not this. Empty on the
+// single-group path.
 func (r *CampaignResult) FailedAdGroups() []string {
 	var out []string
 	for i, g := range r.AdGroups {
-		if g.Status != AdGroupStatusCreated {
+		if g.Status != AdGroupStatusCreated && !r.ownAdGroupConfirmed(i) {
 			out = append(out, fmt.Sprintf("entry %d (%s)", i+1, g.NameSuffix))
 		}
 	}
 	return out
+}
+
+// IncompleteAdGroups names, in request order, every failed entry whose OWN ad group Microsoft
+// confirmed before a later step (the ad, or the keywords) failed: the ad group exists upstream,
+// so the operator must finish it there, not create it. Each names the ad group id and the step
+// to finish ("entry N (suffix): ad group ID exists but its ad was not created"). The create runs
+// ad group, then ad, then keywords, so a recorded ad id means the keyword step failed.
+func (r *CampaignResult) IncompleteAdGroups() []string {
+	var out []string
+	for i, g := range r.AdGroups {
+		if g.Status == AdGroupStatusCreated || !r.ownAdGroupConfirmed(i) {
+			continue
+		}
+		missing := "its ad (and so its keywords) was not created"
+		if g.AdID != "" {
+			missing = "its keywords were not all created"
+		}
+		out = append(out, fmt.Sprintf("entry %d (%s): ad group %s exists but %s", i+1, g.NameSuffix, g.AdGroupID, missing))
+	}
+	return out
+}
+
+// ownAdGroupConfirmed reports whether entry i records an ad group id no earlier entry recorded,
+// i.e. Microsoft confirmed an ad group that belongs to this entry alone.
+func (r *CampaignResult) ownAdGroupConfirmed(i int) bool {
+	id := strings.TrimSpace(r.AdGroups[i].AdGroupID)
+	if id == "" {
+		return false
+	}
+	for j := 0; j < i; j++ {
+		if strings.TrimSpace(r.AdGroups[j].AdGroupID) == id {
+			return false
+		}
+	}
+	return true
 }
 
 // AdGroupError is a refusal of one adGroups entry; Entry is 1-based.

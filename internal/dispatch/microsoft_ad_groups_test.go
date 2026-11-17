@@ -514,10 +514,11 @@ func msFourGroupCampaign() *model.Campaign {
 }
 
 // Once a further ad group has activated, a LATER group's failure is a partial toggle, never the
-// definite "nothing was changed": the read and the definite write rejection of the next group,
-// its "every keyword removed" refusal, and the first group's own rejection all report
-// Unconfirmed() and drop the ErrCampaignNotProvisioned sentinel (the service matches it before
-// the unconfirmed arm). Group 655 activates in every case; the failure lands after it.
+// definite "nothing was changed": the definite write rejection of the next group and the first
+// group's own rejection both report Unconfirmed() and drop the ErrCampaignNotProvisioned sentinel
+// (the service matches it before the unconfirmed arm). Group 655 activates in every case; the
+// failure lands after it. (Every keyword read now runs before any write, so a read failure is
+// definite: see microsoft_activate_reads_test.go.)
 func TestMicrosoftAdGroups_ToggleActivateLaterGroupFailureAfterAnActivatedGroupIsPartial(t *testing.T) {
 	allLive := `{"Keywords":[{"Id":701,"Status":"Paused"},{"Id":702,"Status":"Paused"},{"Id":703,"Status":"Paused"},{"Id":704,"Status":"Paused"}]}`
 	rejected := `{"Errors":[{"Code":1201,"ErrorCode":"CampaignServiceInvalidAdGroupStatus","Message":"rejected"}]}`
@@ -527,24 +528,6 @@ func TestMicrosoftAdGroups_ToggleActivateLaterGroupFailureAfterAnActivatedGroupI
 		// n-th AdGroups PUT (1 = 655, 2 = 656, ...).
 		handle func(read, adGroupPut int, method, path string) (int, string)
 	}{
-		{"next group's keyword read fails", func(read, _ int, _, path string) (int, string) {
-			if path == "Keywords/QueryByAdGroupId" {
-				if read == 3 {
-					return http.StatusBadRequest, rejected
-				}
-				return http.StatusOK, allLive
-			}
-			return http.StatusOK, `{"PartialErrors":[]}`
-		}},
-		{"next group's every keyword removed", func(read, _ int, _, path string) (int, string) {
-			if path == "Keywords/QueryByAdGroupId" {
-				if read == 3 {
-					return http.StatusOK, `{"Keywords":[]}`
-				}
-				return http.StatusOK, allLive
-			}
-			return http.StatusOK, `{"PartialErrors":[]}`
-		}},
 		{"next group's first status write rejected", func(_, put int, method, path string) (int, string) {
 			if path == "Keywords/QueryByAdGroupId" {
 				return http.StatusOK, allLive

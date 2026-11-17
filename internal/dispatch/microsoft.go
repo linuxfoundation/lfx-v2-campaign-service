@@ -1431,11 +1431,28 @@ func verifyMicrosoftAccountMatch(op string, campaign *model.Campaign, client *mi
 		op, campaign.PlatformCampaignID, created, client.AccountID(), domain.ErrCampaignAccountMismatch)
 }
 
-// microsoftActivateKeywordReadBudget bounds the live-keyword read ACTIVATE makes before its
-// cascade. It is a slice of toggleCallTimeout (45s, internal/service), deliberately well under
-// half of it, so the read — one attempt plus any 429 retries — can never leave the four status
-// PUTs without time to run.
+// microsoftActivateKeywordReadBudget bounds ALL the live-keyword reads ACTIVATE makes before its
+// cascade TOGETHER — the first ad group's and every further group's (#563 gap 12), each one
+// attempt plus any 429 retries — not each read on its own. It is a slice of toggleCallTimeout
+// (45s, internal/service), deliberately well under half of it, so however many ad groups the
+// campaign has, the reads can never leave the status PUTs without time to run. A per-read
+// budget did not: five 10s reads alone exceed 45s. microsoftActivateReadContext further caps it
+// at half of whatever the caller's deadline has left.
 var microsoftActivateKeywordReadBudget = 10 * time.Second // a var only so tests can shorten it
+
+// microsoftActivateReadContext derives the ONE context every ACTIVATE keyword read shares: the
+// smaller of microsoftActivateKeywordReadBudget and half the time left on ctx's deadline, so the
+// status PUTs that follow keep at least the other half. The reads all run before any write, so a
+// read that runs out of this budget refuses the activate with nothing changed.
+func microsoftActivateReadContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	budget := microsoftActivateKeywordReadBudget
+	if dl, ok := ctx.Deadline(); ok {
+		if half := time.Until(dl) / 2; half < budget {
+			budget = half
+		}
+	}
+	return context.WithTimeout(ctx, budget)
+}
 
 // microsoftKeywordIDs pulls the persisted keyword ids out of the result blob, using the same
 // lowerCamel json tags campaignFromMicrosoft marshalled (pinned by a round-trip test). Empty
@@ -1524,41 +1541,58 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 	// on BOTH the activate and pause paths: keywords are created Paused, so an activate that
 	// skipped them would enable a campaign with nothing eligible to match a query.
 	//
-	// On ACTIVATE they are first narrowed to the keywords still LIVE in the ad group
+	// On ACTIVATE they are first narrowed to the keywords still LIVE in each ad group
 	// (LFXV2-2665): keyword REMOVE deletes keywords upstream without touching this row, and a
-	// deleted id in the cascade's UpdateKeywords would fail every later activation. The read
-	// runs under its OWN bounded sub-budget (microsoftActivateKeywordReadBudget), so a slow or
-	// throttled read cannot consume the toggle's deadline the mutations need; a failed or
-	// timed-out read REFUSES the activate — definite, because nothing has been changed yet.
+	// deleted id in the cascade's UpdateKeywords would fail every later activation.
+	//
+	// EVERY group's read — the first group's and each further group's — runs BEFORE ANY status
+	// write, all under ONE shared budget (microsoftActivateReadContext), so the reads together
+	// cannot consume the toggle's deadline the mutations need however many groups there are. A
+	// failed or timed-out read, or a group with no live keyword left, REFUSES the activate —
+	// definite, because nothing has been changed yet.
 	//
 	// PAUSE NEVER READS. Stopping delivery must not wait on, or be starved by, a read: the
 	// recorded ids are sent as they are, the campaign gate flips FIRST, and a keyword-stage
 	// failure after it (a deleted keyword's rejection among them) is handled below.
 	keywordIDs := microsoftKeywordIDs(campaign)
+	var extraLive [][]string
 	if msStatus == microsoft.StatusActive && len(keywordIDs) > 0 && adGroupID != "" {
-		readCtx, cancel := context.WithTimeout(ctx, microsoftActivateKeywordReadBudget)
+		readCtx, cancel := microsoftActivateReadContext(ctx)
 		live, lerr := microsoftLiveKeywordIDs(readCtx, client, adGroupID, keywordIDs)
-		cancel()
 		if lerr != nil {
+			cancel()
 			return fmt.Errorf("toggle microsoft campaign status: read the ad group's keywords before activating (nothing was changed): %w", lerr)
 		}
 		if len(live) == 0 {
+			cancel()
 			return fmt.Errorf("%w: microsoft campaign %s cannot be activated because every keyword it was created with has since been removed (at least one keyword is required for a search campaign to serve)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 		}
 		keywordIDs = live
+		for _, g := range extras {
+			gl, gerr := microsoftLiveKeywordIDs(readCtx, client, g.adGroupID, g.keywordIDs)
+			if gerr != nil {
+				cancel()
+				return fmt.Errorf("toggle microsoft campaign status: read ad group %s's keywords before activating (nothing was changed): %w", g.adGroupID, gerr)
+			}
+			if len(gl) == 0 {
+				cancel()
+				return fmt.Errorf("%w: microsoft campaign %s cannot be activated because every keyword ad group %s was created with has since been removed", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID, g.adGroupID)
+			}
+			extraLive = append(extraLive, gl)
+		}
+		cancel()
 	}
-	// ACTIVATE: the further ad groups first, each narrowed to its live keywords, while the
+	// ACTIVATE: the further ad groups first, each with its live keywords read above, while the
 	// campaign gate is still Paused, so nothing serves until every group is ready; the gate opens
 	// last in UpdateCampaignAndChildrenStatus below.
 	//
 	// activated names the further ad groups Microsoft already confirmed Active. Once it is
-	// non-empty, every later failure — a keyword read, a "no live keyword" refusal, a definite
-	// rejection of a later group's or the first group's write — is a PARTIAL toggle, reported
-	// through unconfirmedToggleError so the service holds the write lock for its cooldown and
-	// says "verify before retrying" rather than "nothing was changed". The gate may not be the
-	// safety net either: an already-active campaign reaches this loop too, so an activated
-	// group may already be serving. While activated is empty, every failure is as definite as
-	// before.
+	// non-empty, every later failure — a definite rejection of a later group's or the first
+	// group's write — is a PARTIAL toggle, reported through unconfirmedToggleError so the service
+	// holds the write lock for its cooldown and says "verify before retrying" rather than
+	// "nothing was changed". The gate may not be the safety net either: an already-active
+	// campaign reaches this loop too, so an activated group may already be serving. While
+	// activated is empty, every failure is as definite as before.
 	var activated []string
 	partialAfter := func(err error) error {
 		if len(activated) == 0 {
@@ -1571,17 +1605,8 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 			campaign.PlatformCampaignID, strings.Join(activated, ", "), err)}
 	}
 	if msStatus == microsoft.StatusActive {
-		for _, g := range extras {
-			readCtx, cancel := context.WithTimeout(ctx, microsoftActivateKeywordReadBudget)
-			live, lerr := microsoftLiveKeywordIDs(readCtx, client, g.adGroupID, g.keywordIDs)
-			cancel()
-			if lerr != nil {
-				return partialAfter(fmt.Errorf("toggle microsoft campaign status: read ad group %s's keywords before activating (the campaign was not activated): %w", g.adGroupID, lerr))
-			}
-			if len(live) == 0 {
-				return partialAfter(fmt.Errorf("%w: microsoft campaign %s cannot be activated because every keyword ad group %s was created with has since been removed", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID, g.adGroupID))
-			}
-			if gerr := client.UpdateAdGroupChildrenStatus(ctx, campaign.PlatformCampaignID, g.adGroupID, g.adID, live, msStatus); gerr != nil {
+		for i, g := range extras {
+			if gerr := client.UpdateAdGroupChildrenStatus(ctx, campaign.PlatformCampaignID, g.adGroupID, g.adID, extraLive[i], msStatus); gerr != nil {
 				if microsoft.IsOutcomeUnconfirmed(gerr) {
 					return &unconfirmedToggleError{err: gerr}
 				}

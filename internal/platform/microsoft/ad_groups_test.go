@@ -234,3 +234,22 @@ func TestSiblingAdGroupName(t *testing.T) {
 		})
 	}
 }
+
+// FailedAdGroups names only entries with no ad group of their own; IncompleteAdGroups names the
+// failed entries whose own ad group Microsoft confirmed, with the step left to finish.
+func TestFailedAndIncompleteAdGroups(t *testing.T) {
+	r := &CampaignResult{AdGroups: []AdGroupResult{
+		{NameSuffix: "A", AdGroupID: "654", Status: AdGroupStatusCreated},
+		{NameSuffix: "B", Status: AdGroupStatusFailed},
+		{NameSuffix: "C", AdGroupID: "656", Status: AdGroupStatusFailed},
+		{NameSuffix: "D", AdGroupID: "657", AdID: "990", Status: AdGroupStatusFailed},
+		{NameSuffix: "E", AdGroupID: "654", Status: AdGroupStatusFailed},
+	}}
+	if got := strings.Join(r.FailedAdGroups(), "; "); got != "entry 2 (B); entry 5 (E)" {
+		t.Errorf("FailedAdGroups = %q", got)
+	}
+	want := "entry 3 (C): ad group 656 exists but its ad (and so its keywords) was not created; entry 4 (D): ad group 657 exists but its keywords were not all created"
+	if got := strings.Join(r.IncompleteAdGroups(), "; "); got != want {
+		t.Errorf("IncompleteAdGroups = %q\nwant %q", got, want)
+	}
+}

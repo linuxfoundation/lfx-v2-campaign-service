@@ -822,10 +822,12 @@ without one are refused, exactly as an orphan ad is.
 - **On ACTIVATE, keyword ids are narrowed to the LIVE ones first** (LFXV2-2665, dispatcher side).
   Keyword REMOVE deletes keywords without touching the row, so the recorded `keywordIds` can name
   a deleted keyword, which UpdateKeywords would reject. `ToggleStatus` reads `GetAdGroupKeywords`
-  under its OWN sub-budget (`microsoftActivateKeywordReadBudget`, 10s of the toggle's 45s, so a
-  slow or throttled read cannot leave the four PUTs without time) and passes only ids still
-  present and not `Deleted`; a failed or timed-out read refuses DEFINITELY (nothing changed yet)
-  and an emptied set is `ErrCampaignNotProvisioned`.
+  for EVERY ad group (the first and each further one) BEFORE ANY status write, all under ONE
+  shared budget (`microsoftActivateReadContext`: `microsoftActivateKeywordReadBudget`, 10s of the
+  toggle's 45s, capped at half the caller's remaining deadline), so however many groups there
+  are the reads cannot leave the PUTs without time. It passes only ids still present and not
+  `Deleted`; a failed or timed-out read refuses DEFINITELY (nothing changed yet) and an emptied
+  set is `ErrCampaignNotProvisioned`.
 - **PAUSE never reads** — stopping delivery must not wait on, or be starved by, a read (an earlier
   revision read on pause too and could exhaust the toggle deadline before the gate was sent). The
   recorded ids are sent as they are; the gate flips FIRST, and a failure at the trailing KEYWORD
@@ -1867,8 +1869,10 @@ input, sharing the campaign-wide bid, flight, language and network. PARTIAL RULE
 degraded success, no rollback): the first group failing returns today's partial and error; a later
 group failing is recorded (`AdGroupResult.Status` `failed`, with the error), the remaining groups
 are still built unless the context ended (`not_attempted`), and the result is returned without an
-error; `FailedAdGroups` names them and the dispatcher marks the campaign `created_degraded` with
-one step. A later group whose `AdGroupID` equals an earlier group's (it resolved to that ad group
+error; `FailedAdGroups` names those with no confirmed ad group of their own ("NOT created": create
+them), `IncompleteAdGroups` names those whose ad group Microsoft confirmed before the ad or
+keyword step failed (the group exists upstream: finish its ad or keywords there, never create it
+again), and the dispatcher marks the campaign `created_degraded` with one step for each kind. A later group whose `AdGroupID` equals an earlier group's (it resolved to that ad group
 by name, which the suffix check should already prevent) is recorded `failed` the same way, never
 `created`, so the toggle, bid and keyword levers cannot address one ad group twice. The top-level `AdGroupID`/`AdID`/`KeywordIDs` are the first group's; `BidApplied`,
 `FlightApplied` and `AlreadyExisted` hold only when they hold for every group.
@@ -1878,8 +1882,9 @@ campaign. The dispatcher's toggle activates every further created group (narrowe
 keywords) BEFORE `UpdateCampaignAndChildrenStatus` opens the gate, and pauses them AFTER the gate
 is closed (a failure there is logged; delivery is already stopped); it addresses only `created`
 groups (`microsoftExtraAdGroups`), so activation never opens a partly built one. Once any
-further group has activated, every later failure (a keyword read, a no-live-keyword refusal, a
-definite rejection of a later group or of the first group) is a partial toggle, returned as
+further group has activated, every later failure (a definite rejection of a later group or of
+the first group; the keyword reads all run before the first write, so they are always definite)
+is a partial toggle, returned as
 `unconfirmedToggleError` without the `ErrCampaignNotProvisioned` sentinel. The service then holds
 the lock for its cooldown and does not say nothing changed. An already-active campaign reaches
 this loop too, so an activated group may already be serving. The bid lever

@@ -222,7 +222,8 @@ func checkMicrosoftAdGroupLists(ctx context.Context, client *microsoft.Client, c
 }
 
 // applyMicrosoftAdGroupExtras finishes a multi-ad-group create on the CONFIRMED campaign: it
-// records every group that was not created (degrading the campaign with one step naming them),
+// records every group that was not created, and every group whose ad group exists but whose ad or
+// keyword step failed (degrading the campaign with one step for each kind, naming them),
 // then attaches each CREATED group's negatives (ad-group level) and remarketing lists, under the
 // single-group rules (a list is never written to a reused ad group). Outcomes are recorded on the
 // group's AdGroupResult. It reports whether the campaign is DEGRADED and never returns an error:
@@ -236,6 +237,13 @@ func applyMicrosoftAdGroupExtras(ctx context.Context, client *microsoft.Client, 
 		degraded = true
 		result.Steps = append(result.Steps, fmt.Sprintf("Ad groups NOT created: %s. The campaign stands with the other ad groups (nothing was rolled back); create the missing ones in Microsoft Advertising, and verify any reported UNCONFIRMED first — repeating the create does not retry them", strings.Join(failed, ", ")))
 		slog.WarnContext(ctx, "microsoft create: some ad groups not created", "campaign_id", result.CampaignID, "failed", failed)
+	}
+	// A failed group whose ad group Microsoft DID confirm exists upstream: telling the operator to
+	// create it would make a duplicate. Name the step that failed so they finish it instead.
+	if incomplete := result.IncompleteAdGroups(); len(incomplete) > 0 {
+		degraded = true
+		result.Steps = append(result.Steps, fmt.Sprintf("Ad groups created in Microsoft but NOT completed: %s. Do not create them again; finish them in Microsoft Advertising (add the missing ad and/or keywords) — repeating the create does not retry them", strings.Join(incomplete, "; ")))
+		slog.WarnContext(ctx, "microsoft create: some ad groups created but not completed", "campaign_id", result.CampaignID, "incomplete", incomplete)
 	}
 	for i := range result.AdGroups {
 		g := &result.AdGroups[i]
