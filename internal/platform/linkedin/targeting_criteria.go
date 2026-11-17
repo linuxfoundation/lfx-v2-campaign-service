@@ -112,6 +112,18 @@ func TargetingFacetKeys() []string {
 	return keys
 }
 
+// excludableFacetKeys lists, sorted, the facet keys accepted under exclude: every facet but the
+// includeOnly ones, the same rule cleanFacet applies (#557 review 2).
+func excludableFacetKeys() []string {
+	keys := make([]string, 0, len(targetingFacets))
+	for _, k := range TargetingFacetKeys() {
+		if !targetingFacets[k].includeOnly {
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}
+
 func targetingInvalid(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrTargetingInvalid, fmt.Sprintf(format, args...))
 }
@@ -124,7 +136,11 @@ func quoteValue(v string) string { return domain.CallerValue(v) }
 func cleanFacet(key string, values []string, where string, exclude bool) ([]string, error) {
 	f, ok := targetingFacets[key]
 	if !ok {
-		return nil, targetingInvalid("%s: unknown facet %s; accepted: %s", where, quoteValue(key), strings.Join(TargetingFacetKeys(), ", "))
+		accepted := TargetingFacetKeys()
+		if exclude {
+			accepted = excludableFacetKeys()
+		}
+		return nil, targetingInvalid("%s: unknown facet %s; accepted: %s", where, quoteValue(key), strings.Join(accepted, ", "))
 	}
 	if exclude && f.includeOnly {
 		return nil, targetingInvalid("%s: LinkedIn accepts %s only under include", where, key)
