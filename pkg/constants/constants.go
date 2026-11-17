@@ -250,7 +250,8 @@ const (
 
 	// EnvTwitterCreateTargetingEnabled opts a deployment IN to twitterConfig.geoTargets and
 	// twitterConfig.languages (#564): country and language targeting criteria added to the line
-	// item an X create makes. Only the exact value "true" enables them; unset or any other value
+	// item an X create makes (keywords, interestIds, conversationTopics, platforms, devices,
+	// ageBucket and gender joined later, #564 gaps 4, 8 and 9). Only the exact value "true" enables them; unset or any other value
 	// fails closed, and a create naming either is refused with a 400 before any job exists (and
 	// again at dispatch, before anything upstream).
 	//
@@ -273,6 +274,29 @@ const (
 	// shares, so the create inputs also require global_marketing_ops
 	// (service.TwitterMarketingOpsInputs) and the read sits in the gateway's marketing-ops-api rule.
 	EnvTwitterCustomAudiencesEnabled = "TWITTER_CUSTOM_AUDIENCES_ENABLED"
+
+	// EnvTwitterAudienceExpansionEnabled opts a deployment IN to twitterConfig.audienceExpansion
+	// (#564 gap 11): the line item an X create makes is sent with audience_expansion BROAD, DEFINED
+	// or EXPANDED. Only the exact value "true" enables it; unset or any other value fails closed,
+	// and a create setting it is refused with a 400 before any job exists (and again at dispatch,
+	// before anything upstream).
+	//
+	// It names no account resource: it keeps an UNVERIFIED line-item parameter (from X's published
+	// v12 reference; no live create has sent it) off the shared ad account until a live create
+	// confirms X accepts it on a WEBSITE_CLICKS line item. Turn it on per environment, in
+	// lfx-v2-argocd.
+	EnvTwitterAudienceExpansionEnabled = "TWITTER_AUDIENCE_EXPANSION_ENABLED"
+
+	// EnvTwitterFollowerLookalikesEnabled opts a deployment IN to
+	// twitterConfig.followerLookalikeUserIds (#564 gap 4c): each id becomes a
+	// SIMILAR_TO_FOLLOWERS_OF_USER criterion on the line item an X create makes. Only the exact
+	// value "true" enables it; unset or any other value fails closed, and a create setting it is
+	// refused with a 400 before any job exists (and again at dispatch, before anything upstream).
+	//
+	// It names no account resource (a public user id). It keeps an UNVERIFIED targeting type off
+	// the shared ad account until a live create confirms it: X has no user lookup, so an id X
+	// refuses fails at its criterion POST and leaves a PAUSED partial for reconciliation.
+	EnvTwitterFollowerLookalikesEnabled = "TWITTER_FOLLOWER_LOOKALIKES_ENABLED"
 
 	// EnvTwitterVideoEnabled opts a deployment IN to twitterConfig.videoAssetId (#564 gap 7): a
 	// stored MP4 uploaded as amplify_video (chunked initialize/append/finalize, then STATUS polled

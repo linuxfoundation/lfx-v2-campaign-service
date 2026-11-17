@@ -111,7 +111,7 @@ func TestCreateCampaign_VideoProcessingIsBoundedAndCreatesNothing(t *testing.T) 
 func TestCreateCampaign_VideoRefusedBeforeAnyRequest(t *testing.T) {
 	over := make([]string, MaxCreateTargetingCriteriaWithVideo+1)
 	for i := range over {
-		over[i] = fmt.Sprint("kw", i+1)
+		over[i] = fmt.Sprint(i + 1)
 	}
 	for name, mut := range map[string]func(*CampaignInput){
 		"with an image":  func(in *CampaignInput) { in.Image = &ImageInput{Bytes: testPNG(100), MIME: "image/png"} },
@@ -119,7 +119,11 @@ func TestCreateCampaign_VideoRefusedBeforeAnyRequest(t *testing.T) {
 		"wrong type":     func(in *CampaignInput) { in.Video.MIME = "video/quicktime" },
 		"not an mp4":     func(in *CampaignInput) { in.Video.Bytes = testPNG(100) },
 		"too large":      func(in *CampaignInput) { in.Video.Bytes = testMP4(MaxVideoBytes + 1) },
-		"over criteria":  func(in *CampaignInput) { in.Keywords = over },
+		"over criteria":  func(in *CampaignInput) { in.FollowerLookalikeUserIDs = over },
+		// #564 gap 9: an age bucket and a gender each count as a criterion.
+		"over criteria with age and gender": func(in *CampaignInput) {
+			in.FollowerLookalikeUserIDs, in.AgeBucket, in.Gender = over[:MaxCreateTargetingCriteriaWithVideo-1], "AGE_OVER_18", "FEMALE"
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newMediaFakeX()

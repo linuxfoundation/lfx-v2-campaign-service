@@ -3560,6 +3560,89 @@ interestIds?: string[]           — Interest targeting (#564 gap 4): X interest
                                   wrong JSON type (null reads as absent), a blank or malformed
                                   entry, or a list over its cap is a synchronous 400 `invalid
                                   campaign config: twitterConfig.<field>: …`. Not role-gated.
+conversationTopics?: string[]    — Conversation topic targeting (#564 gap 8): X conversation topic
+                                  values (the `targeting_value` of
+                                  `GET targeting_criteria/conversations`, e.g. `a1`), trimmed,
+                                  lowercased, 1-32 letters or digits, duplicates dropped, at most
+                                  60. Each is sent as a `CONVERSATION` / `EQ` criterion after the
+                                  interests, spelled as X listed it. The conversation list is
+                                  walked to its end before anything is created; a topic it does not
+                                  list, or a list that cannot be read to its end, fails the job with
+                                  nothing created. The same TWITTER_CREATE_TARGETING_ENABLED flag,
+                                  criterion POST path, failure handling, reuse rules and synchronous
+                                  400s as `keywords` / `interestIds`. Not role-gated.
+platforms?: string[]             — Device platform targeting (#564 gap 9): X platform values (the
+                                  `targeting_value` of `GET targeting_criteria/platforms`, e.g. `0`
+                                  for iOS) — X's device platforms, not the request's ad platforms.
+                                  Trimmed, lowercased, 1-32 letters or digits, duplicates dropped,
+                                  at most 10. Each is sent as a `PLATFORM` / `EQ` criterion after the
+                                  conversation topics, spelled as X listed it; the platform list is
+                                  walked to its end first, and a value it does not list, or a list
+                                  that cannot be read, fails the job with nothing created. Omitted,
+                                  the line item serves on every platform, as before. The same flag,
+                                  criterion path, failure and reuse rules and synchronous 400s as
+                                  `conversationTopics`. Not role-gated.
+devices?: string[]               — Device targeting (#564 gap 9): X device values (the
+                                  `targeting_value` of `GET targeting_criteria/devices`, e.g. `1q`
+                                  for the iPhone 3GS). Trimmed, lowercased, 1-32 letters or digits,
+                                  duplicates dropped, at most 60. Each is sent as a `DEVICE` / `EQ`
+                                  criterion after the platforms, spelled as X listed it; the device
+                                  list is walked to its end first, and a value it does not list, or a
+                                  list that cannot be read, fails the job with nothing created. X
+                                  refuses a platform broader than a chosen device (iOS with an
+                                  iPhone); that is not checked here, so such a pair fails at its
+                                  criterion POST, after the PAUSED line item exists. Same flag,
+                                  failure and reuse rules and synchronous 400s as `platforms`.
+                                  Not role-gated.
+ageBucket?: string               — Age targeting (#564 gap 9): ONE of X's AGE_BUCKET values (X
+                                  allows a single age bucket per line item), trimmed and
+                                  uppercased: AGE_13_TO_24, AGE_13_TO_34, AGE_13_TO_49,
+                                  AGE_13_TO_54, AGE_OVER_13, AGE_18_TO_34, AGE_18_TO_49,
+                                  AGE_18_TO_54, AGE_OVER_18, AGE_21_TO_34, AGE_21_TO_49,
+                                  AGE_21_TO_54, AGE_OVER_21, AGE_25_TO_49, AGE_25_TO_54,
+                                  AGE_OVER_25, AGE_35_TO_49, AGE_35_TO_54, AGE_OVER_35,
+                                  AGE_OVER_50 (there is no AGE_18_TO_24). Sent as one `AGE` / `EQ`
+                                  criterion after the devices, with the bucket as its value. The
+                                  list is X's SDK enumeration (docs.x.com shows only AGE_21_TO_34)
+                                  and is not confirmed live. Blank or omitted: every age.
+gender?: string                  — Gender targeting (#564 gap 9): `MALE` or `FEMALE`
+                                  (case-insensitive), sent as one `GENDER` / `EQ` criterion after
+                                  the age bucket with X's value `1` (male) or `2` (female). Blank or
+                                  omitted: every gender, X's default.
+                                  `ageBucket` and `gender` must be JSON strings (null reads as
+                                  absent); otherwise, or outside their sets, or set while
+                                  TWITTER_CREATE_TARGETING_ENABLED is off, the create is a
+                                  synchronous 400 `invalid campaign config: twitterConfig.<field>: …`,
+                                  re-checked at dispatch. Not role-gated.
+audienceExpansion?: string       — Line-item audience expansion (#564 gap 11): `BROAD`, `DEFINED`
+                                  or `EXPANDED` (trimmed, case-insensitive), sent as the new line
+                                  item's `audience_expansion` on `POST accounts/:id/line_items`
+                                  ("expand the reach of campaigns by targeting users similar to
+                                  those already targeted"). Omitted or blank, nothing is sent and X
+                                  applies no expansion, as before. A line item reused by name keeps
+                                  its own expansion, and a warning step says so. OFF unless
+                                  TWITTER_AUDIENCE_EXPANSION_ENABLED is exactly "true" — while off, a
+                                  non-blank value is a synchronous 400 naming the flag. A value
+                                  outside the set, or one that is not a string (null reads as
+                                  absent), is a synchronous 400 `invalid campaign config:
+                                  twitterConfig.audienceExpansion: …`. Not role-gated.
+followerLookalikeUserIds?: string[] — Follower look-alikes (#564 gap 4c): numeric X user ids
+                                  (1-19 digits, no leading zero, within int64; trimmed and
+                                  de-duplicated; at most 60), e.g. `14230524`. Each is sent as a
+                                  `SIMILAR_TO_FOLLOWERS_OF_USER` / `EQ` criterion on the new line
+                                  item, after `platforms` and before the included custom audiences,
+                                  and counts toward the 60-criteria per-create total. NOT looked up
+                                  before create — X's Ads API has no user lookup — so an id X refuses
+                                  fails at its own criterion POST: the create stops before any tweet,
+                                  returning the PAUSED campaign and line item as a retained partial
+                                  ("targeting incomplete … do not enable the line item"), exactly as
+                                  for any other criterion failure; repeating the request answers
+                                  reconciliation required. OFF unless
+                                  TWITTER_FOLLOWER_LOOKALIKES_ENABLED is exactly "true" — while off,
+                                  a non-empty list is a synchronous 400 naming the flag. A malformed
+                                  id, a list over its cap, or a value that is not an array of strings
+                                  (null reads as absent) is a synchronous 400 `invalid campaign
+                                  config: twitterConfig.followerLookalikeUserIds: …`. Not role-gated.
 videoAssetId?: string            — Video creative (#564 gap 7): the id of an MP4 creative asset of
                                   THIS brief (upload-creative-asset, `content_type` `video/mp4`, at
                                   most 30 MiB). Attached to the authored tweet instead of an
@@ -3597,7 +3680,7 @@ excludedCustomAudienceIds?: string[]
                                   `invalid campaign config: twitterConfig.<field>: …`, as is a
                                   value that is not an array of strings (null reads as absent).
                                   ALL THE TARGETING LISTS TOGETHER (`geoTargets`, `languages`,
-                                  `keywords`, `interestIds`, `customAudienceIds`,
+                                  `keywords`, `interestIds`, `conversationTopics`, `platforms`, `devices`, `ageBucket`, `gender`, `followerLookalikeUserIds`, `customAudienceIds`,
                                   `excludedCustomAudienceIds`, counted after de-duplication) may
                                   name at most 60 criteria per create: each is
                                   a separate X write paced at one per second inside the two-minute

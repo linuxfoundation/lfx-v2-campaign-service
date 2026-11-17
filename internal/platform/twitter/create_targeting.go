@@ -83,12 +83,71 @@ const (
 	maxCreateKeywordRunes = 80
 	// TargetingInterest is X's targeting_type for an interest criterion.
 	TargetingInterest = "INTEREST"
+
+	// FieldConversationTopics is the gap 8 twitterConfig key (#564): conversation topics, sent as
+	// CONVERSATION criteria.
+	FieldConversationTopics = "conversationTopics"
+	// MaxCreateConversationTopics caps the list on its own; the per-create total
+	// (MaxCreateTargetingCriteria) bounds it together with the others.
+	MaxCreateConversationTopics = MaxCreateTargetingCriteria
+	// TargetingConversation is X's targeting_type for a conversation topic criterion.
+	TargetingConversation = "CONVERSATION"
+
+	// FieldPlatforms is the gap 9 twitterConfig key (#564): device platforms (iOS, Android,
+	// desktop and so on), sent as PLATFORM criteria.
+	FieldPlatforms = "platforms"
+	// MaxCreatePlatforms caps the list: X lists a handful of platforms, so ten is room to spare.
+	MaxCreatePlatforms = 10
+	// TargetingPlatform is X's targeting_type for a platform criterion.
+	TargetingPlatform = "PLATFORM"
+
+	// FieldDevices is the gap 9 twitterConfig key (#564) for specific mobile devices (X's example:
+	// targeting_value "1q" for the iPhone 3GS), sent as DEVICE criteria.
+	FieldDevices = "devices"
+	// MaxCreateDevices caps the list on its own; the per-create total (MaxCreateTargetingCriteria)
+	// bounds it together with the others.
+	MaxCreateDevices = MaxCreateTargetingCriteria
+	// TargetingDevice is X's targeting_type for a device criterion.
+	TargetingDevice = "DEVICE"
+
+	// FieldAgeBucket and FieldGender are the gap 9 twitterConfig keys (#564) for one AGE and one
+	// GENDER criterion. X: "It is only possible to target a single AGE bucket per line item", and
+	// gender targets "males (1) or females (2). Leave null to target all."
+	FieldAgeBucket = "ageBucket"
+	FieldGender    = "gender"
+	// TargetingAge and TargetingGender are X's targeting_type values.
+	TargetingAge    = "AGE"
+	TargetingGender = "GENDER"
 )
+
+// ageBuckets is X's AGE_BUCKET enumeration. docs.x.com shows only AGE_21_TO_34 (the
+// recommendations example) and links the full list to an Enumerations page it no longer serves,
+// so the list is the AGE_BUCKET enum of X's own Python Ads SDK
+// (github.com/xdevplatform/twitter-python-ads-sdk, twitter_ads/enum.py), which holds that example.
+// Not confirmed against a live account: a bucket X has since added is refused here, and one it has
+// retired fails at its criterion POST.
+var ageBuckets = map[string]bool{
+	"AGE_13_TO_24": true, "AGE_13_TO_34": true, "AGE_13_TO_49": true, "AGE_13_TO_54": true, "AGE_OVER_13": true,
+	"AGE_18_TO_34": true, "AGE_18_TO_49": true, "AGE_18_TO_54": true, "AGE_OVER_18": true,
+	"AGE_21_TO_34": true, "AGE_21_TO_49": true, "AGE_21_TO_54": true, "AGE_OVER_21": true,
+	"AGE_25_TO_49": true, "AGE_25_TO_54": true, "AGE_OVER_25": true,
+	"AGE_35_TO_49": true, "AGE_35_TO_54": true, "AGE_OVER_35": true,
+	"AGE_OVER_50": true,
+}
+
+// genderValues maps the accepted gender to X's GENDER targeting_value (Campaign Management guide,
+// "Understanding targeting types": males 1, females 2).
+var genderValues = map[string]string{"MALE": "1", "FEMALE": "2"}
 
 var (
 	countryCodeRe   = regexp.MustCompile(`^[A-Z]{2}$`)
 	languageValueRe = regexp.MustCompile(`^[a-z][a-z-]{1,7}$`)
 	interestIDRe    = regexp.MustCompile(`^[0-9]{1,19}$`)
+	// listedValueRe is the shape of an opaque targeting_value from a targeting_criteria lookup
+	// (a conversation topic's is "a1" in X's example), after lower-casing: X ids are base-36.
+	listedValueRe = regexp.MustCompile(`^[0-9a-z]{1,32}$`)
+	// echoedIntegerRe is a targeting_value X echoed as a bare JSON number (a GENDER 1 or 2).
+	echoedIntegerRe = regexp.MustCompile(`^[0-9]{1,19}$`)
 )
 
 // foldKey canonicalizes s under Unicode simple case folding: each rune becomes the smallest rune
@@ -145,6 +204,85 @@ func NormalizeKeywordInterestTargeting(keywords, interestIDs []string) (kws, int
 		return nil, nil, err
 	}
 	return kws, interests, nil
+}
+
+// NormalizeConversationTopics applies the gap 8 rules (#564): each conversation topic is the
+// targeting_value of an entry of GET targeting_criteria/conversations, trimmed and lower-cased
+// (X ids are base-36), 1-32 letters or digits; duplicates are dropped and a blank entry refused.
+// Pure, so the dispatcher's synchronous preflight and CreateCampaign apply the same rules. A nil or
+// empty list stays nil.
+func NormalizeConversationTopics(topics []string) ([]string, error) {
+	return normalizeTargetList(FieldConversationTopics, topics, MaxCreateConversationTopics, strings.ToLower, listedValueRe,
+		"must be an X conversation topic value (1-32 letters or digits, from GET targeting_criteria/conversations)")
+}
+
+// NormalizePlatforms applies the gap 9 rules (#564): each platform is the targeting_value of an
+// entry of GET targeting_criteria/platforms (X's example: "0" for iOS), trimmed and lower-cased,
+// 1-32 letters or digits; duplicates are dropped and a blank entry refused; at most
+// MaxCreatePlatforms. Pure, so the dispatcher's synchronous preflight and CreateCampaign apply the
+// same rules. A nil or empty list stays nil.
+func NormalizePlatforms(platforms []string) ([]string, error) {
+	return normalizeTargetList(FieldPlatforms, platforms, MaxCreatePlatforms, strings.ToLower, listedValueRe,
+		"must be an X platform value (1-32 letters or digits, from GET targeting_criteria/platforms)")
+}
+
+// NormalizeDevices applies the gap 9 rules (#564): each device is the targeting_value of an entry
+// of GET targeting_criteria/devices (X's example: "1q" for the iPhone 3GS), trimmed and lower-cased
+// (X ids are base-36), 1-32 letters or digits; duplicates are dropped and a blank entry refused; at
+// most MaxCreateDevices. Pure, so the dispatcher's synchronous preflight and CreateCampaign apply
+// the same rules. A nil or empty list stays nil.
+func NormalizeDevices(devices []string) ([]string, error) {
+	return normalizeTargetList(FieldDevices, devices, MaxCreateDevices, strings.ToLower, listedValueRe,
+		"must be an X device value (1-32 letters or digits, from GET targeting_criteria/devices)")
+}
+
+// NormalizeAgeBucket applies the gap 9 rule (#564): the value is trimmed and upper-cased and must be
+// one of X's age buckets (ageBuckets); empty (or all-whitespace) means no AGE criterion, every
+// age. Pure, so the dispatcher's synchronous preflight and CreateCampaign apply the same rule.
+func NormalizeAgeBucket(v string) (string, error) {
+	n := strings.ToUpper(strings.TrimSpace(v))
+	if n == "" || ageBuckets[n] {
+		return n, nil
+	}
+	return "", &TargetingError{Field: FieldAgeBucket, Msg: fmt.Sprintf("%s must be one of X's age buckets, such as AGE_18_TO_34 or AGE_OVER_25", domain.CallerValue(v))}
+}
+
+// NormalizeGender applies the gap 9 rule (#564): the value is trimmed and upper-cased and must be
+// MALE or FEMALE; empty (or all-whitespace) means no GENDER criterion, every gender, as X's
+// "leave null to target all". Pure, like NormalizeAgeBucket.
+func NormalizeGender(v string) (string, error) {
+	n := strings.ToUpper(strings.TrimSpace(v))
+	if _, ok := genderValues[n]; n == "" || ok {
+		return n, nil
+	}
+	return "", &TargetingError{Field: FieldGender, Msg: fmt.Sprintf("%s must be MALE or FEMALE", domain.CallerValue(v))}
+}
+
+// countSet is 1 for a set single-value criterion (ageBucket, gender) and 0 for an unset one.
+func countSet(v string) int {
+	if v == "" {
+		return 0
+	}
+	return 1
+}
+
+// FieldAudienceExpansion is the gap 11 twitterConfig key (#564).
+const FieldAudienceExpansion = "audienceExpansion"
+
+// audienceExpansionValues are X's documented audience_expansion values for a line item (POST
+// accounts/:account_id/line_items, v12): "Used to expand the reach of campaigns by targeting users
+// similar to those already targeted", with no expansion applied by default.
+var audienceExpansionValues = map[string]bool{"BROAD": true, "DEFINED": true, "EXPANDED": true}
+
+// NormalizeAudienceExpansion applies the gap 11 rule (#564): the value is trimmed and upper-cased
+// and must be BROAD, DEFINED or EXPANDED; empty (or all-whitespace) means no expansion, X's
+// default. Pure, so the dispatcher's synchronous preflight and CreateCampaign apply the same rule.
+func NormalizeAudienceExpansion(v string) (string, error) {
+	n := strings.ToUpper(strings.TrimSpace(v))
+	if n == "" || audienceExpansionValues[n] {
+		return n, nil
+	}
+	return "", &TargetingError{Field: FieldAudienceExpansion, Msg: fmt.Sprintf("%s must be BROAD, DEFINED or EXPANDED", domain.CallerValue(v))}
 }
 
 // TargetingError is a refusal of one create-time targeting list; Field is the twitterConfig key.
@@ -207,8 +345,8 @@ func CheckCreateCriteriaCount(n int) error {
 	if n <= MaxCreateTargetingCriteria {
 		return nil
 	}
-	return fmt.Errorf("%s, %s, %s, %s, %s and %s together name %d targeting criteria; at most %d are accepted per create, since each is a separate X write paced at one per second",
-		FieldGeoTargets, FieldLanguages, FieldKeywords, FieldInterestIDs, FieldCustomAudienceIDs, FieldExcludedCustomAudienceIDs, n, MaxCreateTargetingCriteria)
+	return fmt.Errorf("%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s and %s together name %d targeting criteria; at most %d are accepted per create, since each is a separate X write paced at one per second",
+		FieldGeoTargets, FieldLanguages, FieldKeywords, FieldInterestIDs, FieldConversationTopics, FieldPlatforms, FieldDevices, FieldAgeBucket, FieldGender, FieldFollowerLookalikeUserIDs, FieldCustomAudienceIDs, FieldExcludedCustomAudienceIDs, n, MaxCreateTargetingCriteria)
 }
 
 // createCriterion is one criterion the create path will POST.
@@ -320,11 +458,12 @@ func (c *Client) resolveCountry(ctx context.Context, code string) (string, error
 const maxTargetingValueLen = 128
 
 // listTargetingValues walks one non-account-scoped targeting_criteria lookup (languages,
-// interests) to its end and returns the lower-cased targeting_values of entries of targetingType
-// (an entry with no targeting_type is kept). It refuses to conclude from a list it could not read
+// interests, conversations) to its end and returns the targeting_values of entries of
+// targetingType (an entry with no targeting_type is kept), keyed lower-cased and mapped to the
+// spelling X listed, which is what a criterion sends. It refuses to conclude from a list it could not read
 // to the end: a full page with no usable cursor, the page cap, or a repeated cursor is an error.
-func (c *Client) listTargetingValues(ctx context.Context, kind, targetingType string) (map[string]bool, error) {
-	known := map[string]bool{}
+func (c *Client) listTargetingValues(ctx context.Context, kind, targetingType string) (map[string]string, error) {
+	known := map[string]string{}
 	cursor := ""
 	seenCursors := map[string]bool{}
 	for page := 0; ; page++ {
@@ -344,8 +483,8 @@ func (c *Client) listTargetingValues(ctx context.Context, kind, targetingType st
 			if o.TargetingType != "" && o.TargetingType != targetingType {
 				continue
 			}
-			if v := strings.ToLower(strings.TrimSpace(o.TargetingValue)); v != "" {
-				known[v] = true
+			if v := strings.TrimSpace(o.TargetingValue); v != "" && len(v) <= maxTargetingValueLen {
+				known[strings.ToLower(v)] = v
 			}
 		}
 		verdict := cursorVerdict(resp)
@@ -374,7 +513,7 @@ func (c *Client) resolveLanguages(ctx context.Context, langs []string) error {
 		return err
 	}
 	for _, l := range langs {
-		if !known[l] {
+		if known[l] == "" {
 			return domain.PreflightRefusalf("invalid twitterConfig.%s: X offers no language %s", FieldLanguages, domain.CallerValue(l))
 		}
 	}
@@ -392,16 +531,38 @@ func (c *Client) resolveInterests(ctx context.Context, ids []string) error {
 		return err
 	}
 	for _, id := range ids {
-		if !known[strings.ToLower(id)] {
+		if known[strings.ToLower(id)] == "" {
 			return domain.PreflightRefusalf("invalid twitterConfig.%s: X offers no interest %s", FieldInterestIDs, domain.CallerValue(id))
 		}
 	}
 	return nil
 }
 
+// resolveListedValues checks every requested value against one walked targeting_criteria list
+// (conversations for #564 gap 8, platforms and devices for gap 9) and returns each as X spells it. It refuses a
+// value X does not list, naming the twitterConfig field and noun.
+func (c *Client) resolveListedValues(ctx context.Context, kind, targetingType, field, noun string, values []string) ([]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	known, err := c.listTargetingValues(ctx, kind, targetingType)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		listed := known[v]
+		if listed == "" {
+			return nil, domain.PreflightRefusalf("invalid twitterConfig.%s: X offers no %s %s", field, noun, domain.CallerValue(v))
+		}
+		out = append(out, listed)
+	}
+	return out, nil
+}
+
 // resolveCreateTargeting turns the normalized lists into the criteria to POST, reading X's
 // lookups. Called in the pre-create block, so every failure leaves nothing created.
-func (c *Client) resolveCreateTargeting(ctx context.Context, geo, langs, keywords, interests []string) ([]createCriterion, error) {
+func (c *Client) resolveCreateTargeting(ctx context.Context, geo, langs, keywords, interests, topics, platforms, devices []string, ageBucket, gender string) ([]createCriterion, error) {
 	var out []createCriterion
 	for _, code := range geo {
 		v, err := c.resolveCountry(ctx, code)
@@ -427,6 +588,38 @@ func (c *Client) resolveCreateTargeting(ctx context.Context, geo, langs, keyword
 	}
 	for _, id := range interests {
 		out = append(out, createCriterion{targetingType: TargetingInterest, value: id, label: "interest " + id})
+	}
+	// Conversation topics (#564 gap 8), each sent as X listed it.
+	listed, err := c.resolveListedValues(ctx, "conversation", TargetingConversation, FieldConversationTopics, "conversation topic", topics)
+	if err != nil {
+		return nil, err
+	}
+	for i, v := range listed {
+		out = append(out, createCriterion{targetingType: TargetingConversation, value: v, label: "conversation topic " + topics[i]})
+	}
+	// Platforms (#564 gap 9), the same way.
+	listed, err = c.resolveListedValues(ctx, "platform", TargetingPlatform, FieldPlatforms, "platform", platforms)
+	if err != nil {
+		return nil, err
+	}
+	for i, v := range listed {
+		out = append(out, createCriterion{targetingType: TargetingPlatform, value: v, label: "platform " + platforms[i]})
+	}
+	// Devices (#564 gap 9), the same way.
+	listed, err = c.resolveListedValues(ctx, "device", TargetingDevice, FieldDevices, "device", devices)
+	if err != nil {
+		return nil, err
+	}
+	for i, v := range listed {
+		out = append(out, createCriterion{targetingType: TargetingDevice, value: v, label: "device " + devices[i]})
+	}
+	// Age and gender (#564 gap 9) are closed sets checked by NormalizeAgeBucket / NormalizeGender:
+	// no lookup. The age bucket is sent as its enum name, the gender as X's 1 or 2.
+	if ageBucket != "" {
+		out = append(out, createCriterion{targetingType: TargetingAge, value: ageBucket, label: "age " + ageBucket})
+	}
+	if v := genderValues[gender]; v != "" {
+		out = append(out, createCriterion{targetingType: TargetingGender, value: v, label: "gender " + strings.ToLower(gender)})
 	}
 	return out, nil
 }
