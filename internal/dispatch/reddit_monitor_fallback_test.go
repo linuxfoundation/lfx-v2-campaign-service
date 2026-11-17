@@ -198,3 +198,37 @@ func TestReddit_AccountMonitor_NoConnectionAnywhereIsNotFound(t *testing.T) {
 		t.Errorf("token refreshes %v, api calls %d; want none", got, n)
 	}
 }
+
+// A project that DISCONNECTED its own Reddit connection still monitors the campaigns it created on
+// the LF system account: resolveExisting's error arm rescues the read through the system row when
+// that row is configured for the account (systemConn alone refuses a disconnected project). Any
+// other account stays a 404 with nothing sent.
+func TestReddit_AccountMonitor_DisconnectedProjectReadsItsSystemAccount(t *testing.T) {
+	reader := func() *scopedConnReader {
+		return &scopedConnReader{
+			rows:       map[string]*model.Connection{model.SystemProjectID: systemRedditConnFor("t2_acct")},
+			tombstoned: map[string]bool{"tlf": true},
+		}
+	}
+
+	d, clientIDs, _ := redditMonitorFallbackDispatcher(t, reader())
+	read, err := redditMonitorOrchestrator(d, tlfRedditScope).ReadAccountCampaignMetrics(
+		context.Background(), "tlf", model.ProviderRedditAds, "t2_acct", 30)
+	if err != nil {
+		t.Fatalf("disconnected project reading its system account: %v", err)
+	}
+	if len(read.Rows) != 1 || read.Rows[0].PlatformCampaignID != "t2_c1" {
+		t.Errorf("rows = %+v, want only tlf's recorded campaign t2_c1", read.Rows)
+	}
+	if got := clientIDs(); len(got) == 0 || got[0] != "system-cid" {
+		t.Errorf("token refreshes used client ids %v, want the LF system credential", got)
+	}
+
+	d, clientIDs, apiCalls := redditMonitorFallbackDispatcher(t, reader())
+	if _, err := d.ReadAccountMonitor(context.Background(), "tlf", model.ProviderRedditAds, "t2_other", 30); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("err = %v, want domain.ErrNotFound for an account the LF system row is not configured for", err)
+	}
+	if got, n := clientIDs(), apiCalls(); len(got) != 0 || n != 0 {
+		t.Errorf("token refreshes %v, api calls %d; want none", got, n)
+	}
+}

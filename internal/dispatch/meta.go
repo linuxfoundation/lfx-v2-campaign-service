@@ -1603,13 +1603,14 @@ func (d *MetaDispatcher) ReadAccountMonitor(ctx context.Context, projectID strin
 		return nil, err
 	}
 	// The resolved ROW is needed as well as the client: the account-scope check below
-	// reads it to know which account this project's connection is bound to.
+	// reads it to know which account the resolved row (the project's own, or the LF system
+	// row for its configured account, #615) is bound to.
 	client, res, err := d.resolveMetaMonitorClient(ctx, projectID, platform, accountID)
 	if err != nil {
 		return nil, err
 	}
-	// Before any request is issued: the account the caller named must be the one this
-	// project's connection manages. See requireMetaManagedAccount.
+	// Before any request is issued: the account the caller named must be the one the
+	// resolved row manages. See requireMetaManagedAccount.
 	// The guard's trimmed return is what flows onward, not the caller's raw value: one
 	// validated value, used once. See requireLinkedInManagedAccount's call site for why the
 	// caller's string would only be safe by leaning on ValidateAccountID a second time.

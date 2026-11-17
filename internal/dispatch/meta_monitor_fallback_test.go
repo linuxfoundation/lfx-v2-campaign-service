@@ -208,3 +208,39 @@ func TestMeta_AccountMonitor_NoConnectionAnywhereIsNotFound(t *testing.T) {
 		t.Errorf("requests %v, want none", got)
 	}
 }
+
+// A project that DISCONNECTED its own Meta connection still monitors the campaigns it created on
+// the LF system account: resolveExisting's error arm rescues the read through the system row when
+// that row is configured for the account (systemConn alone refuses a disconnected project). Any
+// other account stays a 404 with nothing sent.
+func TestMeta_AccountMonitor_DisconnectedProjectReadsItsSystemAccount(t *testing.T) {
+	reader := func() *scopedConnReader {
+		return &scopedConnReader{
+			rows:       map[string]*model.Connection{model.SystemProjectID: systemMetaConnFor("act_777")},
+			tombstoned: map[string]bool{"tlf": true},
+		}
+	}
+
+	d, tokens := metaMonitorFallbackDispatcher(t, reader())
+	read, err := metaMonitorOrchestrator(d, tlfMetaScope).ReadAccountCampaignMetrics(
+		context.Background(), "tlf", model.ProviderMetaAds, "act_777", 30)
+	if err != nil {
+		t.Fatalf("disconnected project reading its system account: %v", err)
+	}
+	if len(read.Rows) != 1 || read.Rows[0].PlatformCampaignID != "111" {
+		t.Errorf("rows = %+v, want only tlf's recorded campaign 111", read.Rows)
+	}
+	for _, tok := range tokens() {
+		if tok != "system-tok" {
+			t.Errorf("request used token %q, want the LF system credential", tok)
+		}
+	}
+
+	d, tokens = metaMonitorFallbackDispatcher(t, reader())
+	if _, err := d.ReadAccountMonitor(context.Background(), "tlf", model.ProviderMetaAds, "act_222", 30); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("err = %v, want domain.ErrNotFound for an account the LF system row is not configured for", err)
+	}
+	if got := tokens(); len(got) != 0 {
+		t.Errorf("requests %v, want none", got)
+	}
+}
