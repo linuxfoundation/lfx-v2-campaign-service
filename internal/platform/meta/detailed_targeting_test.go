@@ -192,6 +192,14 @@ func TestNormalizeAudienceTargeting_BehaviorsAndWorkPositions(t *testing.T) {
 		{"too many behaviors", AudienceTargeting{Behaviors: many}, "behaviors names 26 ids; at most 25 are allowed"},
 		{"work position name", AudienceTargeting{WorkPositions: []string{"Engineer"}}, `workPositions entry "Engineer" is not a Meta work position id`},
 		{"too many work positions", AudienceTargeting{WorkPositions: many}, "workPositions names 26 ids; at most 25 are allowed"},
+		{"leading-zero behavior", AudienceTargeting{Behaviors: []string{"06002714895372"}}, `behaviors entry "06002714895372" is not a Meta behavior id (a numeric string without a leading zero)`},
+		{"leading-zero work position", AudienceTargeting{WorkPositions: []string{"06002714895372"}}, `workPositions entry "06002714895372" is not a Meta work position id`},
+		{"leading-zero interest", AudienceTargeting{Interests: []string{"06003"}}, `interests entry "06003" is not a Meta interest id`},
+		{"leading-zero region", AudienceTargeting{Regions: []string{"03847"}}, `regions entry "03847" is not a Meta region key`},
+		{"leading-zero city", AudienceTargeting{Cities: []string{"02420605"}}, `cities entry "02420605" is not a Meta city key`},
+		{"leading-zero custom audience", AudienceTargeting{CustomAudiences: []string{"0120"}}, `customAudiences entry "0120" is not a Meta custom audience id`},
+		{"leading-zero excluded audience", AudienceTargeting{ExcludedCustomAudiences: []string{"0120"}}, `excludedCustomAudiences entry "0120" is not a Meta custom audience id`},
+		{"zero behavior", AudienceTargeting{Behaviors: []string{"0"}}, `behaviors entry "0" is not a Meta behavior id`},
 	} {
 		_, err := NormalizeAudienceTargeting(&tc.in)
 		var refusal *domain.PreflightRefusal

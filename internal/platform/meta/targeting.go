@@ -229,21 +229,25 @@ func targetingInvalid(format string, args ...any) error {
 	return domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig.targeting: %s", domain.ErrCreateConfigInvalid, fmt.Sprintf(format, args...)))
 }
 
-// normalizeAudienceIDs trims and de-duplicates one audience list, refusing a non-numeric id or a
+// normalizeAudienceIDs trims and de-duplicates one audience list, refusing a non-canonical id or a
 // list over MaxCustomAudiences distinct ids.
 func normalizeAudienceIDs(field string, ids []string) ([]string, error) {
 	return normalizeNumericIDs(field, "Meta custom audience id", ids, MaxCustomAudiences)
 }
 
-// normalizeNumericIDs trims and de-duplicates one id list, refusing an id that is not a numeric
-// string (what names the kind of id) or a list over limit distinct ids.
+// normalizeNumericIDs trims and de-duplicates one id list, refusing an id that is not a canonical
+// numeric string (what names the kind of id) or a list over limit distinct ids. Canonical means
+// canonicalCampaignIDRe, no leading zero: Meta never mints one, so such an id could only fail
+// later, as a failed job instead of this 400. checkDetailedTargeting sends behaviors and work
+// positions as json.Number, which json.Marshal refuses for "0…"; interests, geo keys and audience
+// ids are compared as strings against Meta's canonical answers, so "06003" would never match.
 func normalizeNumericIDs(field, what string, ids []string, limit int) ([]string, error) {
 	var out []string
 	seen := map[string]bool{}
 	for _, raw := range ids {
 		id := strings.TrimSpace(raw)
-		if !numericIDRE.MatchString(id) {
-			return nil, targetingInvalid("%s entry %s is not a %s (a numeric string)", field, domain.CallerValue(raw), what)
+		if !canonicalCampaignIDRe.MatchString(id) {
+			return nil, targetingInvalid("%s entry %s is not a %s (a numeric string without a leading zero)", field, domain.CallerValue(raw), what)
 		}
 		if seen[id] {
 			continue

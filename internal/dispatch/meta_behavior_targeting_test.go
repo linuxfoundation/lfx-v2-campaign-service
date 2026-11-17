@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
@@ -48,6 +49,61 @@ func TestMeta_PreflightCreate_BehaviorTargetingFlag(t *testing.T) {
 				want: `"targeting" must be an object of`},
 		})
 	})
+}
+
+// TestMeta_PreflightCreate_RefusesLeadingZeroTargetingIDs: a behavior or work position id with a
+// leading zero is a synchronous 400 naming the field. checkDetailedTargeting sends these ids as
+// json.Number, which json.Marshal refuses for "06002714895372", so before the fix the config passed
+// preflight and the create became a failed job at the validation read's encode step.
+func TestMeta_PreflightCreate_RefusesLeadingZeroTargetingIDs(t *testing.T) {
+	t.Setenv(constants.EnvMetaBehaviorTargetingEnabled, "true")
+	t.Setenv(constants.EnvMetaInterestTargetingEnabled, "true")
+	t.Setenv(constants.EnvMetaAudienceTargetingEnabled, "false")
+	runBiddingPreflight(t, &MetaDispatcher{}, model.ProviderMetaAds, []biddingPreflightCase{
+		{name: "behavior", config: `{"metaConfig":{"targeting":{"behaviors":["06002714895372"]}}}`,
+			want: `invalid campaign config: metaConfig.targeting: behaviors entry "06002714895372" is not a Meta behavior id (a numeric string without a leading zero)`},
+		{name: "work position", config: `{"metaConfig":{"targeting":{"workPositions":["0105763692790962"]}}}`,
+			want: `invalid campaign config: metaConfig.targeting: workPositions entry "0105763692790962" is not a Meta work position id`},
+		{name: "work position 06002714895372", config: `{"metaConfig":{"targeting":{"workPositions":["06002714895372"]}}}`,
+			want: `invalid campaign config: metaConfig.targeting: workPositions entry "06002714895372" is not a Meta work position id`},
+		{name: "interest", config: `{"metaConfig":{"targeting":{"interests":["06002714895372"]}}}`,
+			want: `invalid campaign config: metaConfig.targeting: interests entry "06002714895372" is not a Meta interest id`},
+		{name: "zero", config: `{"metaConfig":{"targeting":{"behaviors":["0"]}}}`,
+			want: `behaviors entry "0" is not a Meta behavior id`},
+	})
+}
+
+// TestMeta_DispatchRefusesLeadingZeroBehaviorBeforeAnyRequest: the same id reaching Dispatch is a
+// config refusal before any Graph request, not an encode failure after the account read.
+func TestMeta_DispatchRefusesLeadingZeroBehaviorBeforeAnyRequest(t *testing.T) {
+	t.Setenv(constants.EnvMetaBehaviorTargetingEnabled, "true")
+	t.Setenv(constants.EnvMetaAudienceTargetingEnabled, "false")
+	var (
+		mu       sync.Mutex
+		requests []string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		http.Error(w, "unexpected", http.StatusNotFound)
+	}))
+	defer srv.Close()
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }))
+	for _, targeting := range []string{`{"behaviors":["06002714895372"]}`, `{"workPositions":["06002714895372"]}`} {
+		cfg := json.RawMessage(`{"metaConfig":{"budget":100,"startDate":"2099-01-01","endDate":"2099-02-01",
+			"targeting":` + targeting + `,"variants":[{"primaryText":"Join us","headline":"KubeCon"}]}}`)
+		camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, cfg)
+		if camp != nil || !errors.Is(err, domain.ErrCreateConfigInvalid) || !strings.Contains(err.Error(), "without a leading zero") {
+			t.Errorf("Dispatch(%s) = %+v, %v; want an invalid-config refusal of the leading zero", targeting, camp, err)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(requests) != 0 {
+		t.Fatalf("requests = %v, want none", requests)
+	}
 }
 
 // TestMeta_DispatchCarriesBehaviorsToTheAdSet: with only the behavior flag on, Dispatch validates
