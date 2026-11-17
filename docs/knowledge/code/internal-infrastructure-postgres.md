@@ -568,8 +568,9 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   CHECK (`creative_assets_mime_type_check`) with one listing `image/png`, `image/jpeg`,
   `video/mp4`. The up's `DROP CONSTRAINT` carries no `IF EXISTS`, so a constraint-name mismatch
   fails the migration instead of silently leaving the image-only CHECK. A video stores NULL `width`/`height` (`000047`'s pair CHECK allows it). The down
-  restores the image-only list `NOT VALID`, so a rollback neither fails on nor deletes a stored
-  video. `snapshotAssetIDs` also extracts ids under a `videoAssetId` key
+  restores the image-only list as a plain, validated CHECK (the exact inverse of version 56), so a
+  rollback refuses while any `video/mp4` row is stored: remove or move the video rows before
+  rolling back. It never deletes a stored video. `snapshotAssetIDs` also extracts ids under a `videoAssetId` key
   (`snapshotVideoAssetIDKey`), so a video a campaign names is guarded like an image.
 
 ## Terminal-job retention (`JobRepo.PruneTerminalJobs`)
