@@ -66,6 +66,16 @@ type AdoptCampaignRequestBody struct {
 	Platform *string `form:"platform,omitempty" json:"platform,omitempty" xml:"platform,omitempty"`
 	// The ad platform's own id for the existing campaign
 	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// linkedin-ads only (#581). Adopt from one of the LF system LinkedIn account's
+	// addressable ad accounts (its default account or an operator-installed grant)
+	// instead of the project's own connection. Requires global_marketing_ops on
+	// the project (403 otherwise, 503 when the role cannot be checked) and
+	// LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED on the deployment (400 otherwise).
+	// Any other platform, or an account the system row cannot address, is 400. The
+	// campaign must report this account. Repeating the same adoption (same brief,
+	// campaign and account) returns the existing campaign without contacting
+	// LinkedIn.
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
 }
 
 // UpdateCampaignRequestBody is the type of the
@@ -2669,6 +2679,16 @@ type AdoptCampaignConflictResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "adopt-campaign" endpoint HTTP
 // response body for the "ServiceUnavailable" error.
 type AdoptCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// AdoptCampaignForbiddenResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "adopt-campaign" endpoint HTTP
+// response body for the "Forbidden" error.
+type AdoptCampaignForbiddenResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -8328,6 +8348,17 @@ func NewAdoptCampaignServiceUnavailableResponseBody(res *lfxv2campaignservicebri
 	return body
 }
 
+// NewAdoptCampaignForbiddenResponseBody builds the HTTP response body from the
+// result of the "adopt-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewAdoptCampaignForbiddenResponseBody(res *lfxv2campaignservicebriefs.ForbiddenError) *AdoptCampaignForbiddenResponseBody {
+	body := &AdoptCampaignForbiddenResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewAdoptCampaignInternalServerErrorResponseBody builds the HTTP response
 // body from the result of the "adopt-campaign" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -10881,6 +10912,7 @@ func NewAdoptCampaignPayload(body *AdoptCampaignRequestBody, projectID string, b
 	v := &lfxv2campaignservicebriefs.AdoptCampaignPayload{
 		Platform:           *body.Platform,
 		PlatformCampaignID: *body.PlatformCampaignID,
+		AccountID:          body.AccountID,
 	}
 	v.ProjectID = projectID
 	v.BriefID = briefID
@@ -11429,6 +11461,12 @@ func ValidateAdoptCampaignRequestBody(body *AdoptCampaignRequestBody) (err error
 		}
 		if utf8.RuneCountInString(*body.PlatformCampaignID) > 64 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.platform_campaign_id", *body.PlatformCampaignID, utf8.RuneCountInString(*body.PlatformCampaignID), 64, false))
+		}
+	}
+	if body.AccountID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", *body.AccountID, "^[0-9]+$"))
+		if utf8.RuneCountInString(*body.AccountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", *body.AccountID, utf8.RuneCountInString(*body.AccountID), 64, false))
 		}
 	}
 	return

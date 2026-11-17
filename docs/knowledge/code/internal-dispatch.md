@@ -3604,6 +3604,28 @@ Pinned by `TestLinkedIn_PauseReachesACampaignInAGrantedAccount`,
 `TestLinkedIn_GrantedAndDefaultAccountsDoNotShareAClient`, `TestGrantScopedHonoursOnlyTheSystemRow`
 and `TestLinkedIn_BrokenSystemRowIsBlamedForAGrantedCampaign`.
 
+Adoption from the system row's accounts (step 5 of #581, same flag): `LinkedInDispatcher.LookupCampaign`
+reads `model.AdoptionAccount(ctx)` (set by the service from adopt-campaign's `account_id`). When
+it is set, the resolver is `credsSource.systemAccountResolverForAdoption(account)` instead of
+`resolveOwnedForAdoption`: the flag must be on, then `resolveForcedSystem` (the system row whatever
+the project has, disconnect included) and `existingOnSystem(sys, account)`, so only the row's
+default account or a grant is accepted and every other account is `ErrAccountNotManagedByConnection`
+with nothing sent. The rest of the lookup is unchanged (the campaign's echoed account must be the
+named one), and the row records that account, so `resolveExisting`, the scoped monitor and the
+levers reach it through the same grant. `ListAdoptableCampaigns` (`service.AdoptableCampaignLister`)
+uses the same resolver and `linkedin.Client.ListAccountCampaignRefs` (the monitor's ACTIVE/PAUSED
+campaign walk, no analytics). Unlike the monitor, which tolerates an untrusted page, that read refuses
+the whole list with `linkedin.ErrUntrustworthyCampaignList` (503 through the default discovery arm)
+when a page repeats a key or a row lacks a valid id, a non-blank name or an ACTIVE/PAUSED status, or
+an id repeats. Both paths pass every connection-defect return through `res.systemScoped` (the
+list via `linkedInLookupError`, the lookup inline): an expired or revoked LF token or a rejected LF
+application credential on the system row is `ErrSystemConnectionNotUsable` (500, the operator's),
+never the bare `ErrConnectionNotUsable` that adopt-campaign answers with the project-repair 409; on
+the project's own row the call is a no-op. Pinned by `TestLinkedIn_AdoptFromASystemAccount`,
+`TestLinkedIn_AdoptFromASystemAccountRefusals`, `TestLinkedIn_ListAdoptableCampaigns`,
+`TestLinkedIn_AdoptLookupSystemCredentialRejected` and
+`TestListAccountCampaignRefs_RefusesUntrustworthyCandidates`.
+
 ## Forced-primary mode: the system account as the account of record
 
 The section above is the DEFAULT — the system row is a fallback, used only when a project has no
