@@ -11102,7 +11102,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: list-linkedin-ads-adoptable-campaigns lfx-v2-campaign-service-connections
-            description: 'List the ACTIVE and PAUSED campaigns in one of the LF system LinkedIn account''s addressable ad accounts (its default account or an operator-installed grant), as candidates for adopt-campaign with account_id (#581), so a campaign built by hand in Campaign Manager can be bound to a brief and shown in this project''s monitor. Read through the LF system LinkedIn connection, whatever connection the project has. Gated on global_marketing_ops of {project_id} by the marketing-ops-api gateway rule, because it lists campaigns of every foundation in the account. Answers 400 unless LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is on, and 400 for an account the system row cannot address (nothing is sent). A missing or unusable LF system LinkedIn connection is 500, an operator''s fault, and an expired system credential is 503. The campaign list pages LinkedIn''s search finder 100 at a time, up to 50 pages, and fails with 503 beyond that or on a page it cannot trust. A pure read: nothing is persisted.'
+            description: 'List the ACTIVE and PAUSED campaigns in one of the LF system LinkedIn account''s addressable ad accounts (its default account or an operator-installed grant), as candidates for adopt-campaign with account_id (#581), so a campaign built by hand in Campaign Manager can be bound to a brief and shown in this project''s monitor. Read through the LF system LinkedIn connection, whatever connection the project has. Gated on global_marketing_ops of {project_id} by the marketing-ops-api gateway rule, because it lists campaigns of every foundation in the account. Answers 400 unless LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is on, and 400 for an account the system row cannot address (nothing is sent). A missing or unusable LF system LinkedIn connection is 500, an operator''s fault, and an expired system credential is 503. The campaign list pages LinkedIn''s search finder 100 at a time, up to 50 pages, and fails with 503 beyond that or on a page it cannot trust: a repeated key, a campaign without a valid id, a non-blank name or an ACTIVE or PAUSED status, or a campaign listed twice. A pure read: nothing is persisted.'
             operationId: lfx-v2-campaign-service-connections#list-linkedin-ads-adoptable-campaigns
             parameters:
                 - name: account_id
@@ -20321,7 +20321,7 @@ definitions:
             platform:
                 type: string
                 description: Ad platform the campaign lives on
-                example: google-ads
+                example: linkedin-ads
             platform_campaign_id:
                 type: string
                 description: The ad platform's own id for the existing campaign
@@ -20330,7 +20330,7 @@ definitions:
                 maxLength: 64
         example:
             account_id: "500928401"
-            platform: google-ads
+            platform: linkedin-ads
             platform_campaign_id: "1234567890"
         required:
             - platform

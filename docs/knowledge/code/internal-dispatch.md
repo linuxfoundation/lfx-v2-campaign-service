@@ -3586,8 +3586,12 @@ with nothing sent. The rest of the lookup is unchanged (the campaign's echoed ac
 named one), and the row records that account, so `resolveExisting`, the scoped monitor and the
 levers reach it through the same grant. `ListAdoptableCampaigns` (`service.AdoptableCampaignLister`)
 uses the same resolver and `linkedin.Client.ListAccountCampaignRefs` (the monitor's ACTIVE/PAUSED
-campaign walk, no analytics). Pinned by `TestLinkedIn_AdoptFromASystemAccount`,
-`TestLinkedIn_AdoptFromASystemAccountRefusals` and `TestLinkedIn_ListAdoptableCampaigns`.
+campaign walk, no analytics). Unlike the monitor, which tolerates an untrusted page, that read refuses
+the whole list with `linkedin.ErrUntrustworthyCampaignList` (503 through the default discovery arm)
+when a page repeats a key or a row lacks a valid id, a non-blank name or an ACTIVE/PAUSED status, or
+an id repeats. Pinned by `TestLinkedIn_AdoptFromASystemAccount`,
+`TestLinkedIn_AdoptFromASystemAccountRefusals`, `TestLinkedIn_ListAdoptableCampaigns` and
+`TestListAccountCampaignRefs_RefusesUntrustworthyCandidates`.
 
 ## Forced-primary mode: the system account as the account of record
 

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
@@ -239,6 +241,13 @@ func TestListLinkedinAdsAdoptableCampaigns(t *testing.T) {
 	disp.listErr = domain.ErrAccountNotManagedByConnection
 	if _, err := svc.ListLinkedinAdsAdoptableCampaigns(context.Background(), payload); !errors.As(err, &bad) || !strings.Contains(bad.Message, "granted") {
 		t.Fatalf("ungranted account = %v, want the 400", err)
+	}
+	// An untrustworthy candidate page (linkedin.ListAccountCampaignRefs' refusal, wrapped as the
+	// dispatcher wraps it) is an upstream fault: 503, not a list.
+	disp.listErr = fmt.Errorf("list linkedin adoptable campaigns: %w", linkedin.ErrUntrustworthyCampaignList)
+	var unavailable *conn.ConnServiceUnavailableError
+	if _, err := svc.ListLinkedinAdsAdoptableCampaigns(context.Background(), payload); !errors.As(err, &unavailable) {
+		t.Fatalf("untrustworthy candidate page = %v, want the 503", err)
 	}
 	if _, err := svc.ListLinkedinAdsAdoptableCampaigns(context.Background(), &conn.ListLinkedinAdsAdoptableCampaignsPayload{ProjectID: model.SystemProjectID, AccountID: "500928401"}); err == nil {
 		t.Fatal("the reserved LF scope was addressable")

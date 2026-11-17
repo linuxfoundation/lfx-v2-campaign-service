@@ -2254,8 +2254,10 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 				// Hyphenated, matching model.ProviderGoogleAds and the Enum on
 				// campaign-create-input. Goa publishes this example straight into the
 				// OpenAPI document, so an underscore here hands client authors a value
-				// the service rejects.
-				Example("google-ads")
+				// the service rejects. linkedin-ads, not google-ads: Goa composes the payload
+				// example from every attribute's own, account_id's included, and account_id is
+				// linkedin-ads only, so any other platform here publishes a 400 (#581).
+				Example("linkedin-ads")
 			})
 			Attribute("platform_campaign_id", String, "The ad platform's own id for the existing campaign", func() {
 				// Load-bearing, not hygiene: an empty id degrades the lookup from "this

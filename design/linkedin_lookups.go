@@ -193,7 +193,8 @@ func linkedInAdsLookupMethods() {
 			"on, and 400 for an account the system row cannot address (nothing is sent). A missing or unusable LF system " +
 			"LinkedIn connection is 500, an operator's fault, and an expired system credential is 503. The " +
 			"campaign list pages LinkedIn's search finder 100 at a time, up to 50 pages, and fails with 503 beyond " +
-			"that or on a page it cannot trust. A pure read: nothing is persisted.")
+			"that or on a page it cannot trust: a repeated key, a campaign without a valid id, a non-blank name or an " +
+			"ACTIVE or PAUSED status, or a campaign listed twice. A pure read: nothing is persisted.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()

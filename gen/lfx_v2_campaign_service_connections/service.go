@@ -481,7 +481,9 @@ type Service interface {
 	// system LinkedIn connection is 500, an operator's fault, and an expired
 	// system credential is 503. The campaign list pages LinkedIn's search finder
 	// 100 at a time, up to 50 pages, and fails with 503 beyond that or on a page
-	// it cannot trust. A pure read: nothing is persisted.
+	// it cannot trust: a repeated key, a campaign without a valid id, a non-blank
+	// name or an ACTIVE or PAUSED status, or a campaign listed twice. A pure read:
+	// nothing is persisted.
 	ListLinkedinAdsAdoptableCampaigns(context.Context, *ListLinkedinAdsAdoptableCampaignsPayload) (res *LinkedinAdsAdoptableCampaigns, err error)
 	// Report the LinkedIn ad account and organization a create for {project_id}
 	// actually uses, and the accounts linkedInConfig.adAccountId may name (#581),
