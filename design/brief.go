@@ -594,9 +594,10 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		"ad group's Network: true is OwnedAndOperatedAndSyndicatedSearch, false OwnedAndOperatedOnly; "+
 		"omitted sends no Network (Microsoft's default, partners included), and a reused ad group keeps its "+
 		"own. "+
-		"OFF unless MICROSOFT_SEARCH_NETWORK_ENABLED is exactly \"true\"; a non-boolean (null reads as "+
-		"absent), or the field while the flag is off (false included), is refused with 400 \"invalid "+
-		"campaign config: microsoftConfig.searchPartners: ...\" before any job exists. "+
+		"OFF unless MICROSOFT_SEARCH_NETWORK_ENABLED is exactly \"true\"; while it is off the field (false "+
+		"included) is refused with 400 \"invalid campaign config: microsoftConfig: searchPartners disabled "+
+		"on this deployment ...\", and a non-boolean (null reads as absent) with 400 \"invalid campaign "+
+		"config: microsoftConfig.searchPartners: ...\", before any job exists. "+
 		"MICROSOFT AD SCHEDULE (#563): microsoftConfig takes `adSchedules`, [{day, startHour, endHour, "+
 		"bidAdjustment?}]: day Monday..Sunday (any casing), whole hours startHour 0-23 and endHour 1-24 "+
 		"after it, bidAdjustment a whole percent -90..900 (omitted means 0); windows on a day may touch but "+
@@ -605,9 +606,10 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		"and are sent untranslated; once any window exists the ads serve only inside the windows. "+
 		"They are attached to the campaign before the ad group, fail-closed: a failed, partial or "+
 		"unconfirmed attach stops the create with the PAUSED campaign reported and retained. "+
-		"OFF unless MICROSOFT_AD_SCHEDULE_ENABLED is exactly \"true\"; a wrong JSON type (null reads as "+
-		"absent), an explicit null bidAdjustment, a rule breach, or the list while the flag is off is "+
-		"refused with 400 \"invalid campaign config: microsoftConfig.adSchedules: ...\" before any job "+
+		"OFF unless MICROSOFT_AD_SCHEDULE_ENABLED is exactly \"true\"; while it is off the list is refused "+
+		"with 400 \"invalid campaign config: microsoftConfig: adSchedules disabled on this deployment "+
+		"...\", and a wrong JSON type (null reads as absent), an explicit null bidAdjustment or a rule "+
+		"breach with 400 \"invalid campaign config: microsoftConfig.adSchedules: ...\", before any job "+
 		"exists. "+
 		"MICROSOFT BID ADJUSTMENTS (#563): microsoftConfig takes `deviceBidAdjustments` (Computers, "+
 		"Smartphones, Tablets; -100..900, where -100 stops serving on the device), `ageBidAdjustments` "+
@@ -618,8 +620,10 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		"fail-closed rule; any device adjustment sends all three devices, an unrequested one at 0. "+
 		"OFF unless MICROSOFT_BID_ADJUSTMENTS_ENABLED is exactly \"true\"; a value that is not an object of "+
 		"numbers (a null field reads as absent; a null segment value is refused), an unknown or repeated "+
-		"segment, an out-of-range or fractional percent, or any of them while the flag is off is refused "+
-		"with 400 \"invalid campaign config: microsoftConfig.<field>: ...\" before any job exists. "+
+		"segment, or an out-of-range or fractional percent is refused with 400 \"invalid campaign config: "+
+		"microsoftConfig.<field>: ...\", and any of the three while the flag is off with 400 \"invalid "+
+		"campaign config: microsoftConfig: <fields> disabled on this deployment ...\" (<fields> the ones "+
+		"sent, comma-separated), before any job exists. "+
 		"MICROSOFT SHARED NEGATIVE KEYWORD LISTS (#563): microsoftConfig takes "+
 		"`sharedNegativeKeywordListIds`, at most 20 ids of EXISTING account-level negative keyword lists, "+
 		"each the canonical decimal spelling of a positive int64, no repeat. "+
@@ -676,7 +680,8 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		"like it plus \" | <nameSuffix>\" (required, 1-40 characters, unique ignoring case and spacing) and "+
 		"needing at least one keyword. "+
 		"Each per-group field keeps its single-group twin's rules and flag (negativeKeywords sent at the ad "+
-		"group level; the lists also need global_marketing_ops); the single-group keywords, copy and list "+
+		"group level; a group's audienceIds and excludedAudienceIds also need global_marketing_ops); the "+
+		"single-group keywords, copy and list "+
 		"fields are refused beside adGroups, and every campaign-level field applies to every group. "+
 		"A group's display URL (the brief url's domain plus its path1/path2) must fit 67 characters (33 "+
 		"with a double-width character), checked before any job exists. "+
