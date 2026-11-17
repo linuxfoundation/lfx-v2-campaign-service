@@ -822,10 +822,12 @@ without one are refused, exactly as an orphan ad is.
 - **On ACTIVATE, keyword ids are narrowed to the LIVE ones first** (LFXV2-2665, dispatcher side).
   Keyword REMOVE deletes keywords without touching the row, so the recorded `keywordIds` can name
   a deleted keyword, which UpdateKeywords would reject. `ToggleStatus` reads `GetAdGroupKeywords`
-  under its OWN sub-budget (`microsoftActivateKeywordReadBudget`, 10s of the toggle's 45s, so a
-  slow or throttled read cannot leave the four PUTs without time) and passes only ids still
-  present and not `Deleted`; a failed or timed-out read refuses DEFINITELY (nothing changed yet)
-  and an emptied set is `ErrCampaignNotProvisioned`.
+  for EVERY ad group (the first and each further one) BEFORE ANY status write, all under ONE
+  shared budget (`microsoftActivateReadContext`: `microsoftActivateKeywordReadBudget`, 10s of the
+  toggle's 45s, capped at half the caller's remaining deadline), so however many groups there
+  are the reads cannot leave the PUTs without time. It passes only ids still present and not
+  `Deleted`; a failed or timed-out read refuses DEFINITELY (nothing changed yet) and an emptied
+  set is `ErrCampaignNotProvisioned`.
 - **PAUSE never reads** — stopping delivery must not wait on, or be starved by, a read (an earlier
   revision read on pause too and could exhaust the toggle deadline before the gate was sent). The
   recorded ids are sent as they are; the gate flips FIRST, and a failure at the trailing KEYWORD
@@ -1838,6 +1840,93 @@ object of numbers, checking each raw segment value for null first (encoding/json
 null as 0, a real adjustment), and any of the three while `MICROSOFT_BID_ADJUSTMENTS_ENABLED` is off. Not
 verified live. In particular it is unconfirmed whether Microsoft accepts an ADD of a device
 criterion on a new campaign; a refusal would stop the create, fail-closed. Not role-gated.
+
+## Multiple ad groups at create (`ad_groups.go`, #563 gap 12)
+
+`microsoftConfig.adGroups` builds 1-5 ad groups under the campaign instead of the single one, each
+with its own `nameSuffix`, keywords and responsive search ad copy (`AdGroupInput`); the
+dispatcher attaches each group's negatives (ad-group level, `AddAdGroupNegativeKeywords`,
+EntityType `AdGroup`) and remarketing lists afterwards. With no `AdGroups` the client takes the
+single-group path unchanged: the same `createAdGroupAndAd` call, the same ad group name, and no
+`adGroups` key in the result.
+
+`validateAdGroups` runs inside CreateCampaign's up-front checks, before anything exists: the
+suffixes (`ValidateAdGroupNameSuffixes`: 1-40 characters, a letter or digit, no control character
+or `|`, no URL or credentials (nothing `redact.SnapshotText` would change, and no `scheme://` or
+`www.` host, which the redactor keeps as written; a bare host such as `example.com` alone is
+allowed, indistinguishable from a label like `Node.js`), unique by the composed name: compared after `sanitizeNamePart` with `strings.EqualFold`,
+so suffixes differing only in case or spacing are refused), each composed name (`composeAdGroupName` plus ` | <suffix>`)
+against the 256-character limit, at least one keyword per group, the copy, and each group's
+display paths against the registration URL's domain. That display check also runs at the create
+preflight (#613 review): `ValidateAdGroupDisplayURLs` (sharing `displayAuthority` and
+`displayURLOverflow` with CreateCampaign) is called by `MicrosoftDispatcher.PreflightCreateBrief`,
+the new optional `service.BriefCreatePreflighter`, which `Orchestrator.PreflightCreateBrief` runs
+after `PreflightCreate` with the loaded brief (fail-open: it refuses only on
+`ErrCreateConfigInvalid`), so an overflow is a synchronous 400.
+
+`createAdGroups` calls `createAdGroupAndAd` once per group, in order, on a per-group copy of the
+input, sharing the campaign-wide bid, flight, language and network. PARTIAL RULES (owner decision:
+degraded success, no rollback): the first group failing returns today's partial and error; a later
+group failing is recorded (`AdGroupResult.Status` `failed`, with the error), the remaining groups
+are still built unless the context ended (`not_attempted`), and the result is returned without an
+error; `FailedAdGroups` names those with no confirmed ad group of their own ("NOT created": create
+them), `IncompleteAdGroups` names those whose ad group Microsoft confirmed before the ad or
+keyword step DEFINITELY failed (the group exists upstream: finish its ad or keywords there, never
+create it again), `UncertainAdGroups` names those whose ad group Microsoft confirmed but whose ad
+or keyword step was UNCONFIRMED (`AdGroupResult.StepUnconfirmed`, set from `IsOutcomeUnconfirmed`
+when an ad group id was recorded: a timeout or unreadable success leaves no `AdID` although the ad
+may exist, so the step says to verify in Microsoft Advertising before adding anything, never "add the
+missing ad"), and the dispatcher marks the campaign `created_degraded` with one step for each kind. A later group whose `AdGroupID` equals an earlier group's (it resolved to that ad group
+by name, which the suffix check should already prevent) is recorded `failed` the same way, never
+`created`, so the toggle, bid and keyword levers cannot address one ad group twice. The top-level `AdGroupID`/`AdID`/`KeywordIDs` are the first group's; `BidApplied`,
+`FlightApplied` and `AlreadyExisted` hold only when they hold for every group.
+
+`UpdateAdGroupChildrenStatus` sets one further group's ad group, ad and keywords without the
+campaign. The dispatcher's toggle activates every further created group (narrowed to its live
+keywords) BEFORE `UpdateCampaignAndChildrenStatus` opens the gate, and pauses them AFTER the gate
+is closed (a failure there is logged; delivery is already stopped); it addresses only `created`
+groups (`microsoftExtraAdGroups`), so activation never opens a partly built one. Once any
+further group has activated, every later failure (a definite rejection of a later group or of
+the first group; the keyword reads all run before the first write, so they are always definite)
+is a partial toggle, returned as
+`unconfirmedToggleError` without the `ErrCampaignNotProvisioned` sentinel. The service then holds
+the lock for its cooldown and does not say nothing changed. An already-active campaign reaches
+this loop too, so an activated group may already be serving. The bid lever
+re-bids, and the keyword lever accepts (one per batch), every distinct group with a CONFIRMED
+`AdGroupID` (`microsoftConfirmedExtraAdGroupIDs`), a `failed` one included: a group whose ad or
+keyword step failed after Microsoft confirmed it still exists at the old bid with its confirmed
+keywords (#613 review). A bid failure after the first group is UNCONFIRMED. A later group whose
+create was ambiguous and confirmed no id (a timeout, a 5xx, or an accepted create with an
+unreadable body, errNoID; `createAdGroupAndAd` marks its UNCONFIRMED steps with
+`hierarchyStepUnconfirmedError` so `IsOutcomeUnconfirmed` agrees) is recorded `failed` with
+`Unconfirmed`; while any is,
+the bid lever first reconciles it (`reconcileMicrosoftUnaddressedAdGroups`): `FindAdGroupByName`
+looks up its recorded `adGroupName` under the campaign (`createAdGroups` composes and records
+every group's name up front, whatever its step returns; a legacy row with none recomposes it from
+a sibling's recorded name and suffix via `SiblingAdGroupName`, and with no sibling to recompose
+from the 409 says a retry will not clear it); found, its id is written into the result
+(`unconfirmed` cleared, status still `failed`) and it is re-bid; definitely absent (a complete,
+readable list without it), the flag is cleared — but only after
+`microsoftUnconfirmedSettleWindow` (1 hour) measured from the row's `UpdatedAt` (never earlier
+than the dispatch result that recorded the group; `CreatedAt` is the claim, before the create
+ran), since a timed-out create can still commit; inside it, or with no `UpdatedAt`, absence keeps
+the 409 (the dispatcher's `bidNow` clock is the test seam). Inside the window the refusal is a
+`settlingBidWriteError`, which update-campaign-bid answers as a 409 saying it is temporary, with
+the retry time first in a service-authored reason clipped to 200 runes (`safeErrSummary`). The reconciled result is persisted with the new
+bid by update-campaign-bid's `ReplaceCampaign` (absence needs every listed entry to carry a
+readable name: an entry with none, such as `{"Id":656}` or `null`, may be the group, so
+`FindAdGroupByName` reports it unestablished via `lookupNamedEntityCounted`, and it first applies
+`decodeTrusted`'s identity check (`identityjson.Check`) to the whole list, so an entry declaring
+`Name` twice cannot stream as another name and hide the group; the create's find-first keeps
+`lookupNamedEntity` unchanged, since Microsoft's duplicate-name refusal backs it) (the BidWriter contract now allows the adapter to
+update `campaign.Result`), and dropped on any error. Only a lookup that cannot establish it (a
+failed or unreadable read, a match with no usable id, an id another entry records, no recorded
+name) keeps the `ErrBidUnwritable` refusal naming the entry, which a later retry can clear. The keyword lever needs no such rule: it acts only on a group the caller names, and an id
+the row does not record is already refused. The monitor, metrics and keyword report are campaign-level.
+
+Not verified live. Behind `MICROSOFT_AD_GROUPS_ENABLED` (default off); each per-group field also
+stays behind its single-group flag, and a group's lists need `global_marketing_ops`
+(`service.MicrosoftMarketingOpsInputs` names them `adGroups entry N audienceIds`).
 
 ## Conversion goals and conversion bidding at create (`conversion_goals.go`, #563 gap 7)
 
