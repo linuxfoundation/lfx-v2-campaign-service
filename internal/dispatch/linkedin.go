@@ -383,12 +383,21 @@ func linkedinBidPlan(cfg linkedinConfig) (bidPlan, error) {
 	return plan, nil
 }
 
-// PreflightCreate refuses, before the create job exists, a linkedInConfig whose bidding cannot be
-// created as asked. It never calls LinkedIn, so every other outcome is ErrPreflightNotApplicable;
-// a config that does not decode is left to Dispatch — except a wrong-typed `bidding`, refused here by
-// checkBiddingShape.
+// PreflightCreate refuses, before the create job exists, a linkedInConfig that cannot be created as
+// asked, as a synchronous 400:
+//   - bidding: a wrong-typed `bidding` (checkBiddingShape) or a bid plan linkedinBidPlan refuses;
+//   - conversions: a `conversions` that is not an array of strings (checkConversionsShape), or one
+//     linkedinConversions refuses (the deployment gate off, or linkedin.ValidateConversions);
+//   - targeting: a `targeting` whose JSON shape is wrong and, with targeting set, an
+//     `employerExclusions` that is not an array of strings (checkTargetingShape); or a targeting
+//     linkedinTargeting refuses (the deployment gate off, or linkedin.ValidateTargeting, which also
+//     holds employerExclusions to the employers rule and checks the merged employer cap).
+//
+// It never calls LinkedIn, so every other outcome is ErrPreflightNotApplicable; a config that does
+// not decode is otherwise left to Dispatch.
 func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
-	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
+	// A wrong-typed `bidding` is a synchronous 400 even though most type errors are not (the
+	// conversions and targeting shape checks below are the other exceptions).
 	if err := checkBiddingShape(config, "linkedInConfig"); err != nil {
 		return err
 	}
@@ -396,7 +405,8 @@ func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ mode
 	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
 	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
 	// not decode is its zero value, which no plan rule reads as a refusal. The decode error itself
-	// stays "not applicable" — only bidding is promised as a synchronous 400.
+	// stays "not applicable" — only bidding, conversions and targeting (with employerExclusions
+	// when targeting is set) are promised as a synchronous 400.
 	var cfg linkedinConfig
 	_ = unmarshalPlatformConfig(config, "linkedInConfig", &cfg)
 	if _, err := linkedinBidPlan(cfg); err != nil {

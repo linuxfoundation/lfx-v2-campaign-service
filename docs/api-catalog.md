@@ -1195,6 +1195,11 @@ numeric ids with no leading zero, like `exclude.employers`), or more than 200 em
 included `industries` or `staffCountRanges` (LinkedIn forbids ANDing them; refused even inside
 one clause until a live probe shows that is accepted).
 
+`audienceMatchingSegments` and `dynamicSegments`, anywhere in `targeting`, name ad segments on the
+ad account, so create-campaigns also requires `global_marketing_ops` on the project for them
+(`403` naming each, `503` when the check cannot be made). The other facets are LinkedIn
+taxonomies and are not role-gated.
+
 ##### Probe before enabling
 
 No LinkedIn call was made to build `targeting`, so keep `LINKEDIN_ADS_TARGETING_ENABLED` off until
@@ -1219,11 +1224,6 @@ LinkedIn-Version: <current> ; X-Restli-Protocol-Version: 2.0.0
 
 Expect `201` and an `x-restli-id`. A second probe with `titles` and `seniorities` in the same ORed
 clause would tell whether that stricter refusal can be relaxed.
-
-`audienceMatchingSegments` and `dynamicSegments`, anywhere in `targeting`, name ad segments on the
-ad account, so create-campaigns also requires `global_marketing_ops` on the project for them
-(`403` naming each, `503` when the check cannot be made). The other facets are LinkedIn
-taxonomies and are not role-gated.
 
 #### GoogleAdsConfig (the `googleAdsConfig` object)
 
