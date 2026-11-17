@@ -6033,27 +6033,28 @@ type CampaignCreateInputRequestBody struct {
 	// ad group stays English. All three apply only to a campaign this run creates:
 	// a create that finds its campaign by name stops before the ad group. OFF
 	// unless MICROSOFT_CREATE_TARGETING_ENABLED is exactly "true". A wrong JSON
-	// type (null reads as absent), a rule breach, or any of them while the flag is
-	// off is refused with 400 "invalid campaign config: microsoftConfig.<field>:
-	// ..." before any job exists. Not role-gated. MICROSOFT SEARCH NETWORK (#563):
-	// microsoftConfig takes `searchPartners`, a boolean sent as the new ad group's
-	// Network: true is OwnedAndOperatedAndSyndicatedSearch, false
-	// OwnedAndOperatedOnly; omitted sends no Network (Microsoft's default,
-	// partners included), and a reused ad group keeps its own. OFF unless
-	// MICROSOFT_SEARCH_NETWORK_ENABLED is exactly "true"; while it is off the
-	// field (false included) is refused with 400 "invalid campaign config:
-	// microsoftConfig: searchPartners disabled on this deployment ...", and a
-	// non-boolean (null reads as absent) with 400 "invalid campaign config:
-	// microsoftConfig.searchPartners: ...", before any job exists. MICROSOFT AD
-	// SCHEDULE (#563): microsoftConfig takes `adSchedules`, [{day, startHour,
-	// endHour, bidAdjustment?}]: day Monday..Sunday (any casing), whole hours
-	// startHour 0-23 and endHour 1-24 after it, bidAdjustment a whole percent
-	// -90..900 (omitted means 0); windows on a day may touch but not overlap, at
-	// most 7 per day and 49 in all. The hours are read in the Microsoft
-	// Advertising ACCOUNT's time zone, not the campaign's timeZone, and are sent
-	// untranslated; once any window exists the ads serve only inside the windows.
-	// They are attached to the campaign before the ad group, fail-closed: a
-	// failed, partial or unconfirmed attach stops the create with the PAUSED
+	// type (null reads as absent) or a rule breach is refused with 400 "invalid
+	// campaign config: microsoftConfig.<field>: ..." before any job exists; any of
+	// them while the flag is off is refused with 400 "invalid campaign config:
+	// microsoftConfig: <fields> disabled on this deployment ...". Not role-gated.
+	// MICROSOFT SEARCH NETWORK (#563): microsoftConfig takes `searchPartners`, a
+	// boolean sent as the new ad group's Network: true is
+	// OwnedAndOperatedAndSyndicatedSearch, false OwnedAndOperatedOnly; omitted
+	// sends no Network (Microsoft's default, partners included), and a reused ad
+	// group keeps its own. OFF unless MICROSOFT_SEARCH_NETWORK_ENABLED is exactly
+	// "true"; while it is off the field (false included) is refused with 400
+	// "invalid campaign config: microsoftConfig: searchPartners disabled on this
+	// deployment ...", and a non-boolean (null reads as absent) with 400 "invalid
+	// campaign config: microsoftConfig.searchPartners: ...", before any job
+	// exists. MICROSOFT AD SCHEDULE (#563): microsoftConfig takes `adSchedules`,
+	// [{day, startHour, endHour, bidAdjustment?}]: day Monday..Sunday (any
+	// casing), whole hours startHour 0-23 and endHour 1-24 after it, bidAdjustment
+	// a whole percent -90..900 (omitted means 0); windows on a day may touch but
+	// not overlap, at most 7 per day and 49 in all. The hours are read in the
+	// Microsoft Advertising ACCOUNT's time zone, not the campaign's timeZone, and
+	// are sent untranslated; once any window exists the ads serve only inside the
+	// windows. They are attached to the campaign before the ad group, fail-closed:
+	// a failed, partial or unconfirmed attach stops the create with the PAUSED
 	// campaign reported and retained. OFF unless MICROSOFT_AD_SCHEDULE_ENABLED is
 	// exactly "true"; while it is off the list is refused with 400 "invalid
 	// campaign config: microsoftConfig: adSchedules disabled on this deployment

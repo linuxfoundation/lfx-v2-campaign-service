@@ -587,8 +587,10 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		"All three apply only to a campaign this run creates: a create that finds its campaign by name stops "+
 		"before the ad group. "+
 		"OFF unless MICROSOFT_CREATE_TARGETING_ENABLED is exactly \"true\". "+
-		"A wrong JSON type (null reads as absent), a rule breach, or any of them while the flag is off is "+
-		"refused with 400 \"invalid campaign config: microsoftConfig.<field>: ...\" before any job exists. "+
+		"A wrong JSON type (null reads as absent) or a rule breach is refused with 400 "+
+		"\"invalid campaign config: microsoftConfig.<field>: ...\" before any job exists; any of them while "+
+		"the flag is off is refused with 400 \"invalid campaign config: microsoftConfig: <fields> disabled on "+
+		"this deployment ...\". "+
 		"Not role-gated. "+
 		"MICROSOFT SEARCH NETWORK (#563): microsoftConfig takes `searchPartners`, a boolean sent as the new "+
 		"ad group's Network: true is OwnedAndOperatedAndSyndicatedSearch, false OwnedAndOperatedOnly; "+
