@@ -1657,6 +1657,19 @@ Clients should key on the reason slug, not the prose. The `mapBriefErr` case sit
 `ErrConflict` arm because the sentinel is its own error, not a wrapped `ErrConflict`. A refused
 request creates no job row and dispatches nothing.
 
+
+`BriefCreatePreflighter` is a second OPTIONAL capability for the checks that need the BRIEF as well
+as the config (#563 gap 12). `CreateCampaigns` calls `Orchestrator.PreflightCreateBrief` right after
+`PreflightCreate`, with the brief it loaded. It is a pure, local check: it makes no platform call,
+so nothing is recorded under `recordUpstream` and no timeout applies. It refuses only on
+`ErrCreateConfigInvalid` (the synchronous 400 `mapBriefErr` already maps); `nil` and
+`ErrPreflightNotApplicable` pass, and any other error is logged at WARN ("brief create pre-check
+could not be completed; continuing without it") and ignored. The Microsoft dispatcher implements it
+(`PreflightCreateBrief`) to check each `microsoftConfig.adGroups` entry's display URL, the brief's
+registration domain plus that group's `path1`/`path2`, against Microsoft's limit
+(`microsoft.ValidateAdGroupDisplayURLs`); `TestOrchestrator_PreflightCreateBrief_RefusesOnlyConfigInvalid`
+pins the fail-open rules.
+
 ## HubSpot email search (LFXV2-3197)
 
 `ListHubspotEmails` serves `GET /projects/{project_id}/connection-hubspot/emails`, returning the
