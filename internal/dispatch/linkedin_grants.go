@@ -151,3 +151,34 @@ func linkedInGrantAccounts(res *resolved) []model.AccessibleAccount {
 	}
 	return out
 }
+
+// CreateAccount implements service.LinkedInCreateAccountReader (#581): the ad account and org a
+// create for projectID resolves to, through creds.resolve, the create path's own resolution (the
+// project's connection, the LF system fallback, the forced-system redirect), and the accounts
+// linkedInConfig.adAccountId may name, as selectLinkedInAccount would accept them: the resolved
+// account, plus the system row's grants while account selection is on. A database read only;
+// nothing is sent to LinkedIn.
+func (d *LinkedInDispatcher) CreateAccount(ctx context.Context, projectID string, platform model.Provider) (*model.LinkedInCreateAccount, error) {
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	if res == nil {
+		return nil, noOwnConnection(projectID, platform)
+	}
+	out := &model.LinkedInCreateAccount{
+		AccountID:        strings.TrimSpace(res.accountID),
+		OrgID:            strings.TrimSpace(res.providerConfig["org_id"]),
+		Label:            res.label,
+		FromSystem:       res.fromSystem,
+		Status:           res.status,
+		SelectionEnabled: linkedinAccountSelectionEnabled(),
+	}
+	if out.AccountID != "" {
+		out.Selectable = append(out.Selectable, model.LinkedInAccountGrant{AccountID: out.AccountID, OrgID: out.OrgID, Label: res.label})
+	}
+	if res.fromSystem && out.SelectionEnabled {
+		out.Selectable = append(out.Selectable, res.grants...)
+	}
+	return out, nil
+}

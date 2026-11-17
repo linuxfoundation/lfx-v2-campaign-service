@@ -265,6 +265,19 @@ func (c *Connection) LinkedInGrant(accountID string) (LinkedInAccountGrant, bool
 	return FindLinkedInGrant(c.LinkedInGrants, accountID)
 }
 
+// LinkedInCreateAccount is the LinkedIn ad account a create for a project resolves to (#581),
+// read from the stored connection without calling LinkedIn. Selectable lists the accounts
+// linkedInConfig.adAccountId may name, the default (AccountID/OrgID) first.
+type LinkedInCreateAccount struct {
+	AccountID        string
+	OrgID            string
+	Label            string
+	FromSystem       bool
+	Status           ConnectionStatus
+	SelectionEnabled bool
+	Selectable       []LinkedInAccountGrant
+}
+
 type pickerAccountKey struct{}
 
 // WithPickerAccount returns ctx carrying the ad account a picker read (the LinkedIn audiences and

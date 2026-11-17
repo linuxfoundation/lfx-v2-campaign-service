@@ -3564,6 +3564,14 @@ database-only `creds.resolve`, leaving a resolution failure to `Dispatch`. The p
 `TestLinkedIn_CreateInAGrantedAccount`, `TestLinkedIn_AdAccountIDRefusals` and
 `TestLinkedIn_PickersAndAccountsListFollowTheGrants`.
 
+The create-account read (`get-linkedin-ads-create-account`, #581): `LinkedInDispatcher.CreateAccount`
+(`service.LinkedInCreateAccountReader`) runs `creds.resolve`, the create path's own resolution, and
+reports the resolved account, its `org_id`, label, status and whether it came from the system row,
+plus the accounts `selectLinkedInAccount` would accept: the resolved account, then — system row
+and `LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED` on — its grants. No LinkedIn call. Pinned by
+`TestLinkedIn_CreateAccountReportsWhatACreateUses`, which also feeds every listed account back
+through `selectLinkedInAccount`, so the list cannot drift from what a create accepts.
+
 Pinned by `TestLinkedIn_PauseReachesACampaignInAGrantedAccount`,
 `TestLinkedIn_GrantedAndDefaultAccountsDoNotShareAClient`, `TestGrantScopedHonoursOnlyTheSystemRow`
 and `TestLinkedIn_BrokenSystemRowIsBlamedForAGrantedCampaign`.

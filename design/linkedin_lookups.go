@@ -84,7 +84,31 @@ func linkedInLookupAccountAttr() {
 	})
 }
 
-// linkedInAdsLookupMethods declares the two reads inside the connections service.
+// LinkedInAdsSelectableAccount is one account linkedInConfig.adAccountId may name (#581).
+var LinkedInAdsSelectableAccount = Type("linkedin-ads-selectable-account", func() {
+	Attribute("account_id", String, "The LinkedIn ad account, in exactly the form linkedInConfig.adAccountId takes", func() { Example("500928401") })
+	Attribute("org_id", String, "The organization page a campaign created in this account is authored by: the connection's org for the default account, the grant's org for a grant. Empty when the connection stores none.", func() { Example("12893459") })
+	Attribute("label", String, "Display text: the connection's label for the default account, the operator-set grant label otherwise. Not an identifier.", func() { Example("CNCF") })
+	Attribute("default", Boolean, "true for the account a create uses when linkedInConfig.adAccountId is omitted", func() { Example(false) })
+	Required("account_id", "org_id", "label", "default")
+})
+
+// LinkedInAdsCreateAccount reports the LinkedIn ad account a create for the project resolves to (#581).
+var LinkedInAdsCreateAccount = Type("linkedin-ads-create-account", func() {
+	Attribute("account_id", String, "The ad account a LinkedIn create for this project is sent to when linkedInConfig.adAccountId is omitted", func() { Example("538170226") })
+	Attribute("org_id", String, "The organization page that create's posts are authored by. Empty when the connection stores none.", func() { Example("208777") })
+	Attribute("label", String, "The resolved connection's label. Not an identifier.", func() { Example("Linux Foundation system account") })
+	Attribute("source", String, "Which connection a create resolves to: `project` (the project's own LinkedIn connection) or `system` (the LF system connection, the fallback for a project with none, or every project while the deployment forces the system account)", func() {
+		Enum("project", "system")
+		Example("system")
+	})
+	Attribute("status", String, "The resolved connection's stored status. A create is refused unless it is `active`.", func() { Example("active") })
+	Attribute("account_selection_enabled", Boolean, "Whether LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is on, so linkedInConfig.adAccountId may name one of the LF system account's granted accounts", func() { Example(true) })
+	Attribute("selectable_accounts", ArrayOf(LinkedInAdsSelectableAccount), "The accounts linkedInConfig.adAccountId may name, the default first. Only the default unless source is `system` and account selection is on, when the system account's grants follow it. While account selection is on, naming any account requires global_marketing_ops of the project.")
+	Required("account_id", "org_id", "label", "source", "status", "account_selection_enabled", "selectable_accounts")
+})
+
+// linkedInAdsLookupMethods declares the LinkedIn picker reads inside the connections service.
 func linkedInAdsLookupMethods() {
 	Method("list-linkedin-ads-audiences", func() {
 		Description("List the ad segments (matched and retargeting audiences) on the LinkedIn ad account a create " +
@@ -134,6 +158,37 @@ func linkedInAdsLookupMethods() {
 			Header("bearer_token:Authorization")
 			connectionAuthErrorResponses()
 			Param("account_id")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("get-linkedin-ads-create-account", func() {
+		Description("Report the LinkedIn ad account and organization a create for {project_id} actually uses, and the " +
+			"accounts linkedInConfig.adAccountId may name (#581), so the Implement tab can show the real account instead " +
+			"of a list the create ignores. Resolved exactly as a create resolves: the project's own LinkedIn connection, " +
+			"else the LF system connection (also for every project while the deployment forces the system account). A " +
+			"database read of stored, non-secret ids: nothing is sent to LinkedIn, so the answer says nothing about the " +
+			"account's billing or serving state. Gated on campaign_manager of {project_id}, like the connection's own " +
+			"accounts read. 404 when neither the project nor the LF system account has a LinkedIn connection, or the " +
+			"project disconnected its own; 500 when the LF system connection the project falls back to is unusable. " +
+			"A pure read: nothing is persisted.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Required("project_id")
+		})
+		Result(LinkedInAdsCreateAccount)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/linkedin-ads/create-account")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
