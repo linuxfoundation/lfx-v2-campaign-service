@@ -188,3 +188,83 @@ func TestCreateCampaign_DeviceAgeGenderCountTowardTheCriteriaCap(t *testing.T) {
 		t.Errorf("writes=%v lookups=%v, want nothing sent", writes, lookups)
 	}
 }
+
+// On a REUSED line item the live AGE and GENDER criteria are checked before any criterion is
+// written: an identical one is kept and not re-sent while the other criteria are added; a
+// different one refuses the targeting with no criterion POST and no tweet, since X holds one of
+// each per line item and the criteria ahead of it would otherwise leave the targeting half-changed.
+// A fresh line item is not read and gets its AGE and GENDER criteria as before.
+func TestCreateCampaign_ReusedLineItemAgeAndGenderMustMatch(t *testing.T) {
+	const liveUS = `{"id":"tc1","line_item_id":"li9","targeting_type":"LOCATION","targeting_value":"96683cc9126741d1","operator_type":"EQ","deleted":false}`
+	live := func(extra ...string) string {
+		return `{"data":[` + strings.Join(append([]string{liveUS}, extra...), ",") + `],"next_cursor":null}`
+	}
+	for name, tc := range map[string]struct {
+		reuse    bool
+		live     string
+		want     string // writes joined by ","
+		conflict string // the refusal the error must carry; "" = success
+	}{
+		"matching bucket and gender": {
+			reuse: true,
+			live: live(`{"id":"tc2","line_item_id":"li9","targeting_type":"AGE","targeting_value":"AGE_25_TO_54","operator_type":"EQ","deleted":false}`,
+				`{"id":"tc3","line_item_id":"li9","targeting_type":"GENDER","targeting_value":2,"deleted":false}`),
+			want: "POST campaigns,POST targeting_criteria LANGUAGE=en,POST promoted_tweets",
+		},
+		"matching bucket, gender missing": {
+			reuse: true,
+			live:  live(`{"id":"tc2","line_item_id":"li9","targeting_type":"AGE","targeting_value":"age_25_to_54","operator_type":"EQ","deleted":false}`),
+			want:  "POST campaigns,POST targeting_criteria LANGUAGE=en,POST targeting_criteria GENDER=2,POST promoted_tweets",
+		},
+		"a deleted different bucket is not a conflict": {
+			reuse: true,
+			live: live(`{"id":"tc2","line_item_id":"li9","targeting_type":"AGE","targeting_value":"AGE_OVER_18","operator_type":"EQ","deleted":true}`,
+				`{"id":"tc3","line_item_id":"li9","targeting_type":"GENDER","targeting_value":"2","deleted":false}`),
+			want: "POST campaigns,POST targeting_criteria LANGUAGE=en,POST targeting_criteria AGE=AGE_25_TO_54,POST promoted_tweets",
+		},
+		"conflicting bucket": {
+			reuse:    true,
+			live:     live(`{"id":"tc2","line_item_id":"li9","targeting_type":"AGE","targeting_value":"AGE_OVER_18","operator_type":"EQ","deleted":false}`),
+			want:     "POST campaigns",
+			conflict: "already holds a different AGE criterion than the requested age AGE_25_TO_54",
+		},
+		"conflicting gender": {
+			reuse:    true,
+			live:     live(`{"id":"tc3","line_item_id":"li9","targeting_type":"GENDER","targeting_value":1,"deleted":false}`),
+			want:     "POST campaigns",
+			conflict: "already holds a different GENDER criterion than the requested gender female",
+		},
+		"fresh line item": {
+			want: "POST campaigns,POST line_items,POST targeting_criteria LOCATION=96683cc9126741d1,POST targeting_criteria LANGUAGE=en,POST targeting_criteria AGE=AGE_25_TO_54,POST targeting_criteria GENDER=2,POST promoted_tweets",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newTargetingFakeX()
+			if tc.reuse {
+				f.reuseLineItem = "Events | KubeCon | Promoted Tweets | AUTO"
+				f.liveCriteria = tc.live
+			}
+			c := targetingClient(t, f)
+			in := targetingInput([]string{"US"}, []string{"en"})
+			in.AgeBucket = "AGE_25_TO_54"
+			in.Gender = "female"
+			res, err := c.CreateCampaign(context.Background(), in)
+			writes, _ := f.snapshot()
+			if got := strings.Join(writes, ","); got != tc.want {
+				t.Fatalf("writes =\n%s\nwant\n%s (err %v)", got, tc.want, err)
+			}
+			if tc.conflict == "" {
+				if err != nil {
+					t.Fatalf("CreateCampaign: %v", err)
+				}
+				return
+			}
+			if err == nil || res == nil || res.LineItemID != "li9" || !errors.Is(err, ErrCreateTargetingIncomplete) || !strings.Contains(err.Error(), tc.conflict) {
+				t.Fatalf("res=%+v err=%v, want the partial result and %q", res, err, tc.conflict)
+			}
+			if !strings.Contains(strings.Join(res.Steps, "\n"), "Targeting NOT applied to reused line item li9") {
+				t.Errorf("steps = %v", res.Steps)
+			}
+		})
+	}
+}

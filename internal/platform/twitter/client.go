@@ -4268,6 +4268,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				return partialResult(), fmt.Errorf("x targeting not confirmed (%s, %s; its existing targeting criteria could not be read, so nothing was authored or promoted): verify the line item's targeting in X Ads Manager before retrying: %w: %w",
 					campaignStatus(), lineItemStatus(), ErrCreateTargetingIncomplete, lerr)
 			}
+			// A different AGE bucket or GENDER already on the line item is refused here, before
+			// any criterion is written: X holds one of each per line item, so adding the
+			// requested one would fail part-way (or widen/change the audience) after the
+			// criteria ahead of it had already changed the targeting. An identical one is kept.
+			if cr, conflict := conflictingSingleValue(criteria, live); conflict {
+				steps = append(steps, fmt.Sprintf("Targeting NOT applied to reused line item %s: it already holds a different %s criterion than the requested %s, and X allows only one per line item, so its targeting was not changed and nothing was authored or promoted; reconcile its targeting in X Ads Manager", lineItemID, cr.targetingType, cr.label))
+				return partialResult(), fmt.Errorf("x targeting not applied (%s, %s; it already holds a different %s criterion than the requested %s, so its targeting was not changed and nothing was authored or promoted): reconcile the line item's targeting in X Ads Manager: %w",
+					campaignStatus(), lineItemStatus(), cr.targetingType, cr.label, ErrCreateTargetingIncomplete)
+			}
 			pending = missingCriteria(criteria, live)
 			if have := len(criteria) - len(pending); have > 0 {
 				steps = append(steps, fmt.Sprintf("Reused line item %s already holds %d of the %d requested targeting criteria; adding the other %d", lineItemID, have, len(criteria), len(pending)))

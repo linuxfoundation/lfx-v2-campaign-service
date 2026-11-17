@@ -1631,7 +1631,7 @@ A partial create is RETAINED by the orchestrator. Repeating the API request does
 it; the request answers "reconciliation required". The client-level REUSE path below is therefore
 reached only when a create finds a same-name line item another way, for example after an operator
 reconciles. That path is NOT skipped, because skipping it would promote a tweet on a line item
-that serves worldwide, the outcome this ordering exists to prevent. It works in three steps:
+that serves worldwide, the outcome this ordering exists to prevent. It works in four steps:
 
 1. Read the line item's `entity_status` (`lineItemEntityStatus`). Reuse does not reset the
    status, so a reused line item may already be serving, and changing its audience is not this
@@ -1640,7 +1640,13 @@ that serves worldwide, the outcome this ordering exists to prevent. It works in 
    status (`ACTIVE`, `DRAFT`, `DELETED`), never X's raw text.
 2. Read its live criteria (`ListLineItemTargetingCriteria`). If that read fails, the create also
    stops before the tweet.
-3. Post only the missing criteria (`missingCriteria`: same type and value, not negated), still
+3. Refuse a single-value conflict (`conflictingSingleValue`): X holds one `AGE` bucket and one
+   `GENDER` per line item, so a live one with a different value or operator than the requested
+   one stops the create before ANY criterion is written (its targeting unchanged, nothing
+   authored or promoted). Without this, the criteria ahead of it would be posted and the second
+   `AGE` (or `GENDER`) would fail after them, leaving the targeting half-changed. An identical
+   live one is not a conflict and is not re-sent.
+4. Post only the missing criteria (`missingCriteria`: same type and value, not negated), still
    before the tweet.
 
 Criteria the line item holds beyond the requested ones are left alone, and `Reused` still makes

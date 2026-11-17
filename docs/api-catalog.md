@@ -3781,11 +3781,17 @@ ageBucket?: string               — Age targeting (#564 gap 9): ONE of X's AGE_
                                   AGE_OVER_50 (there is no AGE_18_TO_24). Sent as one `AGE` / `EQ`
                                   criterion after the devices, with the bucket as its value. The
                                   list is X's SDK enumeration (docs.x.com shows only AGE_21_TO_34)
-                                  and is not confirmed live. Blank or omitted: every age.
+                                  and is not confirmed live. Blank or omitted: every age. On a
+                                  reused line item, a live AGE criterion with the same bucket is
+                                  kept and not re-sent; a different live bucket stops the create
+                                  before ANY criterion is written and before the tweet (its
+                                  targeting unchanged; reconcile in X Ads Manager).
 gender?: string                  — Gender targeting (#564 gap 9): `MALE` or `FEMALE`
                                   (case-insensitive), sent as one `GENDER` / `EQ` criterion after
                                   the age bucket with X's value `1` (male) or `2` (female). Blank or
-                                  omitted: every gender, X's default.
+                                  omitted: every gender, X's default. Reuse follows `ageBucket`:
+                                  the same live gender is kept, a different one stops the create
+                                  before any criterion is written.
                                   `ageBucket` and `gender` must be JSON strings (null reads as
                                   absent); otherwise, or outside their sets, or set while
                                   TWITTER_CREATE_TARGETING_ENABLED is off, the create is a

@@ -762,6 +762,34 @@ func missingCriteria(want []createCriterion, live []TargetingCriterion) []create
 	return out
 }
 
+// singleValueTargeting lists the targeting types X holds at most one of per line item: "It is
+// only possible to target a single AGE bucket per line item", and GENDER is males (1) or females
+// (2), or none for all.
+var singleValueTargeting = map[string]bool{TargetingAge: true, TargetingGender: true}
+
+// conflictingSingleValue returns the first wanted single-value criterion (AGE, GENDER) the line
+// item already holds live under a DIFFERENT value or operator, and ok=false when there is none.
+// Run on reuse before any criterion is written: missingCriteria would queue the wanted one as a
+// second criterion of that type, which X refuses (or, for GENDER, which would change the
+// audience), and the criteria written before it would leave the targeting half-changed. A live
+// criterion identical to the wanted one is not a conflict: missingCriteria leaves it out.
+func conflictingSingleValue(want []createCriterion, live []TargetingCriterion) (createCriterion, bool) {
+	for _, w := range want {
+		if !singleValueTargeting[w.targetingType] {
+			continue
+		}
+		for _, l := range live {
+			if l.Deleted || l.TargetingType != w.targetingType {
+				continue
+			}
+			if !echoedOperator(l.OperatorType, w.op()) || !w.sameValue(l.TargetingValue) {
+				return w, true
+			}
+		}
+	}
+	return createCriterion{}, false
+}
+
 // lineItemEntityStatus reads a line item's entity_status (GET accounts/:account_id/line_items/:id).
 // Used before a reused line item's targeting is changed: only a PAUSED one may be re-targeted, since
 // changing the audience of a line item that may be serving is not this create's to do.
