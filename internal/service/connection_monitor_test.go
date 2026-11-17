@@ -64,7 +64,7 @@ func TestMonitorAccount_RejectsTheReservedSystemScope(t *testing.T) {
 		}},
 		{"linkedin ads", func(s *ConnectionService) error {
 			_, err := s.MonitorLinkedinAdsAccount(context.Background(),
-				&conn.MonitorLinkedinAdsAccountPayload{ProjectID: model.SystemProjectID, AccountID: "a", Days: 30})
+				&conn.MonitorLinkedinAdsAccountPayload{ProjectID: model.SystemProjectID, AccountID: strPtr("a"), Days: 30})
 			return err
 		}},
 		{"meta ads", func(s *ConnectionService) error {
@@ -211,7 +211,7 @@ func TestMonitorAccount_UpstreamFailureNamesAccountMonitor(t *testing.T) {
 		}},
 		{"linkedin ads", model.ProviderLinkedInAds, func(svc *ConnectionService) error {
 			_, err := svc.MonitorLinkedinAdsAccount(context.Background(),
-				&conn.MonitorLinkedinAdsAccountPayload{ProjectID: "p", AccountID: "a", Days: 30})
+				&conn.MonitorLinkedinAdsAccountPayload{ProjectID: "p", AccountID: strPtr("a"), Days: 30})
 			return err
 		}},
 		{"meta ads", model.ProviderMetaAds, func(svc *ConnectionService) error {

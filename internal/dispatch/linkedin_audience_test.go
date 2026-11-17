@@ -67,6 +67,15 @@ func (u *linkedInAudienceUpstream) count() int {
 	return u.calls
 }
 
+func (u *linkedInAudienceUpstream) lastQuery() string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if len(u.queries) == 0 {
+		return ""
+	}
+	return u.queries[len(u.queries)-1]
+}
+
 func linkedInAudienceDispatcher(reader connReader, srvURL string) *LinkedInDispatcher {
 	return NewLinkedInDispatcher(reader, identityEncryptor{},
 		linkedin.WithBaseURL(srvURL), linkedin.WithClock(func() time.Time { return time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC) }))
@@ -117,22 +126,46 @@ func TestLinkedIn_ReadAudience_HappyPathMapsEveryPivot(t *testing.T) {
 	}
 }
 
-// Trust boundary: the project's OWN connection only. A connection that exists only under the LF
-// system scope must NOT serve the read — the result is ErrNotFound (404), and LinkedIn is never
-// contacted.
-func TestLinkedIn_ReadAudience_RefusesSystemFallback(t *testing.T) {
-	up := &linkedInAudienceUpstream{}
-	d := linkedInAudienceDispatcher(&scopedConnReader{
-		rows: map[string]*model.Connection{model.SystemProjectID: activeLinkedInConn(goodLinkedInCreds)},
-	}, up.server(t).URL)
-	_, err := d.ReadLinkedInAudienceInsights(context.Background(), "cncf", model.ProviderLinkedInAds,
-		model.MetricsWindowLast30Days, ownScope(`{"campaignId":"555"}`))
-	if !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("err = %v, want domain.ErrNotFound (no own connection; the LF system row must not be borrowed)", err)
+// The LF system row (#581): a project with no connection of its own reads its campaigns'
+// audience through the system credential only when every campaign RECORDS an account the row is
+// configured for. An unrecorded campaign is refused (409), and so is an account the row is not
+// configured for (the mismatch 409); LinkedIn is never contacted for either.
+func TestLinkedIn_ReadAudience_SystemRowNeedsRecordedGrantedAccounts(t *testing.T) {
+	sysOnly := func() connReader {
+		return &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}}
 	}
-	if up.count() != 0 {
-		t.Errorf("LinkedIn contacted %d time(s) on a refused fallback", up.count())
+	for name, tc := range map[string]struct {
+		scope []model.ProjectCampaignScope
+		want  error
+	}{
+		"unrecorded campaign": {ownScope(`{"campaignId":"555"}`), domain.ErrCampaignProvenanceUnknown},
+		"partly unrecorded":   {ownScope(`{"accountId":"500928401"}`, `{"campaignId":"556"}`), domain.ErrCampaignProvenanceUnknown},
+		"ungranted account":   {ownScope(`{"accountId":"123456789"}`), domain.ErrCampaignAccountMismatch},
+	} {
+		t.Run(name, func(t *testing.T) {
+			up := &linkedInAudienceUpstream{}
+			d := linkedInAudienceDispatcher(sysOnly(), up.server(t).URL)
+			_, err := d.ReadLinkedInAudienceInsights(context.Background(), "cncf", model.ProviderLinkedInAds,
+				model.MetricsWindowLast30Days, tc.scope)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+			if up.count() != 0 {
+				t.Errorf("LinkedIn contacted %d time(s) on a refused read", up.count())
+			}
+		})
 	}
+	t.Run("granted account is read on that account", func(t *testing.T) {
+		up := &linkedInAudienceUpstream{}
+		d := linkedInAudienceDispatcher(sysOnly(), up.server(t).URL)
+		if _, err := d.ReadLinkedInAudienceInsights(context.Background(), "cncf", model.ProviderLinkedInAds,
+			model.MetricsWindowLast30Days, ownScope(`{"campaignId":"555","accountId":"500928401"}`)); err != nil {
+			t.Fatalf("read on a granted account: %v", err)
+		}
+		if up.count() == 0 || !strings.Contains(up.lastQuery(), "500928401") {
+			t.Fatalf("read did not name the granted account: %d requests, last %q", up.count(), up.lastQuery())
+		}
+	})
 }
 
 // Bound account only: ANY campaign created under another LinkedIn ad account refuses the whole

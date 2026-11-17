@@ -4,8 +4,10 @@
 package dispatch
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -156,15 +158,131 @@ func TestMonitorScopePrecheck(t *testing.T) {
 	})
 }
 
-// TestMonitorScopeForAccount_LinkedInAndMicrosoftAreNotScoped pins that only the shared-tenancy
-// platforms carry the capability: LinkedIn and Microsoft monitors keep their account-wide read.
-func TestMonitorScopeForAccount_LinkedInAndMicrosoftAreNotScoped(t *testing.T) {
+// TestMonitorScopeForAccount_MicrosoftIsNotScoped pins that only the shared-tenancy platforms
+// carry the capability: the Microsoft monitor keeps its account-wide read. LinkedIn joined the
+// scoped set with #581, when its LF system row began serving several foundations' accounts.
+func TestMonitorScopeForAccount_MicrosoftIsNotScoped(t *testing.T) {
 	for name, d := range map[string]any{
-		"linkedin":  &LinkedInDispatcher{},
 		"microsoft": &MicrosoftDispatcher{},
 	} {
 		if _, ok := d.(service.AccountMonitorScoper); ok {
 			t.Errorf("%s dispatcher implements AccountMonitorScoper; its account is not recorded as shared", name)
 		}
 	}
+}
+
+// TestLinkedInMonitorScope pins LinkedIn's campaign-scoped monitor (#581): only campaigns
+// recorded under the monitored account are returned, any other recorded account or an unrecorded
+// campaign fails the whole read, a malformed id is ErrAudienceScopeInvalid, and the defaulter
+// names the one account the campaigns record.
+func TestLinkedInMonitorScope(t *testing.T) {
+	d := &LinkedInDispatcher{}
+	rec := func(id, account string) model.ProjectCampaignScope {
+		return model.ProjectCampaignScope{PlatformCampaignID: id, Result: json.RawMessage(`{"accountId":"` + account + `"}`)}
+	}
+	unrec := model.ProjectCampaignScope{PlatformCampaignID: "557", Result: json.RawMessage(`{}`)}
+
+	ids, err := d.MonitorScopeForAccount([]model.ProjectCampaignScope{rec("555", "500928401"), rec("556", "500928401")}, "500928401")
+	if err != nil || len(ids) != 2 {
+		t.Fatalf("matching scope = %v, %v; want both ids", ids, err)
+	}
+	for name, tc := range map[string]struct {
+		scope []model.ProjectCampaignScope
+		want  error
+	}{
+		"other account": {[]model.ProjectCampaignScope{rec("555", "500928401"), rec("556", "538170226")}, domain.ErrCampaignAccountMismatch},
+		"malformed id":  {[]model.ProjectCampaignScope{rec("urn:li:x", "500928401")}, domain.ErrAudienceScopeInvalid},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := d.MonitorScopeForAccount(tc.scope, "500928401"); !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+		})
+	}
+	if err := d.MonitorScopePrecheck("acct-1"); !errors.Is(err, domain.ErrAccountIDMalformed) {
+		t.Fatalf("precheck on a malformed id = %v", err)
+	}
+
+	// The dispatcher's own rule is the LF system row's (#628): an unrecorded campaign is omitted,
+	// not a 409, since on the shared credential its id cannot be proven to be this project's.
+	ids, err = d.MonitorScopeForAccount([]model.ProjectCampaignScope{rec("555", "500928401"), unrec}, "500928401")
+	if err != nil || !reflect.DeepEqual(ids, []string{"555"}) {
+		t.Fatalf("system rule over an unrecorded campaign = %v, %v; want only the recorded 555", ids, err)
+	}
+	// Omitting the unrecorded entries does not hide a recorded mismatch.
+	if _, err := d.MonitorScopeForAccount([]model.ProjectCampaignScope{rec("556", "538170226"), unrec}, "500928401"); !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+		t.Fatalf("system rule over unrecorded + other account = %v, want ErrCampaignAccountMismatch", err)
+	}
+
+	if got, err := d.MonitorAccountForScope([]model.ProjectCampaignScope{rec("555", "500928401"), unrec}); err != nil || got != "500928401" {
+		t.Fatalf("defaulter = %q, %v; want the one recorded account", got, err)
+	}
+	if _, err := d.MonitorAccountForScope([]model.ProjectCampaignScope{rec("555", "500928401"), rec("556", "538170226")}); !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+		t.Fatalf("defaulter over two accounts = %v, want ErrCampaignAccountMismatch", err)
+	}
+	if _, err := d.MonitorAccountForScope([]model.ProjectCampaignScope{unrec}); !errors.Is(err, domain.ErrCampaignProvenanceUnknown) {
+		t.Fatalf("defaulter over unrecorded campaigns = %v, want ErrCampaignProvenanceUnknown", err)
+	}
+}
+
+// TestLinkedInMonitorScopeByConnection pins #628's answer to the legacy-campaign question: on the
+// project's OWN LinkedIn connection a campaign that records no creation account belongs to that
+// connection's account and stays in the monitor, as it did before #581 when the read covered the
+// own account whole. Served by the LF system row, the same campaign is omitted, and a recorded
+// campaign from another account still fails either way.
+func TestLinkedInMonitorScopeByConnection(t *testing.T) {
+	ctx := context.Background()
+	rec := func(id, account string) model.ProjectCampaignScope {
+		return model.ProjectCampaignScope{PlatformCampaignID: id, Result: json.RawMessage(`{"accountId":"` + account + `"}`)}
+	}
+	unrec := model.ProjectCampaignScope{PlatformCampaignID: "557", Result: json.RawMessage(`{}`)}
+	own := activeLinkedInConn(goodLinkedInCreds)
+	own.ID, own.Version, own.ProjectID = "own-li", 1, "cncf"
+
+	t.Run("own connection keeps an unrecorded campaign", func(t *testing.T) {
+		d, _ := grantToggleDispatcher(t, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow(), "cncf": own}})
+		scoper, err := d.MonitorScoperForConnection(ctx, "cncf", own.AccountID)
+		if err != nil || scoper == nil {
+			t.Fatalf("no connection scoper for a project on its own connection: %v", err)
+		}
+		ids, err := scoper.MonitorScopeForAccount([]model.ProjectCampaignScope{rec("555", own.AccountID), unrec}, own.AccountID)
+		if err != nil || !reflect.DeepEqual(ids, []string{"555", "557"}) {
+			t.Fatalf("own-connection scope = %v, %v; want 555 and the unrecorded 557", ids, err)
+		}
+		if _, err := scoper.MonitorScopeForAccount([]model.ProjectCampaignScope{rec("556", "538170226"), unrec}, own.AccountID); !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+			t.Fatalf("own-connection scope with another account = %v, want ErrCampaignAccountMismatch", err)
+		}
+	})
+	t.Run("system row omits an unrecorded campaign", func(t *testing.T) {
+		d, _ := grantToggleDispatcher(t, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}})
+		scoper, err := d.MonitorScoperForConnection(ctx, "cncf", "500928401")
+		if err != nil || scoper == nil {
+			t.Fatalf("no connection scoper for a grant served by the system row: %v", err)
+		}
+		ids, err := scoper.MonitorScopeForAccount([]model.ProjectCampaignScope{rec("555", "500928401"), unrec}, "500928401")
+		if err != nil || !reflect.DeepEqual(ids, []string{"555"}) {
+			t.Fatalf("system-row scope = %v, %v; want only the recorded 555", ids, err)
+		}
+	})
+	// An unresolvable read is an error, exactly as ReadAccountMonitor reports it, not the system
+	// rule: that rule would omit every unrecorded campaign, and the orchestrator would answer the
+	// emptied scope with an empty monitor before the read could report the failure.
+	t.Run("an unresolvable read is the read's error", func(t *testing.T) {
+		d, _ := grantToggleDispatcher(t, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}})
+		s, err := d.MonitorScoperForConnection(ctx, "cncf", "111111111")
+		if s != nil || !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("scoper for an account no connection serves = %T, %v; want nil and ErrNotFound", s, err)
+		}
+		_, readErr := d.ReadAccountMonitor(ctx, "cncf", model.ProviderLinkedInAds, "111111111", 30)
+		if readErr == nil || readErr.Error() != err.Error() {
+			t.Fatalf("scoper error %v differs from the read's %v", err, readErr)
+		}
+	})
+	t.Run("an own connection on another account is the read's error", func(t *testing.T) {
+		d, _ := grantToggleDispatcher(t, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow(), "cncf": own}})
+		s, err := d.MonitorScoperForConnection(ctx, "cncf", "111111111")
+		if s != nil || !errors.Is(err, domain.ErrAccountNotManagedByConnection) {
+			t.Fatalf("own connection naming another account = %T, %v; want nil and ErrAccountNotManagedByConnection", s, err)
+		}
+	})
 }

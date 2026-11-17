@@ -488,24 +488,10 @@ func TestMonitorAccount_ScopeLookupFailureMakesNoUpstreamCall(t *testing.T) {
 	}
 }
 
-// AC-5: LinkedIn and Microsoft do not implement AccountMonitorScoper, so an empty campaign scope
-// leaves their account-wide read unchanged.
+// AC-5: Microsoft does not implement AccountMonitorScoper, so an empty campaign scope leaves its
+// account-wide read unchanged. (LinkedIn implemented it with #581; see
+// TestMonitorLinkedinAdsAccount_IsScopedAndDefaultsTheAccount.)
 func TestMonitorAccount_UnscopedPlatformsKeepTheAccountRead(t *testing.T) {
-	t.Run("linkedin", func(t *testing.T) {
-		rows := []model.AccountCampaignMetrics{
-			{PlatformCampaignID: "1", Name: "a", Status: "ACTIVE", BudgetDay: 10},
-			{PlatformCampaignID: "2", Name: "b", Status: "ACTIVE", BudgetDay: 20},
-		}
-		svc := liveScopeService(model.ProviderLinkedInAds, &mockAccountMetricsReaderDispatcher{rows: rows}, scopeRepo([]string{}, nil))
-		got, err := svc.MonitorLinkedinAdsAccount(context.Background(),
-			&conn.MonitorLinkedinAdsAccountPayload{ProjectID: "p", AccountID: "512345678", Days: 30})
-		if err != nil {
-			t.Fatalf("read: %v", err)
-		}
-		if len(got.Campaigns) != 2 {
-			t.Errorf("campaigns = %v, want both account rows", campaignIDs(got))
-		}
-	})
 	t.Run("microsoft", func(t *testing.T) {
 		o := NewOrchestrator(scopeRepo([]string{}, nil), newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
 			model.ProviderMicrosoftAds: &fakeReportReader{campaigns: twoCampaigns(), submitID: "r1"},
@@ -554,12 +540,123 @@ func TestClassifyMonitorError(t *testing.T) {
 			}
 		})
 	}
-	t.Run("linkedin is delegated unchanged", func(t *testing.T) {
+	t.Run("linkedin answers the declared scope 409 (#581)", func(t *testing.T) {
 		err := svc.classifyMonitorError(context.Background(), "p", model.ProviderLinkedInAds, linkedInAdsMonitorDiscovery, domain.ErrCampaignAccountMismatch)
+		var sce *conn.AccountMonitorScopeConflictError
+		if !errors.As(err, &sce) || sce.Reason != "campaign_account_mismatch" {
+			t.Fatalf("err = %T %v, want a 409 AccountMonitorScopeConflictError", err, err)
+		}
+	})
+	t.Run("microsoft is delegated unchanged", func(t *testing.T) {
+		err := svc.classifyMonitorError(context.Background(), "p", model.ProviderMicrosoftAds, microsoftAdsMonitorDiscovery, domain.ErrCampaignAccountMismatch)
 		var ce *conn.ConflictError
 		var sce *conn.AccountMonitorScopeConflictError
 		if errors.As(err, &ce) || errors.As(err, &sce) {
 			t.Fatalf("err = %v, want classifyDiscoveryError's answer, not a 409 the method does not declare", err)
 		}
 	})
+}
+
+// connScopedLiveDispatcher is scopedLiveDispatcher whose scope rule depends on the connection
+// serving the read (AccountMonitorConnectionScoper, #628): its own rule refuses every scope (or,
+// with baseOmits, omits every campaign, as LinkedIn's system rule does an unrecorded one), the
+// connection's rule, when offered, is fakeMonitorScope, and resolveErr is a credential that cannot
+// be resolved.
+type connScopedLiveDispatcher struct {
+	scopedLiveDispatcher
+	offer      bool
+	baseOmits  bool
+	resolveErr error
+	asked      int
+}
+
+func (d *connScopedLiveDispatcher) MonitorScopeForAccount([]model.ProjectCampaignScope, string) ([]string, error) {
+	if d.baseOmits {
+		return []string{}, nil
+	}
+	return nil, fmt.Errorf("base rule: %w", domain.ErrCampaignAccountMismatch)
+}
+
+func (d *connScopedLiveDispatcher) MonitorScoperForConnection(context.Context, string, string) (AccountMonitorScoper, error) {
+	d.asked++
+	if d.resolveErr != nil {
+		return nil, d.resolveErr
+	}
+	if !d.offer {
+		return nil, nil
+	}
+	return &d.scopedLiveDispatcher, nil
+}
+
+// TestReadAccountCampaignMetricsUsesTheConnectionScoper pins the orchestrator half of #628: when a
+// dispatcher offers a connection-specific scoper it replaces the dispatcher's own rule for both
+// the initial scope and the post-read revalidation; nil keeps the dispatcher's rule; a connection
+// that cannot be resolved fails the read; and a project with no campaigns is answered without
+// asking.
+func TestReadAccountCampaignMetricsUsesTheConnectionScoper(t *testing.T) {
+	rows := []model.AccountCampaignMetrics{{PlatformCampaignID: "c1"}, {PlatformCampaignID: "c2"}}
+	newD := func(offer bool) *connScopedLiveDispatcher {
+		d := &connScopedLiveDispatcher{offer: offer}
+		d.rows = rows
+		return d
+	}
+	t.Run("offered", func(t *testing.T) {
+		d := newD(true)
+		o := NewOrchestrator(scopeRepo([]string{"c1"}, nil), newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: d})
+		read, err := o.ReadAccountCampaignMetrics(context.Background(), "p", model.ProviderLinkedInAds, "acct", 30)
+		if err != nil || len(read.Rows) != 1 || read.Rows[0].PlatformCampaignID != "c1" {
+			t.Fatalf("read = %+v, %v; want only c1 through the connection's rule", read, err)
+		}
+		if d.asked != 2 {
+			t.Fatalf("connection scoper asked %d times, want 2 (scope and revalidation)", d.asked)
+		}
+	})
+	t.Run("declined", func(t *testing.T) {
+		d := newD(false)
+		o := NewOrchestrator(scopeRepo([]string{"c1"}, nil), newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: d})
+		if _, err := o.ReadAccountCampaignMetrics(context.Background(), "p", model.ProviderLinkedInAds, "acct", 30); !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+			t.Fatalf("err = %v, want the dispatcher's own refusal", err)
+		}
+	})
+	// The Copilot finding on #628: every campaign is unrecorded, so the dispatcher's own rule would
+	// omit them all, and an empty scope answers an empty monitor before the read runs. The
+	// resolution failure must be the answer instead, or a broken connection reads as zero
+	// campaigns and zero spend.
+	t.Run("unresolvable connection with every campaign unrecorded", func(t *testing.T) {
+		resolveErr := fmt.Errorf("no linkedin connection configured for project p: %w: %w", domain.ErrNotFound, domain.ErrConnectionAbsent)
+		d := newD(true)
+		d.baseOmits = true
+		d.resolveErr = resolveErr
+		o := NewOrchestrator(scopeRepo([]string{"c1", "c2"}, nil), newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: d})
+		read, err := o.ReadAccountCampaignMetrics(context.Background(), "p", model.ProviderLinkedInAds, "acct", 30)
+		if !errors.Is(err, domain.ErrNotFound) || !errors.Is(err, domain.ErrConnectionAbsent) {
+			t.Fatalf("read = %+v, %v; want the credential-resolution failure, not an empty monitor", read, err)
+		}
+		if d.reads != 0 {
+			t.Fatalf("read %d times after the connection failed to resolve, want 0", d.reads)
+		}
+	})
+	t.Run("no campaigns", func(t *testing.T) {
+		d := newD(true)
+		d.resolveErr = errors.New("must not be resolved")
+		o := NewOrchestrator(scopeRepo([]string{}, nil), newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: d})
+		read, err := o.ReadAccountCampaignMetrics(context.Background(), "p", model.ProviderLinkedInAds, "acct", 30)
+		if err != nil || read == nil || len(read.Rows) != 0 {
+			t.Fatalf("empty scope = %+v, %v; want an empty monitor", read, err)
+		}
+		if d.asked != 0 || d.reads != 0 {
+			t.Fatalf("empty scope asked the connection scoper %d times and read %d times, want 0 and 0", d.asked, d.reads)
+		}
+	})
+}
+
+// TestRevalidateAccountMonitorScopeSurfacesAResolutionFailure: the post-read revalidation resolves
+// the connection again, and a failure there is the read's answer, not an empty filtered monitor.
+func TestRevalidateAccountMonitorScopeSurfacesAResolutionFailure(t *testing.T) {
+	d := &connScopedLiveDispatcher{offer: true, baseOmits: true, resolveErr: fmt.Errorf("linkedin connection not usable: %w", domain.ErrConnectionNotUsable)}
+	o := NewOrchestrator(scopeRepo([]string{"c1"}, nil), newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: d})
+	ids, err := o.revalidateAccountMonitorScope(context.Background(), "p", model.ProviderLinkedInAds, "acct", map[string]bool{"c1": true})
+	if !errors.Is(err, domain.ErrConnectionNotUsable) || ids != nil {
+		t.Fatalf("revalidate = %v, %v; want the resolution failure and no ids", ids, err)
+	}
 }
