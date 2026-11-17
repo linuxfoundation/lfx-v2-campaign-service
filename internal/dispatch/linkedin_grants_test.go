@@ -5,16 +5,20 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // TestVerifyLinkedInGrant pins the install-time check (#581): the pairing LinkedIn records must
@@ -208,4 +212,332 @@ func TestLinkedIn_BrokenSystemRowIsBlamedForAGrantedCampaign(t *testing.T) {
 	if !errors.Is(err, domain.ErrSystemConnectionOrigin) {
 		t.Fatalf("err = %v, want the system row's error", err)
 	}
+}
+
+// grantCreateServer answers a whole LinkedIn create and records every request path and body.
+func grantCreateServer(t *testing.T) (*httptest.Server, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		seen = append(seen, r.Method+" "+r.URL.Path+" "+string(body))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
+			return
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			w.Header().Set("x-restli-id", "urn:li:sponsoredCampaign:200")
+			_, _ = io.WriteString(w, `{}`)
+		case strings.Contains(r.URL.Path, "posts"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:400"}`)
+		default:
+			http.Error(w, "unexpected path "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), seen...)
+	}
+}
+
+func grantCreateConfig(adAccountID string) json.RawMessage {
+	return grantCreateConfigRaw(`"` + adAccountID + `"`)
+}
+
+// grantCreateConfigRaw is grantCreateConfig with adAccountId set to the raw JSON value given.
+func grantCreateConfigRaw(adAccountID string) json.RawMessage {
+	return json.RawMessage(`{"linkedInConfig":{
+		"adAccountId":` + adAccountID + `,
+		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
+		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
+		"targetingProfile":"cloud-native",
+		"targetingProfiles":[{"id":"cloud-native","label":"Cloud Native","skills":["urn:li:skill:1"],"groups":["urn:li:group:100"]}],
+		"variants":[{"introText":"Join us — it's great and long enough","headline":"KubeCon 2099"}]
+	}}`)
+}
+
+func grantCreateDispatcher(srvURL string, repo connReader) *LinkedInDispatcher {
+	return NewLinkedInDispatcher(repo, identityEncryptor{},
+		linkedin.WithBaseURL(srvURL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }))
+}
+
+// TestLinkedIn_CreateInAGrantedAccount pins step 4 of #581: with account selection on, a create
+// resolving to the LF system row may name one of its grants, and the campaign is created in that
+// account under the GRANT's org (the dark post is authored by it), and records that account.
+func TestLinkedIn_CreateInAGrantedAccount(t *testing.T) {
+	t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, "true")
+	srv, seen := grantCreateServer(t)
+	repo := &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}}
+	d := grantCreateDispatcher(srv.URL, repo)
+	if err := d.PreflightCreate(context.Background(), "cncf", model.ProviderLinkedInAds, grantCreateConfig("500928401")); !errors.Is(err, domain.ErrPreflightNotApplicable) {
+		t.Fatalf("preflight on a granted account = %v, want not-applicable", err)
+	}
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, grantCreateConfig("500928401"))
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if got := linkedInCreationAccountID(camp); got != "500928401" {
+		t.Fatalf("created row records account %q, want the granted 500928401", got)
+	}
+	var sawAccount, sawOrg bool
+	for _, r := range seen() {
+		if strings.Contains(r, "538170226") || strings.Contains(r, "organization:208777") {
+			t.Fatalf("a request named the default account or org: %s", r)
+		}
+		sawAccount = sawAccount || strings.Contains(r, "sponsoredAccount:500928401") || strings.Contains(r, "/adAccounts/500928401/")
+		sawOrg = sawOrg || strings.Contains(r, "organization:12893459")
+	}
+	if !sawAccount || !sawOrg {
+		t.Fatalf("create did not use the granted account (%v) and its org (%v): %v", sawAccount, sawOrg, seen())
+	}
+}
+
+// TestLinkedIn_AdAccountIDRefusals: every account a create may not name is a synchronous
+// pre-flight 400 (ErrCreateConfigInvalid) and, if it reached Dispatch anyway, a pre-create refusal
+// with nothing sent — the flag off, an ungranted account, and a grant on a project-owned row.
+func TestLinkedIn_AdAccountIDRefusals(t *testing.T) {
+	own := activeLinkedInConn(goodLinkedInCreds)
+	own.ID, own.Version = "own-li", 1
+	own.LinkedInGrants = []model.LinkedInAccountGrant{{AccountID: "500928401", OrgID: "12893459"}}
+	for name, tc := range map[string]struct {
+		flag    string
+		repo    connReader
+		account string
+	}{
+		"flag off":                     {flag: "", repo: &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}}, account: "500928401"},
+		"flag not exactly true":        {flag: "TRUE", repo: &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}}, account: "500928401"},
+		"ungranted account":            {flag: "true", repo: &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}}, account: "111111111"},
+		"grant on a project-owned row": {flag: "true", repo: &scopedConnReader{rows: map[string]*model.Connection{"cncf": own}}, account: "500928401"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, tc.flag)
+			srv, seen := grantCreateServer(t)
+			d := grantCreateDispatcher(srv.URL, tc.repo)
+			if err := d.PreflightCreate(context.Background(), "cncf", model.ProviderLinkedInAds, grantCreateConfig(tc.account)); !errors.Is(err, domain.ErrCreateConfigInvalid) {
+				t.Fatalf("preflight = %v, want ErrCreateConfigInvalid", err)
+			}
+			_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, grantCreateConfig(tc.account))
+			if !errors.Is(err, domain.ErrCreateConfigInvalid) || !isNoUpstreamCreate(err) {
+				t.Fatalf("Dispatch err = %v, want a pre-create ErrCreateConfigInvalid", err)
+			}
+			if r := seen(); len(r) != 0 {
+				t.Fatalf("a refused create sent %d request(s): %v", len(r), r)
+			}
+		})
+	}
+	// A wrong-typed adAccountId is refused synchronously, before any job: the best-effort pre-flight
+	// decode would otherwise leave it "" and skip the account check, answering 202 for a create
+	// Dispatch then fails in the strict decode. Dispatch refuses it with the same sentence.
+	for name, raw := range map[string]string{"number": `500928401`, "object": `{"id":"500928401"}`, "array": `["500928401"]`} {
+		t.Run("wrong-typed adAccountId: "+name, func(t *testing.T) {
+			t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, "true")
+			srv, seen := grantCreateServer(t)
+			d := grantCreateDispatcher(srv.URL, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}})
+			cfg := grantCreateConfigRaw(raw)
+			err := d.PreflightCreate(context.Background(), "cncf", model.ProviderLinkedInAds, cfg)
+			if !errors.Is(err, domain.ErrCreateConfigInvalid) || !strings.Contains(err.Error(), "invalid campaign config: linkedInConfig.adAccountId: ") {
+				t.Fatalf("preflight = %v, want an ErrCreateConfigInvalid naming linkedInConfig.adAccountId", err)
+			}
+			_, derr := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+			if !errors.Is(derr, domain.ErrCreateConfigInvalid) || !isNoUpstreamCreate(derr) || !strings.Contains(derr.Error(), "linkedInConfig.adAccountId: ") {
+				t.Fatalf("Dispatch err = %v, want the pre-create adAccountId refusal", derr)
+			}
+			if r := seen(); len(r) != 0 {
+				t.Fatalf("a refused create sent %d request(s): %v", len(r), r)
+			}
+		})
+	}
+	t.Run("a null adAccountId reads as omitted", func(t *testing.T) {
+		t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, "true")
+		srv, _ := grantCreateServer(t)
+		d := grantCreateDispatcher(srv.URL, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}})
+		if err := d.PreflightCreate(context.Background(), "cncf", model.ProviderLinkedInAds, grantCreateConfigRaw(`null`)); !errors.Is(err, domain.ErrPreflightNotApplicable) {
+			t.Fatalf("preflight with adAccountId null = %v, want ErrPreflightNotApplicable", err)
+		}
+	})
+	t.Run("the connection's own account needs no flag", func(t *testing.T) {
+		t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, "")
+		srv, _ := grantCreateServer(t)
+		d := grantCreateDispatcher(srv.URL, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}})
+		if err := d.PreflightCreate(context.Background(), "cncf", model.ProviderLinkedInAds, grantCreateConfig("538170226")); !errors.Is(err, domain.ErrPreflightNotApplicable) {
+			t.Fatalf("preflight on the default account = %v", err)
+		}
+	})
+}
+
+// TestLinkedIn_PickersAndAccountsListFollowTheGrants: a picker naming a granted account reads that
+// account, an ungranted one is ErrAccountNotManagedByConnection with nothing sent, and with
+// selection on the system row's accounts list is its default and its grants, with no LinkedIn call.
+func TestLinkedIn_PickersAndAccountsListFollowTheGrants(t *testing.T) {
+	var mu sync.Mutex
+	var queries []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		queries = append(queries, r.URL.Path+"?"+r.URL.RawQuery)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
+	}))
+	t.Cleanup(srv.Close)
+	drain := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := queries
+		queries = nil
+		return out
+	}
+	d := grantCreateDispatcher(srv.URL, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}})
+
+	// Selection off: a grant is not nameable from the pickers either, and nothing is sent.
+	t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, "")
+	if _, _, err := d.ListConversionActions(model.WithPickerAccount(context.Background(), "500928401"), "cncf", model.ProviderLinkedInAds); !errors.Is(err, domain.ErrAccountNotManagedByConnection) {
+		t.Fatalf("picker on a granted account with selection off err = %v", err)
+	}
+	if q := drain(); len(q) != 0 {
+		t.Fatalf("a flag-off picker read sent %v", q)
+	}
+
+	t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, "true")
+	res, _, err := d.ListConversionActions(model.WithPickerAccount(context.Background(), "500928401"), "cncf", model.ProviderLinkedInAds)
+	if err != nil || res.AccountID != "500928401" {
+		t.Fatalf("picker on a granted account = %+v, %v", res, err)
+	}
+	if q := drain(); len(q) == 0 || !strings.Contains(q[0], "500928401") {
+		t.Fatalf("picker read %v, want the granted account", q)
+	}
+	if _, _, err := d.ListAudiences(model.WithPickerAccount(context.Background(), "111111111"), "cncf", model.ProviderLinkedInAds, LinkedInAdSegmentKind); !errors.Is(err, domain.ErrAccountNotManagedByConnection) {
+		t.Fatalf("picker on an ungranted account err = %v", err)
+	}
+	if q := drain(); len(q) != 0 {
+		t.Fatalf("an ungranted picker read sent %v", q)
+	}
+
+	accts, err := d.ListAccounts(context.Background(), "cncf", model.ProviderLinkedInAds)
+	if err != nil || len(accts) != 2 || accts[0].ID != "538170226" || accts[1].ID != "500928401" || !strings.Contains(accts[1].Label, "CNCF") {
+		t.Fatalf("accounts with selection on = %+v, %v; want the default then the grant", accts, err)
+	}
+	if q := drain(); len(q) != 0 {
+		t.Fatalf("the grants list called LinkedIn: %v", q)
+	}
+}
+
+// TestLinkedIn_CreateAccountReportsWhatACreateUses pins the create-account read (#581): it names
+// the account and org a create resolves to (the project's own row, the LF system fallback, the
+// forced-system redirect), lists exactly what selectLinkedInAccount accepts, and never calls
+// LinkedIn.
+func TestLinkedIn_CreateAccountReportsWhatACreateUses(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("the create-account read called LinkedIn: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	ownRow := &model.Connection{
+		ID: "own-li", Version: 1, ProjectID: "cncf", Provider: model.ProviderLinkedInAds, AccountID: "111111111",
+		EncryptedCredentials: []byte(goodLinkedInCreds), ProviderConfig: map[string]string{"org_id": "222"},
+		Status: model.StatusInactive, Label: "CNCF own",
+		// A project row never carries grants (the installer refuses it); if one did, it must not widen the list.
+		LinkedInGrants: []model.LinkedInAccountGrant{{AccountID: "500928401", OrgID: "12893459"}},
+	}
+	ids := func(a *model.LinkedInCreateAccount) []string {
+		out := make([]string, 0, len(a.Selectable))
+		for _, g := range a.Selectable {
+			out = append(out, g.AccountID+"/"+g.OrgID)
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name, flag, force string
+		rows              map[string]*model.Connection
+		wantAcct, wantOrg string
+		wantSystem        bool
+		wantStatus        model.ConnectionStatus
+		wantSelectable    []string
+	}{
+		{"system fallback, selection off", "", "", map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()},
+			"538170226", "208777", true, model.StatusActive, []string{"538170226/208777"}},
+		{"system fallback, selection on", "true", "", map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()},
+			"538170226", "208777", true, model.StatusActive, []string{"538170226/208777", "500928401/12893459"}},
+		{"own connection, selection on", "true", "", map[string]*model.Connection{"cncf": ownRow, model.SystemProjectID: grantedSystemRow()},
+			"111111111", "222", false, model.StatusInactive, []string{"111111111/222"}},
+		{"forced system overrides the own connection", "true", "true", map[string]*model.Connection{"cncf": ownRow, model.SystemProjectID: grantedSystemRow()},
+			"538170226", "208777", true, model.StatusActive, []string{"538170226/208777", "500928401/12893459"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, tc.flag)
+			t.Setenv(constants.EnvForceSystemAdsAccount, tc.force)
+			d := grantCreateDispatcher(srv.URL, &scopedConnReader{rows: tc.rows})
+			got, err := d.CreateAccount(context.Background(), "cncf", model.ProviderLinkedInAds)
+			if err != nil {
+				t.Fatalf("CreateAccount: %v", err)
+			}
+			if got.AccountID != tc.wantAcct || got.OrgID != tc.wantOrg || got.FromSystem != tc.wantSystem || got.Status != tc.wantStatus || got.SelectionEnabled != (tc.flag == "true") {
+				t.Fatalf("CreateAccount = %+v, want account %s org %s system %v status %s", got, tc.wantAcct, tc.wantOrg, tc.wantSystem, tc.wantStatus)
+			}
+			if g := ids(got); strings.Join(g, ",") != strings.Join(tc.wantSelectable, ",") {
+				t.Fatalf("selectable = %v, want %v", g, tc.wantSelectable)
+			}
+			// The list is the create's contract: every listed account is one selectLinkedInAccount
+			// accepts, under the org the list reports.
+			res, err := d.creds.resolve(context.Background(), "cncf", model.ProviderLinkedInAds)
+			if err != nil {
+				t.Fatalf("resolve: %v", err)
+			}
+			for _, g := range got.Selectable {
+				sel, err := selectLinkedInAccount(res, g.AccountID)
+				if err != nil || sel.accountID != g.AccountID || strings.TrimSpace(sel.providerConfig["org_id"]) != g.OrgID {
+					t.Fatalf("listed %s/%s but a create resolves %+v, %v", g.AccountID, g.OrgID, sel, err)
+				}
+			}
+		})
+	}
+
+	t.Run("a disconnected project is not served the system account", func(t *testing.T) {
+		d := grantCreateDispatcher(srv.URL, &scopedConnReader{
+			rows:       map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()},
+			tombstoned: map[string]bool{"cncf": true},
+		})
+		if _, err := d.CreateAccount(context.Background(), "cncf", model.ProviderLinkedInAds); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("CreateAccount for a disconnected project = %v, want ErrNotFound", err)
+		}
+	})
+	t.Run("no connection anywhere", func(t *testing.T) {
+		d := grantCreateDispatcher(srv.URL, &scopedConnReader{rows: map[string]*model.Connection{}})
+		if _, err := d.CreateAccount(context.Background(), "cncf", model.ProviderLinkedInAds); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("CreateAccount with no connection = %v, want ErrNotFound", err)
+		}
+	})
+	// creds.resolve decrypts without validating, so an active LF row whose credential document is
+	// `{}` (no access token) must still answer the system-connection 500 a create would hit, not a
+	// 200 naming an account nothing can spend in. A project-owned row with the same document keeps
+	// reporting its stored status: the project owns it and can repair it.
+	t.Run("an unusable system credential is the system-connection error", func(t *testing.T) {
+		sys := grantedSystemRow()
+		sys.EncryptedCredentials = []byte(`{}`)
+		d := grantCreateDispatcher(srv.URL, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: sys}})
+		got, err := d.CreateAccount(context.Background(), "cncf", model.ProviderLinkedInAds)
+		if !errors.Is(err, domain.ErrSystemConnectionNotUsable) || !errors.Is(err, domain.ErrCredentialsIncomplete) {
+			t.Fatalf("CreateAccount on a system row with no access token = %+v, %v; want ErrSystemConnectionNotUsable (missing access token)", got, err)
+		}
+	})
+	t.Run("an unusable project credential still reports its stored status", func(t *testing.T) {
+		own := *ownRow
+		own.EncryptedCredentials = []byte(`{}`)
+		own.Status = model.StatusActive
+		d := grantCreateDispatcher(srv.URL, &scopedConnReader{rows: map[string]*model.Connection{"cncf": &own, model.SystemProjectID: grantedSystemRow()}})
+		got, err := d.CreateAccount(context.Background(), "cncf", model.ProviderLinkedInAds)
+		if err != nil || got.FromSystem || got.AccountID != "111111111" || got.Status != model.StatusActive {
+			t.Fatalf("CreateAccount on a project row with no access token = %+v, %v; want its stored account and status", got, err)
+		}
+	})
 }

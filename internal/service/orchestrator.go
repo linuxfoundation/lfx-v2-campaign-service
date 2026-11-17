@@ -634,6 +634,13 @@ type CampaignAdopter interface {
 	LookupCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) (*model.PlatformCampaignRef, error)
 }
 
+// LinkedInCreateAccountReader is an OPTIONAL dispatcher capability (#581): report the ad account
+// a create for the project resolves to, and the accounts linkedInConfig.adAccountId may name,
+// from the stored connection. It must not call the platform.
+type LinkedInCreateAccountReader interface {
+	CreateAccount(ctx context.Context, projectID string, platform model.Provider) (*model.LinkedInCreateAccount, error)
+}
+
 // ConnectionProber is a REQUIRED dispatcher capability for every platform whose connection can
 // be tested: reach the platform with the project's OWN stored credential and report what it
 // said. It is the capability the connection-test endpoints were missing — six of the seven
@@ -3906,6 +3913,20 @@ func (o *Orchestrator) projectCampaignScope(ctx context.Context, projectID strin
 		return nil, fmt.Errorf("resolve campaign scope for project %s on %s: %w", projectID, platform, err)
 	}
 	return ids, nil
+}
+
+// LinkedInCreateAccount reports the LinkedIn ad account a create for projectID resolves to (#581).
+// A database read: nothing is sent to LinkedIn, so no upstream call is recorded.
+func (o *Orchestrator) LinkedInCreateAccount(ctx context.Context, projectID string) (*model.LinkedInCreateAccount, error) {
+	d, ok := o.dispatchers[model.ProviderLinkedInAds]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrAccountsUnsupported, model.ProviderLinkedInAds)
+	}
+	r, ok := d.(LinkedInCreateAccountReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrAccountsUnsupported, model.ProviderLinkedInAds)
+	}
+	return r.CreateAccount(ctx, projectID, model.ProviderLinkedInAds)
 }
 
 // ResolvePlatformCampaign maps one upstream campaign id back to this service's own campaigns.

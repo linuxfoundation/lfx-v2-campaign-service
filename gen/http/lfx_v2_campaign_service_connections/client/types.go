@@ -1110,6 +1110,37 @@ type ListLinkedinAdsConversionsResponseBody struct {
 	ConversionCount *int `form:"conversion_count,omitempty" json:"conversion_count,omitempty" xml:"conversion_count,omitempty"`
 }
 
+// GetLinkedinAdsCreateAccountResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "get-linkedin-ads-create-account" endpoint HTTP response body.
+type GetLinkedinAdsCreateAccountResponseBody struct {
+	// The ad account a LinkedIn create for this project is sent to when
+	// linkedInConfig.adAccountId is omitted
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The organization page that create's posts are authored by. Empty when the
+	// connection stores none.
+	OrgID *string `form:"org_id,omitempty" json:"org_id,omitempty" xml:"org_id,omitempty"`
+	// The resolved connection's label. Not an identifier.
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// Which connection a create resolves to: `project` (the project's own LinkedIn
+	// connection) or `system` (the LF system connection, the fallback for a
+	// project with none, or every project while the deployment forces the system
+	// account)
+	Source *string `form:"source,omitempty" json:"source,omitempty" xml:"source,omitempty"`
+	// The resolved connection's stored status. A create is refused unless it is
+	// `active`.
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Whether LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is on, so
+	// linkedInConfig.adAccountId may name one of the LF system account's granted
+	// accounts
+	AccountSelectionEnabled *bool `form:"account_selection_enabled,omitempty" json:"account_selection_enabled,omitempty" xml:"account_selection_enabled,omitempty"`
+	// The accounts linkedInConfig.adAccountId may name, the default first. Only
+	// the default unless source is `system` and account selection is on, when the
+	// system account's grants follow it. While account selection is on, naming any
+	// account requires global_marketing_ops of the project.
+	SelectableAccounts []*LinkedinAdsSelectableAccountResponseBody `form:"selectable_accounts,omitempty" json:"selectable_accounts,omitempty" xml:"selectable_accounts,omitempty"`
+}
+
 // GetMicrosoftAdsKeywordsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body.
@@ -5471,6 +5502,72 @@ type ListLinkedinAdsConversionsUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetLinkedinAdsCreateAccountBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "get-linkedin-ads-create-account" endpoint HTTP response body for the
+// "BadRequest" error.
+type GetLinkedinAdsCreateAccountBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetLinkedinAdsCreateAccountServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "get-linkedin-ads-create-account" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type GetLinkedinAdsCreateAccountServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetLinkedinAdsCreateAccountInternalServerErrorResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "get-linkedin-ads-create-account" endpoint HTTP response body for the
+// "InternalServerError" error.
+type GetLinkedinAdsCreateAccountInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetLinkedinAdsCreateAccountNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "get-linkedin-ads-create-account" endpoint HTTP response body for the
+// "NotFound" error.
+type GetLinkedinAdsCreateAccountNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetLinkedinAdsCreateAccountPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "get-linkedin-ads-create-account" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type GetLinkedinAdsCreateAccountPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetLinkedinAdsCreateAccountUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "get-linkedin-ads-create-account" endpoint HTTP response body for the
+// "Unauthorized" error.
+type GetLinkedinAdsCreateAccountUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetMicrosoftAdsKeywordsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -7594,6 +7691,22 @@ type LinkedinAdsConversionRuleResponseBody struct {
 	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
 	// Whether the rule is enabled; false when LinkedIn did not say
 	Enabled *bool `form:"enabled,omitempty" json:"enabled,omitempty" xml:"enabled,omitempty"`
+}
+
+// LinkedinAdsSelectableAccountResponseBody is used to define fields on
+// response body types.
+type LinkedinAdsSelectableAccountResponseBody struct {
+	// The LinkedIn ad account, in exactly the form linkedInConfig.adAccountId takes
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The organization page a campaign created in this account is authored by: the
+	// connection's org for the default account, the grant's org for a grant. Empty
+	// when the connection stores none.
+	OrgID *string `form:"org_id,omitempty" json:"org_id,omitempty" xml:"org_id,omitempty"`
+	// Display text: the connection's label for the default account, the
+	// operator-set grant label otherwise. Not an identifier.
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+	// true for the account a create uses when linkedInConfig.adAccountId is omitted
+	Default *bool `form:"default,omitempty" json:"default,omitempty" xml:"default,omitempty"`
 }
 
 // MicrosoftAdsAudienceBucketResponseBody is used to define fields on response
@@ -14321,6 +14434,103 @@ func NewListLinkedinAdsConversionsUnauthorized(body *ListLinkedinAdsConversionsU
 	return v
 }
 
+// NewGetLinkedinAdsCreateAccountLinkedinAdsCreateAccountOK builds a
+// "lfx-v2-campaign-service-connections" service
+// "get-linkedin-ads-create-account" endpoint result from a HTTP "OK" response.
+func NewGetLinkedinAdsCreateAccountLinkedinAdsCreateAccountOK(body *GetLinkedinAdsCreateAccountResponseBody) *lfxv2campaignserviceconnections.LinkedinAdsCreateAccount {
+	v := &lfxv2campaignserviceconnections.LinkedinAdsCreateAccount{
+		AccountID:               *body.AccountID,
+		OrgID:                   *body.OrgID,
+		Label:                   *body.Label,
+		Source:                  *body.Source,
+		Status:                  *body.Status,
+		AccountSelectionEnabled: *body.AccountSelectionEnabled,
+	}
+	v.SelectableAccounts = make([]*lfxv2campaignserviceconnections.LinkedinAdsSelectableAccount, len(body.SelectableAccounts))
+	for i, val := range body.SelectableAccounts {
+		if val == nil {
+			v.SelectableAccounts[i] = nil
+			continue
+		}
+		v.SelectableAccounts[i] = unmarshalLinkedinAdsSelectableAccountResponseBodyToLfxv2campaignserviceconnectionsLinkedinAdsSelectableAccount(val)
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsCreateAccountBadRequest builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-create-account
+// endpoint BadRequest error.
+func NewGetLinkedinAdsCreateAccountBadRequest(body *GetLinkedinAdsCreateAccountBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsCreateAccountServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-create-account
+// endpoint ServiceUnavailable error.
+func NewGetLinkedinAdsCreateAccountServiceUnavailable(body *GetLinkedinAdsCreateAccountServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsCreateAccountInternalServerError builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-create-account
+// endpoint InternalServerError error.
+func NewGetLinkedinAdsCreateAccountInternalServerError(body *GetLinkedinAdsCreateAccountInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsCreateAccountNotFound builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-create-account
+// endpoint NotFound error.
+func NewGetLinkedinAdsCreateAccountNotFound(body *GetLinkedinAdsCreateAccountNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsCreateAccountPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-create-account
+// endpoint PayloadTooLarge error.
+func NewGetLinkedinAdsCreateAccountPayloadTooLarge(body *GetLinkedinAdsCreateAccountPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsCreateAccountUnauthorized builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-create-account
+// endpoint Unauthorized error.
+func NewGetLinkedinAdsCreateAccountUnauthorized(body *GetLinkedinAdsCreateAccountUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetMicrosoftAdsKeywordsMicrosoftAdsKeywordsOK builds a
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint result from a HTTP "OK" response.
@@ -18011,6 +18221,45 @@ func ValidateListLinkedinAdsConversionsResponseBody(body *ListLinkedinAdsConvers
 	for _, e := range body.Conversions {
 		if e != nil {
 			if err2 := validateLinkedinAdsConversionRuleResponseBody(e, "body.conversions[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsCreateAccountResponseBody runs the validations defined
+// on GetLinkedinAdsCreateAccountResponseBody
+func ValidateGetLinkedinAdsCreateAccountResponseBody(body *GetLinkedinAdsCreateAccountResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.OrgID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("org_id", "body"))
+	}
+	if body.Label == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("label", "body"))
+	}
+	if body.Source == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("source", "body"))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	if body.AccountSelectionEnabled == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_selection_enabled", "body"))
+	}
+	if body.SelectableAccounts == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("selectable_accounts", "body"))
+	}
+	if body.Source != nil {
+		if !(*body.Source == "project" || *body.Source == "system") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.source", *body.Source, []any{"project", "system"}))
+		}
+	}
+	for _, e := range body.SelectableAccounts {
+		if e != nil {
+			if err2 := validateLinkedinAdsSelectableAccountResponseBody(e, "body.selectable_accounts[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -23561,6 +23810,80 @@ func ValidateListLinkedinAdsConversionsUnauthorizedResponseBody(body *ListLinked
 	return
 }
 
+// ValidateGetLinkedinAdsCreateAccountBadRequestResponseBody runs the
+// validations defined on GetLinkedinAdsCreateAccountBadRequestResponseBody
+func ValidateGetLinkedinAdsCreateAccountBadRequestResponseBody(body *GetLinkedinAdsCreateAccountBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsCreateAccountServiceUnavailableResponseBody runs the
+// validations defined on
+// GetLinkedinAdsCreateAccountServiceUnavailableResponseBody
+func ValidateGetLinkedinAdsCreateAccountServiceUnavailableResponseBody(body *GetLinkedinAdsCreateAccountServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsCreateAccountInternalServerErrorResponseBody runs the
+// validations defined on
+// GetLinkedinAdsCreateAccountInternalServerErrorResponseBody
+func ValidateGetLinkedinAdsCreateAccountInternalServerErrorResponseBody(body *GetLinkedinAdsCreateAccountInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsCreateAccountNotFoundResponseBody runs the validations
+// defined on GetLinkedinAdsCreateAccountNotFoundResponseBody
+func ValidateGetLinkedinAdsCreateAccountNotFoundResponseBody(body *GetLinkedinAdsCreateAccountNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsCreateAccountPayloadTooLargeResponseBody runs the
+// validations defined on GetLinkedinAdsCreateAccountPayloadTooLargeResponseBody
+func ValidateGetLinkedinAdsCreateAccountPayloadTooLargeResponseBody(body *GetLinkedinAdsCreateAccountPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsCreateAccountUnauthorizedResponseBody runs the
+// validations defined on GetLinkedinAdsCreateAccountUnauthorizedResponseBody
+func ValidateGetLinkedinAdsCreateAccountUnauthorizedResponseBody(body *GetLinkedinAdsCreateAccountUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetMicrosoftAdsKeywordsBadRequestResponseBody runs the validations
 // defined on GetMicrosoftAdsKeywordsBadRequestResponseBody
 func ValidateGetMicrosoftAdsKeywordsBadRequestResponseBody(body *GetMicrosoftAdsKeywordsBadRequestResponseBody) (err error) {
@@ -26535,6 +26858,43 @@ func validateLinkedinAdsConversionRuleResponseBody(body *LinkedinAdsConversionRu
 	}
 	if body.Enabled == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("enabled", path))
+	}
+	return
+}
+
+// ValidateLinkedinAdsSelectableAccountResponseBody runs the validations
+// defined on linkedin-ads-selectable-account
+func ValidateLinkedinAdsSelectableAccountResponseBody(body *LinkedinAdsSelectableAccountResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.OrgID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("org_id", "body"))
+	}
+	if body.Label == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("label", "body"))
+	}
+	if body.Default == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("default", "body"))
+	}
+	return
+}
+
+// validateLinkedinAdsSelectableAccountResponseBody checks
+// linkedin-ads-selectable-account and reports errors using the path supplied
+// by its caller
+func validateLinkedinAdsSelectableAccountResponseBody(body *LinkedinAdsSelectableAccountResponseBody, path string) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", path))
+	}
+	if body.OrgID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("org_id", path))
+	}
+	if body.Label == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("label", path))
+	}
+	if body.Default == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("default", path))
 	}
 	return
 }

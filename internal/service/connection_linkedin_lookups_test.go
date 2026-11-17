@@ -107,3 +107,27 @@ func TestListLinkedinAdsLookups_SystemScopeAndUpstreamFailure(t *testing.T) {
 		t.Errorf("an upstream failure = %T %v, want a 503", err, err)
 	}
 }
+
+// TestListLinkedinAdsLookups_PassTheAccountDown drives both picker handlers with and without
+// account_id (#581): the account the caller named reaches the dispatcher, and an omitted one
+// reaches it as "", the account a create uses.
+func TestListLinkedinAdsLookups_PassTheAccountDown(t *testing.T) {
+	d := &mockLookupDispatcher{
+		audiences: &model.AudienceResources{AccountID: "500928401", Audiences: []model.AudienceResource{}},
+		actions:   &model.ConversionActions{AccountID: "500928401", Actions: []model.ConversionAction{}},
+	}
+	svc := linkedInLookupService(d)
+	acct := "500928401"
+	if _, err := svc.ListLinkedinAdsAudiences(context.Background(), &conn.ListLinkedinAdsAudiencesPayload{ProjectID: "cncf", AccountID: &acct}); err != nil || d.gotPickerAccount != acct {
+		t.Fatalf("audiences with account_id: err=%v, dispatcher saw %q", err, d.gotPickerAccount)
+	}
+	if _, err := svc.ListLinkedinAdsAudiences(context.Background(), &conn.ListLinkedinAdsAudiencesPayload{ProjectID: "cncf"}); err != nil || d.gotPickerAccount != "" {
+		t.Fatalf("audiences without account_id: err=%v, dispatcher saw %q", err, d.gotPickerAccount)
+	}
+	if _, err := svc.ListLinkedinAdsConversions(context.Background(), &conn.ListLinkedinAdsConversionsPayload{ProjectID: "cncf", AccountID: &acct}); err != nil || d.gotPickerAccount != acct {
+		t.Fatalf("conversions with account_id: err=%v, dispatcher saw %q", err, d.gotPickerAccount)
+	}
+	if _, err := svc.ListLinkedinAdsConversions(context.Background(), &conn.ListLinkedinAdsConversionsPayload{ProjectID: "cncf"}); err != nil || d.gotPickerAccount != "" {
+		t.Fatalf("conversions without account_id: err=%v, dispatcher saw %q", err, d.gotPickerAccount)
+	}
+}

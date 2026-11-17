@@ -3573,6 +3573,33 @@ error unchanged, the one `ReadAccountMonitor` would return, and the orchestrator
 with it rather than judging the scope by the system rule. Pinned by
 `TestLinkedInMonitorScopeByConnection`.
 
+Create-time selection (step 4 of #581, behind `LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED`):
+`selectLinkedInAccount(res, adAccountId)` keeps the resolved account, or — flag on, system row, a
+grant — returns the grant-scoped copy, so `Dispatch` builds its `RuntimeConfig` (default account,
+org, single-entry allowlist) from the grant and records that account. Every other value is a
+pre-flight 400 (`ErrCreateConfigInvalid`); `PreflightCreate` runs the same check after a
+database-only `creds.resolve`, leaving a resolution failure to `Dispatch`. Before either,
+`checkAdAccountIDShape` refuses an `adAccountId` that is present but not a JSON string with the
+same pre-flight 400 (null reads as omitted), since the best-effort pre-flight decode would leave
+it empty and skip the account check. The pickers
+(`createLookupClient`) read `model.PickerAccount(ctx)` and accept the resolved account, or a grant
+while the flag is on (else `ErrAccountNotManagedByConnection`). With the flag on, `ListAccounts` on the system row returns
+`linkedInGrantAccounts` (default + grants, no LinkedIn call). Pinned by
+`TestLinkedIn_CreateInAGrantedAccount`, `TestLinkedIn_AdAccountIDRefusals` and
+`TestLinkedIn_PickersAndAccountsListFollowTheGrants`.
+
+The create-account read (`get-linkedin-ads-create-account`, #581): `LinkedInDispatcher.CreateAccount`
+(`service.LinkedInCreateAccountReader`) runs `creds.resolve`, the create path's own resolution, and
+reports the resolved account, its `org_id`, label, status and whether it came from the system row,
+plus the accounts `selectLinkedInAccount` would accept: the resolved account, then — system row
+and `LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED` on — its grants. No LinkedIn call. `creds.resolve`
+does not validate the credential document, so a system-row result is also put through
+`resolveLinkedInCredentials`' checks: an unusable LF row (inactive, undecodable, no access token,
+no account id) returns `ErrSystemConnectionNotUsable` (500). A project-owned row is not validated
+and keeps reporting its stored status. Pinned by
+`TestLinkedIn_CreateAccountReportsWhatACreateUses`, which also feeds every listed account back
+through `selectLinkedInAccount`, so the list cannot drift from what a create accepts.
+
 Pinned by `TestLinkedIn_PauseReachesACampaignInAGrantedAccount`,
 `TestLinkedIn_GrantedAndDefaultAccountsDoNotShareAClient`, `TestGrantScopedHonoursOnlyTheSystemRow`
 and `TestLinkedIn_BrokenSystemRowIsBlamedForAGrantedCampaign`.

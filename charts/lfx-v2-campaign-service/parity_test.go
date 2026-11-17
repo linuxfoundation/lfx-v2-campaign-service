@@ -858,6 +858,9 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/linkedin-ads/campaign-ref", true},
 		{"/projects/p1/reddit-ads/campaign-ref/x", false},
 		{"/projects/p1/linkedin-ads/campaign-ref/x", false},
+		// The LinkedIn create-account read (#581).
+		{"/projects/p1/linkedin-ads/create-account", true},
+		{"/projects/p1/linkedin-ads/create-account/x", false},
 		{"/projects/p1/hubspot-ads/campaign-ref", false},
 		// --- accepted: event-page pre-fill (LFXV2-3043) ---
 		// A SIBLING of /briefs, not a descendant, so unlike /status and /metrics above it

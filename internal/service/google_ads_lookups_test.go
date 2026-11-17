@@ -27,7 +27,10 @@ type mockLookupDispatcher struct {
 	gotKind    string
 	gotQuery   model.GeoTargetQuery
 	gotAccount string
-	calls      int
+	// gotPickerAccount is model.PickerAccount(ctx) as ListAudiences / ListConversionActions saw
+	// it: the LinkedIn pickers' account_id (#581).
+	gotPickerAccount string
+	calls            int
 }
 
 func (m *mockLookupDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
@@ -46,13 +49,15 @@ func (m *mockLookupDispatcher) ListUserLists(_ context.Context, _ string, _ mode
 	return m.lists, !m.notCalled, m.err
 }
 
-func (m *mockLookupDispatcher) ListConversionActions(context.Context, string, model.Provider) (*model.ConversionActions, bool, error) {
+func (m *mockLookupDispatcher) ListConversionActions(ctx context.Context, _ string, _ model.Provider) (*model.ConversionActions, bool, error) {
 	m.calls++
+	m.gotPickerAccount = model.PickerAccount(ctx)
 	return m.actions, !m.notCalled, m.err
 }
 
-func (m *mockLookupDispatcher) ListAudiences(_ context.Context, _ string, _ model.Provider, kind string) (*model.AudienceResources, bool, error) {
+func (m *mockLookupDispatcher) ListAudiences(ctx context.Context, _ string, _ model.Provider, kind string) (*model.AudienceResources, bool, error) {
 	m.calls++
+	m.gotPickerAccount = model.PickerAccount(ctx)
 	m.gotKind = kind
 	return m.audiences, !m.notCalled, m.err
 }
