@@ -84,6 +84,21 @@ const (
 	mediaLibraryNamePrefix = "lfxasset"
 )
 
+// mediaKind is what differs between the two creatives this client uploads: an image (tweet_image,
+// the Media Library's IMAGE type) and a video (amplify_video, VIDEO; video.go, #564 gap 7).
+type mediaKind struct {
+	// noun names the creative in steps and errors ("creative image", "creative video").
+	noun string
+	// category is the upload's media_category; libraryType the Media Library media_type.
+	category, libraryType string
+	// maxPolls bounds the STATUS checks after finalize; each wait is capped at mediaPollCap, so
+	// maxPolls * mediaPollCap bounds the time spent waiting for X to process the upload.
+	maxPolls int
+}
+
+// imageMedia is the creative image's kind.
+var imageMedia = mediaKind{noun: "creative image", category: "tweet_image", libraryType: "IMAGE", maxPolls: maxMediaStatusPolls}
+
 // ImageInput is a creative image for the authored tweet. Bytes are read, never retained or
 // mutated; MIME is the stored asset's verified type.
 type ImageInput struct {
@@ -146,12 +161,12 @@ type mediaLibraryEntry struct {
 	Deleted   bool    `json:"deleted"`
 }
 
-// findMediaByName returns the media_key of the account's live IMAGE library entry named name,
+// findMediaByName returns the media_key of the account's live library entry of kind named name,
 // or "" when there is none. It follows findByName's rules: a short page is conclusively last, a
 // FULL page with no usable cursor is inconclusive and errors rather than reporting not-found —
 // not-found is answered with an upload, so it must not rest on a truncated read.
-func (c *Client) findMediaByName(ctx context.Context, name string) (string, error) {
-	path := "media_library?count=" + strconv.Itoa(mediaLibraryPageSize) + "&media_type=IMAGE&q=" + url.QueryEscape(name)
+func (c *Client) findMediaByName(ctx context.Context, name string, kind mediaKind) (string, error) {
+	path := "media_library?count=" + strconv.Itoa(mediaLibraryPageSize) + "&media_type=" + kind.libraryType + "&q=" + url.QueryEscape(name)
 	seen := map[string]struct{}{}
 	cursor := ""
 	for page := 0; page < maxListPages; page++ {
@@ -168,10 +183,10 @@ func (c *Client) findMediaByName(ctx context.Context, name string) (string, erro
 		if resp == nil || entries == nil {
 			// No data field: not an empty page, an unanswered one. Refuse rather than upload
 			// on the strength of it — the same rule findByName applies.
-			return "", fmt.Errorf("x media library lookup returned a page with no data field, so an existing upload of this image cannot be ruled out")
+			return "", fmt.Errorf("x media library lookup returned a page with no data field, so an existing upload of this %s cannot be ruled out", kind.noun)
 		}
 		for _, e := range entries {
-			if e.Deleted || e.Name == nil || *e.Name != name || !strings.EqualFold(e.MediaType, "IMAGE") {
+			if e.Deleted || e.Name == nil || *e.Name != name || !strings.EqualFold(e.MediaType, kind.libraryType) {
 				continue
 			}
 			if key := strings.TrimSpace(e.MediaKey); mediaKeyRe.MatchString(key) {
@@ -186,7 +201,7 @@ func (c *Client) findMediaByName(ctx context.Context, name string) (string, erro
 			if len(entries) < mediaLibraryPageSize {
 				return "", nil
 			}
-			return "", fmt.Errorf("x media library lookup returned a full page with no usable next_cursor, so an existing upload of this image cannot be ruled out")
+			return "", fmt.Errorf("x media library lookup returned a full page with no usable next_cursor, so an existing upload of this %s cannot be ruled out", kind.noun)
 		}
 		if _, dup := seen[resp.NextCursor]; dup {
 			return "", fmt.Errorf("x media library lookup did not terminate (repeated page cursor)")
@@ -204,33 +219,39 @@ func (c *Client) findMediaByName(ctx context.Context, name string) (string, erro
 // campaign, line item or tweet exists. Its messages name the stage and the outcome class, and
 // never carry upstream body text (the request layer's errors render method, path and status).
 func (c *Client) ensureImageMedia(ctx context.Context, img *ImageInput, steps *[]string) (string, error) {
-	name := mediaLibraryName(img.Bytes)
+	return c.ensureMedia(ctx, img.Bytes, img.MIME, imageMedia, steps)
+}
+
+// ensureMedia is ensureImageMedia for any mediaKind: the media_key of a library entry of kind
+// holding data, found by its deterministic name or uploaded and added.
+func (c *Client) ensureMedia(ctx context.Context, data []byte, mime string, kind mediaKind, steps *[]string) (string, error) {
+	name := mediaLibraryName(data)
 	// Serialize lookup -> upload -> library add per (account, image): without it two concurrent
 	// dispatches of identical bytes both miss the lookup and both upload and add. The key carries
 	// the base URL and account so two endpoints or accounts never share an entry.
 	release, err := c.mediaLocks.acquire(ctx, c.baseURL+"\x00"+c.account.AccountID+"\x00"+name)
 	if err != nil {
-		return "", fmt.Errorf("x creative image upload aborted before any campaign was created: %w", err)
+		return "", fmt.Errorf("x %s upload aborted before any campaign was created: %w", kind.noun, err)
 	}
 	defer release()
-	existing, err := c.findMediaByName(ctx, name)
+	existing, err := c.findMediaByName(ctx, name, kind)
 	if err != nil {
 		return "", err
 	}
 	if existing != "" {
-		*steps = append(*steps, fmt.Sprintf("Reusing creative image already in the account's Media Library: %s", existing))
+		*steps = append(*steps, fmt.Sprintf("Reusing %s already in the account's Media Library: %s", kind.noun, existing))
 		return existing, nil
 	}
 
-	mediaID, mediaKey, err := c.uploadImageChunked(ctx, img)
+	mediaID, mediaKey, err := c.uploadChunked(ctx, data, mime, kind)
 	if err != nil {
 		// Nothing reached the Media Library: an upload session that stalls expires on its own
 		// (expires_after_secs), so a retry starts a fresh one and cannot duplicate a library
 		// entry. Stated for both outcome classes, because only the wording differs.
 		if createOutcomeAmbiguous(err) {
-			return "", fmt.Errorf("x creative image upload UNCONFIRMED before any campaign was created (an unfinished upload session expires on its own; nothing was added to the Media Library): %w", err)
+			return "", fmt.Errorf("x %s upload UNCONFIRMED before any campaign was created (an unfinished upload session expires on its own; nothing was added to the Media Library): %w", kind.noun, err)
 		}
-		return "", fmt.Errorf("x creative image upload failed before any campaign was created: %w", err)
+		return "", fmt.Errorf("x %s upload failed before any campaign was created: %w", kind.noun, err)
 	}
 
 	if err := c.pace(ctx); err != nil {
@@ -244,7 +265,7 @@ func (c *Client) ensureImageMedia(ctx context.Context, img *ImageInput, steps *[
 	if err != nil {
 		if createOutcomeAmbiguous(err) {
 			// The entry MAY exist under the deterministic name; the retry's lookup finds it.
-			return "", fmt.Errorf("x media library add UNCONFIRMED before any campaign was created (the image may already be in the account's Media Library; a retry reuses it by name): %w", err)
+			return "", fmt.Errorf("x media library add UNCONFIRMED before any campaign was created (the %s may already be in the account's Media Library; a retry reuses it by name): %w", kind.noun, err)
 		}
 		return "", fmt.Errorf("x media library add failed before any campaign was created: %w", err)
 	}
@@ -255,20 +276,20 @@ func (c *Client) ensureImageMedia(ctx context.Context, img *ImageInput, steps *[
 		_ = json.Unmarshal(resp.Data, &added)
 	}
 	if strings.TrimSpace(added.MediaKey) != mediaKey {
-		return "", fmt.Errorf("x media library add UNCONFIRMED before any campaign was created (X returned a 2xx without the uploaded media key; the image may already be in the account's Media Library; a retry reuses it by name)")
+		return "", fmt.Errorf("x media library add UNCONFIRMED before any campaign was created (X returned a 2xx without the uploaded media key; the %s may already be in the account's Media Library; a retry reuses it by name)", kind.noun)
 	}
-	*steps = append(*steps, fmt.Sprintf("Creative image uploaded (media %s) and added to the account's Media Library: %s", mediaID, mediaKey))
+	*steps = append(*steps, fmt.Sprintf("%s%s uploaded (media %s) and added to the account's Media Library: %s", strings.ToUpper(kind.noun[:1]), kind.noun[1:], mediaID, mediaKey))
 	return mediaKey, nil
 }
 
-// uploadImageChunked runs initialize -> append xN -> finalize (-> status polls when X reports
+// uploadChunked runs initialize -> append xN -> finalize (-> status polls when X reports
 // processing) and returns the media id and media_key. Every POST is paced through the account
 // pacer, like every other write this client issues.
-func (c *Client) uploadImageChunked(ctx context.Context, img *ImageInput) (string, string, error) {
+func (c *Client) uploadChunked(ctx context.Context, data []byte, mime string, kind mediaKind) (string, string, error) {
 	initBody, err := json.Marshal(map[string]any{
-		"media_type":     img.MIME,
-		"total_bytes":    len(img.Bytes),
-		"media_category": "tweet_image",
+		"media_type":     mime,
+		"total_bytes":    len(data),
+		"media_category": kind.category,
 	})
 	if err != nil {
 		return "", "", fmt.Errorf("encode media upload initialize: %w", err)
@@ -298,10 +319,10 @@ func (c *Client) uploadImageChunked(ctx context.Context, img *ImageInput) (strin
 		chunk = defaultMediaChunkSize
 	}
 	appendPath := "/2/media/upload/" + mediaID + "/append"
-	for seg, off := 0, 0; off < len(img.Bytes); seg, off = seg+1, off+chunk {
+	for seg, off := 0, 0; off < len(data); seg, off = seg+1, off+chunk {
 		end := off + chunk
-		if end > len(img.Bytes) {
-			end = len(img.Bytes)
+		if end > len(data) {
+			end = len(data)
 		}
 		prefix, suffix, ctype, ferr := appendFraming(seg)
 		if ferr != nil {
@@ -310,7 +331,7 @@ func (c *Client) uploadImageChunked(ctx context.Context, img *ImageInput) (strin
 		if err := c.pace(ctx); err != nil {
 			return "", "", err
 		}
-		if _, err := c.doBodyRequest(ctx, c.uploadBaseURL+appendPath, appendPath, ctype, prefix, img.Bytes[off:end], suffix); err != nil {
+		if _, err := c.doBodyRequest(ctx, c.uploadBaseURL+appendPath, appendPath, ctype, prefix, data[off:end], suffix); err != nil {
 			return "", "", fmt.Errorf("segment %d: %w", seg, err)
 		}
 	}
@@ -327,7 +348,7 @@ func (c *Client) uploadImageChunked(ctx context.Context, img *ImageInput) (strin
 	if !ok {
 		return "", "", mediaStateUnknown(http.MethodPost, finalizePath)
 	}
-	if err := c.awaitMediaProcessing(ctx, mediaID, fin); err != nil {
+	if err := c.awaitMediaProcessing(ctx, mediaID, fin, kind); err != nil {
 		return "", "", err
 	}
 	mediaKey := strings.TrimSpace(fin.MediaKey)
@@ -385,7 +406,7 @@ func mediaStateUnknown(method, path string) error {
 // unknown state is polled; "failed" is a definite refusal;
 // "pending"/"in_progress" is re-checked through the read-only STATUS command, a bounded number
 // of times.
-func (c *Client) awaitMediaProcessing(ctx context.Context, mediaID string, st mediaState) error {
+func (c *Client) awaitMediaProcessing(ctx context.Context, mediaID string, st mediaState, kind mediaKind) error {
 	for poll := 0; ; poll++ {
 		if st.ProcessingInfo == nil {
 			return nil
@@ -397,10 +418,10 @@ func (c *Client) awaitMediaProcessing(ctx context.Context, mediaID string, st me
 		case "succeeded":
 			return nil
 		case "failed":
-			return fmt.Errorf("x rejected the creative image during processing")
+			return fmt.Errorf("x rejected the %s during processing", kind.noun)
 		}
-		if poll >= maxMediaStatusPolls {
-			return fmt.Errorf("x did not finish processing the creative image after %d status checks", maxMediaStatusPolls)
+		if poll >= kind.maxPolls {
+			return fmt.Errorf("x did not finish processing the %s after %d status checks", kind.noun, kind.maxPolls)
 		}
 		wait := time.Duration(st.ProcessingInfo.CheckAfterSecs) * time.Second
 		if wait <= 0 || wait > c.mediaPollCap {

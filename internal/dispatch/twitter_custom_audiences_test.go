@@ -40,6 +40,8 @@ var twitterUngatedFields = map[string]bool{
 	"asUserId": true, "imageAssetId": true, "bidding": true, "geoTargets": true, "languages": true,
 	// #564 gap 4: keyword text and X's public interest ids name no account resource.
 	"keywords": true, "interestIds": true,
+	// #564 gap 7: a stored asset of this brief names no account resource.
+	"videoAssetId": true,
 }
 
 // TestEveryTwitterConfigFieldIsClassifiedForTheMarketingOpsGate fails when a twitterConfig field

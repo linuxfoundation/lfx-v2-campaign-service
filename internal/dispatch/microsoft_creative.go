@@ -137,6 +137,9 @@ func (d *MicrosoftDispatcher) resolveMicrosoftImage(ctx context.Context, brief *
 		// an image-less campaign would spend on a creative nobody approved.
 		return nil, noop, domain.PreflightRefusalf("creative asset %s has no stored image bytes", assetID)
 	}
+	if asset.MimeType == model.MimeTypeMP4 {
+		return nil, noop, domain.PreflightRefusalf("creative asset %s is a video, not an image; microsoftConfig.imageAssetId accepts PNG or JPEG", assetID)
+	}
 	alt := strings.TrimSpace(cfg.ImageAltText)
 	if alt == "" {
 		alt = microsoft.ImageAltTextFromName(eventName)

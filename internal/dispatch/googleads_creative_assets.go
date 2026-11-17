@@ -310,6 +310,9 @@ func (d *GoogleAdsDispatcher) resolveGoogleCreativeAssets(ctx context.Context, b
 			if len(asset.Bytes) == 0 {
 				return nil, func() {}, domain.PreflightRefusalf("google-ads %s entry %d references creative asset %s, which has no stored image bytes", slot.label, i+1, assetID)
 			}
+			if asset.MimeType == model.MimeTypeMP4 {
+				return nil, func() {}, domain.PreflightRefusalf("google-ads %s entry %d references creative asset %s, which is a video, not an image", slot.label, i+1, assetID)
+			}
 			byID[googleAdsImageRefScheme+assetID] = asset.Bytes
 		}
 	}
