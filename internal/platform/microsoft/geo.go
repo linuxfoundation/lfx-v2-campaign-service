@@ -949,7 +949,7 @@ func (c *Client) existingLocationIDs(ctx context.Context, campaignID string) (ma
 		return nil, nil, err
 	}
 	var resp queryCampaignCriterionsResponse
-	if uErr := json.Unmarshal(body, &resp); uErr != nil {
+	if uErr := decodeTrusted(body, &resp); uErr != nil {
 		return nil, nil, fmt.Errorf("decode CampaignCriterions/QueryByIds response: %w", uErr)
 	}
 	// A TRUNCATED error array cannot be read as "no errors" here for the same reason it cannot

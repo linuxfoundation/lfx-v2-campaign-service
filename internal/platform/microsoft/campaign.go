@@ -1372,7 +1372,7 @@ func firstCampaignID(body []byte) (string, error) {
 	var partials []msErrorItem
 	id, err := firstEntityID(body, "CampaignIds", func(b []byte) ([]*json.Number, []msErrorItem, error) {
 		var resp createCampaignsResponse
-		if uerr := json.Unmarshal(b, &resp); uerr != nil {
+		if uerr := decodeTrusted(b, &resp); uerr != nil {
 			return nil, nil, uerr
 		}
 		partials = resp.PartialErrors.Items
@@ -1741,10 +1741,11 @@ func putUpdateOutcome(body []byte, err error, path, what string) error {
 		return err
 	}
 	var resp updateStatusResponse
-	if uerr := json.Unmarshal(body, &resp); uerr != nil {
-		// A malformed 200 leaves the outcome UNKNOWN: the update MAY have applied, so do not
-		// report success. transportError reports Unconfirmed, matching the create path's
-		// treatment of an undecodable success body.
+	if uerr := decodeTrusted(body, &resp); uerr != nil {
+		// A malformed 200 — or one decodeTrusted refuses because a key is declared twice —
+		// leaves the outcome UNKNOWN: the update MAY have applied, so do not report success.
+		// transportError reports Unconfirmed, matching the create path's treatment of an
+		// undecodable success body.
 		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s response: %w", what, uerr)}
 	}
 	// A syntactically valid body that OMITS PartialErrors (`{}`, or a top-level `null`) decodes

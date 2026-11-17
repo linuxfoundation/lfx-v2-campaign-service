@@ -1397,3 +1397,13 @@ func TestCreateCampaign_DuplicatesOnlyPastTheCapStillConverge(t *testing.T) {
 		t.Error("AlreadyExisted = true, want false: this run created keywords")
 	}
 }
+
+// An error entry that declares Code twice decodes last-key-wins into a definite rejection;
+// decodeTrusted refuses the ambiguous body, so the create is UNCONFIRMED, not "rejected".
+func TestCreateCampaign_KeywordDuplicateCodeIsUnconfirmed(t *testing.T) {
+	api := &campaignsAPI{keywordPostBody: `{"KeywordIds":[null],"PartialErrors":[{"Code":null,"Code":1042}]}`}
+	c := newAPIClient(t, api.handler(t))
+	if _, err := c.CreateCampaign(context.Background(), validInputWithKeywords()); err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Fatalf("err = %v, want UNCONFIRMED", err)
+	}
+}

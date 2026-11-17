@@ -1466,3 +1466,16 @@ func TestUpdateCampaignAndChildrenStatus_MalformedPartialErrorsList(t *testing.T
 		})
 	}
 }
+
+// A code declared twice (case variants included) decodes last-key-wins, so an ambiguous campaign
+// create or status update could read as a definite rejection. Both decodes go through
+// decodeTrusted: the create is errNoID (UNCONFIRMED), the update a transportError (UNCONFIRMED).
+func TestCampaignMutationResponses_DuplicateKeyIsUnconfirmed(t *testing.T) {
+	if id, err := firstCampaignID([]byte(`{"CampaignIds":[null],"PartialErrors":[{"Code":null,"code":1234}]}`)); !errors.Is(err, errNoID) {
+		t.Errorf("firstCampaignID = (%q, %v), want errNoID", id, err)
+	}
+	err := putUpdateOutcome([]byte(`{"PartialErrors":[{"ErrorCode":null,"ErrorCode":"X"}]}`), nil, "/Campaigns", "campaign status")
+	if err == nil || !IsOutcomeUnconfirmed(err) {
+		t.Fatalf("putUpdateOutcome = %v, want UNCONFIRMED", err)
+	}
+}

@@ -231,7 +231,7 @@ func (c *Client) CheckRemarketingLists(ctx context.Context, include, exclude []s
 	// client asked for, and reading it as "no such list" would blame a possibly valid id.
 	var probe map[string]json.RawMessage
 	var resp getAudiencesByIDsResponse
-	if json.Unmarshal(raw, &probe) != nil || json.Unmarshal(raw, &resp) != nil {
+	if json.Unmarshal(raw, &probe) != nil || decodeTrusted(raw, &resp) != nil {
 		return fmt.Errorf("%w: the response is not the documented shape", errAudienceLookupMalformed)
 	}
 	if aud, ok := probe["Audiences"]; !ok || isJSONNullRaw(aud) {
@@ -452,7 +452,7 @@ func (c *Client) addAudienceCriteria(ctx context.Context, adGroupID string, ids 
 	if json.Unmarshal(raw, &probe) == nil {
 		_, sawIDs = probe["AdGroupCriterionIds"]
 	}
-	if !sawIDs || json.Unmarshal(raw, &resp) != nil || len(resp.AdGroupCriterionIds) > len(ids) {
+	if !sawIDs || decodeTrusted(raw, &resp) != nil || len(resp.AdGroupCriterionIds) > len(ids) {
 		all(OutcomeUnconfirmed, "")
 		return out, fmt.Errorf("microsoft-ads %s audience lists UNCONFIRMED: the response could not be read", kind)
 	}

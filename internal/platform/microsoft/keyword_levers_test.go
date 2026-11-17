@@ -428,6 +428,10 @@ func TestAddCampaignNegativeKeywords_AmbiguityIsUnconfirmed(t *testing.T) {
 		{"5xx", http.StatusInternalServerError, `{}`},
 		{"200 answering nothing", http.StatusOK, `{}`},
 		{"undecodable 200", http.StatusOK, `[`},
+		// A duplicated code (case variants included) would decode last-key-wins to 0 and erase
+		// the rejection, reading the negative APPLIED.
+		{"duplicate code", http.StatusOK, `{"NegativeKeywordIds":[{"Ids":[9001]}],"NestedPartialErrors":[{"BatchErrors":[{"Index":0,"Code":1005,"Code":0}]}]}`},
+		{"case-variant code", http.StatusOK, `{"NegativeKeywordIds":[{"Ids":[9001]}],"NestedPartialErrors":[{"BatchErrors":[{"Index":0,"Code":1005,"code":0}]}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, calls := kwRecorder(t, func(string, string) (int, string) { return tc.status, tc.body })
@@ -739,5 +743,59 @@ func TestApplyKeywordActions_UnreadableEntriesAreUnconfirmed(t *testing.T) {
 		if err == nil || !IsOutcomeUnconfirmed(err) {
 			t.Fatalf("%s: got %v, %v; want UNCONFIRMED", body, outcomesOf(out), err)
 		}
+	}
+}
+
+// A PartialErrors entry that declares its code twice — `"Code":1234,"Code":0`, or a case variant
+// `"code":0` — would decode last-key-wins into a zero-code placeholder and read a rejected item
+// APPLIED. decodeTrusted refuses the body, so the call is UNCONFIRMED and, on the PAUSE call of a
+// combined request, the irreversible REMOVE is never sent.
+func TestApplyKeywordActions_DuplicateCodeIsUnconfirmed(t *testing.T) {
+	bodies := map[string]string{
+		"duplicate Code":    `{"PartialErrors":[{"Index":0,"Code":1234,"Code":0}]}`,
+		"case-variant code": `{"PartialErrors":[{"Index":0,"Code":1234,"code":0}]}`,
+	}
+	for name, body := range bodies {
+		t.Run("pause/"+name, func(t *testing.T) {
+			c, calls := kwRecorder(t, func(method, _ string) (int, string) {
+				if method == http.MethodPut {
+					return http.StatusOK, body
+				}
+				return http.StatusOK, `{"PartialErrors":[]}`
+			})
+			out, err := c.ApplyKeywordActions(context.Background(), "654", []KeywordAction{
+				{AdGroupID: "654", KeywordID: "701", Action: "PAUSE"},
+				{AdGroupID: "654", KeywordID: "702", Action: "REMOVE"},
+			})
+			if err == nil || !IsOutcomeUnconfirmed(err) {
+				t.Fatalf("got %v, %v; want an UNCONFIRMED whole-call error", outcomesOf(out), err)
+			}
+			for _, cs := range calls() {
+				if cs.method == http.MethodDelete {
+					t.Fatalf("the REMOVE was sent after an unconfirmed pause: %+v", calls())
+				}
+			}
+		})
+		t.Run("remove/"+name, func(t *testing.T) {
+			c, _ := kwRecorder(t, func(method, _ string) (int, string) {
+				if method == http.MethodDelete {
+					return http.StatusOK, body
+				}
+				return http.StatusOK, `{"PartialErrors":[]}`
+			})
+			out, err := c.ApplyKeywordActions(context.Background(), "654", []KeywordAction{
+				{AdGroupID: "654", KeywordID: "702", Action: "REMOVE"},
+			})
+			if err == nil || !IsOutcomeUnconfirmed(err) {
+				t.Fatalf("remove-only: got %v, %v; want an UNCONFIRMED whole-call error", outcomesOf(out), err)
+			}
+			out, err = c.ApplyKeywordActions(context.Background(), "654", []KeywordAction{
+				{AdGroupID: "654", KeywordID: "701", Action: "PAUSE"},
+				{AdGroupID: "654", KeywordID: "702", Action: "REMOVE"},
+			})
+			if got := strings.Join(outcomesOf(out), ","); err != nil || got != "APPLIED,UNCONFIRMED" {
+				t.Fatalf("combined: got %s, %v; want APPLIED,UNCONFIRMED", got, err)
+			}
+		})
 	}
 }

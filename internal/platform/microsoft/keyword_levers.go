@@ -756,7 +756,9 @@ func (c *Client) keywordMutation(ctx context.Context, method, what string, body 
 		return nil, err
 	}
 	var resp keywordMutateResponse
-	if uerr := json.Unmarshal(raw, &resp); uerr != nil || !resp.sawPartialErrors {
+	// decodeTrusted refuses a key declared twice (case variants included): last-key-wins would
+	// let `"Code":1234,"Code":0` erase a rejection and read it as a zero-code placeholder.
+	if uerr := decodeTrusted(raw, &resp); uerr != nil || !resp.sawPartialErrors {
 		return nil, &keywordMutationUnconfirmedError{what: what, err: errMalformedKeywordResponse}
 	}
 	// A NON-EMPTY PartialErrors that names no rejection is APPLIED only when every entry is an
@@ -891,7 +893,7 @@ func (c *Client) AddCampaignNegativeKeywords(ctx context.Context, campaignID str
 	_, sawIDs := probe["NegativeKeywordIds"]
 	_, sawErrs := probe["NestedPartialErrors"]
 	var resp addNegativeKeywordsResponse
-	if uerr := json.Unmarshal(raw, &resp); uerr != nil || (!sawIDs && !sawErrs) {
+	if uerr := decodeTrusted(raw, &resp); uerr != nil || (!sawIDs && !sawErrs) {
 		return nil, &keywordMutationUnconfirmedError{what: "negative keyword add", err: errMalformedKeywordResponse}
 	}
 

@@ -705,7 +705,7 @@ func (c *Client) findOrCreateAdGroup(ctx context.Context, campaignID, name strin
 	}
 	var resp createAdGroupsResponse
 	newID, err := firstEntityID(body, "AdGroupIds", func(b []byte) ([]*json.Number, []msErrorItem, error) {
-		if uErr := json.Unmarshal(b, &resp); uErr != nil {
+		if uErr := decodeTrusted(b, &resp); uErr != nil {
 			return nil, nil, uErr
 		}
 		return resp.AdGroupIds, resp.PartialErrors.Items, nil
@@ -923,7 +923,7 @@ func (c *Client) findOrCreateResponsiveSearchAd(ctx context.Context, adGroupID s
 	}
 	var resp createAdsResponse
 	newID, err := firstEntityID(body, "AdIds", func(b []byte) ([]*json.Number, []msErrorItem, error) {
-		if uErr := json.Unmarshal(b, &resp); uErr != nil {
+		if uErr := decodeTrusted(b, &resp); uErr != nil {
 			return nil, nil, uErr
 		}
 		return resp.AdIds, resp.PartialErrors.Items, nil

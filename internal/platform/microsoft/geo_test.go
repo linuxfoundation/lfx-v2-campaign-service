@@ -1241,3 +1241,15 @@ func TestCreateCampaign_ReusedCampaignWithExactlyTheRequestedTargetsSucceeds(t *
 		}
 	}
 }
+
+// A criterion that declares LocationId twice is ambiguous identity evidence: the read refuses.
+func TestExistingLocationIDs_DuplicateKeyRefuses(t *testing.T) {
+	g := &geoAPI{
+		fileBody:          geoFileFixture(geoRowUS),
+		criterionReadBody: `{"CampaignCriterions":[{"Type":"BiddableCampaignCriterion","Criterion":{"Type":"LocationCriterion","LocationId":200,"locationid":190}}],"PartialErrors":[]}`,
+	}
+	c := newGeoClient(t, g)
+	if got, _, err := c.existingLocationIDs(context.Background(), "321"); err == nil {
+		t.Fatalf("existingLocationIDs = %v, want a refusal for a duplicated key", got)
+	}
+}

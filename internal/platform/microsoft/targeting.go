@@ -310,7 +310,7 @@ func (c *Client) createKeywords(ctx context.Context, adGroupID string, keywords 
 	}
 
 	var resp createKeywordsResponse
-	if uErr := json.Unmarshal(body, &resp); uErr != nil {
+	if uErr := decodeTrusted(body, &resp); uErr != nil {
 		// A 2xx whose body will not parse is UNCONFIRMED, not a clean failure: the keywords may
 		// have been created and a blind retry would duplicate them. errNoID is the sentinel the
 		// call site maps to UNCONFIRMED.
