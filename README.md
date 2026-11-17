@@ -462,6 +462,15 @@ openssl rand -base64 32
   exists. The lists belong to the shared account, so the field also needs
   `global_marketing_ops`. The chart sets it to `"false"`
   (`app.environment.MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED.value`).
+- `MICROSOFT_AD_GROUPS_ENABLED` (default unset, i.e. OFF) — opts a deployment
+  IN to `microsoftConfig.adGroups` (#563 gap 12): up to five ad groups under
+  one Microsoft campaign, each with its own name suffix, keywords, negative
+  keywords, remarketing lists and ad copy. Each per-group field also stays
+  behind its single-group flag, and a group's remarketing lists need
+  `global_marketing_ops`. Only the exact value `true` enables it; anything else
+  fails closed, and a create naming it is refused with a 400 before any job
+  exists. The chart sets it to `"false"`
+  (`app.environment.MICROSOFT_AD_GROUPS_ENABLED.value`).
 - `MICROSOFT_STRUCTURED_SNIPPETS_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `microsoftConfig.structuredSnippets` (#563): structured
   snippet extensions (a predefined header and 3-10 values) created at create
