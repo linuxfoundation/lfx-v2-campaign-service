@@ -551,6 +551,44 @@ type RedditCustomAudiences struct {
 	Truncated bool
 }
 
+// MicrosoftRemarketingList is one remarketing list on a Microsoft Advertising account (#563 gap 4
+// follow-up), for the microsoftConfig.audienceIds / excludedAudienceIds picker. Scope is
+// Microsoft's value verbatim (Account or Customer); MembershipDuration (days) and SearchSize are
+// nil when Microsoft sent none.
+type MicrosoftRemarketingList struct {
+	ID                 string
+	Name               string
+	Description        string
+	Scope              string
+	MembershipDuration *int
+	SearchSize         *int64
+}
+
+// MicrosoftRemarketingLists is the remarketing-list read on the account a Microsoft create for
+// the project uses. GetAudiencesByIds does not page, so the list is complete.
+type MicrosoftRemarketingLists struct {
+	AccountID string
+	Lists     []MicrosoftRemarketingList
+}
+
+// MicrosoftConversionGoal is one conversion goal on a Microsoft Advertising account (#563 gap 7),
+// for the microsoftConfig.conversionGoalIds picker. Status, Type and Scope are Microsoft's values
+// verbatim.
+type MicrosoftConversionGoal struct {
+	ID     string
+	Name   string
+	Status string
+	Type   string
+	Scope  string
+}
+
+// MicrosoftConversionGoals is the conversion-goal read on the account a Microsoft create for the
+// project uses. GetConversionGoalsByIds does not page, so the list is complete.
+type MicrosoftConversionGoals struct {
+	AccountID string
+	Goals     []MicrosoftConversionGoal
+}
+
 // RedditPixel is one conversion pixel on a Reddit ad account (#549 gap 10), for the
 // conversionPixelId picker. BusinessID is empty when Reddit sent none.
 type RedditPixel struct {

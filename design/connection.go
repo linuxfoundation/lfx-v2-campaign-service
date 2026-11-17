@@ -1776,6 +1776,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	metaAdsLookupMethods()
 	redditAdsLookupMethods()
 	twitterAdsLookupMethods()
+	microsoftAdsLookupMethods()
 
 	Method("get-meta-ads-audience", func() {
 		Description("Read Meta audience insights — age and gender (one combined breakdown) and placement " +

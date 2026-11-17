@@ -981,6 +981,32 @@ type ListTwitterAdsCustomAudiencesResponseBody struct {
 	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
 }
 
+// ListMicrosoftAdsRemarketingListsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-remarketing-lists" endpoint HTTP response body.
+type ListMicrosoftAdsRemarketingListsResponseBody struct {
+	// The Microsoft Advertising account the lists were read from: the account a
+	// Microsoft create for this project uses
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The account's remarketing lists, sorted by name (ignoring case), then id
+	Lists []*MicrosoftAdsRemarketingListResponseBody `form:"lists" json:"lists" xml:"lists"`
+	// How many lists are in `lists`
+	ListCount int `form:"list_count" json:"list_count" xml:"list_count"`
+}
+
+// ListMicrosoftAdsConversionGoalsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-conversion-goals" endpoint HTTP response body.
+type ListMicrosoftAdsConversionGoalsResponseBody struct {
+	// The Microsoft Advertising account the goals were read from: the account a
+	// Microsoft create for this project uses
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The account's conversion goals, sorted by name (ignoring case), then id
+	Goals []*MicrosoftAdsConversionGoalResponseBody `form:"goals" json:"goals" xml:"goals"`
+	// How many goals are in `goals`
+	GoalCount int `form:"goal_count" json:"goal_count" xml:"goal_count"`
+}
+
 // GetMetaAdsAudienceResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body.
@@ -4968,6 +4994,138 @@ type ListTwitterAdsCustomAudiencesUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListMicrosoftAdsRemarketingListsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-remarketing-lists" endpoint HTTP response body for the
+// "BadRequest" error.
+type ListMicrosoftAdsRemarketingListsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMicrosoftAdsRemarketingListsServiceUnavailableResponseBody is the type
+// of the "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-remarketing-lists" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type ListMicrosoftAdsRemarketingListsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMicrosoftAdsRemarketingListsInternalServerErrorResponseBody is the type
+// of the "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-remarketing-lists" endpoint HTTP response body for the
+// "InternalServerError" error.
+type ListMicrosoftAdsRemarketingListsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMicrosoftAdsRemarketingListsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-remarketing-lists" endpoint HTTP response body for the
+// "NotFound" error.
+type ListMicrosoftAdsRemarketingListsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMicrosoftAdsRemarketingListsPayloadTooLargeResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-remarketing-lists" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type ListMicrosoftAdsRemarketingListsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMicrosoftAdsRemarketingListsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-remarketing-lists" endpoint HTTP response body for the
+// "Unauthorized" error.
+type ListMicrosoftAdsRemarketingListsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMicrosoftAdsConversionGoalsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-conversion-goals" endpoint HTTP response body for the
+// "BadRequest" error.
+type ListMicrosoftAdsConversionGoalsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMicrosoftAdsConversionGoalsServiceUnavailableResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-conversion-goals" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type ListMicrosoftAdsConversionGoalsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMicrosoftAdsConversionGoalsInternalServerErrorResponseBody is the type
+// of the "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-conversion-goals" endpoint HTTP response body for the
+// "InternalServerError" error.
+type ListMicrosoftAdsConversionGoalsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMicrosoftAdsConversionGoalsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-conversion-goals" endpoint HTTP response body for the
+// "NotFound" error.
+type ListMicrosoftAdsConversionGoalsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMicrosoftAdsConversionGoalsPayloadTooLargeResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-conversion-goals" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type ListMicrosoftAdsConversionGoalsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMicrosoftAdsConversionGoalsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "list-microsoft-ads-conversion-goals" endpoint HTTP response body for the
+// "Unauthorized" error.
+type ListMicrosoftAdsConversionGoalsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetMetaAdsAudienceBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -7262,6 +7420,42 @@ type TwitterAdsCustomAudienceResponseBody struct {
 	ReasonsNotTargetable []string `form:"reasons_not_targetable" json:"reasons_not_targetable" xml:"reasons_not_targetable"`
 }
 
+// MicrosoftAdsRemarketingListResponseBody is used to define fields on response
+// body types.
+type MicrosoftAdsRemarketingListResponseBody struct {
+	// The remarketing list id, in exactly the form microsoftConfig.audienceIds and
+	// excludedAudienceIds accept. Send it as-is.
+	ID string `form:"id" json:"id" xml:"id"`
+	// The list's display name. Not an identifier; may be empty.
+	Name string `form:"name" json:"name" xml:"name"`
+	// The list's description, verbatim; may be empty.
+	Description string `form:"description" json:"description" xml:"description"`
+	// Microsoft's Scope, verbatim (Account or Customer); may be empty.
+	Scope string `form:"scope" json:"scope" xml:"scope"`
+	// Microsoft's MembershipDuration, in days. Absent when Microsoft sent none.
+	MembershipDuration *int `form:"membership_duration,omitempty" json:"membership_duration,omitempty" xml:"membership_duration,omitempty"`
+	// Microsoft's SearchSize: the list members reachable on Search. Absent when
+	// Microsoft sent none, which is not a size of 0.
+	SearchSize *int64 `form:"search_size,omitempty" json:"search_size,omitempty" xml:"search_size,omitempty"`
+}
+
+// MicrosoftAdsConversionGoalResponseBody is used to define fields on response
+// body types.
+type MicrosoftAdsConversionGoalResponseBody struct {
+	// The conversion goal id, in exactly the form
+	// microsoftConfig.conversionGoalIds accepts. Send it as-is.
+	ID string `form:"id" json:"id" xml:"id"`
+	// The goal's display name. Not an identifier; may be empty.
+	Name string `form:"name" json:"name" xml:"name"`
+	// Microsoft's Status, verbatim (for example Active or Paused). A create
+	// refuses any goal that is not Active.
+	Status string `form:"status" json:"status" xml:"status"`
+	// Microsoft's goal Type, verbatim (for example Url or Event); may be empty.
+	Type string `form:"type" json:"type" xml:"type"`
+	// Microsoft's Scope, verbatim (Account or Customer); may be empty.
+	Scope string `form:"scope" json:"scope" xml:"scope"`
+}
+
 // MetaAdsAudienceBucketResponseBody is used to define fields on response body
 // types.
 type MetaAdsAudienceBucketResponseBody struct {
@@ -9048,6 +9242,52 @@ func NewListTwitterAdsCustomAudiencesResponseBody(res *lfxv2campaignserviceconne
 		}
 	} else {
 		body.Audiences = []*TwitterAdsCustomAudienceResponseBody{}
+	}
+	return body
+}
+
+// NewListMicrosoftAdsRemarketingListsResponseBody builds the HTTP response
+// body from the result of the "list-microsoft-ads-remarketing-lists" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsRemarketingListsResponseBody(res *lfxv2campaignserviceconnections.MicrosoftAdsRemarketingLists) *ListMicrosoftAdsRemarketingListsResponseBody {
+	body := &ListMicrosoftAdsRemarketingListsResponseBody{
+		AccountID: res.AccountID,
+		ListCount: res.ListCount,
+	}
+	if res.Lists != nil {
+		body.Lists = make([]*MicrosoftAdsRemarketingListResponseBody, len(res.Lists))
+		for i, val := range res.Lists {
+			if val == nil {
+				body.Lists[i] = nil
+				continue
+			}
+			body.Lists[i] = marshalLfxv2campaignserviceconnectionsMicrosoftAdsRemarketingListToMicrosoftAdsRemarketingListResponseBody(val)
+		}
+	} else {
+		body.Lists = []*MicrosoftAdsRemarketingListResponseBody{}
+	}
+	return body
+}
+
+// NewListMicrosoftAdsConversionGoalsResponseBody builds the HTTP response body
+// from the result of the "list-microsoft-ads-conversion-goals" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsConversionGoalsResponseBody(res *lfxv2campaignserviceconnections.MicrosoftAdsConversionGoals) *ListMicrosoftAdsConversionGoalsResponseBody {
+	body := &ListMicrosoftAdsConversionGoalsResponseBody{
+		AccountID: res.AccountID,
+		GoalCount: res.GoalCount,
+	}
+	if res.Goals != nil {
+		body.Goals = make([]*MicrosoftAdsConversionGoalResponseBody, len(res.Goals))
+		for i, val := range res.Goals {
+			if val == nil {
+				body.Goals[i] = nil
+				continue
+			}
+			body.Goals[i] = marshalLfxv2campaignserviceconnectionsMicrosoftAdsConversionGoalToMicrosoftAdsConversionGoalResponseBody(val)
+		}
+	} else {
+		body.Goals = []*MicrosoftAdsConversionGoalResponseBody{}
 	}
 	return body
 }
@@ -13687,6 +13927,144 @@ func NewListTwitterAdsCustomAudiencesUnauthorizedResponseBody(res *lfxv2campaign
 	return body
 }
 
+// NewListMicrosoftAdsRemarketingListsBadRequestResponseBody builds the HTTP
+// response body from the result of the "list-microsoft-ads-remarketing-lists"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsRemarketingListsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListMicrosoftAdsRemarketingListsBadRequestResponseBody {
+	body := &ListMicrosoftAdsRemarketingListsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMicrosoftAdsRemarketingListsServiceUnavailableResponseBody builds the
+// HTTP response body from the result of the
+// "list-microsoft-ads-remarketing-lists" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsRemarketingListsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListMicrosoftAdsRemarketingListsServiceUnavailableResponseBody {
+	body := &ListMicrosoftAdsRemarketingListsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMicrosoftAdsRemarketingListsInternalServerErrorResponseBody builds
+// the HTTP response body from the result of the
+// "list-microsoft-ads-remarketing-lists" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsRemarketingListsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListMicrosoftAdsRemarketingListsInternalServerErrorResponseBody {
+	body := &ListMicrosoftAdsRemarketingListsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMicrosoftAdsRemarketingListsNotFoundResponseBody builds the HTTP
+// response body from the result of the "list-microsoft-ads-remarketing-lists"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsRemarketingListsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListMicrosoftAdsRemarketingListsNotFoundResponseBody {
+	body := &ListMicrosoftAdsRemarketingListsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMicrosoftAdsRemarketingListsPayloadTooLargeResponseBody builds the
+// HTTP response body from the result of the
+// "list-microsoft-ads-remarketing-lists" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsRemarketingListsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListMicrosoftAdsRemarketingListsPayloadTooLargeResponseBody {
+	body := &ListMicrosoftAdsRemarketingListsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMicrosoftAdsRemarketingListsUnauthorizedResponseBody builds the HTTP
+// response body from the result of the "list-microsoft-ads-remarketing-lists"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsRemarketingListsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListMicrosoftAdsRemarketingListsUnauthorizedResponseBody {
+	body := &ListMicrosoftAdsRemarketingListsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMicrosoftAdsConversionGoalsBadRequestResponseBody builds the HTTP
+// response body from the result of the "list-microsoft-ads-conversion-goals"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsConversionGoalsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListMicrosoftAdsConversionGoalsBadRequestResponseBody {
+	body := &ListMicrosoftAdsConversionGoalsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMicrosoftAdsConversionGoalsServiceUnavailableResponseBody builds the
+// HTTP response body from the result of the
+// "list-microsoft-ads-conversion-goals" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsConversionGoalsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListMicrosoftAdsConversionGoalsServiceUnavailableResponseBody {
+	body := &ListMicrosoftAdsConversionGoalsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMicrosoftAdsConversionGoalsInternalServerErrorResponseBody builds the
+// HTTP response body from the result of the
+// "list-microsoft-ads-conversion-goals" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsConversionGoalsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListMicrosoftAdsConversionGoalsInternalServerErrorResponseBody {
+	body := &ListMicrosoftAdsConversionGoalsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMicrosoftAdsConversionGoalsNotFoundResponseBody builds the HTTP
+// response body from the result of the "list-microsoft-ads-conversion-goals"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsConversionGoalsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListMicrosoftAdsConversionGoalsNotFoundResponseBody {
+	body := &ListMicrosoftAdsConversionGoalsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMicrosoftAdsConversionGoalsPayloadTooLargeResponseBody builds the
+// HTTP response body from the result of the
+// "list-microsoft-ads-conversion-goals" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsConversionGoalsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListMicrosoftAdsConversionGoalsPayloadTooLargeResponseBody {
+	body := &ListMicrosoftAdsConversionGoalsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMicrosoftAdsConversionGoalsUnauthorizedResponseBody builds the HTTP
+// response body from the result of the "list-microsoft-ads-conversion-goals"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsConversionGoalsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListMicrosoftAdsConversionGoalsUnauthorizedResponseBody {
+	body := &ListMicrosoftAdsConversionGoalsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetMetaAdsAudienceBadRequestResponseBody builds the HTTP response body
 // from the result of the "get-meta-ads-audience" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -16403,6 +16781,28 @@ func NewListRedditAdsPixelsPayload(projectID string, bearerToken *string) *lfxv2
 // list-twitter-ads-custom-audiences endpoint payload.
 func NewListTwitterAdsCustomAudiencesPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListTwitterAdsCustomAudiencesPayload {
 	v := &lfxv2campaignserviceconnections.ListTwitterAdsCustomAudiencesPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListMicrosoftAdsRemarketingListsPayload builds a
+// lfx-v2-campaign-service-connections service
+// list-microsoft-ads-remarketing-lists endpoint payload.
+func NewListMicrosoftAdsRemarketingListsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListMicrosoftAdsRemarketingListsPayload {
+	v := &lfxv2campaignserviceconnections.ListMicrosoftAdsRemarketingListsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListMicrosoftAdsConversionGoalsPayload builds a
+// lfx-v2-campaign-service-connections service
+// list-microsoft-ads-conversion-goals endpoint payload.
+func NewListMicrosoftAdsConversionGoalsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListMicrosoftAdsConversionGoalsPayload {
+	v := &lfxv2campaignserviceconnections.ListMicrosoftAdsConversionGoalsPayload{}
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken
 

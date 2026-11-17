@@ -1,0 +1,190 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package microsoft
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+)
+
+// ---------------------------------------------------------------------------
+// Remarketing-list picker read (#563, gap 4 follow-up): every remarketing list on the client's
+// account, for the microsoftConfig.audienceIds / excludedAudienceIds picker.
+//
+// Microsoft Advertising Campaign Management v13 reference (learn.microsoft.com, read
+// 2026-11-14), GetAudiencesByIds (POST Audiences/QueryByIds): AudienceIds is optional, and when
+// it is nil or empty the operation returns every audience of the requested Type on the account.
+// The answer is Audiences (RemarketingList entries carry Id, Name, Description,
+// MembershipDuration, Scope and SearchSize among others) plus PartialErrors. There is no paging.
+//
+// It is the same call CheckRemarketingLists makes before a create, with no ids, so an id it lists
+// is one that check accepts. System-generated lists (All Visitors, All Converters, Smart lists)
+// are not returned by GetAudiencesByIds, so they are not listed either.
+//
+// VERIFICATION LEVEL: none of this has been exercised against a live account, which is why the
+// dispatcher keeps it behind MICROSOFT_REMARKETING_LISTS_ENABLED.
+// ---------------------------------------------------------------------------
+
+// maxRemarketingListRows bounds the decoded list, so an answer that never ends cannot hold the
+// process. Far above the lists one account holds in practice; more is refused as unbelievable.
+const maxRemarketingListRows = 5000
+
+// RemarketingList is one remarketing list on the account. MembershipDuration (days) and
+// SearchSize are nil when Microsoft sent none, which is not a value of 0.
+type RemarketingList struct {
+	ID                 string
+	Name               string
+	Description        string
+	Scope              string
+	MembershipDuration *int
+	SearchSize         *int64
+}
+
+type listRemarketingListsRequest struct {
+	// AudienceIds is sent as null: "all audiences of the type".
+	AudienceIds []json.Number `json:"AudienceIds"`
+	Type        string        `json:"Type"`
+}
+
+type msRemarketingList struct {
+	Id          *json.Number `json:"Id"`
+	Type        string       `json:"Type"`
+	Name        string       `json:"Name"`
+	Description string       `json:"Description"`
+	Scope       string       `json:"Scope"`
+	// MembershipDuration (an int) and SearchSize (a long) are decoded raw: Microsoft's REST JSON
+	// sends a long as a quoted string ("12000"), and may quote either, so both spellings are
+	// accepted and validated by wholeNumberField / wholeInt32Field rather than failing the whole answer.
+	MembershipDuration json.RawMessage `json:"MembershipDuration"`
+	SearchSize         json.RawMessage `json:"SearchSize"`
+}
+
+// wholeNumberText extracts the decimal text of an optional whole number sent as a JSON number
+// (12000) or a quoted one ("12000"). Absent or null is ("", false, true); anything that is not
+// a JSON number or a string holding one (or that carries a leading "+") is ("", true, false).
+func wholeNumberText(raw json.RawMessage) (text string, present, ok bool) {
+	if len(raw) == 0 || isJSONNullRaw(raw) {
+		return "", false, true
+	}
+	var n json.Number
+	if json.Unmarshal(raw, &n) != nil {
+		return "", true, false
+	}
+	s := strings.TrimSpace(n.String())
+	if s == "" || strings.HasPrefix(s, "+") {
+		return "", true, false
+	}
+	return s, true, true
+}
+
+// wholeNumberField reads an optional non-negative whole number (see wholeNumberText) that fits
+// an int64. Absent or null is (nil, true); anything else that is not such a number (a fraction,
+// a negative, text, an overflow) is (nil, false).
+func wholeNumberField(raw json.RawMessage) (*int64, bool) {
+	s, present, ok := wholeNumberText(raw)
+	if !ok || !present {
+		return nil, ok
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || v < 0 {
+		return nil, false
+	}
+	return &v, true
+}
+
+// wholeInt32Field is wholeNumberField for a field Microsoft types as an int: the value is parsed
+// with a 32-bit size, so anything above math.MaxInt32 is an overflow — (nil, false), the same
+// refusal as text or a fraction — and the conversion to int can never truncate.
+func wholeInt32Field(raw json.RawMessage) (*int, bool) {
+	s, present, ok := wholeNumberText(raw)
+	if !ok || !present {
+		return nil, ok
+	}
+	v, err := strconv.ParseInt(s, 10, 32)
+	if err != nil || v < 0 {
+		return nil, false
+	}
+	d := int(v)
+	return &d, true
+}
+
+// ErrRemarketingListsMalformed marks a list answer this client cannot believe. The service maps
+// it, like any upstream failure it cannot classify, to a 503 with nothing partial.
+var ErrRemarketingListsMalformed = errors.New("microsoft-ads remarketing list read could not be confirmed")
+
+// ListRemarketingLists reads every remarketing list on the client's account with ONE
+// GetAudiencesByIds call (no ids, Type RemarketingList). A pure read, retried on 429 like every
+// read here. The rows are in Microsoft's order; the caller sorts.
+//
+// An answer it cannot believe is ErrRemarketingListsMalformed with no rows: no Audiences array (a
+// 2xx without it describes nothing), a null entry, an id that is not a positive decimal or
+// repeats, an entry of another audience type (the Type filter was not applied), more than
+// maxRemarketingListRows entries, or any partial error (an incomplete list must not pass for a
+// complete one).
+func (c *Client) ListRemarketingLists(ctx context.Context) ([]RemarketingList, error) {
+	if err := c.validateAccountIDs(); err != nil {
+		return nil, err
+	}
+	raw, err := c.doRequest(ctx, http.MethodPost, "Audiences/QueryByIds", listRemarketingListsRequest{Type: audienceTypeRemarketingList}, true /* a read */)
+	if err != nil {
+		return nil, fmt.Errorf("microsoft-ads remarketing list read failed: %w", err)
+	}
+	// Decoded token by token (decodeCappedList), so row decoding stops at the first row past
+	// maxRemarketingListRows instead of after every row is decoded. doRequest has already
+	// buffered the body; the cap does not limit that read.
+	resp, err := decodeCappedList[msRemarketingList](raw, "Audiences", maxRemarketingListRows)
+	if errors.Is(err, errListOverCap) {
+		return nil, fmt.Errorf("%w: it returned more than %d lists", ErrRemarketingListsMalformed, maxRemarketingListRows)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%w: the response is not the documented shape", ErrRemarketingListsMalformed)
+	}
+	if !resp.SawList {
+		return nil, fmt.Errorf("%w: the response carries no Audiences array", ErrRemarketingListsMalformed)
+	}
+	if resp.PartialErrors.Truncated {
+		return nil, fmt.Errorf("%w: it reported errors", ErrRemarketingListsMalformed)
+	}
+	for _, it := range resp.PartialErrors.Items {
+		if present, _ := audienceErrorCode(it.ErrorCode, it.Code); present {
+			return nil, fmt.Errorf("%w: it reported errors", ErrRemarketingListsMalformed)
+		}
+	}
+	out := make([]RemarketingList, 0, len(resp.Rows))
+	seen := make(map[string]struct{}, len(resp.Rows))
+	for i, a := range resp.Rows {
+		if a == nil {
+			return nil, fmt.Errorf("%w: position %d is empty", ErrRemarketingListsMalformed, i+1)
+		}
+		id := numberID(a.Id)
+		if !canonicalPositiveID(id) {
+			return nil, fmt.Errorf("%w: position %d has no usable id", ErrRemarketingListsMalformed, i+1)
+		}
+		if _, dup := seen[id]; dup {
+			return nil, fmt.Errorf("%w: position %d repeats an id", ErrRemarketingListsMalformed, i+1)
+		}
+		seen[id] = struct{}{}
+		if a.Type != audienceTypeRemarketingList {
+			return nil, fmt.Errorf("%w: position %d is not a remarketing list", ErrRemarketingListsMalformed, i+1)
+		}
+		size, ok := wholeNumberField(a.SearchSize)
+		if !ok {
+			return nil, fmt.Errorf("%w: position %d has an unreadable SearchSize", ErrRemarketingListsMalformed, i+1)
+		}
+		dur, ok := wholeInt32Field(a.MembershipDuration)
+		if !ok {
+			return nil, fmt.Errorf("%w: position %d has an unreadable MembershipDuration", ErrRemarketingListsMalformed, i+1)
+		}
+		out = append(out, RemarketingList{
+			ID: id, Name: a.Name, Description: a.Description, Scope: a.Scope,
+			MembershipDuration: dur, SearchSize: size,
+		})
+	}
+	return out, nil
+}
