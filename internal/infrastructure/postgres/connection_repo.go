@@ -150,16 +150,19 @@ func (r *ConnectionRepo) ReplaceLinkedInAccountGrants(ctx context.Context, proje
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("replace linkedin account grants: %w", err)
 		}
-		// Missing vs stale, read outside the rolled-back transaction as update does.
-		_, gerr := r.Get(ctx, projectID, provider)
-		switch {
-		case errors.Is(gerr, domain.ErrNotFound):
-			return nil, domain.ErrNotFound
-		case gerr != nil:
-			return nil, gerr
-		default:
-			return nil, domain.ErrPreconditionFailed
+		// Missing vs stale, told apart through tx: the transaction still holds its pool
+		// connection, so a pool read here (r.Get) would wait for a SECOND connection and, on
+		// a pool of one, wait on itself until the context expires.
+		//nolint:gosec // table name comes from a fixed internal allowlist, not user input.
+		probe := fmt.Sprintf("SELECT EXISTS (SELECT 1 FROM %s WHERE project_id = $1 AND status <> 'deleted')", provider.Table())
+		var live bool
+		if perr := tx.QueryRow(ctx, probe, projectID).Scan(&live); perr != nil {
+			return nil, fmt.Errorf("replace linkedin account grants: probe: %w", perr)
 		}
+		if !live {
+			return nil, domain.ErrNotFound
+		}
+		return nil, domain.ErrPreconditionFailed
 	}
 	if _, err := tx.Exec(ctx, "DELETE FROM linkedin_ads_account_grants WHERE connection_id = $1::uuid", updated.ID); err != nil {
 		return nil, fmt.Errorf("replace linkedin account grants: delete: %w", err)

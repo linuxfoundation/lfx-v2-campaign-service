@@ -75,6 +75,27 @@ type twitterConfig struct {
 	// TWITTER_CREATE_TARGETING_ENABLED flag.
 	Keywords    []string `json:"keywords,omitempty"`
 	InterestIDs []string `json:"interestIds,omitempty"`
+	// ConversationTopics (CONVERSATION, values from GET targeting_criteria/conversations) target
+	// the new line item too (#564 gap 8), behind the same TWITTER_CREATE_TARGETING_ENABLED flag.
+	ConversationTopics []string `json:"conversationTopics,omitempty"`
+	// Platforms (PLATFORM, values from GET targeting_criteria/platforms) narrow the new line item to
+	// device platforms (#564 gap 9), behind the same TWITTER_CREATE_TARGETING_ENABLED flag. These
+	// are X's device platforms (iOS, Android, desktop), not the request's ad platforms.
+	Platforms []string `json:"platforms,omitempty"`
+	// Devices (DEVICE, values from GET targeting_criteria/devices), AgeBucket (one AGE bucket such
+	// as AGE_18_TO_34) and Gender (MALE or FEMALE, sent as X's GENDER 1 or 2) narrow the new line
+	// item too (#564 gap 9), behind the same TWITTER_CREATE_TARGETING_ENABLED flag.
+	Devices   []string `json:"devices,omitempty"`
+	AgeBucket string   `json:"ageBucket,omitempty"`
+	Gender    string   `json:"gender,omitempty"`
+	// AudienceExpansion (BROAD, DEFINED or EXPANDED) is sent as the new line item's
+	// audience_expansion (#564 gap 11, twitter_audience_expansion.go). Behind
+	// TWITTER_AUDIENCE_EXPANSION_ENABLED; omitted, X applies no expansion, as before.
+	AudienceExpansion string `json:"audienceExpansion,omitempty"`
+	// FollowerLookalikeUserIDs (numeric X user ids) become SIMILAR_TO_FOLLOWERS_OF_USER criteria on
+	// the new line item (#564 gap 4c, twitter_follower_lookalikes.go). Behind
+	// TWITTER_FOLLOWER_LOOKALIKES_ENABLED; shape-checked only, since X has no user lookup.
+	FollowerLookalikeUserIDs []string `json:"followerLookalikeUserIds,omitempty"`
 	// VideoAssetID references a stored MP4 creative asset (upload-creative-asset, video/mp4) to
 	// upload as amplify_video and attach to the authored tweet instead of an image (#564 gap 7,
 	// twitter_video.go). Behind TWITTER_VIDEO_ENABLED; never with imageAssetId.
@@ -125,6 +146,14 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 	if err := checkTwitterCustomAudienceShape(config); err != nil {
 		return err
 	}
+	// And a mistyped audienceExpansion (#564 gap 11).
+	if err := checkTwitterAudienceExpansionShape(config); err != nil {
+		return err
+	}
+	// And a mistyped followerLookalikeUserIds (#564 gap 4c).
+	if err := checkTwitterFollowerLookalikesShape(config); err != nil {
+		return err
+	}
 	// And a mistyped videoAssetId (#564 gap 7).
 	if err := checkTwitterVideoShape(config); err != nil {
 		return err
@@ -146,7 +175,13 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 	if err := checkTwitterCustomAudiences(cfg); err != nil {
 		return err
 	}
+	if tgt.lookalikes, err = checkTwitterFollowerLookalikes(cfg); err != nil {
+		return err
+	}
 	if err := checkTwitterCreateCriteriaCount(tgt, cfg); err != nil {
+		return err
+	}
+	if _, err := checkTwitterAudienceExpansion(cfg); err != nil {
 		return err
 	}
 	if _, err := checkTwitterVideo(cfg, tgt.count()+len(cfg.CustomAudienceIDs)+len(cfg.ExcludedCustomAudienceIDs)); err != nil {
@@ -298,6 +333,12 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if err := checkTwitterCustomAudienceShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	if err := checkTwitterAudienceExpansionShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	if err := checkTwitterFollowerLookalikesShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	if err := checkTwitterVideoShape(config); err != nil {
 		return nil, notCreated(err)
 	}
@@ -325,7 +366,16 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if err := checkTwitterCustomAudiences(cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// And the follower look-alike gate and shape (#564 gap 4c), for the same reason.
+	if tgt.lookalikes, err = checkTwitterFollowerLookalikes(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	if err := checkTwitterCreateCriteriaCount(tgt, cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// And the audience expansion gate and rule (#564 gap 11), for the same reason.
+	audienceExpansion, err := checkTwitterAudienceExpansion(cfg)
+	if err != nil {
 		return nil, notCreated(err)
 	}
 	// And the video gate and rules (#564 gap 7).
@@ -454,6 +504,16 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		Languages:   tgt.langs,
 		Keywords:    tgt.keywords,
 		InterestIDs: tgt.interests,
+
+		ConversationTopics: tgt.topics,
+		Platforms:          tgt.platforms,
+		Devices:            tgt.devices,
+		AgeBucket:          tgt.ageBucket,
+		Gender:             tgt.gender,
+
+		AudienceExpansion: audienceExpansion,
+
+		FollowerLookalikeUserIDs: tgt.lookalikes,
 
 		Video: video,
 

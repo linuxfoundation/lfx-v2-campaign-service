@@ -2618,7 +2618,10 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"upstream account is shared across foundations, so the account read is filtered to them before " +
 			"rules and totals. A project with no campaigns recorded on the platform gets an empty monitor " +
 			"without any upstream call. A recorded campaign created under a different account than " +
-			"account_id, or recording none, fails the read with 409 rather than returning a partial picture. " +
+			"account_id fails the read with 409 rather than returning a partial picture. A campaign that " +
+			"records no account (one created before accounts were recorded) is shown when the project's own " +
+			"connection serves the read, as belonging to that connection's account, and omitted when the LF " +
+			"system credential serves it, since that credential is shared between foundations. " +
 			"Campaigns deleted in this service stay in the monitor, because a local delete does not stop the " +
 			"upstream campaign, unless it does not record account_id as the customer it was created under " +
 			"or another project has since taken it over; such a campaign is omitted, never a 409. " +
@@ -2677,7 +2680,10 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"account and its operator-installed grants), so the account read is filtered to them before " +
 			"rules and totals. A project with no campaigns recorded on the platform gets an empty monitor " +
 			"without any upstream call. A recorded campaign created under a different account than " +
-			"account_id, or recording none, fails the read with 409 rather than returning a partial picture. " +
+			"account_id fails the read with 409 rather than returning a partial picture. A campaign that " +
+			"records no account (one created before accounts were recorded) is shown when the project's own " +
+			"connection serves the read, as belonging to that connection's account, and omitted when the LF " +
+			"system credential serves it, since that credential is shared between foundations. " +
 			"Campaigns deleted in this service stay in the monitor, because a local delete does not stop the " +
 			"upstream campaign, unless it does not record account_id as the account it was created under " +
 			"or another project has since taken it over; such a campaign is omitted, never a 409. " +
@@ -2685,7 +2691,8 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"created under, read from this service's own records: the response's account_id names it, " +
 			"and an empty account_id with no campaigns means the project has none recorded on the " +
 			"platform (answered without any upstream call). Live campaigns created under more than one " +
-			"account, or none recording one, fail with 409 whether or not account_id is given. " +
+			"account fail with 409 whether or not account_id is given, and so does omitting account_id when " +
+			"no live campaign records one (name the account instead). " +
 			"account_id is read with the project's own connection when that is configured for it (a " +
 			"project's own connection reads only its own account), otherwise with the LF system credential " +
 			"when account_id is the system row's account or one of its grants. Any other account, for a " +
@@ -2708,7 +2715,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 		Result(AccountMonitor)
 		Error("NotFound", NotFoundError, "Resource not found")
-		Error("Conflict", AccountMonitorScopeConflictError, "A campaign recorded for this project does not fit the monitored account: created under a different account than account_id, recording none, or carrying an id the platform cannot read (see reason); the same for account_id omitted")
+		Error("Conflict", AccountMonitorScopeConflictError, "A campaign recorded for this project does not fit the monitored account: created under a different account than account_id, or carrying an id the platform cannot read (see reason); with account_id omitted, also when no live campaign records an account")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -2886,7 +2893,10 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"upstream account is shared across foundations, so the account read is filtered to them before " +
 			"rules and totals. A project with no campaigns recorded on the platform gets an empty monitor " +
 			"without any upstream call. A recorded campaign created under a different account than " +
-			"account_id, or recording none, fails the read with 409 rather than returning a partial picture. " +
+			"account_id fails the read with 409 rather than returning a partial picture. A campaign that " +
+			"records no account (one created before accounts were recorded) is shown when the project's own " +
+			"connection serves the read, as belonging to that connection's account, and omitted when the LF " +
+			"system credential serves it, since that credential is shared between foundations. " +
 			"Campaigns deleted in this service stay in the monitor, because a local delete does not stop the " +
 			"upstream campaign, unless it does not record account_id as the account it was created under, " +
 			"its stored id is not one the platform can read, or another project has since taken it over; " +

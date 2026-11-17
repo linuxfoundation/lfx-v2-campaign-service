@@ -3552,6 +3552,12 @@ The LinkedIn account monitor and audience insights read through the same rule (s
 `AccountMonitorDefaulter`, and the system credential is served only for its default account or a
 grant, and only to a campaign-scoped read (see the account-monitor architecture concept).
 
+It also implements `service.AccountMonitorConnectionScoper` (#628): `MonitorScoperForConnection`
+resolves the read's credential, and on the project's own connection keeps a campaign that records
+no creation account (as that connection's account); on the system row, or when the credential
+cannot be resolved, `linkedInMonitorScope` omits and logs it. Pinned by
+`TestLinkedInMonitorScopeByConnection`.
+
 Create-time selection (step 4 of #581, behind `LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED`):
 `selectLinkedInAccount(res, adAccountId)` keeps the resolved account, or — flag on, system row, a
 grant — returns the grant-scoped copy, so `Dispatch` builds its `RuntimeConfig` (default account,

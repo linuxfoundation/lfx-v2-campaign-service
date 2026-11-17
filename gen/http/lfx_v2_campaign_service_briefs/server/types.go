@@ -5704,39 +5704,79 @@ type CampaignCreateInputRequestBody struct {
 	// digits, each listed by GET targeting_criteria/interests, which is walked to
 	// its end before anything is created; at most 60), sent as BROAD_KEYWORD and
 	// INTEREST criteria (operator EQ) after the languages, with the same failure
-	// and reuse rules (#564 gap 4). All four are OFF unless
+	// and reuse rules (#564 gap 4), and `conversationTopics` (X conversation topic
+	// values, 1-32 letters or digits, lowercased, each listed by GET
+	// targeting_criteria/conversations, which is walked to its end before anything
+	// is created; at most 60), sent as CONVERSATION criteria (operator EQ) after
+	// the interests, with the same rules (#564 gap 8), and `platforms` (X device
+	// platform values such as 0 for iOS, not the request's ad platforms; 1-32
+	// letters or digits, lowercased, each listed by GET
+	// targeting_criteria/platforms before anything is created; at most 10), sent
+	// as PLATFORM criteria (operator EQ) after the conversation topics, with the
+	// same rules (#564 gap 9), plus `devices` (X device values such as 1q for the
+	// iPhone 3GS; 1-32 letters or digits, lowercased, each listed by GET
+	// targeting_criteria/devices before anything is created; at most 60), sent as
+	// DEVICE criteria after the platforms, `ageBucket` (a string: one of X's
+	// AGE_BUCKET values such as AGE_18_TO_34 or AGE_OVER_25, uppercased; X allows
+	// a single age bucket per line item), sent as one AGE criterion, and `gender`
+	// (a string: MALE or FEMALE, case-insensitive), sent as one GENDER criterion
+	// with X's value 1 or 2; a blank ageBucket or gender is unset (every age,
+	// every gender) (#564 gap 9). All nine are OFF unless
 	// TWITTER_CREATE_TARGETING_ENABLED is exactly "true". A blank or malformed
-	// entry, a list over its cap, a value that is not an array of strings (null
-	// reads as absent), or any list while the flag is off, is refused with 400
-	// "invalid campaign config: twitterConfig.<field>: ..." before any job exists.
-	// X VIDEO (#564 gap 7): twitterConfig takes `videoAssetId`, the id of an MP4
-	// creative asset uploaded to this brief (upload-creative-asset, content_type
-	// video/mp4, at most 30 MiB), attached to the authored tweet instead of an
-	// image. It requires an authored tweet (tweetText, never tweetId) and is never
-	// combined with imageAssetId. Before anything billable exists the video is
-	// uploaded through X's chunked media upload (initialize with media_category
-	// amplify_video and media_type video/mp4, one append per 4 MiB segment,
-	// finalize, then the STATUS command while X reports processing, at most 6
-	// checks of at most 5 seconds each) and added to the ad account's Media
-	// Library under a name derived from its SHA-256, which a later create of the
-	// same bytes finds and reuses instead of uploading again; its media_key is
-	// then sent as media_keys on the authored tweet. A video that cannot be
-	// uploaded, is rejected during processing, or does not finish processing
-	// within that bound fails the job with nothing created. A create with a
-	// videoAssetId may name at most 30 targeting criteria in total (the upload and
-	// processing share the dispatch budget). An asset that does not exist for this
-	// brief, is over 30 MiB or is not video/mp4 fails the job before any X
-	// request. OFF unless TWITTER_VIDEO_ENABLED is exactly "true"; a videoAssetId
-	// while off, a malformed id, one beside imageAssetId or tweetId or without
-	// tweetText, more than 30 criteria, or a non-string (null reads as absent) is
-	// refused with 400 "invalid campaign config: twitterConfig..." before any job
-	// exists. Not role-gated. X CUSTOM AUDIENCES (#564): twitterConfig takes
-	// `customAudienceIds` and `excludedCustomAudienceIds`, arrays of X custom
-	// audience ids (list-twitter-ads-custom-audiences offers them) to target and
-	// to exclude, sent as CUSTOM_AUDIENCE targeting criteria on the new line item
-	// with operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
+	// entry, a list over its cap, a value that is not an array of strings (or, for
+	// ageBucket and gender, not a string; null reads as absent), an age bucket or
+	// gender outside its set, or any of them while the flag is off, is refused
+	// with 400 "invalid campaign config: twitterConfig.<field>: ..." before any
+	// job exists. X AUDIENCE EXPANSION (#564 gap 11): twitterConfig takes
+	// `audienceExpansion` (BROAD, DEFINED or EXPANDED, case-insensitive), sent as
+	// the new line item's audience_expansion; omitted or blank sends nothing (X
+	// applies no expansion), and a line item reused by name keeps its own. It is
+	// OFF unless TWITTER_AUDIENCE_EXPANSION_ENABLED is exactly "true"; a non-blank
+	// value while off, a value outside the set, or a non-string is refused with
+	// 400 "invalid campaign config: twitterConfig..." before any job exists. X
+	// FOLLOWER LOOK-ALIKES (#564 gap 4c): twitterConfig takes
+	// `followerLookalikeUserIds` (numeric X user ids, 1-19 digits with no leading
+	// zero and within int64, trimmed and de-duplicated, at most 60), each sent as
+	// a SIMILAR_TO_FOLLOWERS_OF_USER criterion (operator EQ) after the platforms
+	// and before the included custom audiences; they count toward the 60-criteria
+	// per-create total. Only the shape is checked before create: X has no user
+	// lookup, so an id X refuses fails at its own criterion POST, which stops the
+	// create before any tweet with the PAUSED campaign and line item retained for
+	// reconciliation, exactly as for any other criterion failure. OFF unless
+	// TWITTER_FOLLOWER_LOOKALIKES_ENABLED is exactly "true"; a non-empty list
+	// while off, a malformed id, a list over its cap, or a value that is not an
+	// array of strings (null reads as absent) is refused with 400 "invalid
+	// campaign config: twitterConfig.followerLookalikeUserIds: ..." before any job
+	// exists. Not role-gated. X VIDEO (#564 gap 7): twitterConfig takes
+	// `videoAssetId`, the id of an MP4 creative asset uploaded to this brief
+	// (upload-creative-asset, content_type video/mp4, at most 30 MiB), attached to
+	// the authored tweet instead of an image. It requires an authored tweet
+	// (tweetText, never tweetId) and is never combined with imageAssetId. Before
+	// anything billable exists the video is uploaded through X's chunked media
+	// upload (initialize with media_category amplify_video and media_type
+	// video/mp4, one append per 4 MiB segment, finalize, then the STATUS command
+	// while X reports processing, at most 6 checks of at most 5 seconds each) and
+	// added to the ad account's Media Library under a name derived from its
+	// SHA-256, which a later create of the same bytes finds and reuses instead of
+	// uploading again; its media_key is then sent as media_keys on the authored
+	// tweet. A video that cannot be uploaded, is rejected during processing, or
+	// does not finish processing within that bound fails the job with nothing
+	// created. A create with a videoAssetId may name at most 30 targeting criteria
+	// in total (the upload and processing share the dispatch budget). An asset
+	// that does not exist for this brief, is over 30 MiB or is not video/mp4 fails
+	// the job before any X request. OFF unless TWITTER_VIDEO_ENABLED is exactly
+	// "true"; a videoAssetId while off, a malformed id, one beside imageAssetId or
+	// tweetId or without tweetText, more than 30 criteria, or a non-string (null
+	// reads as absent) is refused with 400 "invalid campaign config:
+	// twitterConfig..." before any job exists. Not role-gated. X CUSTOM AUDIENCES
+	// (#564): twitterConfig takes `customAudienceIds` and
+	// `excludedCustomAudienceIds`, arrays of X custom audience ids
+	// (list-twitter-ads-custom-audiences offers them) to target and to exclude,
+	// sent as CUSTOM_AUDIENCE targeting criteria on the new line item with
+	// operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
 	// given; at most 60 per list; no id twice and none in both lists. geoTargets,
-	// languages, keywords, interestIds, customAudienceIds and
+	// languages, keywords, interestIds, conversationTopics, platforms, devices,
+	// ageBucket, gender, followerLookalikeUserIds, customAudienceIds and
 	// excludedCustomAudienceIds together may name at most 60 criteria per create,
 	// since each is a separate X write paced at one per second inside the
 	// two-minute dispatch budget; more is refused with the same 400. Before

@@ -4,8 +4,10 @@
 package dispatch
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -189,7 +191,6 @@ func TestLinkedInMonitorScope(t *testing.T) {
 		want  error
 	}{
 		"other account": {[]model.ProjectCampaignScope{rec("555", "500928401"), rec("556", "538170226")}, domain.ErrCampaignAccountMismatch},
-		"unrecorded":    {[]model.ProjectCampaignScope{rec("555", "500928401"), unrec}, domain.ErrCampaignProvenanceUnknown},
 		"malformed id":  {[]model.ProjectCampaignScope{rec("urn:li:x", "500928401")}, domain.ErrAudienceScopeInvalid},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -202,6 +203,17 @@ func TestLinkedInMonitorScope(t *testing.T) {
 		t.Fatalf("precheck on a malformed id = %v", err)
 	}
 
+	// The dispatcher's own rule is the LF system row's (#628): an unrecorded campaign is omitted,
+	// not a 409, since on the shared credential its id cannot be proven to be this project's.
+	ids, err = d.MonitorScopeForAccount([]model.ProjectCampaignScope{rec("555", "500928401"), unrec}, "500928401")
+	if err != nil || !reflect.DeepEqual(ids, []string{"555"}) {
+		t.Fatalf("system rule over an unrecorded campaign = %v, %v; want only the recorded 555", ids, err)
+	}
+	// Omitting the unrecorded entries does not hide a recorded mismatch.
+	if _, err := d.MonitorScopeForAccount([]model.ProjectCampaignScope{rec("556", "538170226"), unrec}, "500928401"); !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+		t.Fatalf("system rule over unrecorded + other account = %v, want ErrCampaignAccountMismatch", err)
+	}
+
 	if got, err := d.MonitorAccountForScope([]model.ProjectCampaignScope{rec("555", "500928401"), unrec}); err != nil || got != "500928401" {
 		t.Fatalf("defaulter = %q, %v; want the one recorded account", got, err)
 	}
@@ -211,4 +223,51 @@ func TestLinkedInMonitorScope(t *testing.T) {
 	if _, err := d.MonitorAccountForScope([]model.ProjectCampaignScope{unrec}); !errors.Is(err, domain.ErrCampaignProvenanceUnknown) {
 		t.Fatalf("defaulter over unrecorded campaigns = %v, want ErrCampaignProvenanceUnknown", err)
 	}
+}
+
+// TestLinkedInMonitorScopeByConnection pins #628's answer to the legacy-campaign question: on the
+// project's OWN LinkedIn connection a campaign that records no creation account belongs to that
+// connection's account and stays in the monitor, as it did before #581 when the read covered the
+// own account whole. Served by the LF system row, the same campaign is omitted, and a recorded
+// campaign from another account still fails either way.
+func TestLinkedInMonitorScopeByConnection(t *testing.T) {
+	ctx := context.Background()
+	rec := func(id, account string) model.ProjectCampaignScope {
+		return model.ProjectCampaignScope{PlatformCampaignID: id, Result: json.RawMessage(`{"accountId":"` + account + `"}`)}
+	}
+	unrec := model.ProjectCampaignScope{PlatformCampaignID: "557", Result: json.RawMessage(`{}`)}
+	own := activeLinkedInConn(goodLinkedInCreds)
+	own.ID, own.Version, own.ProjectID = "own-li", 1, "cncf"
+
+	t.Run("own connection keeps an unrecorded campaign", func(t *testing.T) {
+		d, _ := grantToggleDispatcher(t, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow(), "cncf": own}})
+		scoper := d.MonitorScoperForConnection(ctx, "cncf", own.AccountID)
+		if scoper == nil {
+			t.Fatal("no connection scoper for a project on its own connection")
+		}
+		ids, err := scoper.MonitorScopeForAccount([]model.ProjectCampaignScope{rec("555", own.AccountID), unrec}, own.AccountID)
+		if err != nil || !reflect.DeepEqual(ids, []string{"555", "557"}) {
+			t.Fatalf("own-connection scope = %v, %v; want 555 and the unrecorded 557", ids, err)
+		}
+		if _, err := scoper.MonitorScopeForAccount([]model.ProjectCampaignScope{rec("556", "538170226"), unrec}, own.AccountID); !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+			t.Fatalf("own-connection scope with another account = %v, want ErrCampaignAccountMismatch", err)
+		}
+	})
+	t.Run("system row omits an unrecorded campaign", func(t *testing.T) {
+		d, _ := grantToggleDispatcher(t, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}})
+		scoper := d.MonitorScoperForConnection(ctx, "cncf", "500928401")
+		if scoper == nil {
+			t.Fatal("no connection scoper for a grant served by the system row")
+		}
+		ids, err := scoper.MonitorScopeForAccount([]model.ProjectCampaignScope{rec("555", "500928401"), unrec}, "500928401")
+		if err != nil || !reflect.DeepEqual(ids, []string{"555"}) {
+			t.Fatalf("system-row scope = %v, %v; want only the recorded 555", ids, err)
+		}
+	})
+	t.Run("an unresolvable read keeps the system rule", func(t *testing.T) {
+		d, _ := grantToggleDispatcher(t, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}})
+		if s := d.MonitorScoperForConnection(ctx, "cncf", "111111111"); s != nil {
+			t.Fatalf("scoper for an account no connection serves = %T, want nil", s)
+		}
+	})
 }
