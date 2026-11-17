@@ -75,6 +75,10 @@ type twitterConfig struct {
 	// TWITTER_CREATE_TARGETING_ENABLED flag.
 	Keywords    []string `json:"keywords,omitempty"`
 	InterestIDs []string `json:"interestIds,omitempty"`
+	// VideoAssetID references a stored MP4 creative asset (upload-creative-asset, video/mp4) to
+	// upload as amplify_video and attach to the authored tweet instead of an image (#564 gap 7,
+	// twitter_video.go). Behind TWITTER_VIDEO_ENABLED; never with imageAssetId.
+	VideoAssetID string `json:"videoAssetId,omitempty"`
 	// CustomAudienceIDs and ExcludedCustomAudienceIDs are X custom audience ids to target and to
 	// exclude on the new line item (#564 gap 3, twitter_custom_audiences.go). Behind
 	// TWITTER_CUSTOM_AUDIENCES_ENABLED, and global_marketing_ops only
@@ -121,6 +125,10 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 	if err := checkTwitterCustomAudienceShape(config); err != nil {
 		return err
 	}
+	// And a mistyped videoAssetId (#564 gap 7).
+	if err := checkTwitterVideoShape(config); err != nil {
+		return err
+	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
 	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
 	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
@@ -139,6 +147,9 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 		return err
 	}
 	if err := checkTwitterCreateCriteriaCount(tgt, cfg); err != nil {
+		return err
+	}
+	if _, err := checkTwitterVideo(cfg, tgt.count()+len(cfg.CustomAudienceIDs)+len(cfg.ExcludedCustomAudienceIDs)); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -287,6 +298,9 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if err := checkTwitterCustomAudienceShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	if err := checkTwitterVideoShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg twitterConfig
 	if err := unmarshalPlatformConfig(config, "twitterConfig", &cfg); err != nil {
 		return nil, notCreated(err)
@@ -312,6 +326,11 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		return nil, notCreated(err)
 	}
 	if err := checkTwitterCreateCriteriaCount(tgt, cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// And the video gate and rules (#564 gap 7).
+	videoAssetID, err := checkTwitterVideo(cfg, tgt.count()+len(cfg.CustomAudienceIDs)+len(cfg.ExcludedCustomAudienceIDs))
+	if err != nil {
 		return nil, notCreated(err)
 	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
@@ -398,6 +417,12 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		return nil, notCreated(err)
 	}
 	defer releaseImage()
+	// The creative video (#564 gap 7), likewise before any X request.
+	video, releaseVideo, err := d.resolveTwitterVideo(ctx, brief, videoAssetID)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	defer releaseVideo()
 
 	stageToken, tacticToken := model.DispatchLabels(ctx).NameTokens()
 	in := twitter.CampaignInput{
@@ -429,6 +454,8 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		Languages:   tgt.langs,
 		Keywords:    tgt.keywords,
 		InterestIDs: tgt.interests,
+
+		Video: video,
 
 		CustomAudienceIDs:         cfg.CustomAudienceIDs,
 		ExcludedCustomAudienceIDs: cfg.ExcludedCustomAudienceIDs,

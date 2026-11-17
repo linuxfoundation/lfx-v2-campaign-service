@@ -274,6 +274,15 @@ const (
 	// (service.TwitterMarketingOpsInputs) and the read sits in the gateway's marketing-ops-api rule.
 	EnvTwitterCustomAudiencesEnabled = "TWITTER_CUSTOM_AUDIENCES_ENABLED"
 
+	// EnvTwitterVideoEnabled opts a deployment IN to twitterConfig.videoAssetId (#564 gap 7): a
+	// stored MP4 uploaded as amplify_video (chunked initialize/append/finalize, then STATUS polled
+	// for at most 30 s) and attached to the tweet an X create authors. Only the exact value
+	// "true" enables it; unset or any other value fails closed, and a create setting it is refused
+	// with a 400 before any job exists (and again at dispatch). Blocker before enabling: measure
+	// X's amplify_video processing time for a 20-30 MiB MP4 against the 30 s bound, which runs
+	// inside the two-minute provider call and must not be lengthened.
+	EnvTwitterVideoEnabled = "TWITTER_VIDEO_ENABLED"
+
 	// EnvMetaConversionsMetricsEnabled opts a deployment IN to conversions in the Meta metrics read
 	// (#550 gap 6): for a campaign whose create result records a conversion event (the
 	// conversions objective, #559), the Insights read also requests `actions` and reports the

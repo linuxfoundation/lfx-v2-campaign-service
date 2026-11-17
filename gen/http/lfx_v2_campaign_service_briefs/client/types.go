@@ -40,8 +40,8 @@ type UploadCreativeAssetRequestBody struct {
 	// Declared MIME type of the uploaded bytes. The bytes are re-sniffed
 	// server-side and must match; the stored mime_type is the verified one.
 	ContentType string `form:"content_type" json:"content_type" xml:"content_type"`
-	// The image, base64-encoded (RFC 4648 standard alphabet, padded). Decoded
-	// server-side; the decoded image must not exceed 30 MiB.
+	// The image or video, base64-encoded (RFC 4648 standard alphabet, padded).
+	// Decoded server-side; the decoded file must not exceed 30 MiB.
 	Bytes string `form:"bytes" json:"bytes" xml:"bytes"`
 }
 
@@ -490,8 +490,8 @@ type UploadCreativeAssetOKResponseBody struct {
 	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
 	// Parent brief
 	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
-	// Stored image MIME type, as verified from the bytes (not merely the declared
-	// header)
+	// Stored MIME type, as verified from the bytes (not merely the declared
+	// header). video/mp4 since #586.
 	MimeType *string `form:"mime_type,omitempty" json:"mime_type,omitempty" xml:"mime_type,omitempty"`
 	// Size of the stored image in bytes
 	ByteSize *int64 `form:"byte_size,omitempty" json:"byte_size,omitempty" xml:"byte_size,omitempty"`
@@ -542,8 +542,8 @@ type GetCreativeAssetResponseBody struct {
 	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
 	// Parent brief
 	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
-	// Stored image MIME type, as verified from the bytes (not merely the declared
-	// header)
+	// Stored MIME type, as verified from the bytes (not merely the declared
+	// header). video/mp4 since #586.
 	MimeType *string `form:"mime_type,omitempty" json:"mime_type,omitempty" xml:"mime_type,omitempty"`
 	// Size of the stored image in bytes
 	ByteSize *int64 `form:"byte_size,omitempty" json:"byte_size,omitempty" xml:"byte_size,omitempty"`
@@ -4810,8 +4810,8 @@ type CreativeAssetResponseBody struct {
 	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
 	// Parent brief
 	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
-	// Stored image MIME type, as verified from the bytes (not merely the declared
-	// header)
+	// Stored MIME type, as verified from the bytes (not merely the declared
+	// header). video/mp4 since #586.
 	MimeType *string `form:"mime_type,omitempty" json:"mime_type,omitempty" xml:"mime_type,omitempty"`
 	// Size of the stored image in bytes
 	ByteSize *int64 `form:"byte_size,omitempty" json:"byte_size,omitempty" xml:"byte_size,omitempty"`
@@ -5699,11 +5699,32 @@ type CampaignCreateInputRequestBody struct {
 	// entry, a list over its cap, a value that is not an array of strings (null
 	// reads as absent), or any list while the flag is off, is refused with 400
 	// "invalid campaign config: twitterConfig.<field>: ..." before any job exists.
-	// X CUSTOM AUDIENCES (#564): twitterConfig takes `customAudienceIds` and
-	// `excludedCustomAudienceIds`, arrays of X custom audience ids
-	// (list-twitter-ads-custom-audiences offers them) to target and to exclude,
-	// sent as CUSTOM_AUDIENCE targeting criteria on the new line item with
-	// operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
+	// X VIDEO (#564 gap 7): twitterConfig takes `videoAssetId`, the id of an MP4
+	// creative asset uploaded to this brief (upload-creative-asset, content_type
+	// video/mp4, at most 30 MiB), attached to the authored tweet instead of an
+	// image. It requires an authored tweet (tweetText, never tweetId) and is never
+	// combined with imageAssetId. Before anything billable exists the video is
+	// uploaded through X's chunked media upload (initialize with media_category
+	// amplify_video and media_type video/mp4, one append per 4 MiB segment,
+	// finalize, then the STATUS command while X reports processing, at most 6
+	// checks of at most 5 seconds each) and added to the ad account's Media
+	// Library under a name derived from its SHA-256, which a later create of the
+	// same bytes finds and reuses instead of uploading again; its media_key is
+	// then sent as media_keys on the authored tweet. A video that cannot be
+	// uploaded, is rejected during processing, or does not finish processing
+	// within that bound fails the job with nothing created. A create with a
+	// videoAssetId may name at most 30 targeting criteria in total (the upload and
+	// processing share the dispatch budget). An asset that does not exist for this
+	// brief, is over 30 MiB or is not video/mp4 fails the job before any X
+	// request. OFF unless TWITTER_VIDEO_ENABLED is exactly "true"; a videoAssetId
+	// while off, a malformed id, one beside imageAssetId or tweetId or without
+	// tweetText, more than 30 criteria, or a non-string (null reads as absent) is
+	// refused with 400 "invalid campaign config: twitterConfig..." before any job
+	// exists. Not role-gated. X CUSTOM AUDIENCES (#564): twitterConfig takes
+	// `customAudienceIds` and `excludedCustomAudienceIds`, arrays of X custom
+	// audience ids (list-twitter-ads-custom-audiences offers them) to target and
+	// to exclude, sent as CUSTOM_AUDIENCE targeting criteria on the new line item
+	// with operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
 	// given; at most 60 per list; no id twice and none in both lists. geoTargets,
 	// languages, keywords, interestIds, customAudienceIds and
 	// excludedCustomAudienceIds together may name at most 60 criteria per create,
@@ -11059,8 +11080,8 @@ func ValidateUploadCreativeAssetCreatedResponseBody(body *UploadCreativeAssetCre
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.id", *body.ID, goa.FormatUUID))
 	}
 	if body.MimeType != nil {
-		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg"}))
+		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg" || *body.MimeType == "video/mp4") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg", "video/mp4"}))
 		}
 	}
 	if body.Width != nil {
@@ -11106,8 +11127,8 @@ func ValidateUploadCreativeAssetOKResponseBody(body *UploadCreativeAssetOKRespon
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.id", *body.ID, goa.FormatUUID))
 	}
 	if body.MimeType != nil {
-		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg"}))
+		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg" || *body.MimeType == "video/mp4") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg", "video/mp4"}))
 		}
 	}
 	if body.Width != nil {
@@ -11181,8 +11202,8 @@ func ValidateGetCreativeAssetResponseBody(body *GetCreativeAssetResponseBody) (e
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.id", *body.ID, goa.FormatUUID))
 	}
 	if body.MimeType != nil {
-		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg"}))
+		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg" || *body.MimeType == "video/mp4") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg", "video/mp4"}))
 		}
 	}
 	if body.Width != nil {
@@ -16233,8 +16254,8 @@ func ValidateCreativeAssetResponseBody(body *CreativeAssetResponseBody) (err err
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.id", *body.ID, goa.FormatUUID))
 	}
 	if body.MimeType != nil {
-		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg"}))
+		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg" || *body.MimeType == "video/mp4") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg", "video/mp4"}))
 		}
 	}
 	if body.Width != nil {
@@ -16280,8 +16301,8 @@ func validateCreativeAssetResponseBody(body *CreativeAssetResponseBody, path str
 		err = goa.MergeErrors(err, goa.ValidateFormat(path+".id", *body.ID, goa.FormatUUID))
 	}
 	if body.MimeType != nil {
-		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".mime_type", *body.MimeType, []any{"image/png", "image/jpeg"}))
+		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg" || *body.MimeType == "video/mp4") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".mime_type", *body.MimeType, []any{"image/png", "image/jpeg", "video/mp4"}))
 		}
 	}
 	if body.Width != nil {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -91,6 +92,8 @@ type xCreativeServer struct {
 	tweetQuery string
 	initStatus int
 	total      int
+	// initBody is the last initialize's JSON body (#564 gap 7).
+	initBody string
 }
 
 func (x *xCreativeServer) count(label string) int {
@@ -110,6 +113,8 @@ func newXCreativeServer(t *testing.T) (*xCreativeServer, *httptest.Server) {
 		switch {
 		case r.Method == http.MethodPost && p == "/2/media/upload/initialize":
 			hit("init")
+			b, _ := io.ReadAll(r.Body)
+			x.initBody = string(b)
 			if x.initStatus != 0 {
 				w.WriteHeader(x.initStatus)
 				return

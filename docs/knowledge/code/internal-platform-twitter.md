@@ -1701,3 +1701,24 @@ snapshot.
 `followerLookalikeUserIds` from the gap 4 shape is deferred: X has no user lookup to check an id
 before create. Everything here is behind `TWITTER_CREATE_TARGETING_ENABLED` (default off) and is
 not verified live.
+
+## Video creative (`CampaignInput.Video`, #564 gap 7)
+
+`twitterConfig.videoAssetId` (`video.go`). `media.go` is now kind-parameterised (`mediaKind`:
+noun, `media_category`, library `media_type`, STATUS poll bound): `imageMedia` (`tweet_image`,
+`IMAGE`, 10 polls) and `videoMedia` (`amplify_video`, `VIDEO`, `maxVideoStatusPolls` = 6, each wait
+capped at `mediaPollCap` 5 s, so at most 30 s). `ensureMedia` runs Step 1b' for a video exactly as
+for an image — library lookup by SHA-256 name, else chunked upload (initialize / append / finalize
+/ STATUS) and library add — before the campaign POST, so every failure, including processing not
+finished within the bound, is `(nil, err)` with nothing created. Retry safety: the library lookup
+precedes any byte, so a video already added is never uploaded twice; an upload stopped before the
+library add leaves only an expiring session; tweets are authored once per create after the line
+item, as for an image. The video's `media_key` then rides as `media_keys`. Up front:
+`validateVideoInput` (bytes present, at most `MaxVideoBytes` 30 MiB — the store's ceiling,
+`video/mp4`, an `ftyp` box), never with `Image`, an authored tweet required, and
+`CheckCreateCriteriaCountWithVideo` (at most 30 criteria: the budget test now adds the video's
+writes and 30 s wait). The dispatcher (`internal/dispatch/twitter_video.go`) gates it on
+`TWITTER_VIDEO_ENABLED`, refuses the config-only rules synchronously (re-checked in `Dispatch`),
+and `resolveTwitterVideo` loads the MP4 (size before blob, `AssetReserver`, `video/mp4` only)
+before any X request. The asset store side (video/mp4 uploads, migration `000057`) is #586's,
+taken unchanged. Not verified live: amplify_video processing time is the open question.

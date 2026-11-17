@@ -324,6 +324,14 @@ openssl rand -base64 32
   `"false"` (`app.environment.TWITTER_CREATE_TARGETING_ENABLED.value`);
   enable it per-environment in the ArgoCD overlay once a live create
   confirms it.
+- `TWITTER_VIDEO_ENABLED` (default unset, i.e. OFF) — opts a deployment IN to
+  `twitterConfig.videoAssetId` (#564 gap 7): a stored MP4 uploaded as
+  `amplify_video` (chunked initialize/append/finalize, then STATUS polled for at
+  most 30 s) and attached to the tweet an X create authors. Only the exact
+  value `true` enables it; anything else fails closed, and a create setting it
+  is refused with a 400 before any job exists. Before enabling, measure X's
+  processing time for a 20-30 MiB MP4 against the 30 s bound. The chart sets it
+  to `"false"` (`app.environment.TWITTER_VIDEO_ENABLED.value`).
 - `META_CONVERSIONS_METRICS_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to conversions in the Meta metrics read (#550): for a
   campaign this service created with the conversions objective, the Insights
