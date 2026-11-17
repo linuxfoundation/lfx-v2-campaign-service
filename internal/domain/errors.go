@@ -651,7 +651,7 @@ var (
 	// other targeting, which this reduce-only surface never does. Mapped to 409, nothing changed.
 	ErrKeywordTargetingWouldEmpty = errors.New("the removal would leave no keyword targeted")
 
-	// ErrKeywordTargetingLimit indicates a positive keyword add (#564 gap 12, X) that would leave
+	// ErrKeywordTargetingLimit indicates a positive or negative keyword add (#564 gap 12, X) that would leave
 	// the line item holding more targeting criteria than this service puts on one line item
 	// (twitter.MaxCreateTargetingCriteria, the create-time cap), counting the criteria it already
 	// holds. Decided from a READ before any write, so nothing was changed; a state fault, not a

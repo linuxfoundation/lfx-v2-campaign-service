@@ -60,6 +60,38 @@ func (d *TwitterDispatcher) lockTwitterTargeting(ctx context.Context, op, accoun
 	return hold, nil
 }
 
+// settleTwitterTargetingLock releases a line item's targeting lock at the end of a positive or
+// negative keyword add. The same rule as Reddit's whole-targeting writes: an UNCONFIRMED error, or
+// any UNCONFIRMED item in a per-item answer, keeps the lock for the cooldown (X may still be
+// applying it; released at once, the next add would not see it and send it again).
+func (d *TwitterDispatcher) settleTwitterTargetingLock(hold domain.KeywordTargetingLockHold, err error, outcomes []string) {
+	if redditWriteUnsettled(err, outcomes...) {
+		hold.ReleaseAfterCooldown(d.targetingCooldown)
+		return
+	}
+	hold.Release()
+}
+
+// checkTwitterCriteriaCap is the one total-criteria cap both keyword adds enforce, positive
+// (AddKeywordTargeting) and negative (AddNegativeKeywords): the line item must not end up with more
+// than twitter.MaxCreateTargetingCriteria live criteria of any type, counting every live criterion
+// it holds now (all, deleted ones excluded) plus the toSend criteria this request would POST.
+// Decided under the line item's targeting lock from a complete read, before any write, so a
+// refusal (domain.ErrKeywordTargetingLimit, a 409) changed nothing.
+func checkTwitterCriteriaCap(op, lineItemID string, all []twitter.TargetingCriterion, toSend int) error {
+	live := 0
+	for _, tc := range all {
+		if !tc.Deleted {
+			live++
+		}
+	}
+	if live+toSend > twitter.MaxCreateTargetingCriteria {
+		return fmt.Errorf("%s: line item %s holds %d targeting criteria and this request would add %d; at most %d are accepted on one line item: %w",
+			op, lineItemID, live, toSend, twitter.MaxCreateTargetingCriteria, domain.ErrKeywordTargetingLimit)
+	}
+	return nil
+}
+
 // AddKeywordTargeting implements service.KeywordTargetingAdder for X: one BROAD_KEYWORD targeting
 // criterion (operator_type EQ) per keyword on the ONE line item this service created for the
 // campaign (#564 gap 12).
@@ -83,7 +115,8 @@ func (d *TwitterDispatcher) lockTwitterTargeting(ctx context.Context, op, accoun
 //
 // THE LOCK. Held from the criteria read through the last POST, so two LFX adds to one line item
 // cannot both read the same criteria, both pass the cap and both send — together exceeding it, or
-// each sending the same keyword as a duplicate criterion. It is released at once when the add
+// each sending the same keyword as a duplicate criterion. AddNegativeKeywords takes the same lock
+// and enforces the same cap, so a positive and a negative add cannot overlap past it either. It is released at once when the add
 // settled, and kept for targetingCooldown after any UNCONFIRMED POST (X may still be applying it;
 // released at once, the next add would not see it and send the same keyword again). A change made
 // outside LFX (X Ads Manager) is not serialized.
@@ -109,13 +142,7 @@ func (d *TwitterDispatcher) AddKeywordTargeting(ctx context.Context, projectID s
 		for _, o := range retOut {
 			outcomes = append(outcomes, o.Outcome)
 		}
-		// The same rule as Reddit's whole-targeting writes: an UNCONFIRMED error, or any
-		// UNCONFIRMED item in a per-item answer, keeps the lock for the cooldown.
-		if redditWriteUnsettled(retErr, outcomes...) {
-			hold.ReleaseAfterCooldown(d.targetingCooldown)
-			return
-		}
-		hold.Release()
+		d.settleTwitterTargetingLock(hold, retErr, outcomes)
 	}()
 
 	all, err := client.ListLineItemTargetingCriteria(ctx, lineItemID)
@@ -125,13 +152,11 @@ func (d *TwitterDispatcher) AddKeywordTargeting(ctx context.Context, projectID s
 		}
 		return nil, fmt.Errorf("%s: list targeting criteria: %w", op, err)
 	}
-	liveCriteria := 0
 	present := make(map[string]string, len(all))
 	for _, tc := range all {
 		if tc.Deleted {
 			continue
 		}
-		liveCriteria++
 		if tc.PositiveBroadKeyword() {
 			if _, seen := present[twitterNegativeKey(tc.TargetingType, tc.TargetingValue)]; !seen {
 				present[twitterNegativeKey(tc.TargetingType, tc.TargetingValue)] = tc.ID
@@ -144,9 +169,8 @@ func (d *TwitterDispatcher) AddKeywordTargeting(ctx context.Context, projectID s
 			toSend++
 		}
 	}
-	if liveCriteria+toSend > twitter.MaxCreateTargetingCriteria {
-		return nil, fmt.Errorf("%s: line item %s holds %d targeting criteria and this request would add %d; at most %d are accepted on one line item: %w",
-			op, lineItemID, liveCriteria, toSend, twitter.MaxCreateTargetingCriteria, domain.ErrKeywordTargetingLimit)
+	if err := checkTwitterCriteriaCap(op, lineItemID, all, toSend); err != nil {
+		return nil, err
 	}
 
 	out := make([]model.KeywordTargetingOutcome, 0, len(kws))

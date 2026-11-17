@@ -262,3 +262,57 @@ func TestTwitter_AddKeywordTargeting_WhitespaceVariantsAreOneKeyword(t *testing.
 		t.Errorf("POSTs = %d, want 1", n)
 	}
 }
+
+// A positive and a negative add overlapping on one line item at 59 live criteria cannot end at 61:
+// both take the line item's lock, so the second reads the first's criterion and is refused by the
+// shared cap. The first add's POST is held open so the second starts while it is in flight, in
+// both orders.
+func TestTwitter_OverlappingPositiveAndNegativeAddsStayUnderTheCap(t *testing.T) {
+	enableXKeywordAdd(t)
+	positive := func(s *xNegStub) error {
+		out, err := addXKeywords(s, xBidCampaign(), "ebpf")
+		if err == nil && (len(out) != 1 || out[0].Outcome != model.KeywordOutcomeApplied) {
+			return fmt.Errorf("outcomes %+v", out)
+		}
+		return err
+	}
+	negative := func(s *xNegStub) error {
+		out, err := addXNegatives(s, xBidCampaign(), "", model.NegativeKeyword{Text: "torrent", MatchType: "Broad"})
+		if err == nil && (len(out) != 1 || out[0].Outcome != model.KeywordOutcomeApplied) {
+			return fmt.Errorf("outcomes %+v", out)
+		}
+		return err
+	}
+	for _, tc := range []struct {
+		name          string
+		slow          string
+		first, second func(*xNegStub) error
+	}{
+		{"positive first", "ebpf", positive, negative},
+		{"negative first", "torrent", negative, positive},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newXNegStubSlow(t, xKWTLineItem, xCriteriaWith(59), nil, map[string]time.Duration{tc.slow: 300 * time.Millisecond})
+			s.reflect = true
+			firstErr := make(chan error, 1)
+			go func() { firstErr <- tc.first(s) }()
+			deadline := time.Now().Add(5 * time.Second)
+			for len(s.sent()) == 0 {
+				if time.Now().After(deadline) {
+					t.Fatal("the first add never sent its POST")
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			secondErr := tc.second(s)
+			if err := <-firstErr; err != nil {
+				t.Fatalf("first add: %v", err)
+			}
+			if !errors.Is(secondErr, domain.ErrKeywordTargetingLimit) {
+				t.Errorf("second add: want ErrKeywordTargetingLimit, got %v", secondErr)
+			}
+			if n := len(s.sent()); n != 1 {
+				t.Errorf("%d criteria POSTed from 59 live, want 1 (the line item would hold %d)", n, 59+n)
+			}
+		})
+	}
+}

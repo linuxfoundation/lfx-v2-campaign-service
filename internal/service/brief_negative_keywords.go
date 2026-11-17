@@ -140,8 +140,16 @@ func (s *BriefService) classifyNegativeKeywordError(ctx context.Context, p *brie
 		}
 	case errors.Is(aerr, domain.ErrKeywordTargetingChanged):
 		return &briefs.ConflictError{Code: "409", Message: "the ad group's targeting changed since it was read — nothing was added; read the keyword targeting again and resend with its revision"}
+	case errors.Is(aerr, domain.ErrKeywordTargetingWriteInProgress) && platform == model.ProviderTwitterAds:
+		return &briefs.ConflictError{Code: "409", Message: "another change to this line item's keyword targeting is still in progress — nothing was added; read the keyword targeting again and resend"}
 	case errors.Is(aerr, domain.ErrKeywordTargetingWriteInProgress):
 		return &briefs.ConflictError{Code: "409", Message: "another change to this ad group's keyword targeting is still in progress — nothing was added; read the keyword targeting again and resend with its revision"}
+	case errors.Is(aerr, domain.ErrKeywordTargetingLimit):
+		// X: a negated keyword is a targeting criterion, counted against the same per-line-item
+		// cap (and under the same lock) as the positive add, and refused with its 409.
+		slog.WarnContext(ctx, "negative keywords refused: the line item's targeting criteria cap; nothing was added",
+			append(logFields, "error", safeErrSummary(aerr))...)
+		return &briefs.ConflictError{Code: "409", Message: "the line item would hold more than 60 targeting criteria, counting those it already has — nothing was added; remove criteria first or add fewer negative keywords"}
 	case errors.Is(aerr, domain.ErrNegativeKeywordLimit):
 		slog.WarnContext(ctx, "negative keywords refused: the platform's limit would be exceeded; nothing was added",
 			append(logFields, "error", safeErrSummary(aerr))...)
