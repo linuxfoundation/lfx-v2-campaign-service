@@ -216,6 +216,34 @@ func linkedinConversionsEnabled() bool {
 	return os.Getenv(constants.EnvLinkedInAdsConversionsEnabled) == "true"
 }
 
+// checkAdAccountIDShape refuses a linkedInConfig.adAccountId that is present but not a JSON string
+// (#581): a number, object, array or boolean. PreflightCreate decodes the config best-effort, and
+// encoding/json skips a wrong-typed field, so without this `"adAccountId": 500928401` would decode
+// to "" and skip the account check: the request would get a job and a 202, and Dispatch would then
+// fail it in the strict decode. An explicit null decodes to "" without error and reads as omitted
+// (the connection's account), as a null employerExclusions does. Keys match case-insensitively, as
+// encoding/json does; anything it cannot attribute to adAccountId is left to the ordinary decode.
+func checkAdAccountIDShape(config json.RawMessage) error {
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(config, &envelope) != nil {
+		return nil
+	}
+	var platformCfg map[string]json.RawMessage
+	if json.Unmarshal(envelope["linkedInConfig"], &platformCfg) != nil {
+		return nil
+	}
+	for k, raw := range platformCfg {
+		if !strings.EqualFold(k, "adAccountId") || isJSONNull(raw) {
+			continue
+		}
+		var str string
+		if json.Unmarshal(raw, &str) != nil {
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.adAccountId: must be a string holding the bare LinkedIn account number, e.g. \"500928401\"; omit it for the connection's account", domain.ErrCreateConfigInvalid))
+		}
+	}
+	return nil
+}
+
 // checkConversionsShape refuses a linkedInConfig.conversions that is not a JSON array of strings
 // (#552), explicit null included. encoding/json decodes a number entry into a []string as "" and the best-effort
 // pre-flight decode keeps going, so without this a caller sending [104012] would be told "" is
@@ -392,14 +420,15 @@ func linkedinBidPlan(cfg linkedinConfig) (bidPlan, error) {
 //     `employerExclusions` that is not an array of strings (checkTargetingShape); or a targeting
 //     linkedinTargeting refuses (the deployment gate off, or linkedin.ValidateTargeting, which also
 //     holds employerExclusions to the employers rule and checks the merged employer cap);
-//   - adAccountId (#581): an account selectLinkedInAccount refuses for the resolved connection.
+//   - adAccountId (#581): an `adAccountId` that is not a JSON string (checkAdAccountIDShape; null
+//     reads as omitted), or an account selectLinkedInAccount refuses for the resolved connection.
 //
 // It never calls LinkedIn (adAccountId needs only the database read a create's resolution makes),
 // so every other outcome is ErrPreflightNotApplicable; a config that does not decode is otherwise
 // left to Dispatch.
 func (d *LinkedInDispatcher) PreflightCreate(ctx context.Context, projectID string, platform model.Provider, config json.RawMessage) error {
 	// A wrong-typed `bidding` is a synchronous 400 even though most type errors are not (the
-	// conversions and targeting shape checks below are the other exceptions).
+	// conversions, targeting and adAccountId shape checks below are the other exceptions).
 	if err := checkBiddingShape(config, "linkedInConfig"); err != nil {
 		return err
 	}
@@ -407,8 +436,8 @@ func (d *LinkedInDispatcher) PreflightCreate(ctx context.Context, projectID stri
 	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
 	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
 	// not decode is its zero value, which no plan rule reads as a refusal. The decode error itself
-	// stays "not applicable" — only bidding, conversions and targeting (with employerExclusions
-	// when targeting is set) are promised as a synchronous 400.
+	// stays "not applicable" — only bidding, conversions, targeting (with employerExclusions
+	// when targeting is set) and adAccountId are promised as a synchronous 400.
 	var cfg linkedinConfig
 	_ = unmarshalPlatformConfig(config, "linkedInConfig", &cfg)
 	if _, err := linkedinBidPlan(cfg); err != nil {
@@ -431,9 +460,14 @@ func (d *LinkedInDispatcher) PreflightCreate(ctx context.Context, projectID stri
 	if _, err := linkedinTargeting(cfg); err != nil {
 		return err
 	}
-	// linkedInConfig.adAccountId (#581) is a synchronous 400 when it names an account a create
-	// would refuse. It needs the resolution a create uses (a database read, no LinkedIn call); a
-	// resolution that fails is left to Dispatch, which reports the connection fault itself.
+	// linkedInConfig.adAccountId (#581) is a synchronous 400 when it is not a JSON string (the
+	// best-effort decode above would leave it "" and skip the account check), and when it names an
+	// account a create would refuse. The account check needs the resolution a create uses (a
+	// database read, no LinkedIn call); a resolution that fails is left to Dispatch, which reports
+	// the connection fault itself.
+	if err := checkAdAccountIDShape(config); err != nil {
+		return err
+	}
 	if strings.TrimSpace(cfg.AdAccountID) != "" {
 		if res, rerr := d.creds.resolve(ctx, projectID, platform); rerr == nil && res != nil {
 			if _, serr := selectLinkedInAccount(res, cfg.AdAccountID); serr != nil {
@@ -513,6 +547,10 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	// See stampProvenance for why this is a defer on the named return, not a per-return call.
 	defer func() { res.stampProvenance(camp) }()
 
+	// A wrong-typed adAccountId fails with PreflightCreate's sentence, not the strict decode's.
+	if err := checkAdAccountIDShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg linkedinConfig
 	if err := unmarshalPlatformConfig(config, "linkedInConfig", &cfg); err != nil {
 		return nil, notCreated(err)
