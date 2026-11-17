@@ -85,6 +85,23 @@ func linkedInLookupAccountAttr() {
 	})
 }
 
+// LinkedInAdsAdoptableCampaign is one campaign of the adoption candidate list (#581).
+var LinkedInAdsAdoptableCampaign = Type("linkedin-ads-adoptable-campaign", func() {
+	Attribute("id", String, "The LinkedIn campaign id, in exactly the form adopt-campaign's platform_campaign_id takes", func() { Example("312345678") })
+	Attribute("name", String, "The campaign's name in Campaign Manager. Not an identifier.", func() { Example("KubeCon NA 2026 — Registrations") })
+	Attribute("status", String, "LinkedIn's campaign status, verbatim: ACTIVE or PAUSED (only those are listed)", func() { Example("ACTIVE") })
+	Attribute("recorded_in_project", Boolean, "true when this project already has a live campaign row for this campaign id (adopted or created here), so its monitor already shows it. false does not mean adoptable: a campaign bound in ANOTHER project is still refused by adopt-campaign (409).", func() { Example(false) })
+	Required("id", "name", "status", "recorded_in_project")
+})
+
+// LinkedInAdsAdoptableCampaigns is the adoption candidate list (#581).
+var LinkedInAdsAdoptableCampaigns = Type("linkedin-ads-adoptable-campaigns", func() {
+	Attribute("account_id", String, "The LinkedIn ad account the campaigns were read from", func() { Example("500928401") })
+	Attribute("campaigns", ArrayOf(LinkedInAdsAdoptableCampaign), "The account's ACTIVE and PAUSED campaigns, in the order LinkedIn returned them")
+	Attribute("adoptable_count", Int, "How many campaigns are in `campaigns`", func() { Example(1) })
+	Required("account_id", "campaigns", "adoptable_count")
+})
+
 // LinkedInAdsSelectableAccount is one account linkedInConfig.adAccountId may name (#581).
 var LinkedInAdsSelectableAccount = Type("linkedin-ads-selectable-account", func() {
 	Attribute("account_id", String, "The LinkedIn ad account, in exactly the form linkedInConfig.adAccountId takes", func() { Example("500928401") })
@@ -156,6 +173,47 @@ func linkedInAdsLookupMethods() {
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
 			GET("/projects/{project_id}/linkedin-ads/conversions")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("account_id")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("list-linkedin-ads-adoptable-campaigns", func() {
+		Description("List the ACTIVE and PAUSED campaigns in one of the LF system LinkedIn account's addressable ad " +
+			"accounts (its default account or an operator-installed grant), as candidates for adopt-campaign with " +
+			"account_id (#581), so a campaign built by hand in Campaign Manager can be bound to a brief and shown in " +
+			"this project's monitor. Read through the LF system LinkedIn connection, whatever connection the project " +
+			"has. Gated on global_marketing_ops of {project_id} by the marketing-ops-api gateway rule, because it lists " +
+			"campaigns of every foundation in the account. Answers 400 unless LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is " +
+			"on, and 400 for an account the system row cannot address (nothing is sent). A missing or unusable LF system " +
+			"LinkedIn connection is 500, an operator's fault, and so is an expired or revoked LF system token or a " +
+			"rejected LF application credential, or the LF row's credential cannot be decrypted: only an operator can " +
+			"repair the LF row. A transient LinkedIn " +
+			"failure is 503. The campaign list pages LinkedIn's search finder 100 at a time, up to 50 pages, and fails with 503 beyond " +
+			"that or on a page it cannot trust: a repeated key, a campaign without a valid id, a non-blank name or an " +
+			"ACTIVE or PAUSED status, or a campaign listed twice. A pure read: nothing is persisted.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("account_id", String, "The LinkedIn ad account to list: the LF system account's default account or one of its grants", func() {
+				Pattern(`^[0-9]+$`)
+				MaxLength(64)
+				Example("500928401")
+			})
+			Required("project_id", "account_id")
+		})
+		Result(LinkedInAdsAdoptableCampaigns)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/linkedin-ads/adoptable-campaigns")
 			Header("bearer_token:Authorization")
 			connectionAuthErrorResponses()
 			Param("account_id")

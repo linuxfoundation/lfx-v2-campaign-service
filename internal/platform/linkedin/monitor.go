@@ -7,11 +7,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -153,6 +155,52 @@ func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID
 	return out, budgetCurrency.code(), nil
 }
 
+// ListAccountCampaignRefs is the campaign list ListAccountCampaigns walks, without the analytics
+// read: every ACTIVE/PAUSED campaign on accountID with its id, name and status (the other fields
+// of each row are whatever the list carried). It backs the adoption candidate list (#581), which
+// needs to name campaigns, not report on them, so it costs no Ad Analytics call.
+//
+// The monitor tolerates a page it cannot fully trust (it withholds only the currency); a list of
+// campaigns offered for adoption cannot, because each row is a choice a caller acts on. So every
+// row must carry a valid campaign id, a non-blank name and a status of ACTIVE or PAUSED (the
+// finder's own filter: anything else means the filter was not honoured), no id may appear twice,
+// and every page must pass identityjson (a repeated key would make the decoded id, name or status
+// merely the last of two). Any violation refuses the whole list with ErrUntrustworthyCampaignList,
+// which the service's discovery classifier answers as 503.
+func (c *Client) ListAccountCampaignRefs(ctx context.Context, accountID string) ([]AccountCampaignRow, error) {
+	if err := ValidateAccountID(accountID); err != nil {
+		return nil, err
+	}
+	rows, read, err := c.fetchAccountCampaignList(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if read.pageUntrusted {
+		return nil, fmt.Errorf("%w: a page repeats a key", ErrUntrustworthyCampaignList)
+	}
+	seen := make(map[string]struct{}, len(rows))
+	for i, r := range rows {
+		if ValidateCampaignID(r.CampaignID) != nil {
+			return nil, fmt.Errorf("%w: campaign %d has no valid id", ErrUntrustworthyCampaignList, i)
+		}
+		if strings.TrimSpace(r.Name) == "" {
+			return nil, fmt.Errorf("%w: campaign %s has no name", ErrUntrustworthyCampaignList, r.CampaignID)
+		}
+		if r.Status != "ACTIVE" && r.Status != "PAUSED" {
+			return nil, fmt.Errorf("%w: campaign %s is not ACTIVE or PAUSED", ErrUntrustworthyCampaignList, r.CampaignID)
+		}
+		if _, dup := seen[r.CampaignID]; dup {
+			return nil, fmt.Errorf("%w: campaign %s is listed twice", ErrUntrustworthyCampaignList, r.CampaignID)
+		}
+		seen[r.CampaignID] = struct{}{}
+	}
+	return rows, nil
+}
+
+// ErrUntrustworthyCampaignList is ListAccountCampaignRefs' refusal of a campaign list it cannot
+// offer as adoption candidates. It is an upstream fault, not the caller's or the connection's.
+var ErrUntrustworthyCampaignList = errors.New("list account campaigns: the campaign list cannot be trusted")
+
 // fetchAccountCampaignList walks GET /adAccounts/{id}/adCampaigns?q=search over
 // ACTIVE/PAUSED campaigns, decoding the budget/schedule fields the shared responseElement
 // type does not carry — this uses its own response shape rather than doRequest's
@@ -197,6 +245,7 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 		pageTrusted := identityjson.Check(page) == nil
 		if !pageTrusted {
 			currencies.unusable = true
+			currencies.pageUntrusted = true
 		}
 		if err := json.Unmarshal(page, &resp); err != nil {
 			return nil, budgetCurrencies{}, fmt.Errorf("list account campaigns: response is not a campaign page of the expected shape")
@@ -300,6 +349,9 @@ type budgetCurrencies struct {
 	codes    map[string]struct{}
 	missing  bool
 	unusable bool
+	// pageUntrusted records that some page failed identityjson. The monitor needs only the
+	// currency consequence (unusable); ListAccountCampaignRefs refuses the whole list on it.
+	pageUntrusted bool
 }
 
 // observe folds one budget's raw currencyCode. named reports that the budget carried the field at

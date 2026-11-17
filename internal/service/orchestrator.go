@@ -620,7 +620,8 @@ type CampaignAdopter interface {
 	// unverifiable answer must be an ERROR, never a nil ref: a false absence tells an operator
 	// "your campaign isn't there" about a campaign sitting on the platform spending money.
 	//
-	// It MUST resolve the PROJECT's own connection only — never the shared LF system account
+	// Without an adoption account (model.AdoptionAccount(ctx) empty), it MUST resolve the
+	// PROJECT's own connection only — never the shared LF system account
 	// that every other path falls back to. Under that fallback all such projects share one ad
 	// account, so project A could name a campaign project B created there and bind it to its
 	// own brief; the account-mismatch guards do not help, because both resolve to the same
@@ -630,8 +631,23 @@ type CampaignAdopter interface {
 	// Declining to RESOLVE the fallback, rather than rejecting a value that came from it, is
 	// part of the contract: resolution validates and decrypts the LF row before the caller can
 	// see where it came from, so consulting it lets that row's defects surface as this call's
-	// failure. The service switch has no arm for them, deliberately.
+	// failure.
+	//
+	// The one exception (#581, LinkedIn only): with an adoption account set — adopt-campaign's
+	// account_id, admitted only for global_marketing_ops while LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED
+	// is on — the lookup reads that account through the LF system row (its default account or a
+	// grant). The binding index still refuses a campaign bound anywhere, and the service's
+	// ErrSystemConnectionMissing / ErrSystemConnectionNotUsable arm (500) is reachable only
+	// through that path.
 	LookupCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) (*model.PlatformCampaignRef, error)
+}
+
+// AdoptableCampaignLister is an OPTIONAL dispatcher capability (#581, LinkedIn only): list the
+// campaigns in one of the LF system account's addressable ad accounts that adopt-campaign with
+// account_id could bind. A pure read; an account the system row cannot address must be refused
+// with domain.ErrAccountNotManagedByConnection before anything is sent.
+type AdoptableCampaignLister interface {
+	ListAdoptableCampaigns(ctx context.Context, projectID string, platform model.Provider, accountID string) ([]model.AdoptableCampaign, error)
 }
 
 // LinkedInCreateAccountReader is an OPTIONAL dispatcher capability (#581): report the ad account
@@ -3927,6 +3943,40 @@ func (o *Orchestrator) LinkedInCreateAccount(ctx context.Context, projectID stri
 		return nil, fmt.Errorf("%w: %s", ErrAccountsUnsupported, model.ProviderLinkedInAds)
 	}
 	return r.CreateAccount(ctx, projectID, model.ProviderLinkedInAds)
+}
+
+// ListAdoptableCampaigns lists the adoption candidates in accountID (#581) and marks each one the
+// project already records live (ListProjectPlatformCampaignIDs, scoped by project in SQL). The
+// mark is advisory: the binding index, not this list, refuses a campaign another project holds.
+func (o *Orchestrator) ListAdoptableCampaigns(ctx context.Context, projectID string, platform model.Provider, accountID string) ([]model.AdoptableCampaign, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrAdoptionUnsupported, platform)
+	}
+	lister, ok := d.(AdoptableCampaignLister)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrAdoptionUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, adoptLookupTimeout)
+	defer cancel()
+	start := time.Now()
+	rows, err := lister.ListAdoptableCampaigns(callCtx, projectID, platform, accountID)
+	o.recordUpstream(ctx, platform, opLookupCampaign, start, err)
+	if err != nil {
+		return nil, err
+	}
+	recorded, err := o.projectCampaignScope(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	have := make(map[string]struct{}, len(recorded))
+	for _, r := range recorded {
+		have[r.PlatformCampaignID] = struct{}{}
+	}
+	for i := range rows {
+		_, rows[i].RecordedInProject = have[rows[i].ID]
+	}
+	return rows, nil
 }
 
 // ResolvePlatformCampaign maps one upstream campaign id back to this service's own campaigns.
