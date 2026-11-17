@@ -494,7 +494,11 @@ none), or carrying an id the platform cannot read — or another project has sin
 such a campaign is omitted, never a 409. Microsoft does not implement the capability, so its monitor
 stays account-wide. LinkedIn implements it since #581 (its system row's grants make one credential serve several
 foundations' accounts), and like Google Ads it names the default account from the project's recorded campaigns
-when the caller omits one; a campaign recording no account fails its monitor, as on Google Ads, Reddit and X. Implementing it is how a platform is recorded as shared in code: if a platform's
+when the caller omits one. Unlike Google Ads, Reddit and X, a campaign recording no account does not fail its
+monitor: it is kept, as the connection's account, when the project's own connection serves the read, and omitted
+(logged) when the LF system credential serves it, since that credential is shared between foundations; a failure
+resolving which credential serves the read is an error, and omitting `account_id` when no campaign records an
+account is still a 409. Implementing it is how a platform is recorded as shared in code: if a platform's
 tenancy changes, change its dispatcher in the same change as the tables here.
 
 **Requested-account guards.** Five platforms carry one —
