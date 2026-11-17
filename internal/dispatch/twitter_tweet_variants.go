@@ -4,6 +4,7 @@
 package dispatch
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
@@ -69,6 +71,66 @@ func checkTwitterTweetVariants(cfg twitterConfig) ([]string, error) {
 		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: twitterConfig: %w", domain.ErrCreateConfigInvalid, err))
 	}
 	return texts, nil
+}
+
+// twitterHSToken is the hsToken a tweet's destination is tagged with: the documented top-level
+// envelope field when the request sets it, the brief's otherwise. A wrong-typed hsToken is an error.
+func twitterHSToken(config json.RawMessage, bf briefFields) (string, error) {
+	hsToken, err := envelopeHSToken(config)
+	if err != nil {
+		return "", err
+	}
+	if hsToken == "" {
+		hsToken = bf.HSToken
+	}
+	return hsToken, nil
+}
+
+// twitterTweetDestination is the part of the CampaignInput an authored tweet's destination URL is
+// built from. Dispatch and the synchronous preflight (checkTwitterComposedTweets) both take it from
+// here, so they compose the same text. Project is stamped from the authenticated scope, never from
+// caller JSON (api-catalog).
+func twitterTweetDestination(brief *model.CampaignBrief, bf briefFields, hsToken string) twitter.CampaignInput {
+	return twitter.CampaignInput{
+		EventName:       bf.EventName,
+		EventSlug:       brief.EventSlug,
+		Project:         brief.ProjectID,
+		RegistrationURL: bf.RegistrationURL,
+		HSToken:         hsToken,
+	}
+}
+
+// checkTwitterComposedTweets refuses, synchronously, a tweetText or variant whose COMPOSED text —
+// the copy plus the destination URL the job appends, each variant's tagged utm_content=variant-N —
+// is over X's limit (twitter.CheckComposedTweetTexts, the composition CreateCampaign publishes).
+// Copy with a link of its own that is not the destination passes the config-only rules
+// (NormalizeTweetVariants) yet gets the destination appended; without this it was a 202 and then a
+// failed job. It needs the brief (model.CreatePreflightBrief); without one, or with a brief or
+// hsToken the job would refuse on its own, it checks nothing and the job decides.
+func checkTwitterComposedTweets(ctx context.Context, config json.RawMessage, cfg twitterConfig, variants []string) error {
+	brief := model.CreatePreflightBrief(ctx)
+	if brief == nil {
+		return nil
+	}
+	bf, err := decodeBriefFields(brief)
+	if err != nil {
+		return nil
+	}
+	hsToken, err := twitterHSToken(config, bf)
+	if err != nil {
+		return nil
+	}
+	in := twitterTweetDestination(brief, bf, hsToken)
+	in.TweetID = cfg.TweetID
+	in.TweetText = cfg.TweetText
+	if err := twitter.CheckComposedTweetTexts(in, variants); err != nil {
+		var tErr *twitter.TargetingError
+		if errors.As(err, &tErr) {
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: twitterConfig.%s: %s", domain.ErrCreateConfigInvalid, tErr.Field, tErr.Msg))
+		}
+		return domain.WrapPreflightRefusal(fmt.Errorf("%w: twitterConfig: %w", domain.ErrCreateConfigInvalid, err))
+	}
+	return nil
 }
 
 // checkTwitterTweetVariantsShape refuses a variants value that is not a JSON array of objects whose

@@ -104,6 +104,50 @@ func TestTwitterTweetVariants_GateAndShape(t *testing.T) {
 	}
 }
 
+// Copy that already carries a link of its own, but not the destination, passes the config-only
+// rules at 250+1+23 = 274 and gets the destination appended at create (298). Given the brief, the
+// synchronous preflight composes the text exactly as the job does and refuses it, with no X call;
+// the job, reached anyway, refuses it with the same length. Without a brief it checks only the
+// config, as before. A nearby copy whose composed text fits is not refused.
+func TestTwitterTweetVariants_PreflightChecksComposedText(t *testing.T) {
+	t.Setenv(constants.EnvTwitterTweetVariantsEnabled, "true")
+	d, _, calls, _ := twitterVariantsServer(t, activeTwitterConn(goodTwitterCreds), 0)
+	// testBrief's destination is https://events.example/kc: this link is a different one.
+	over := strings.Repeat("a", 250) + " https://events.example/kubecon"
+	fits := strings.Repeat("a", 200) + " https://events.example/kubecon"
+	withBrief := model.WithCreatePreflightBrief(context.Background(), testBrief())
+
+	for _, tc := range []struct{ name, extra, want string }{
+		{"variant", `,"variants":[{"tweetText":"short"},{"tweetText":"` + over + `"}]`, "twitterConfig.variants: entry 1 tweetText: invalid tweet text: weighted length 298"},
+		{"tweetText", `,"tweetText":"` + over + `"`, "twitterConfig.tweetText: invalid tweet text: weighted length 298"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := twitterVariantsCfg(tc.extra)
+			requireConfigInvalid(t, d.PreflightCreate(withBrief, "cncf", model.ProviderTwitterAds, cfg), tc.want)
+			if err := d.PreflightCreate(context.Background(), "cncf", model.ProviderTwitterAds, cfg); !errors.Is(err, domain.ErrPreflightNotApplicable) {
+				t.Errorf("without a brief: %v, want not applicable (config-only rules pass it)", err)
+			}
+			_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds, cfg)
+			requirePreCreate(t, err)
+			if err == nil || !strings.Contains(err.Error(), "weighted length 298") {
+				t.Errorf("the job refused with %v; want the same weighted length 298 the preflight computed", err)
+			}
+			if n := calls.Load(); n != 0 {
+				t.Fatalf("%d X calls; want 0", n)
+			}
+		})
+	}
+
+	for _, extra := range []string{
+		`,"variants":[{"tweetText":"` + fits + `"}]`,
+		`,"tweetText":"` + fits + `"`,
+	} {
+		if err := d.PreflightCreate(withBrief, "cncf", model.ProviderTwitterAds, twitterVariantsCfg(extra)); !errors.Is(err, domain.ErrPreflightNotApplicable) {
+			t.Errorf("%s: %v, want not applicable", extra, err)
+		}
+	}
+}
+
 // On: every variant is authored and promoted, the row is created and records every promoted
 // tweet; a variant that fails after another was published makes the row created_degraded with a
 // step naming it, and the published tweets are kept.

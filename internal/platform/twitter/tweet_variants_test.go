@@ -318,3 +318,44 @@ func TestCreateCampaign_ImageIsJudgedWithVariants(t *testing.T) {
 		t.Fatalf("err = %v, want the image's own refusal", err)
 	}
 }
+
+// CheckComposedTweetTexts refuses exactly what CreateCampaign's composition refuses: copy with a
+// link that is not the destination gets the destination appended (250+1+23+1+23 = 298), while copy
+// that already carries its exact destination is not appended to and fits. A destination that
+// cannot be built is left to CreateCampaign.
+func TestCheckComposedTweetTexts(t *testing.T) {
+	over := strings.Repeat("a", 250) + " https://events.example/kubecon"
+	in := variantsInput()
+	if _, err := NormalizeTweetVariants([]string{over}, "", ""); err != nil {
+		t.Fatalf("the config-only rules refuse the copy (%v); the case needs one they pass", err)
+	}
+
+	var tErr *TargetingError
+	err := CheckComposedTweetTexts(in, []string{"short", over})
+	if !errors.As(err, &tErr) || tErr.Field != FieldTweetVariants || !strings.Contains(tErr.Msg, "entry 1 tweetText: invalid tweet text: weighted length 298") {
+		t.Fatalf("variants: %v, want entry 1 refused at weighted length 298", err)
+	}
+	single := in
+	single.TweetText = over
+	if err := CheckComposedTweetTexts(single, nil); !errors.As(err, &tErr) || tErr.Field != FieldTweetText {
+		t.Fatalf("tweetText: %v, want a tweetText refusal", err)
+	}
+	single.TweetID = "123" // an explicit tweet wins; tweetText is not authored
+	if err := CheckComposedTweetTexts(single, nil); err != nil {
+		t.Fatalf("tweetText beside a tweetId: %v, want nil", err)
+	}
+
+	dest, err := buildTwitterVariantUTMURL(in, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckComposedTweetTexts(in, []string{strings.Repeat("a", 250) + " " + dest}); err != nil {
+		t.Fatalf("copy carrying its own destination: %v, want nil (nothing appended)", err)
+	}
+
+	bad := in
+	bad.RegistrationURL = "not a url"
+	if err := CheckComposedTweetTexts(bad, []string{over}); err != nil {
+		t.Fatalf("unbuildable destination: %v, want nil (CreateCampaign reports it)", err)
+	}
+}

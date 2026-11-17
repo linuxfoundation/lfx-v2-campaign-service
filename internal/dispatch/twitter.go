@@ -141,7 +141,7 @@ func twitterBidPlan(cfg twitterConfig) (bidPlan, error) {
 // created as asked. It never calls X, so every other outcome is ErrPreflightNotApplicable; a
 // config that does not decode is left to Dispatch — except a wrong-typed `bidding`, refused here
 // by checkBiddingShape.
-func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
+func (d *TwitterDispatcher) PreflightCreate(ctx context.Context, _ string, _ model.Provider, config json.RawMessage) error {
 	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
 	if err := checkBiddingShape(config, "twitterConfig"); err != nil {
 		return err
@@ -200,7 +200,11 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 	if _, err := checkTwitterAudienceExpansion(cfg); err != nil {
 		return err
 	}
-	if _, err := checkTwitterTweetVariants(cfg); err != nil {
+	variants, err := checkTwitterTweetVariants(cfg)
+	if err != nil {
+		return err
+	}
+	if err := checkTwitterComposedTweets(ctx, config, cfg, variants); err != nil {
 		return err
 	}
 	if _, err := checkTwitterWebsiteCard(cfg); err != nil {
@@ -505,12 +509,9 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// a request-supplied token takes precedence over the brief blobs so it drives the
 	// promoted-tweet utm_campaign instead of being silently ignored (matches the other
 	// dispatchers via the shared envelopeHSToken helper).
-	hsToken, err := envelopeHSToken(config)
+	hsToken, err := twitterHSToken(config, bf)
 	if err != nil {
 		return nil, notCreated(err) // a wrong-typed hsToken is a caller error (pre-create)
-	}
-	if hsToken == "" {
-		hsToken = bf.HSToken
 	}
 
 	// The creative image is resolved BEFORE the client is built or X contacted: every refusal
@@ -529,13 +530,15 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	defer releaseVideo()
 
 	stageToken, tacticToken := model.DispatchLabels(ctx).NameTokens()
+	// The destination fields come from the helper the synchronous preflight composes the tweet
+	// text with (checkTwitterComposedTweets), so the two build the same destination URL.
+	dest := twitterTweetDestination(brief, bf, hsToken)
 	in := twitter.CampaignInput{
-		EventName: bf.EventName,
-		EventSlug: brief.EventSlug,
-		// Project stamped from the authenticated scope, not caller JSON (api-catalog).
-		Project:         brief.ProjectID,
-		RegistrationURL: bf.RegistrationURL,
-		HSToken:         hsToken,
+		EventName:       dest.EventName,
+		EventSlug:       dest.EventSlug,
+		Project:         dest.Project,
+		RegistrationURL: dest.RegistrationURL,
+		HSToken:         dest.HSToken,
 		BudgetUsd:       cfg.BudgetAmount, // account-currency amount (client field name is legacy)
 		StartDate:       cfg.StartDate,
 		EndDate:         cfg.EndDate,

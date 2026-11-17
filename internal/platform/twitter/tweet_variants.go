@@ -87,7 +87,8 @@ func NormalizeTweetVariants(texts []string, tweetID, tweetText string) ([]string
 		// The length checks a config alone can decide, so preflight refuses them synchronously:
 		// copy over X's cap on its own, or copy with no URL of its own, which gets the
 		// destination URL appended (counted at tcoURLWeight plus the joining space).
-		// composeTweetText repeats the exact check at create, when the destination URL is known.
+		// CheckComposedTweetTexts runs the exact check, on the composed text, once the destination
+		// URL is known (the dispatcher's preflight, given the brief, and CreateCampaign).
 		if n := weightedTweetLen(t); n > maxTweetWeightedChars {
 			return nil, &TargetingError{Field: FieldTweetVariants, Msg: fmt.Sprintf("entry %d tweetText has weighted length %d, over X's %d-character limit", i, n, maxTweetWeightedChars)}
 		} else if len(findTweetURLRuns(t)) == 0 && n+1+tcoURLWeight > maxTweetWeightedChars {
@@ -96,6 +97,37 @@ func NormalizeTweetVariants(texts []string, tweetID, tweetText string) ([]string
 		out = append(out, t)
 	}
 	return out, nil
+}
+
+// FieldTweetText is the single authored tweet's twitterConfig key, named in refusals.
+const FieldTweetText = "tweetText"
+
+// CheckComposedTweetTexts composes the text of every tweet a create would author — in.TweetText
+// when no tweetId is set, and each of variants (already normalized by NormalizeTweetVariants) —
+// with its own destination URL, through the same composition CreateCampaign publishes
+// (composeSingleTweet, composeVariantTweet), and returns a *TargetingError for the first one
+// composeTweetText refuses. NormalizeTweetVariants alone cannot decide this: copy that already
+// carries a link of its own, but not the destination, still gets the destination appended, at
+// another tcoURLWeight plus the joining space.
+//
+// It needs the destination fields of in (RegistrationURL, EventName, EventSlug, HSToken, Project).
+// A destination that cannot be built is not refused here — nil, so CreateCampaign reports it with
+// its own error — and neither is the credential screen, which stays CreateCampaign's.
+func CheckComposedTweetTexts(in CampaignInput, variants []string) error {
+	if validateRegistrationURL(in.RegistrationURL) != nil {
+		return nil
+	}
+	if strings.TrimSpace(in.TweetID) == "" && strings.TrimSpace(in.TweetText) != "" {
+		if _, buildErr, err := composeSingleTweet(in); buildErr == nil && err != nil {
+			return &TargetingError{Field: FieldTweetText, Msg: err.Error()}
+		}
+	}
+	for i, t := range variants {
+		if _, buildErr, err := composeVariantTweet(in, i, t); buildErr == nil && err != nil {
+			return &TargetingError{Field: FieldTweetVariants, Msg: fmt.Sprintf("entry %d tweetText: %s", i, err.Error())}
+		}
+	}
+	return nil
 }
 
 // variantUTMContent is a variant's utm_content, as the other platforms' variants spell it.

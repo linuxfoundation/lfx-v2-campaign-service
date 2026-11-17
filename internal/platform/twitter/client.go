@@ -3284,6 +3284,30 @@ func composeTweetText(callerText, destURL string) (string, error) {
 	return full, nil
 }
 
+// composeSingleTweet is the final text of the single authored tweet: in.TweetText composed with
+// the promoted-tweet destination. composeVariantTweet is the same for variant i (0-based), whose
+// destination carries utm_content=variant-(i+1). buildErr is set when the destination cannot be
+// built; err when composeTweetText refuses the text. These are the ONLY places an authored tweet's
+// text is composed: CreateCampaign publishes what they return, and CheckComposedTweetTexts (the
+// dispatcher's synchronous preflight) refuses what they refuse, so the two cannot diverge.
+func composeSingleTweet(in CampaignInput) (text string, buildErr, err error) {
+	destURL, buildErr := buildTwitterUTMURL(in)
+	if buildErr != nil {
+		return "", buildErr, nil
+	}
+	text, err = composeTweetText(in.TweetText, destURL)
+	return text, nil, err
+}
+
+func composeVariantTweet(in CampaignInput, i int, copyText string) (text string, buildErr, err error) {
+	destURL, buildErr := buildTwitterVariantUTMURL(in, i+1)
+	if buildErr != nil {
+		return "", buildErr, nil
+	}
+	text, err = composeTweetText(copyText, destURL)
+	return text, nil, err
+}
+
 // displayTwitterUtmURL builds a click URL SAFE TO PERSIST in Steps / return to callers:
 // it strips any userinfo, fragment, and PRE-EXISTING query params from the registration
 // URL (which may carry secrets like ?token=...) and keeps ONLY the generated utm_*
@@ -3703,11 +3727,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// (before any mutating call) so Step 4 need not re-validate.
 	var composedTweetText string
 	if in.TweetID == "" && strings.TrimSpace(in.TweetText) != "" {
-		destURL, err := buildTwitterUTMURL(in)
-		if err != nil {
-			return nil, err
+		text, buildErr, err := composeSingleTweet(in)
+		if buildErr != nil {
+			return nil, buildErr
 		}
-		text, err := composeTweetText(in.TweetText, destURL)
 		if err != nil {
 			// Fixed text and counts only (never the URL or the copy): operator-safe.
 			return nil, domain.WrapPreflightRefusal(err)
@@ -3730,11 +3753,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	composedVariants := make([]string, 0, len(variantTexts))
 	for i, t := range variantTexts {
-		destURL, err := buildTwitterVariantUTMURL(in, i+1)
-		if err != nil {
-			return nil, err
+		text, buildErr, err := composeVariantTweet(in, i, t)
+		if buildErr != nil {
+			return nil, buildErr
 		}
-		text, err := composeTweetText(t, destURL)
 		if err != nil {
 			return nil, domain.PreflightRefusalf("invalid twitterConfig.%s: variant %d: %s", FieldTweetVariants, i+1, err.Error())
 		}
