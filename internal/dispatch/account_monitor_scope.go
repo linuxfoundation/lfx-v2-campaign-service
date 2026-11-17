@@ -90,6 +90,13 @@ func (d *MetaDispatcher) MonitorScopePrecheck(accountID string) error {
 
 // MonitorScopeForAccount implements service.AccountMonitorScoper for Meta; the account id is
 // normalised to its act_ form inside metaScopeForAccount.
+//
+// Unlike Google, Reddit and X it does not wrap the scope in requireRecordedMonitorProvenance: a
+// recorded campaign with no creation account is read as "unknown, proceed". That stays safe now
+// the read can run on the LF system credential (#615) because Meta campaign ids are globally
+// unique objects, so an unrecorded id this project owns can only ever match that same campaign,
+// never another foundation's. Making it strict would turn this project's legacy Meta campaigns
+// that predate provenance into a 409 on its own connection, which is a separate change.
 func (d *MetaDispatcher) MonitorScopeForAccount(scope []model.ProjectCampaignScope, accountID string) ([]string, error) {
 	return metaScopeForAccount(scope, accountID, "read meta account monitor")
 }
