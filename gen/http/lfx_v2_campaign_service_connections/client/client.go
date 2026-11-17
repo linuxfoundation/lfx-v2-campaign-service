@@ -266,6 +266,10 @@ type Client struct {
 	// the list-linkedin-ads-conversions endpoint.
 	ListLinkedinAdsConversionsDoer goahttp.Doer
 
+	// GetLinkedinAdsCreateAccount Doer is the HTTP client used to make requests to
+	// the get-linkedin-ads-create-account endpoint.
+	GetLinkedinAdsCreateAccountDoer goahttp.Doer
+
 	// GetMicrosoftAdsKeywords Doer is the HTTP client used to make requests to the
 	// get-microsoft-ads-keywords endpoint.
 	GetMicrosoftAdsKeywordsDoer goahttp.Doer
@@ -449,6 +453,7 @@ func NewClient(
 		GetLinkedinAdsAudienceDoer:           doer,
 		ListLinkedinAdsAudiencesDoer:         doer,
 		ListLinkedinAdsConversionsDoer:       doer,
+		GetLinkedinAdsCreateAccountDoer:      doer,
 		GetMicrosoftAdsKeywordsDoer:          doer,
 		GetMicrosoftAdsAudienceDoer:          doer,
 		GetRedditAdsAudienceDoer:             doer,
@@ -1979,6 +1984,31 @@ func (c *Client) ListLinkedinAdsConversions() goa.Endpoint {
 		resp, err := c.ListLinkedinAdsConversionsDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-linkedin-ads-conversions", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// GetLinkedinAdsCreateAccount returns an endpoint that makes HTTP requests to
+// the lfx-v2-campaign-service-connections service
+// get-linkedin-ads-create-account server.
+func (c *Client) GetLinkedinAdsCreateAccount() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeGetLinkedinAdsCreateAccountRequest(c.encoder)
+		decodeResponse = DecodeGetLinkedinAdsCreateAccountResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildGetLinkedinAdsCreateAccountRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.GetLinkedinAdsCreateAccountDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err)
 		}
 		return decodeResponse(resp)
 	}

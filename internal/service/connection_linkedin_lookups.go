@@ -29,6 +29,13 @@ var (
 			"with access_token set, and that an account_id is selected",
 		operation: "conversion rule lookup",
 	}
+	linkedInAdsCreateAccountLookup = accountDiscovery{
+		provider:    model.ProviderLinkedInAds,
+		displayName: "linkedin ads",
+		notUsableRemedy: "check that it is active, that the stored credential is valid json " +
+			"with access_token set, and that an account_id is selected",
+		operation: "create account lookup",
+	}
 )
 
 // ListLinkedinAdsAudiences lists the ad segments on the LinkedIn ad account a create for this
@@ -46,7 +53,7 @@ func (s *ConnectionService) ListLinkedinAdsAudiences(ctx context.Context, p *con
 	if err != nil {
 		return nil, err
 	}
-	res, rerr := orch.ReadAudiences(ctx, p.ProjectID, model.ProviderLinkedInAds, linkedInAdSegmentKind)
+	res, rerr := orch.ReadAudiences(linkedInPickerContext(ctx, p.AccountID), p.ProjectID, model.ProviderLinkedInAds, linkedInAdSegmentKind)
 	if rerr != nil {
 		return nil, s.classifyTargetingLookupError(ctx, p.ProjectID, linkedInAdsAudienceLookup, rerr)
 	}
@@ -77,7 +84,7 @@ func (s *ConnectionService) ListLinkedinAdsConversions(ctx context.Context, p *c
 	if err != nil {
 		return nil, err
 	}
-	res, rerr := orch.ReadConversionActions(ctx, p.ProjectID, model.ProviderLinkedInAds)
+	res, rerr := orch.ReadConversionActions(linkedInPickerContext(ctx, p.AccountID), p.ProjectID, model.ProviderLinkedInAds)
 	if rerr != nil {
 		return nil, s.classifyTargetingLookupError(ctx, p.ProjectID, linkedInAdsConversionLookup, rerr)
 	}
@@ -88,4 +95,47 @@ func (s *ConnectionService) ListLinkedinAdsConversions(ctx context.Context, p *c
 		})
 	}
 	return &conn.LinkedinAdsConversionRules{AccountID: res.AccountID, Conversions: out, ConversionCount: len(out)}, nil
+}
+
+// linkedInPickerContext carries the picker's optional account_id (#581) to the dispatcher, whose
+// lookup interface is shared with Google Ads and has no account argument. The dispatcher accepts
+// only the resolved account or one of the LF system account's grants.
+func linkedInPickerContext(ctx context.Context, accountID *string) context.Context {
+	if accountID == nil {
+		return ctx
+	}
+	return model.WithPickerAccount(ctx, *accountID)
+}
+
+// GetLinkedinAdsCreateAccount reports the LinkedIn ad account and org a create for this project
+// uses, and the accounts linkedInConfig.adAccountId may name (#581), so the Implement tab can show
+// the account a create will actually spend in. Stored, non-secret ids only: nothing is sent to
+// LinkedIn. campaign_manager (project-api), like the connection's accounts read, which already
+// lists the same default account and grants. The reserved LF scope stays unaddressable.
+func (s *ConnectionService) GetLinkedinAdsCreateAccount(ctx context.Context, p *conn.GetLinkedinAdsCreateAccountPayload) (*conn.LinkedinAdsCreateAccount, error) {
+	if err := rejectSystemScope(p.ProjectID); err != nil {
+		return nil, err
+	}
+	_, _, orch, err := s.resolveBackendWithOrch(linkedInAdsCreateAccountLookup.label())
+	if err != nil {
+		return nil, err
+	}
+	acct, rerr := orch.LinkedInCreateAccount(ctx, p.ProjectID)
+	if rerr != nil {
+		return nil, s.classifyDiscoveryError(ctx, p.ProjectID, linkedInAdsCreateAccountLookup, rerr)
+	}
+	source := "project"
+	if acct.FromSystem {
+		source = "system"
+	}
+	selectable := make([]*conn.LinkedinAdsSelectableAccount, 0, len(acct.Selectable))
+	for i, a := range acct.Selectable {
+		selectable = append(selectable, &conn.LinkedinAdsSelectableAccount{
+			AccountID: a.AccountID, OrgID: a.OrgID, Label: a.Label, Default: i == 0 && a.AccountID == acct.AccountID,
+		})
+	}
+	return &conn.LinkedinAdsCreateAccount{
+		AccountID: acct.AccountID, OrgID: acct.OrgID, Label: acct.Label, Source: source,
+		Status: string(acct.Status), AccountSelectionEnabled: acct.SelectionEnabled, SelectableAccounts: selectable,
+	}, nil
 }

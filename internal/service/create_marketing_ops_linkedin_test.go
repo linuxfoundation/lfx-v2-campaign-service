@@ -4,6 +4,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -11,6 +12,8 @@ import (
 	"testing"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 func TestLinkedInMarketingOpsInputs(t *testing.T) {
@@ -185,5 +188,35 @@ func TestBriefService_CreateCampaigns_LinkedInConversionsNeedMarketingOps(t *tes
 				t.Fatalf("checker called %d time(s), want %d", got, tc.wantCalls)
 			}
 		})
+	}
+}
+
+// TestLinkedInMarketingOpsInputs_AdAccountID (#581): while account selection is on, any
+// adAccountId is ops-only, because it can name another foundation's granted account. While the
+// flag is off only the connection's own account is accepted, so nothing is gated.
+func TestLinkedInMarketingOpsInputs_AdAccountID(t *testing.T) {
+	cfg := json.RawMessage(`{"linkedInConfig":{"adAccountId":"500928401"}}`)
+	t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, "")
+	if got := LinkedInMarketingOpsInputs(cfg); len(got) != 0 {
+		t.Fatalf("flag off gated %v", got)
+	}
+	t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, "true")
+	if got := LinkedInMarketingOpsInputs(cfg); len(got) != 1 || got[0] != "linkedInConfig.adAccountId" {
+		t.Fatalf("flag on gated %v, want linkedInConfig.adAccountId", got)
+	}
+	if got := LinkedInMarketingOpsInputs(json.RawMessage(`{"linkedInConfig":{"adAccountId":"  "}}`)); len(got) != 0 {
+		t.Fatalf("a blank adAccountId was gated: %v", got)
+	}
+}
+
+// TestLinkedInPickerContextCarriesTheAccount: the pickers' optional account_id reaches the
+// dispatcher through the context (#581); omitted, nothing is set.
+func TestLinkedInPickerContextCarriesTheAccount(t *testing.T) {
+	acct := "500928401"
+	if got := model.PickerAccount(linkedInPickerContext(context.Background(), &acct)); got != acct {
+		t.Fatalf("picker account = %q, want %q", got, acct)
+	}
+	if got := model.PickerAccount(linkedInPickerContext(context.Background(), nil)); got != "" {
+		t.Fatalf("omitted account_id set %q", got)
 	}
 }

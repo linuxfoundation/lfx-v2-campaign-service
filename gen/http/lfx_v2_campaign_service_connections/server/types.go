@@ -1110,6 +1110,37 @@ type ListLinkedinAdsConversionsResponseBody struct {
 	ConversionCount int `form:"conversion_count" json:"conversion_count" xml:"conversion_count"`
 }
 
+// GetLinkedinAdsCreateAccountResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "get-linkedin-ads-create-account" endpoint HTTP response body.
+type GetLinkedinAdsCreateAccountResponseBody struct {
+	// The ad account a LinkedIn create for this project is sent to when
+	// linkedInConfig.adAccountId is omitted
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The organization page that create's posts are authored by. Empty when the
+	// connection stores none.
+	OrgID string `form:"org_id" json:"org_id" xml:"org_id"`
+	// The resolved connection's label. Not an identifier.
+	Label string `form:"label" json:"label" xml:"label"`
+	// Which connection a create resolves to: `project` (the project's own LinkedIn
+	// connection) or `system` (the LF system connection, the fallback for a
+	// project with none, or every project while the deployment forces the system
+	// account)
+	Source string `form:"source" json:"source" xml:"source"`
+	// The resolved connection's stored status. A create is refused unless it is
+	// `active`.
+	Status string `form:"status" json:"status" xml:"status"`
+	// Whether LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is on, so
+	// linkedInConfig.adAccountId may name one of the LF system account's granted
+	// accounts
+	AccountSelectionEnabled bool `form:"account_selection_enabled" json:"account_selection_enabled" xml:"account_selection_enabled"`
+	// The accounts linkedInConfig.adAccountId may name, the default first. Only
+	// the default unless source is `system` and account selection is on, when the
+	// system account's grants follow it. While account selection is on, naming any
+	// account requires global_marketing_ops of the project.
+	SelectableAccounts []*LinkedinAdsSelectableAccountResponseBody `form:"selectable_accounts" json:"selectable_accounts" xml:"selectable_accounts"`
+}
+
 // GetMicrosoftAdsKeywordsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body.
@@ -5471,6 +5502,72 @@ type ListLinkedinAdsConversionsUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetLinkedinAdsCreateAccountBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "get-linkedin-ads-create-account" endpoint HTTP response body for the
+// "BadRequest" error.
+type GetLinkedinAdsCreateAccountBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetLinkedinAdsCreateAccountServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "get-linkedin-ads-create-account" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type GetLinkedinAdsCreateAccountServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetLinkedinAdsCreateAccountInternalServerErrorResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "get-linkedin-ads-create-account" endpoint HTTP response body for the
+// "InternalServerError" error.
+type GetLinkedinAdsCreateAccountInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetLinkedinAdsCreateAccountNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "get-linkedin-ads-create-account" endpoint HTTP response body for the
+// "NotFound" error.
+type GetLinkedinAdsCreateAccountNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetLinkedinAdsCreateAccountPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "get-linkedin-ads-create-account" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type GetLinkedinAdsCreateAccountPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetLinkedinAdsCreateAccountUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "get-linkedin-ads-create-account" endpoint HTTP response body for the
+// "Unauthorized" error.
+type GetLinkedinAdsCreateAccountUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetMicrosoftAdsKeywordsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -7596,6 +7693,22 @@ type LinkedinAdsConversionRuleResponseBody struct {
 	Enabled bool `form:"enabled" json:"enabled" xml:"enabled"`
 }
 
+// LinkedinAdsSelectableAccountResponseBody is used to define fields on
+// response body types.
+type LinkedinAdsSelectableAccountResponseBody struct {
+	// The LinkedIn ad account, in exactly the form linkedInConfig.adAccountId takes
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The organization page a campaign created in this account is authored by: the
+	// connection's org for the default account, the grant's org for a grant. Empty
+	// when the connection stores none.
+	OrgID string `form:"org_id" json:"org_id" xml:"org_id"`
+	// Display text: the connection's label for the default account, the
+	// operator-set grant label otherwise. Not an identifier.
+	Label string `form:"label" json:"label" xml:"label"`
+	// true for the account a create uses when linkedInConfig.adAccountId is omitted
+	Default bool `form:"default" json:"default" xml:"default"`
+}
+
 // MicrosoftAdsAudienceBucketResponseBody is used to define fields on response
 // body types.
 type MicrosoftAdsAudienceBucketResponseBody struct {
@@ -9424,6 +9537,33 @@ func NewListLinkedinAdsConversionsResponseBody(res *lfxv2campaignserviceconnecti
 		}
 	} else {
 		body.Conversions = []*LinkedinAdsConversionRuleResponseBody{}
+	}
+	return body
+}
+
+// NewGetLinkedinAdsCreateAccountResponseBody builds the HTTP response body
+// from the result of the "get-linkedin-ads-create-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetLinkedinAdsCreateAccountResponseBody(res *lfxv2campaignserviceconnections.LinkedinAdsCreateAccount) *GetLinkedinAdsCreateAccountResponseBody {
+	body := &GetLinkedinAdsCreateAccountResponseBody{
+		AccountID:               res.AccountID,
+		OrgID:                   res.OrgID,
+		Label:                   res.Label,
+		Source:                  res.Source,
+		Status:                  res.Status,
+		AccountSelectionEnabled: res.AccountSelectionEnabled,
+	}
+	if res.SelectableAccounts != nil {
+		body.SelectableAccounts = make([]*LinkedinAdsSelectableAccountResponseBody, len(res.SelectableAccounts))
+		for i, val := range res.SelectableAccounts {
+			if val == nil {
+				body.SelectableAccounts[i] = nil
+				continue
+			}
+			body.SelectableAccounts[i] = marshalLfxv2campaignserviceconnectionsLinkedinAdsSelectableAccountToLinkedinAdsSelectableAccountResponseBody(val)
+		}
+	} else {
+		body.SelectableAccounts = []*LinkedinAdsSelectableAccountResponseBody{}
 	}
 	return body
 }
@@ -14447,6 +14587,72 @@ func NewListLinkedinAdsConversionsUnauthorizedResponseBody(res *lfxv2campaignser
 	return body
 }
 
+// NewGetLinkedinAdsCreateAccountBadRequestResponseBody builds the HTTP
+// response body from the result of the "get-linkedin-ads-create-account"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewGetLinkedinAdsCreateAccountBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *GetLinkedinAdsCreateAccountBadRequestResponseBody {
+	body := &GetLinkedinAdsCreateAccountBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetLinkedinAdsCreateAccountServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "get-linkedin-ads-create-account"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewGetLinkedinAdsCreateAccountServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetLinkedinAdsCreateAccountServiceUnavailableResponseBody {
+	body := &GetLinkedinAdsCreateAccountServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetLinkedinAdsCreateAccountInternalServerErrorResponseBody builds the
+// HTTP response body from the result of the "get-linkedin-ads-create-account"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewGetLinkedinAdsCreateAccountInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetLinkedinAdsCreateAccountInternalServerErrorResponseBody {
+	body := &GetLinkedinAdsCreateAccountInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetLinkedinAdsCreateAccountNotFoundResponseBody builds the HTTP response
+// body from the result of the "get-linkedin-ads-create-account" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewGetLinkedinAdsCreateAccountNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetLinkedinAdsCreateAccountNotFoundResponseBody {
+	body := &GetLinkedinAdsCreateAccountNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetLinkedinAdsCreateAccountPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "get-linkedin-ads-create-account"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewGetLinkedinAdsCreateAccountPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *GetLinkedinAdsCreateAccountPayloadTooLargeResponseBody {
+	body := &GetLinkedinAdsCreateAccountPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetLinkedinAdsCreateAccountUnauthorizedResponseBody builds the HTTP
+// response body from the result of the "get-linkedin-ads-create-account"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewGetLinkedinAdsCreateAccountUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetLinkedinAdsCreateAccountUnauthorizedResponseBody {
+	body := &GetLinkedinAdsCreateAccountUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetMicrosoftAdsKeywordsBadRequestResponseBody builds the HTTP response
 // body from the result of the "get-microsoft-ads-keywords" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -16874,9 +17080,10 @@ func NewGetLinkedinAdsAudiencePayload(projectID string, window *string, bearerTo
 // NewListLinkedinAdsAudiencesPayload builds a
 // lfx-v2-campaign-service-connections service list-linkedin-ads-audiences
 // endpoint payload.
-func NewListLinkedinAdsAudiencesPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListLinkedinAdsAudiencesPayload {
+func NewListLinkedinAdsAudiencesPayload(projectID string, accountID *string, bearerToken *string) *lfxv2campaignserviceconnections.ListLinkedinAdsAudiencesPayload {
 	v := &lfxv2campaignserviceconnections.ListLinkedinAdsAudiencesPayload{}
 	v.ProjectID = projectID
+	v.AccountID = accountID
 	v.BearerToken = bearerToken
 
 	return v
@@ -16885,8 +17092,20 @@ func NewListLinkedinAdsAudiencesPayload(projectID string, bearerToken *string) *
 // NewListLinkedinAdsConversionsPayload builds a
 // lfx-v2-campaign-service-connections service list-linkedin-ads-conversions
 // endpoint payload.
-func NewListLinkedinAdsConversionsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload {
+func NewListLinkedinAdsConversionsPayload(projectID string, accountID *string, bearerToken *string) *lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload {
 	v := &lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload{}
+	v.ProjectID = projectID
+	v.AccountID = accountID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetLinkedinAdsCreateAccountPayload builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-create-account
+// endpoint payload.
+func NewGetLinkedinAdsCreateAccountPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.GetLinkedinAdsCreateAccountPayload {
+	v := &lfxv2campaignserviceconnections.GetLinkedinAdsCreateAccountPayload{}
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken
 

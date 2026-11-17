@@ -443,8 +443,11 @@ type Service interface {
 	// team), not campaign_manager, which also admits a foundation's executive
 	// director. The read pages LinkedIn's finder 100 at a time and never
 	// truncates: more than 1000 entries, a page that repeats an earlier one, or an
-	// entry of another ad account fails it with 503. A pure read: nothing is
-	// persisted.
+	// entry of another ad account fails it with 503. account_id (optional, #581)
+	// names the account to list instead: the resolved account itself, or, while
+	// LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is on, one of the LF system account's
+	// operator-installed grants (the accounts linkedInConfig.adAccountId may
+	// name); any other account is a 400. A pure read: nothing is persisted.
 	ListLinkedinAdsAudiences(context.Context, *ListLinkedinAdsAudiencesPayload) (res *LinkedinAdsAudienceSegments, err error)
 	// List the conversion rules on the LinkedIn ad account a create for this
 	// project uses, live from LinkedIn's Conversions finder, for picking
@@ -458,9 +461,26 @@ type Service interface {
 	// (the LF marketing team), not campaign_manager, which also admits a
 	// foundation's executive director. The read pages LinkedIn's finder 100 at a
 	// time and never truncates: more than 1000 entries, a page that repeats an
-	// earlier one, or an entry of another ad account fails it with 503. A pure
+	// earlier one, or an entry of another ad account fails it with 503. account_id
+	// (optional, #581) names the account to list instead: the resolved account
+	// itself, or, while LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is on, one of the
+	// LF system account's operator-installed grants (the accounts
+	// linkedInConfig.adAccountId may name); any other account is a 400. A pure
 	// read: nothing is persisted.
 	ListLinkedinAdsConversions(context.Context, *ListLinkedinAdsConversionsPayload) (res *LinkedinAdsConversionRules, err error)
+	// Report the LinkedIn ad account and organization a create for {project_id}
+	// actually uses, and the accounts linkedInConfig.adAccountId may name (#581),
+	// so the Implement tab can show the real account instead of a list the create
+	// ignores. Resolved exactly as a create resolves: the project's own LinkedIn
+	// connection, else the LF system connection (also for every project while the
+	// deployment forces the system account). A database read of stored, non-secret
+	// ids: nothing is sent to LinkedIn, so the answer says nothing about the
+	// account's billing or serving state. Gated on campaign_manager of
+	// {project_id}, like the connection's own accounts read. 404 when neither the
+	// project nor the LF system account has a LinkedIn connection, or the project
+	// disconnected its own; 500 when the LF system connection the project falls
+	// back to is unusable. A pure read: nothing is persisted.
+	GetLinkedinAdsCreateAccount(context.Context, *GetLinkedinAdsCreateAccountPayload) (res *LinkedinAdsCreateAccount, err error)
 	// Read Microsoft Advertising keyword performance for this project's own
 	// campaigns, in the same row shape as get-google-ads-keywords. Scoped to the
 	// campaigns this service holds for the project, NOT to the connected ad
@@ -967,7 +987,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [87]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "list-google-ads-audiences", "list-meta-custom-audiences", "search-meta-targeting-options", "list-meta-lead-forms", "list-reddit-ads-custom-audiences", "list-reddit-ads-pixels", "list-twitter-ads-custom-audiences", "list-microsoft-ads-remarketing-lists", "list-microsoft-ads-conversion-goals", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "list-linkedin-ads-audiences", "list-linkedin-ads-conversions", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
+var MethodNames = [88]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "list-google-ads-audiences", "list-meta-custom-audiences", "search-meta-targeting-options", "list-meta-lead-forms", "list-reddit-ads-custom-audiences", "list-reddit-ads-pixels", "list-twitter-ads-custom-audiences", "list-microsoft-ads-remarketing-lists", "list-microsoft-ads-conversion-goals", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "list-linkedin-ads-audiences", "list-linkedin-ads-conversions", "get-linkedin-ads-create-account", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -1444,6 +1464,16 @@ type GetLinkedinAdsAudiencePayload struct {
 	// Reporting window; defaults to last_30_days when omitted. yesterday and
 	// last_14_days are not available on LinkedIn.
 	Window *string
+}
+
+// GetLinkedinAdsCreateAccountPayload is the payload type of the
+// lfx-v2-campaign-service-connections service get-linkedin-ads-create-account
+// method.
+type GetLinkedinAdsCreateAccountPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
 }
 
 // GetLinkedinAdsPayload is the payload type of the
@@ -2239,6 +2269,37 @@ type LinkedinAdsConversionRules struct {
 	ConversionCount int
 }
 
+// LinkedinAdsCreateAccount is the result type of the
+// lfx-v2-campaign-service-connections service get-linkedin-ads-create-account
+// method.
+type LinkedinAdsCreateAccount struct {
+	// The ad account a LinkedIn create for this project is sent to when
+	// linkedInConfig.adAccountId is omitted
+	AccountID string
+	// The organization page that create's posts are authored by. Empty when the
+	// connection stores none.
+	OrgID string
+	// The resolved connection's label. Not an identifier.
+	Label string
+	// Which connection a create resolves to: `project` (the project's own LinkedIn
+	// connection) or `system` (the LF system connection, the fallback for a
+	// project with none, or every project while the deployment forces the system
+	// account)
+	Source string
+	// The resolved connection's stored status. A create is refused unless it is
+	// `active`.
+	Status string
+	// Whether LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is on, so
+	// linkedInConfig.adAccountId may name one of the LF system account's granted
+	// accounts
+	AccountSelectionEnabled bool
+	// The accounts linkedInConfig.adAccountId may name, the default first. Only
+	// the default unless source is `system` and account selection is on, when the
+	// system account's grants follow it. While account selection is on, naming any
+	// account requires global_marketing_ops of the project.
+	SelectableAccounts []*LinkedinAdsSelectableAccount
+}
+
 // LinkedIn Ads credential. Write-only; never returned.
 type LinkedinAdsCredentials struct {
 	// OAuth access token (LinkedIn: valid 60 days)
@@ -2252,6 +2313,20 @@ type LinkedinAdsCredentials struct {
 	// OAuth client secret (optional; required together with refresh_token and
 	// client_id)
 	ClientSecret *string
+}
+
+type LinkedinAdsSelectableAccount struct {
+	// The LinkedIn ad account, in exactly the form linkedInConfig.adAccountId takes
+	AccountID string
+	// The organization page a campaign created in this account is authored by: the
+	// connection's org for the default account, the grant's org for a grant. Empty
+	// when the connection stores none.
+	OrgID string
+	// Display text: the connection's label for the default account, the
+	// operator-set grant label otherwise. Not an identifier.
+	Label string
+	// true for the account a create uses when linkedInConfig.adAccountId is omitted
+	Default bool
 }
 
 // ListGoogleAdsAccountsPayload is the payload type of the
@@ -2353,6 +2428,11 @@ type ListLinkedinAdsAudiencesPayload struct {
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
 	ProjectID string
+	// The LinkedIn ad account to list. Optional: omitted, the account a create for
+	// this project uses; otherwise that account or, while
+	// LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is on, one of the LF system account's
+	// granted accounts.
+	AccountID *string
 }
 
 // ListLinkedinAdsConversionsPayload is the payload type of the
@@ -2363,6 +2443,11 @@ type ListLinkedinAdsConversionsPayload struct {
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
 	ProjectID string
+	// The LinkedIn ad account to list. Optional: omitted, the account a create for
+	// this project uses; otherwise that account or, while
+	// LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is on, one of the LF system account's
+	// granted accounts.
+	AccountID *string
 }
 
 // ListMetaAdsAccountsPayload is the payload type of the

@@ -12505,6 +12505,11 @@ func EncodeListLinkedinAdsAudiencesRequest(encoder func(*http.Request) goahttp.E
 				req.Header.Set("Authorization", head)
 			}
 		}
+		values := req.URL.Query()
+		if p.AccountID != nil {
+			values.Add("account_id", *p.AccountID)
+		}
+		req.URL.RawQuery = values.Encode()
 		return nil
 	}
 }
@@ -12705,6 +12710,11 @@ func EncodeListLinkedinAdsConversionsRequest(encoder func(*http.Request) goahttp
 				req.Header.Set("Authorization", head)
 			}
 		}
+		values := req.URL.Query()
+		if p.AccountID != nil {
+			values.Add("account_id", *p.AccountID)
+		}
+		req.URL.RawQuery = values.Encode()
 		return nil
 	}
 }
@@ -12858,6 +12868,206 @@ func DecodeListLinkedinAdsConversionsResponse(decoder func(*http.Response) goaht
 				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-linkedin-ads-conversions", err)
 			}
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-linkedin-ads-conversions", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildGetLinkedinAdsCreateAccountRequest instantiates a HTTP request object
+// with method and path set to call the "lfx-v2-campaign-service-connections"
+// service "get-linkedin-ads-create-account" endpoint
+func (c *Client) BuildGetLinkedinAdsCreateAccountRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.GetLinkedinAdsCreateAccountPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", "*lfxv2campaignserviceconnections.GetLinkedinAdsCreateAccountPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: GetLinkedinAdsCreateAccountLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeGetLinkedinAdsCreateAccountRequest returns an encoder for requests
+// sent to the lfx-v2-campaign-service-connections
+// get-linkedin-ads-create-account server.
+func EncodeGetLinkedinAdsCreateAccountRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.GetLinkedinAdsCreateAccountPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", "*lfxv2campaignserviceconnections.GetLinkedinAdsCreateAccountPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		return nil
+	}
+}
+
+// DecodeGetLinkedinAdsCreateAccountResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// get-linkedin-ads-create-account endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+// DecodeGetLinkedinAdsCreateAccountResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeGetLinkedinAdsCreateAccountResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body GetLinkedinAdsCreateAccountResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err)
+			}
+			err = ValidateGetLinkedinAdsCreateAccountResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err)
+			}
+			res := NewGetLinkedinAdsCreateAccountLinkedinAdsCreateAccountOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetLinkedinAdsCreateAccountBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err)
+			}
+			err = ValidateGetLinkedinAdsCreateAccountBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err)
+			}
+			return nil, NewGetLinkedinAdsCreateAccountBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body GetLinkedinAdsCreateAccountServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err)
+			}
+			err = ValidateGetLinkedinAdsCreateAccountServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err)
+			}
+			return nil, NewGetLinkedinAdsCreateAccountServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body GetLinkedinAdsCreateAccountInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err)
+			}
+			err = ValidateGetLinkedinAdsCreateAccountInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err)
+			}
+			return nil, NewGetLinkedinAdsCreateAccountInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body GetLinkedinAdsCreateAccountNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err)
+			}
+			err = ValidateGetLinkedinAdsCreateAccountNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err)
+			}
+			return nil, NewGetLinkedinAdsCreateAccountNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetLinkedinAdsCreateAccountPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err)
+			}
+			err = ValidateGetLinkedinAdsCreateAccountPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err)
+			}
+			return nil, NewGetLinkedinAdsCreateAccountPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GetLinkedinAdsCreateAccountUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err)
+			}
+			err = ValidateGetLinkedinAdsCreateAccountUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err)
+			}
+			return nil, NewGetLinkedinAdsCreateAccountUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", resp.StatusCode, string(body))
 		}
 	}
 }
@@ -18792,6 +19002,21 @@ func unmarshalLinkedinAdsConversionRuleResponseBodyToLfxv2campaignserviceconnect
 		Name:    *v.Name,
 		Type:    *v.Type,
 		Enabled: *v.Enabled,
+	}
+
+	return res
+}
+
+// unmarshalLinkedinAdsSelectableAccountResponseBodyToLfxv2campaignserviceconnectionsLinkedinAdsSelectableAccount
+// builds a value of type
+// *lfxv2campaignserviceconnections.LinkedinAdsSelectableAccount from a value
+// of type *LinkedinAdsSelectableAccountResponseBody.
+func unmarshalLinkedinAdsSelectableAccountResponseBodyToLfxv2campaignserviceconnectionsLinkedinAdsSelectableAccount(v *LinkedinAdsSelectableAccountResponseBody) *lfxv2campaignserviceconnections.LinkedinAdsSelectableAccount {
+	res := &lfxv2campaignserviceconnections.LinkedinAdsSelectableAccount{
+		AccountID: *v.AccountID,
+		OrgID:     *v.OrgID,
+		Label:     *v.Label,
+		Default:   *v.Default,
 	}
 
 	return res

@@ -271,6 +271,10 @@ spec:
           - path: /projects/:projectId/twitter-ads/campaign-ref
           # LinkedIn twin (LFXV2-2665), same read and permission.
           - path: /projects/:projectId/linkedin-ads/campaign-ref
+          # LinkedIn create-account read (#581): the account and org a create for the project
+          # resolves to, from the stored connection, with no LinkedIn call. campaign_manager like
+          # connection-linkedin-ads/accounts, which already lists the same default and grants.
+          - path: /projects/:projectId/linkedin-ads/create-account
           # Meta targeting search (#550): Meta's own taxonomy (interests, behaviors, work
           # positions), the same for every token and naming nothing any ad account holds, so
           # campaign_manager like the Google geo-targets search, NOT marketing-ops-api with the
