@@ -29,15 +29,21 @@ type bidWriterDispatcher struct {
 	err       error
 	calls     int
 	gotChange model.BidChange
+	// reconciled, when set, is written into the row's Result the way an adapter records what it
+	// reconciled during the write (Microsoft's unconfirmed ad groups).
+	reconciled json.RawMessage
 }
 
 func (d *bidWriterDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
 	return nil, errors.New("unused")
 }
 
-func (d *bidWriterDispatcher) WriteBid(_ context.Context, _ string, _ model.Provider, _ *model.Campaign, bid model.BidChange) error {
+func (d *bidWriterDispatcher) WriteBid(_ context.Context, _ string, _ model.Provider, c *model.Campaign, bid model.BidChange) error {
 	d.calls++
 	d.gotChange = bid
+	if d.reconciled != nil {
+		c.Result = d.reconciled
+	}
 	return d.err
 }
 
@@ -346,6 +352,112 @@ func TestUpdateCampaignBid_AdoptedCampaignHasItsOwnConflictText(t *testing.T) {
 	}
 }
 
+// settlingBidError mirrors the dispatch package's settlingBidWriteError.
+type settlingBidError struct {
+	reason string
+	err    error
+}
+
+func (e *settlingBidError) Error() string             { return e.err.Error() }
+func (e *settlingBidError) Unwrap() error             { return e.err }
+func (e *settlingBidError) BidSettlingReason() string { return e.reason }
+
+// A TEMPORARY refusal (Microsoft: an unconfirmed ad group create inside its settle window)
+// wraps ErrBidUnwritable but gets its own 409: it says the refusal is temporary and carries the
+// adapter's service-authored reason (the entry and when to retry) — not the generic "check the
+// campaign" text, and not the rendered chain with the campaign id.
+func TestUpdateCampaignBid_SettlingRefusalSaysTemporaryAndWhenToRetry(t *testing.T) {
+	reason := "retry after 2026-11-16T12:59:00Z, or once the ad group appears in Microsoft Advertising — ad group entry 2 (B) has an unconfirmed create that may still commit, so its absence is not yet trusted"
+	d := &bidWriterDispatcher{err: &settlingBidError{
+		reason: reason,
+		err:    fmt.Errorf("write microsoft campaign bid: campaign 555 has ad group entry 2 (B) whose create was unconfirmed: %w", ErrBidUnwritable),
+	}}
+	s, camps := budgetService(t, bidCampaign(), d)
+	_, err := s.UpdateCampaignBid(context.Background(), bidPayload(1, "cpc", "3"))
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("want 409, got %T: %v", err, err)
+	}
+	for _, want := range []string{"temporary", "entry 2 (B)", "retry after 2026-11-16T12:59:00Z"} {
+		if !strings.Contains(conflict.Message, want) {
+			t.Errorf("the 409 must say %q, got %q", want, conflict.Message)
+		}
+	}
+	for _, never := range []string{"555", "write microsoft campaign bid", "check the campaign in the ad platform"} {
+		if strings.Contains(conflict.Message, never) {
+			t.Errorf("the 409 must not carry %q, got %q", never, conflict.Message)
+		}
+	}
+	if camps.got != nil {
+		t.Error("the row must not be written when the bid was refused")
+	}
+}
+
+// reconcileBidError mirrors the dispatch package's reconcileBidWriteError.
+type reconcileBidError struct {
+	reason    string
+	retryable bool
+	err       error
+}
+
+func (e *reconcileBidError) Error() string               { return e.err.Error() }
+func (e *reconcileBidError) Unwrap() error               { return e.err }
+func (e *reconcileBidError) BidReconcileReason() string  { return e.reason }
+func (e *reconcileBidError) BidReconcileRetryable() bool { return e.retryable }
+
+// An ad group this service may have created that could not be reconciled wraps ErrBidUnwritable
+// but gets its own 409 (Copilot, #623): an unrecomposable name says retrying will not help and
+// what to do instead; an unresolved lookup says it is temporary and to retry. Each carries the
+// adapter's service-authored reason, never the generic bidding-setup text nor the upstream chain.
+func TestUpdateCampaignBid_ReconcileRefusalCarriesItsRemedy(t *testing.T) {
+	upstream := "write microsoft campaign bid: campaign 555 lookup: Microsoft said InternalError 0x8000 at node-17"
+	for name, tc := range map[string]struct {
+		err   *reconcileBidError
+		wants []string
+		nots  []string
+	}{
+		"unnamed group": {
+			err: &reconcileBidError{
+				reason: "set the bid in Microsoft Advertising, or recreate the campaign — ad group entry 2 (B) has an unconfirmed create and no recorded name, so it cannot be looked up (it may not exist)",
+				err:    fmt.Errorf("%s: %w", upstream, ErrBidUnwritable),
+			},
+			wants: []string{"retrying will not help", "set the bid in Microsoft Advertising, or recreate the campaign", "entry 2 (B)"},
+			nots:  []string{"temporary", "retry later"},
+		},
+		"unresolved lookup": {
+			err: &reconcileBidError{
+				reason:    "retry the bid change later — ad group entry 2 (B) has an unconfirmed create that a lookup in Microsoft Advertising could not yet find or confirm absent; it clears once the lookup succeeds",
+				retryable: true,
+				err:       fmt.Errorf("%s: %w", upstream, ErrBidUnwritable),
+			},
+			wants: []string{"usually temporary", "retry later", "retry the bid change later", "entry 2 (B)"},
+			nots:  []string{"retrying will not help", "recreate the campaign"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, camps := budgetService(t, bidCampaign(), &bidWriterDispatcher{err: tc.err})
+			_, err := s.UpdateCampaignBid(context.Background(), bidPayload(1, "cpc", "3"))
+			var conflict *briefs.ConflictError
+			if !errors.As(err, &conflict) {
+				t.Fatalf("want 409, got %T: %v", err, err)
+			}
+			for _, want := range tc.wants {
+				if !strings.Contains(conflict.Message, want) {
+					t.Errorf("the 409 must say %q, got %q", want, conflict.Message)
+				}
+			}
+			for _, never := range append(tc.nots, "555", "InternalError", "node-17", "write microsoft campaign bid", "check the campaign in the ad platform", "not a manual per-click bid") {
+				if strings.Contains(conflict.Message, never) {
+					t.Errorf("the 409 must not carry %q, got %q", never, conflict.Message)
+				}
+			}
+			if camps.got != nil {
+				t.Error("the row must not be written when the bid was refused")
+			}
+		})
+	}
+}
+
 // reasonedBidAmountError mirrors the dispatch package's rejectedBidAmountError.
 type reasonedBidAmountError struct {
 	reason string
@@ -493,5 +605,28 @@ func TestBuildUpdateCampaignBidPayload_AcceptsAnOmittedBidType(t *testing.T) {
 	}
 	if p.Bid != 2.5 || p.BidType != nil {
 		t.Errorf("built bid=%v bid_type=%v, want 2.5 and nil", p.Bid, p.BidType)
+	}
+}
+
+// What the adapter records into the row's Result during a confirmed write (Microsoft's
+// reconciled ad groups) is persisted with the new bid; on a refused write nothing is.
+func TestUpdateCampaignBid_PersistsTheResultTheAdapterReconciled(t *testing.T) {
+	reconciled := json.RawMessage(`{"adGroups":[{"adGroupId":"654"},{"adGroupId":"656","status":"failed"}]}`)
+	d := &bidWriterDispatcher{reconciled: reconciled}
+	s, camps := budgetService(t, bidCampaign(), d)
+	if _, err := s.UpdateCampaignBid(context.Background(), bidPayload(2.35, "cpc", "3")); err != nil {
+		t.Fatalf("UpdateCampaignBid: %v", err)
+	}
+	if camps.got == nil || string(camps.got.Result) != string(reconciled) {
+		t.Fatalf("persisted result = %s, want the reconciled %s", camps.got.Result, reconciled)
+	}
+
+	refused := &bidWriterDispatcher{reconciled: reconciled, err: fmt.Errorf("refused: %w", ErrBidUnwritable)}
+	s2, camps2 := budgetService(t, bidCampaign(), refused)
+	if _, err := s2.UpdateCampaignBid(context.Background(), bidPayload(2.35, "cpc", "3")); err == nil {
+		t.Fatal("a refused write must answer an error")
+	}
+	if camps2.got != nil {
+		t.Errorf("a refused write persisted the row: %+v", camps2.got)
 	}
 }

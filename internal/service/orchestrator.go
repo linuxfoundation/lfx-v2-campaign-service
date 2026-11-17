@@ -365,7 +365,10 @@ type BidWriter interface {
 	// provenance and the recorded ad group id.
 	//
 	// Returns nil ONLY when the platform confirmed the change. The caller persists the new
-	// bid onto the row on nil and on nothing else.
+	// bid onto the row on nil and on nothing else. The adapter MAY update campaign.Result to
+	// record what it reconciled while writing (Microsoft resolves an unconfirmed further ad
+	// group by name); that change is persisted with the bid on nil, through the same
+	// ReplaceCampaign that writes the result column, and dropped on any error.
 	WriteBid(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, bid model.BidChange) error
 }
 
@@ -559,6 +562,16 @@ type CreatePreflighter interface {
 	// PreflightCreate inspects the create config for the platform. config is the raw JSON the
 	// caller sent, unparsed, because only the dispatcher knows its own platform's config key.
 	PreflightCreate(ctx context.Context, projectID string, platform model.Provider, config json.RawMessage) error
+}
+
+// BriefCreatePreflighter is an OPTIONAL companion to CreatePreflighter for the checks that
+// depend on the BRIEF as well as the config (Microsoft's display URL is the brief's registration
+// host plus the config's display paths). It is a pure, local check: it makes no platform call,
+// and the orchestrator acts only on ErrCreateConfigInvalid, logging and ignoring anything else,
+// so it can never block a create on its own malfunction. Return ErrPreflightNotApplicable when
+// there was nothing to check.
+type BriefCreatePreflighter interface {
+	PreflightCreateBrief(ctx context.Context, projectID string, platform model.Provider, brief *model.CampaignBrief, config json.RawMessage) error
 }
 
 // CampaignSearcher is implemented by a dispatcher that can look up and create marketing
@@ -3677,6 +3690,36 @@ func (o *Orchestrator) PreflightCreate(ctx context.Context, projectID string, pl
 			return perr
 		}
 		slog.WarnContext(ctx, "create pre-check could not be completed; continuing without it",
+			"project_id", projectID, "platform", platform, "error", perr)
+	}
+	return nil
+}
+
+// PreflightCreateBrief runs each selected platform's optional BriefCreatePreflighter, the
+// brief-dependent half of PreflightCreate. Like PreflightCreate it refuses ONLY on
+// ErrCreateConfigInvalid (a synchronous 400) and logs and ignores any other error, so it is
+// fail-open. These checks are local, so nothing is recorded as an upstream call.
+func (o *Orchestrator) PreflightCreateBrief(ctx context.Context, projectID string, platforms []model.Provider, brief *model.CampaignBrief, config json.RawMessage) error {
+	if brief == nil {
+		return nil
+	}
+	for _, platform := range platforms {
+		d, ok := o.dispatchers[platform]
+		if !ok {
+			continue
+		}
+		pre, ok := d.(BriefCreatePreflighter)
+		if !ok {
+			continue
+		}
+		perr := pre.PreflightCreateBrief(ctx, projectID, platform, brief, config)
+		switch {
+		case perr == nil, errors.Is(perr, ErrPreflightNotApplicable):
+			continue
+		case errors.Is(perr, ErrCreateConfigInvalid):
+			return perr
+		}
+		slog.WarnContext(ctx, "brief create pre-check could not be completed; continuing without it",
 			"project_id", projectID, "platform", platform, "error", perr)
 	}
 	return nil

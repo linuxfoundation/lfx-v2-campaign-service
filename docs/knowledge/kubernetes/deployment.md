@@ -246,6 +246,10 @@ create (#563) the same way, defaulting to `"false"`: the `GetSharedEntities` pre
 Only exactly `"true"` enables it, read per call; off, a create naming it is a 400 before any job
 exists, and Dispatch refuses it again before any Microsoft call.
 
+`MICROSOFT_AD_GROUPS_ENABLED` gates `microsoftConfig.adGroups` (#563 gap 12) on the same terms,
+defaulting to `"false"`: a create with several ad groups has not been exercised live. Each
+per-group field also stays behind its single-group flag.
+
 `MICROSOFT_STRUCTURED_SNIPPETS_ENABLED` gates `microsoftConfig.structuredSnippets` at create (#563)
 on the same terms, defaulting to `"false"`: the `StructuredSnippetAdExtension` shape is from the v13
 reference and has not been sent live.

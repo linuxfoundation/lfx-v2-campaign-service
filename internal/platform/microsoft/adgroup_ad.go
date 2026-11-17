@@ -21,6 +21,7 @@ import (
 	"golang.org/x/text/width"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 // ---------------------------------------------------------------------------
@@ -366,7 +367,7 @@ func (c *Client) createAdGroupAndAd(
 		// clean abort where nothing was created. errNoID (malformed 2xx, no id) is UNCONFIRMED.
 		switch {
 		case createOutcomeAmbiguous(err) || errors.Is(err, errNoID):
-			return adGroupPartial(), fmt.Errorf("microsoft-ads ad group creation UNCONFIRMED (campaign %s %s; %q may exist — verify before retrying): %w", campaignID, campaignState, adGroupName, err)
+			return adGroupPartial(), &hierarchyStepUnconfirmedError{err: fmt.Errorf("microsoft-ads ad group creation UNCONFIRMED (campaign %s %s; %q may exist — verify before retrying): %w", campaignID, campaignState, adGroupName, err)}
 		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
 			return adGroupPartial(), fmt.Errorf("microsoft-ads ad group step aborted (campaign %s %s; context done during the lookup, no ad group created): %w", campaignID, campaignState, err)
 		case errors.Is(err, errPartialFailure):
@@ -452,7 +453,7 @@ func (c *Client) createAdGroupAndAd(
 		// clean abort).
 		switch {
 		case createOutcomeAmbiguous(err) || errors.Is(err, errNoID):
-			return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad creation UNCONFIRMED (%s; an ad may exist — verify before retrying): %w", hierState, err)
+			return adGroupWithIDPartial(), &hierarchyStepUnconfirmedError{err: fmt.Errorf("microsoft-ads ad creation UNCONFIRMED (%s; an ad may exist — verify before retrying): %w", hierState, err)}
 		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
 			return adGroupWithIDPartial(), fmt.Errorf("microsoft-ads ad step aborted (%s; context done during the lookup, no ad created): %w", hierState, err)
 		case errors.Is(err, errPartialFailure):
@@ -583,7 +584,7 @@ func (c *Client) createAdGroupAndAd(
 				r.Steps = *steps
 				return r, nil
 			case createOutcomeAmbiguous(kerr) || errors.Is(kerr, errNoID):
-				return adWithIDPartial(), fmt.Errorf("microsoft-ads keyword targeting UNCONFIRMED (%s + ad %s; keywords may exist — verify before retrying, a blind retry would duplicate them): %w", hierState, adID, kerr)
+				return adWithIDPartial(), &hierarchyStepUnconfirmedError{err: fmt.Errorf("microsoft-ads keyword targeting UNCONFIRMED (%s + ad %s; keywords may exist — verify before retrying, a blind retry would duplicate them): %w", hierState, adID, kerr)}
 			case errors.Is(kerr, context.Canceled) || errors.Is(kerr, context.DeadlineExceeded):
 				return adWithIDPartial(), fmt.Errorf("microsoft-ads keyword step aborted (%s + ad %s; context done, no keywords created): %w", hierState, adID, kerr)
 			case errors.Is(kerr, errPartialFailure):
@@ -755,31 +756,72 @@ func isDuplicateAdGroupPartial(items []msErrorItem) bool {
 // (idempotent, retried on 429); the response carries the full set for the campaign in
 // one response (not paged), so the single-shot read can't miss a match.
 func (c *Client) findAdGroupByName(ctx context.Context, campaignID, name string) (string, error) {
+	id, _, err := c.findAdGroupByNameCounted(ctx, campaignID, name, false)
+	return id, err
+}
+
+// findAdGroupByNameCounted is findAdGroupByName that also reports how many listed ad groups had
+// no readable name (lookupNamedEntityCounted). trusted first refuses, as decodeTrusted does, a
+// body whose bytes do not say one thing (a key declared twice, case variants included, or
+// malformed UTF-8): an entry `{"Id":656,"Name":"X | B","Name":"Other"}` would otherwise stream
+// as "Other" and hide the very ad group a proof of absence is looking for.
+func (c *Client) findAdGroupByNameCounted(ctx context.Context, campaignID, name string, trusted bool) (string, int, error) {
 	req := queryAdGroupsRequest{CampaignId: json.Number(campaignID)}
 	body, err := c.doRequest(ctx, http.MethodPost, "AdGroups/QueryByCampaignId", req, true)
 	if err != nil {
-		return "", err
+		return "", 0, err
+	}
+	if trusted {
+		if cerr := identityjson.Check(body); cerr != nil {
+			return "", 0, fmt.Errorf("decode AdGroups/QueryByCampaignId response (%v): %w", cerr, errNoID)
+		}
 	}
 	// STREAM the AdGroups array by name (see lookupNamedEntity) rather than Unmarshaling the
 	// whole set: a malformed up-to-8-MiB body packed with `{}` entries would otherwise amplify
 	// into tens of MiB per concurrent create. The omitted/null-vs-present distinction is
 	// preserved and validated (a truncated array fails closed), mirroring lookupCampaignByName.
-	id, matched, present, err := lookupNamedEntity(body, "AdGroups", name)
+	id, matched, present, unnamed, err := lookupNamedEntityCounted(body, "AdGroups", name)
 	if err != nil {
-		return "", fmt.Errorf("decode AdGroups/QueryByCampaignId response (%v): %w", err, errNoID)
+		return "", 0, fmt.Errorf("decode AdGroups/QueryByCampaignId response (%v): %w", err, errNoID)
 	}
 	if !present {
 		// The response OMITTED (or nulled, or truncated) the AdGroups field: we cannot confirm
 		// the ad group is absent, and a blind create could duplicate. Fail closed as UNCONFIRMED.
-		return "", fmt.Errorf("AdGroups/QueryByCampaignId response omitted the AdGroups field; cannot confirm ad group %q is absent: %w", name, errNoID)
+		return "", 0, fmt.Errorf("AdGroups/QueryByCampaignId response omitted the AdGroups field; cannot confirm ad group %q is absent: %w", name, errNoID)
 	}
 	if matched && id == "" {
 		// The name matched (ad-group names are case-insensitively unique under a campaign) but
 		// the id is null/unparseable: the group almost certainly exists. Reporting "" (absent)
 		// would issue POST /AdGroups and create a DUPLICATE. errNoID → UNCONFIRMED.
-		return "", fmt.Errorf("ad group %q found with no usable id: %w", name, errNoID)
+		return "", 0, fmt.Errorf("ad group %q found with no usable id: %w", name, errNoID)
 	}
-	return id, nil
+	return id, unnamed, nil
+}
+
+// FindAdGroupByName looks up the ad group named name under the campaign with one
+// GetAdGroupsByCampaignId read (findAdGroupByName). found=false with a nil error means a
+// complete, readable list, EVERY entry of which carried a readable name, held no such name — it
+// is DEFINITELY absent. Any error (the read failed, the list was omitted, truncated or
+// unreadable or declared a key twice, the name matched an entry with no usable id, or no entry
+// matched while some entry had no readable name) means it could not be established either way.
+// Used by the bid write to reconcile a further ad group whose create was UNCONFIRMED (#563 gap 12).
+func (c *Client) FindAdGroupByName(ctx context.Context, campaignID, name string) (id string, found bool, err error) {
+	if !idRE.MatchString(campaignID) {
+		return "", false, fmt.Errorf("microsoft-ads ad group lookup: campaign id %q is not a Microsoft id", clipID(campaignID))
+	}
+	if strings.TrimSpace(name) == "" {
+		return "", false, errors.New("microsoft-ads ad group lookup: no ad group name to look up")
+	}
+	id, unnamed, err := c.findAdGroupByNameCounted(ctx, campaignID, name, true)
+	if err != nil {
+		return "", false, err
+	}
+	if id == "" && unnamed > 0 {
+		// Absence is proven only by a complete list whose every entry has a readable name: an
+		// entry without one ({"Id":656}, null) may be the ad group sought.
+		return "", false, fmt.Errorf("AdGroups/QueryByCampaignId returned %d ad group(s) with no readable name, so ad group %q cannot be confirmed absent: %w", unnamed, name, errNoID)
+	}
+	return id, id != "", nil
 }
 
 // lookupNamedEntity streams the top-level object's `field` array (whose elements are
@@ -789,6 +831,21 @@ func (c *Client) findAdGroupByName(ctx context.Context, campaignID, name string)
 // closed array. A truncated/unterminated array errors (fail closed), and an omitted/null field
 // yields present=false. Shared by findAdGroupByName; mirrors lookupCampaignByName exactly.
 func lookupNamedEntity(body []byte, field, name string) (id string, matched, present bool, err error) {
+	id, matched, present, _, err = lookupNamedEntityCounted(body, field, name)
+	return id, matched, present, err
+}
+
+// lookupNamedEntityCounted is lookupNamedEntity that also counts the array's entries with no
+// readable name (a null entry, or a missing, null or empty Name). The create's find-first does
+// not need the count: a name it could not see there is caught by Microsoft's duplicate-name
+// refusal on the create, which the create then reconciles. A caller that must PROVE absence
+// from the list (FindAdGroupByName) does: an unnamed entry may be the one it is looking for.
+func lookupNamedEntityCounted(body []byte, field, name string) (id string, matched, present bool, unnamed int, err error) {
+	id, matched, present, err = lookupNamedEntityInto(body, field, name, &unnamed)
+	return id, matched, present, unnamed, err
+}
+
+func lookupNamedEntityInto(body []byte, field, name string, unnamed *int) (id string, matched, present bool, err error) {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	tok, err := dec.Token()
 	if err != nil {
@@ -825,6 +882,9 @@ func lookupNamedEntity(body []byte, field, name string) (id string, matched, pre
 			}
 			if derr := dec.Decode(&e); derr != nil {
 				return "", false, false, derr
+			}
+			if strings.TrimSpace(e.Name) == "" {
+				*unnamed++
 			}
 			if matched || !strings.EqualFold(e.Name, name) {
 				continue
@@ -1105,6 +1165,11 @@ func composeAdGroupName(in CampaignInput) string {
 		parts = append(parts, e)
 	}
 	if s := sanitizeNamePart(in.NameSuffix); s != "" {
+		parts = append(parts, s)
+	}
+	// One of several ad groups (#563 gap 12) carries its own suffix last; the single ad group
+	// has none, so its name is unchanged.
+	if s := sanitizeNamePart(in.adGroupNameSuffix); s != "" {
 		parts = append(parts, s)
 	}
 	return strings.Join(parts, " | ")
@@ -1656,3 +1721,14 @@ func redactAdURL(raw string) string {
 	}
 	return truncate(trimmed, maxErrorBodyChars)
 }
+
+// hierarchyStepUnconfirmedError marks an ad group, ad or keyword step of createAdGroupAndAd that
+// was classified UNCONFIRMED, so IsOutcomeUnconfirmed agrees with that classification. Without
+// it, an accepted create whose response was unreadable (errNoID, which IsOutcomeUnconfirmed does
+// not recognize on its own) read as definite, and a later ad group's Unconfirmed flag was saved
+// false (#613 review).
+type hierarchyStepUnconfirmedError struct{ err error }
+
+func (e *hierarchyStepUnconfirmedError) Error() string     { return e.err.Error() }
+func (e *hierarchyStepUnconfirmedError) Unwrap() error     { return e.err }
+func (e *hierarchyStepUnconfirmedError) Unconfirmed() bool { return true }

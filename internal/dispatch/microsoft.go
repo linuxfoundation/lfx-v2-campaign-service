@@ -167,6 +167,11 @@ type microsoftConfig struct {
 	// MICROSOFT_LOGO_EXTENSION_ENABLED; not role-gated.
 	LogoAssetID      string `json:"logoAssetId,omitempty"`
 	LogoBusinessName string `json:"logoBusinessName,omitempty"`
+	// AdGroups asks for up to five ad groups (#563 gap 12, microsoft_ad_groups.go), each with its
+	// own nameSuffix, keywords, negativeKeywords, remarketing lists and ad copy, replacing the
+	// single-group fields. Behind MICROSOFT_AD_GROUPS_ENABLED; a group's audienceIds and
+	// excludedAudienceIds are global_marketing_ops only (service.MicrosoftMarketingOpsInputs).
+	AdGroups []microsoftAdGroupConfig `json:"adGroups,omitempty"`
 	// ConversionGoalIDs are EXISTING conversion goals set as the new campaign's GoalIds (#563 gap
 	// 7, microsoft_conversion_goals.go), each verified before anything is created; they are what
 	// bidding.strategy "maxConversions" and "targetCpa" require. Behind
@@ -220,6 +225,9 @@ type MicrosoftDispatcher struct {
 	// settingsNow is the settings readback's ReadAt clock; nil means the wall clock. A field only so
 	// tests can pin it.
 	settingsNow func() time.Time
+	// bidNow is the bid write's clock for microsoftUnconfirmedSettleWindow; nil means the wall
+	// clock. A field only so tests can pin it.
+	bidNow func() time.Time
 	// creatives resolves microsoftConfig.imageAssetId to image bytes at dispatch, and assets
 	// bounds the bytes concurrent dispatches hold — the SAME read-only port and process-wide
 	// budget the Meta dispatcher uses. Both bound by registerDispatchers; nil in the
@@ -290,6 +298,10 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	}
 	// And a wrong-typed logoAssetId or logoBusinessName (#563 gap 13).
 	if err := checkMicrosoftLogoShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	// And a wrong-typed adGroups (#563 gap 12).
+	if err := checkMicrosoftAdGroupsShape(config); err != nil {
 		return nil, notCreated(err)
 	}
 	// And a wrong-typed conversionGoalIds (#563 gap 7).
@@ -373,6 +385,16 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err := checkMicrosoftLogo(cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// Several ad groups (#563 gap 12): gated and validated BEFORE any upstream call, each group's
+	// fields under its single-group twin's rules and gate.
+	groupNegatives, err := checkMicrosoftAdGroups(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	// The snapshot records what is sent: each group's normalized negatives.
+	for i := range cfg.AdGroups {
+		cfg.AdGroups[i].NegativeKeywords = microsoftNegativeKeywordConfigs(groupNegatives[i])
+	}
 	// Conversion goals (#563 gap 7): gated and validated BEFORE any upstream call. The role check
 	// ran before the job existed (service.MicrosoftMarketingOpsInputs); the conversion strategies
 	// were checked with the bid plan above.
@@ -439,6 +461,8 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		// The campaign's bid adjustments (#563 gap 8), validated above by
 		// checkMicrosoftBidAdjustments.
 		BidAdjustments: microsoftBidAdjustments(cfg),
+		// The ad groups (#563 gap 12), validated above by checkMicrosoftAdGroups.
+		AdGroups: microsoftAdGroupInputs(cfg.AdGroups),
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: Microsoft
 		// enforces case-insensitive campaign-name uniqueness, so a retry composes the SAME name
 		// and the client's find-first lookup cleanly REUSES the existing campaign
@@ -485,6 +509,10 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		if err := client.CheckSharedNegativeKeywordLists(ctx, cfg.SharedNegativeKeywordListIDs); err != nil {
 			return nil, notCreated(err)
 		}
+	}
+	// And every ad group's remarketing lists (#563 gap 12), one read per group naming any.
+	if err := checkMicrosoftAdGroupLists(ctx, client, cfg); err != nil {
+		return nil, notCreated(err)
 	}
 	// And every conversion goal must exist on this account, usable, BEFORE anything is created
 	// (one GetConversionGoalsByIds read): LFX never creates a goal, so a miss fails the job with
@@ -546,6 +574,11 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	}
 	// And the remarketing lists, on the confirmed ad group (applyMicrosoftAudiences).
 	if applyMicrosoftAudiences(ctx, client, result, cfg) {
+		degraded = true
+	}
+	// And, for several ad groups (#563 gap 12), the groups not created and each created group's
+	// negatives and lists (applyMicrosoftAdGroupExtras).
+	if applyMicrosoftAdGroupExtras(ctx, client, result, cfg, groupNegatives) {
 		degraded = true
 	}
 	camp = campaignFromMicrosoft(ctx, result, cfg)
@@ -615,6 +648,10 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 	if err := checkMicrosoftLogoShape(config); err != nil {
 		return err
 	}
+	// And a wrong-typed adGroups (#563 gap 12).
+	if err := checkMicrosoftAdGroupsShape(config); err != nil {
+		return err
+	}
 	// And a wrong-typed conversionGoalIds (#563 gap 7).
 	if err := checkMicrosoftConversionGoalsShape(config); err != nil {
 		return err
@@ -626,7 +663,7 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 	// stays "not applicable" — only bidding, the caller ad copy, sitelinks/callouts,
 	// negativeKeywords, the remarketing lists, the create-time targeting, the search network, the ad
 	// schedule, the bid adjustments, the shared negative keyword lists, the structured snippets,
-	// the conversion goals and the logo extension are promised as synchronous 400s.
+	// the ad groups, the conversion goals and the logo extension are promised as synchronous 400s.
 	var cfg microsoftConfig
 	_ = unmarshalPlatformConfig(config, "microsoftConfig", &cfg)
 	if _, err := microsoftBidPlan(cfg); err != nil {
@@ -664,6 +701,9 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 		return err
 	}
 	if err := checkMicrosoftLogo(cfg); err != nil {
+		return err
+	}
+	if _, err := checkMicrosoftAdGroups(cfg); err != nil {
 		return err
 	}
 	if err := checkMicrosoftConversionGoals(cfg); err != nil {
@@ -850,6 +890,27 @@ func microsoftSnapshotConfig(cfg microsoftConfig) microsoftConfig {
 		copy(snapshot.ProximityTargets, cfg.ProximityTargets)
 		for i := range snapshot.ProximityTargets {
 			snapshot.ProximityTargets[i].Name = sanitizeSnapshotText(snapshot.ProximityTargets[i].Name)
+		}
+	}
+	// The ad groups (#563 gap 12) carry the same caller free text per group, copied before they
+	// are reduced. Their negatives are the validated lists, as below.
+	if cfg.AdGroups != nil {
+		snapshot.AdGroups = make([]microsoftAdGroupConfig, len(cfg.AdGroups))
+		for i, g := range cfg.AdGroups {
+			sg := g
+			sg.NameSuffix = sanitizeSnapshotText(g.NameSuffix)
+			sg.Headlines = sanitizeSnapshotTexts(g.Headlines)
+			sg.Descriptions = sanitizeSnapshotTexts(g.Descriptions)
+			sg.Path1 = sanitizeSnapshotText(g.Path1)
+			sg.Path2 = sanitizeSnapshotText(g.Path2)
+			if g.Keywords != nil {
+				sg.Keywords = make([]microsoftKeywordConfig, len(g.Keywords))
+				copy(sg.Keywords, g.Keywords)
+				for j := range sg.Keywords {
+					sg.Keywords[j].Text = sanitizeSnapshotText(sg.Keywords[j].Text)
+				}
+			}
+			snapshot.AdGroups[i] = sg
 		}
 	}
 	// NegativeKeywords (#563) needs no reduction: by the time a snapshot is written Dispatch has
@@ -1370,11 +1431,28 @@ func verifyMicrosoftAccountMatch(op string, campaign *model.Campaign, client *mi
 		op, campaign.PlatformCampaignID, created, client.AccountID(), domain.ErrCampaignAccountMismatch)
 }
 
-// microsoftActivateKeywordReadBudget bounds the live-keyword read ACTIVATE makes before its
-// cascade. It is a slice of toggleCallTimeout (45s, internal/service), deliberately well under
-// half of it, so the read — one attempt plus any 429 retries — can never leave the four status
-// PUTs without time to run.
+// microsoftActivateKeywordReadBudget bounds ALL the live-keyword reads ACTIVATE makes before its
+// cascade TOGETHER — the first ad group's and every further group's (#563 gap 12), each one
+// attempt plus any 429 retries — not each read on its own. It is a slice of toggleCallTimeout
+// (45s, internal/service), deliberately well under half of it, so however many ad groups the
+// campaign has, the reads can never leave the status PUTs without time to run. A per-read
+// budget did not: five 10s reads alone exceed 45s. microsoftActivateReadContext further caps it
+// at half of whatever the caller's deadline has left.
 var microsoftActivateKeywordReadBudget = 10 * time.Second // a var only so tests can shorten it
+
+// microsoftActivateReadContext derives the ONE context every ACTIVATE keyword read shares: the
+// smaller of microsoftActivateKeywordReadBudget and half the time left on ctx's deadline, so the
+// status PUTs that follow keep at least the other half. The reads all run before any write, so a
+// read that runs out of this budget refuses the activate with nothing changed.
+func microsoftActivateReadContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	budget := microsoftActivateKeywordReadBudget
+	if dl, ok := ctx.Deadline(); ok {
+		if half := time.Until(dl) / 2; half < budget {
+			budget = half
+		}
+	}
+	return context.WithTimeout(ctx, budget)
+}
 
 // microsoftKeywordIDs pulls the persisted keyword ids out of the result blob, using the same
 // lowerCamel json tags campaignFromMicrosoft marshalled (pinned by a round-trip test). Empty
@@ -1447,32 +1525,95 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 	if msStatus == microsoft.StatusActive && len(microsoftKeywordIDs(campaign)) == 0 {
 		return fmt.Errorf("%w: microsoft campaign %s cannot be activated because keyword targeting is not yet provisioned (at least one keyword is required for a search campaign to serve)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 	}
+	// Every further ad group a multi-ad-group create made (#563 gap 12) follows the first: on
+	// ACTIVATE each must record its ad and keywords (a group missing them would stay Paused while
+	// the row claimed active), checked here before anything changes. Groups the create did not
+	// make are not addressed; the create's steps named them.
+	extras := microsoftExtraAdGroups(campaign.Result)
+	if msStatus == microsoft.StatusActive {
+		for _, g := range extras {
+			if g.adGroupID == "" || g.adID == "" || len(g.keywordIDs) == 0 {
+				return fmt.Errorf("%w: microsoft campaign %s cannot be activated because its ad group %s has no recorded ad or keywords", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID, g.adGroupID)
+			}
+		}
+	}
 	// Keyword ids come from the SAME persisted result blob as the child ids. They are passed
 	// on BOTH the activate and pause paths: keywords are created Paused, so an activate that
 	// skipped them would enable a campaign with nothing eligible to match a query.
 	//
-	// On ACTIVATE they are first narrowed to the keywords still LIVE in the ad group
+	// On ACTIVATE they are first narrowed to the keywords still LIVE in each ad group
 	// (LFXV2-2665): keyword REMOVE deletes keywords upstream without touching this row, and a
-	// deleted id in the cascade's UpdateKeywords would fail every later activation. The read
-	// runs under its OWN bounded sub-budget (microsoftActivateKeywordReadBudget), so a slow or
-	// throttled read cannot consume the toggle's deadline the mutations need; a failed or
-	// timed-out read REFUSES the activate — definite, because nothing has been changed yet.
+	// deleted id in the cascade's UpdateKeywords would fail every later activation.
+	//
+	// EVERY group's read — the first group's and each further group's — runs BEFORE ANY status
+	// write, all under ONE shared budget (microsoftActivateReadContext), so the reads together
+	// cannot consume the toggle's deadline the mutations need however many groups there are. A
+	// failed or timed-out read, or a group with no live keyword left, REFUSES the activate —
+	// definite, because nothing has been changed yet.
 	//
 	// PAUSE NEVER READS. Stopping delivery must not wait on, or be starved by, a read: the
 	// recorded ids are sent as they are, the campaign gate flips FIRST, and a keyword-stage
 	// failure after it (a deleted keyword's rejection among them) is handled below.
 	keywordIDs := microsoftKeywordIDs(campaign)
+	var extraLive [][]string
 	if msStatus == microsoft.StatusActive && len(keywordIDs) > 0 && adGroupID != "" {
-		readCtx, cancel := context.WithTimeout(ctx, microsoftActivateKeywordReadBudget)
+		readCtx, cancel := microsoftActivateReadContext(ctx)
 		live, lerr := microsoftLiveKeywordIDs(readCtx, client, adGroupID, keywordIDs)
-		cancel()
 		if lerr != nil {
+			cancel()
 			return fmt.Errorf("toggle microsoft campaign status: read the ad group's keywords before activating (nothing was changed): %w", lerr)
 		}
 		if len(live) == 0 {
+			cancel()
 			return fmt.Errorf("%w: microsoft campaign %s cannot be activated because every keyword it was created with has since been removed (at least one keyword is required for a search campaign to serve)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 		}
 		keywordIDs = live
+		for _, g := range extras {
+			gl, gerr := microsoftLiveKeywordIDs(readCtx, client, g.adGroupID, g.keywordIDs)
+			if gerr != nil {
+				cancel()
+				return fmt.Errorf("toggle microsoft campaign status: read ad group %s's keywords before activating (nothing was changed): %w", g.adGroupID, gerr)
+			}
+			if len(gl) == 0 {
+				cancel()
+				return fmt.Errorf("%w: microsoft campaign %s cannot be activated because every keyword ad group %s was created with has since been removed", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID, g.adGroupID)
+			}
+			extraLive = append(extraLive, gl)
+		}
+		cancel()
+	}
+	// ACTIVATE: the further ad groups first, each with its live keywords read above, while the
+	// campaign gate is still Paused, so nothing serves until every group is ready; the gate opens
+	// last in UpdateCampaignAndChildrenStatus below.
+	//
+	// activated names the further ad groups Microsoft already confirmed Active. Once it is
+	// non-empty, every later failure — a definite rejection of a later group's or the first
+	// group's write — is a PARTIAL toggle, reported through unconfirmedToggleError so the service
+	// holds the write lock for its cooldown and says "verify before retrying" rather than
+	// "nothing was changed". The gate may not be the safety net either: an already-active
+	// campaign reaches this loop too, so an activated group may already be serving. While
+	// activated is empty, every failure is as definite as before.
+	var activated []string
+	partialAfter := func(err error) error {
+		if len(activated) == 0 {
+			return err
+		}
+		// %v, not %w: the cause can carry a sentinel (ErrCampaignNotProvisioned) that the
+		// service's switch matches BEFORE its unconfirmed arm, which would answer a definite 409
+		// and release the lock for a campaign this call already partly changed.
+		return &unconfirmedToggleError{err: fmt.Errorf("microsoft campaign %s: ad group(s) %s were already activated before this step failed, so the campaign is partly changed: %v",
+			campaign.PlatformCampaignID, strings.Join(activated, ", "), err)}
+	}
+	if msStatus == microsoft.StatusActive {
+		for i, g := range extras {
+			if gerr := client.UpdateAdGroupChildrenStatus(ctx, campaign.PlatformCampaignID, g.adGroupID, g.adID, extraLive[i], msStatus); gerr != nil {
+				if microsoft.IsOutcomeUnconfirmed(gerr) {
+					return &unconfirmedToggleError{err: gerr}
+				}
+				return partialAfter(fmt.Errorf("toggle microsoft campaign status: activate ad group %s (the campaign gate stayed Paused): %w", g.adGroupID, gerr))
+			}
+			activated = append(activated, g.adGroupID)
+		}
 	}
 	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, keywordIDs, msStatus); uerr != nil {
 		// A PAUSE whose gate (and ad group and ad) Microsoft confirmed Paused, failing only at
@@ -1482,14 +1623,33 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 		if microsoft.IsPausedBeforeKeywordStage(uerr) {
 			slog.WarnContext(ctx, "microsoft campaign paused; the keyword status update after the campaign gate did not complete (a keyword removed upstream is rejected here) — delivery is stopped by the paused campaign",
 				"project_id", projectID, "platform_campaign_id", campaign.PlatformCampaignID, "error", uerr.Error())
+			pauseMicrosoftExtraAdGroups(ctx, client, projectID, campaign.PlatformCampaignID, extras)
 			return nil
 		}
 		if microsoft.IsOutcomeUnconfirmed(uerr) {
 			return &unconfirmedToggleError{err: uerr}
 		}
-		return uerr
+		return partialAfter(uerr)
+	}
+	if msStatus == microsoft.StatusPaused {
+		pauseMicrosoftExtraAdGroups(ctx, client, projectID, campaign.PlatformCampaignID, extras)
 	}
 	return nil
+}
+
+// pauseMicrosoftExtraAdGroups pauses every further ad group (#563 gap 12) AFTER the campaign gate
+// is confirmed Paused. Delivery has already stopped, so this is housekeeping that leaves the tree
+// all-Paused as a create does; a failure is logged, never reported as an unpaused campaign.
+func pauseMicrosoftExtraAdGroups(ctx context.Context, client *microsoft.Client, projectID, campaignID string, extras []microsoftAdGroupRef) {
+	for _, g := range extras {
+		if g.adGroupID == "" || g.adID == "" {
+			continue
+		}
+		if err := client.UpdateAdGroupChildrenStatus(ctx, campaignID, g.adGroupID, g.adID, g.keywordIDs, microsoft.StatusPaused); err != nil {
+			slog.WarnContext(ctx, "microsoft campaign paused; pausing a further ad group after the campaign gate did not complete — delivery is stopped by the paused campaign",
+				"project_id", projectID, "platform_campaign_id", campaignID, "ad_group_id", g.adGroupID, "error", err.Error())
+		}
+	}
 }
 
 // ReadMetrics implements the OPTIONAL service.MetricsReader capability for Microsoft

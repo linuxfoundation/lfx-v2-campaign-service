@@ -46,6 +46,13 @@ func msBudgetDispatcher(t *testing.T, readJSON string, writeStatus int, writeJSO
 // that never answers before the client's deadline.
 func msBudgetDispatcherWith(t *testing.T, readJSON string, write http.HandlerFunc, opts ...microsoft.Option) (*MicrosoftDispatcher, func() []budgetRequest) {
 	t.Helper()
+	return msBudgetDispatcherRouted(t, nil, readJSON, write, opts...)
+}
+
+// msBudgetDispatcherRouted is msBudgetDispatcherWith with route answering any non-PUT request it
+// claims (ok=true) by path, such as the ad group lookup the bid write's reconciliation sends.
+func msBudgetDispatcherRouted(t *testing.T, route func(path string) (int, string, bool), readJSON string, write http.HandlerFunc, opts ...microsoft.Option) (*MicrosoftDispatcher, func() []budgetRequest) {
+	t.Helper()
 	var (
 		mu   sync.Mutex
 		seen []budgetRequest
@@ -63,6 +70,13 @@ func msBudgetDispatcherWith(t *testing.T, readJSON string, write http.HandlerFun
 		if r.Method == http.MethodPut {
 			write(w, r)
 			return
+		}
+		if route != nil {
+			if status, b, ok := route(r.URL.Path); ok {
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, b)
+				return
+			}
 		}
 		_, _ = io.WriteString(w, readJSON)
 	}))
