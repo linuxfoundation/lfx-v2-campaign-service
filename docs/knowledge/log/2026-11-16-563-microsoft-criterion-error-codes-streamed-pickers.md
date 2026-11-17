@@ -1,0 +1,3 @@
+# 2026-11-16 — #563 Microsoft criterion error codes follow the default-code rule
+
+**Fix** — A #613 review finding. `postCampaignCriterions`, which the geo targets, ad schedule and bid adjustments share, now classifies its `NestedPartialErrors` with `audienceErrorCode`'s rule at both the collection and the nested `BatchErrors` level (`nestedErrorState`). A zero-code placeholder (`{"Code":0,"ErrorCode":null}`) no longer stops a fully successful create. An unreadable code (`{"Code":true}`) is a rejection, not a false success. An entry with both codes explicitly null is UNCONFIRMED, matching the keyword lever's `isZeroCodePlaceholder` rule.

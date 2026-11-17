@@ -1737,3 +1737,21 @@ func TestDisplayDomainCountsTheBracketedIPv6Authority(t *testing.T) {
 		})
 	}
 }
+
+// An error entry that declares Code twice decodes last-key-wins, so `"Code":null,"Code":1100`
+// would read as a definite rejection ("nothing was created") although the body is ambiguous and
+// the entity may exist. decodeTrusted refuses the body: UNCONFIRMED.
+func TestCreateCampaign_DuplicateKeyCreateBodiesAreUnconfirmed(t *testing.T) {
+	for name, api := range map[string]*campaignsAPI{
+		"ad group": {adGroupPostBody: `{"AdGroupIds":[null],"PartialErrors":[{"Code":null,"Code":1100}]}`},
+		"ad":       {adPostBody: `{"AdIds":[null],"PartialErrors":[{"Code":null,"code":1100}]}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := newAPIClient(t, api.handler(t))
+			_, err := c.CreateCampaign(context.Background(), validInput())
+			if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
+				t.Fatalf("err = %v, want UNCONFIRMED", err)
+			}
+		})
+	}
+}

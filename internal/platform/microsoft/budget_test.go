@@ -381,3 +381,14 @@ func TestPutStatus_RejectionAfter429IsUnconfirmed(t *testing.T) {
 		t.Errorf("the final refusal should stay reachable through Unwrap: %v", err)
 	}
 }
+
+// A campaign that declares DailyBudget twice is ambiguous: the budget read refuses it rather
+// than guarding on the last value.
+func TestGetCampaignBudget_DuplicateKeyRefuses(t *testing.T) {
+	c := newAPIClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"Campaigns":[{"Id":321,"BudgetType":"DailyBudgetAccelerated","DailyBudget":5000,"dailybudget":50,"BudgetId":null}],"PartialErrors":[]}`)
+	})
+	if got, err := c.GetCampaignBudget(context.Background(), "321"); err == nil {
+		t.Fatalf("GetCampaignBudget = %+v, want a refusal for a duplicated key", got)
+	}
+}

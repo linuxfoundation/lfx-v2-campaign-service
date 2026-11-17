@@ -1,0 +1,228 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package microsoft
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+	"testing"
+)
+
+func TestValidateBidAdjustments(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   BidAdjustments
+		want string // "" = accepted
+		got  string // accepted: the label of the normalized list
+	}{
+		{"nothing", BidAdjustments{}, "", ""},
+		{"ordered and normalized", BidAdjustments{
+			Device: map[string]float64{"tablets": -100, " SMARTPHONES ": -20},
+			Age:    map[string]float64{"sixtyfiveandabove": -90, "EighteenToTwentyFour": 900},
+			Gender: map[string]float64{"female": 10},
+		}, "", "Smartphones -20%, Tablets -100%, EighteenToTwentyFour +900%, SixtyFiveAndAbove -90%, Female +10%"},
+		{"unknown device", BidAdjustments{Device: map[string]float64{"TV": 5}}, "deviceBidAdjustments: unknown key; use Computers, Smartphones, Tablets", ""},
+		{"unknown age", BidAdjustments{Age: map[string]float64{"Unknown": 5}}, "ageBidAdjustments: unknown key", ""},
+		{"duplicate by case", BidAdjustments{Gender: map[string]float64{"Male": 5, "male": 6}}, "genderBidAdjustments: Male is named twice", ""},
+		{"device below -100", BidAdjustments{Device: map[string]float64{"Computers": -101}}, "deviceBidAdjustments: Computers must be a whole percent from -100 to 900", ""},
+		{"age -100 refused", BidAdjustments{Age: map[string]float64{"FiftyToSixtyFour": -100}}, "ageBidAdjustments: FiftyToSixtyFour must be a whole percent from -90 to 900", ""},
+		{"gender above 900", BidAdjustments{Gender: map[string]float64{"Female": 901}}, "from -90 to 900", ""},
+		{"fraction", BidAdjustments{Device: map[string]float64{"Tablets": 1.5}}, "Tablets must be a whole percent", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ValidateBidAdjustments(tc.in)
+			if tc.want != "" {
+				var bErr *BidAdjustmentError
+				if !errors.As(err, &bErr) || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("err = %v, want a BidAdjustmentError containing %q", err, tc.want)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if l := bidAdjustmentLabel(got); l != tc.got {
+				t.Errorf("label = %q, want %q", l, tc.got)
+			}
+		})
+	}
+}
+
+func bidAdjustmentCreateInput() CampaignInput {
+	in := validInput()
+	in.GeoTargets = []string{"US"}
+	in.BidAdjustments = BidAdjustments{
+		Device: map[string]float64{"Tablets": -100},
+		Age:    map[string]float64{"EighteenToTwentyFour": -50},
+		Gender: map[string]float64{"Female": 15},
+	}
+	return in
+}
+
+// The adjustments follow the positive geo in one Targets call, each a biddable criterion of its
+// own type with its BidMultiplier, before the ad group.
+func TestCreateCampaign_BidAdjustmentsAttachedBeforeTheAdGroup(t *testing.T) {
+	a := &targetingAPI{}
+	c := newTargetingClient(t, a)
+	res, err := c.CreateCampaign(context.Background(), bidAdjustmentCreateInput())
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	calls, _ := a.snapshot()
+	var muts []string
+	for _, p := range calls {
+		if p == "Campaigns" || p == "CampaignCriterions" || p == "AdGroups" || p == "Ads" {
+			muts = append(muts, p)
+		}
+	}
+	if got := strings.Join(muts, ","); got != "Campaigns,CampaignCriterions,CampaignCriterions,AdGroups,Ads" {
+		t.Fatalf("mutations = %s", got)
+	}
+	// {"Tablets":-100} sends all three devices, as Microsoft requires: the other two at 0.
+	want := `{"CampaignCriterions":[` +
+		`{"CampaignId":321,"Criterion":{"Type":"DeviceCriterion","DeviceName":"Computers"},"Type":"BiddableCampaignCriterion","CriterionBid":{"Type":"BidMultiplier","Multiplier":0}},` +
+		`{"CampaignId":321,"Criterion":{"Type":"DeviceCriterion","DeviceName":"Smartphones"},"Type":"BiddableCampaignCriterion","CriterionBid":{"Type":"BidMultiplier","Multiplier":0}},` +
+		`{"CampaignId":321,"Criterion":{"Type":"DeviceCriterion","DeviceName":"Tablets"},"Type":"BiddableCampaignCriterion","CriterionBid":{"Type":"BidMultiplier","Multiplier":-100}},` +
+		`{"CampaignId":321,"Criterion":{"Type":"AgeCriterion","AgeRange":"EighteenToTwentyFour"},"Type":"BiddableCampaignCriterion","CriterionBid":{"Type":"BidMultiplier","Multiplier":-50}},` +
+		`{"CampaignId":321,"Criterion":{"Type":"GenderCriterion","GenderType":"Female"},"Type":"BiddableCampaignCriterion","CriterionBid":{"Type":"BidMultiplier","Multiplier":15}}` +
+		`],"CriterionType":"Targets"}`
+	if b := a.bodyOf("CampaignCriterions", 2); b != want {
+		t.Errorf("adjustment body =\n%s\nwant\n%s", b, want)
+	}
+	if strings.Join(res.BidAdjustmentCriterionIDs, ",") != "9002,9102,9202,9302,9402" {
+		t.Errorf("ids = %v", res.BidAdjustmentCriterionIDs)
+	}
+	if !strings.Contains(strings.Join(res.Steps, "\n"), "Bid adjustments attached: 5 criteria (Tablets -100%, EighteenToTwentyFour -50%, Female +15%); Computers, Smartphones sent at +0% because Microsoft requires all three devices in one request") {
+		t.Errorf("steps = %v", res.Steps)
+	}
+}
+
+// A refused adjustment creates nothing.
+func TestCreateCampaign_BidAdjustmentRefusalCreatesNothing(t *testing.T) {
+	a := &targetingAPI{}
+	c := newTargetingClient(t, a)
+	in := bidAdjustmentCreateInput()
+	in.BidAdjustments.Gender = map[string]float64{"Other": 5}
+	res, err := c.CreateCampaign(context.Background(), in)
+	if res != nil || err == nil || !strings.Contains(err.Error(), "invalid microsoftConfig.genderBidAdjustments: unknown key") {
+		t.Fatalf("CreateCampaign = (%v, %v)", res, err)
+	}
+	calls, _ := a.snapshot()
+	for _, p := range calls {
+		if p == "Campaigns" || p == "CampaignCriterions" {
+			t.Fatalf("a mutation was sent: %v", calls)
+		}
+	}
+}
+
+// A failed attach stops the create before the ad group; a campaign found by name stops there too.
+func TestCreateCampaign_BidAdjustmentFailureAndReuseStopBeforeTheAdGroup(t *testing.T) {
+	t.Run("rejected", func(t *testing.T) {
+		a := &targetingAPI{failCriterion: 2, criterionStatus: http.StatusOK, criterionBody: `{"CampaignCriterionIds":[9002,9102,9202,null,9402],"NestedPartialErrors":[{"Index":3,"Code":1032,"ErrorCode":"X"}]}`}
+		c := newTargetingClient(t, a)
+		res, err := c.CreateCampaign(context.Background(), bidAdjustmentCreateInput())
+		if res == nil || err == nil || !strings.Contains(err.Error(), "bid adjustments PARTIALLY attached (campaign 321 carries 4 of 5") {
+			t.Fatalf("CreateCampaign = (%+v, %v)", res, err)
+		}
+		if strings.Join(res.BidAdjustmentCriterionIDs, ",") != "9002,9102,9202,9402" {
+			t.Errorf("partial ids = %v", res.BidAdjustmentCriterionIDs)
+		}
+		calls, _ := a.snapshot()
+		for _, p := range calls {
+			if p == "AdGroups" {
+				t.Fatalf("the ad group was created after a failed attach: %v", calls)
+			}
+		}
+	})
+	t.Run("reused", func(t *testing.T) {
+		in := bidAdjustmentCreateInput()
+		a := &targetingAPI{campaignQueryBody: `{"Campaigns":[{"Id":321,"Name":` + jsonString(composeName(in)) + `}]}`}
+		c := newTargetingClient(t, a)
+		res, err := c.CreateCampaign(context.Background(), in)
+		if res == nil || err == nil || !strings.Contains(err.Error(), "NOT applied to reused campaign 321 (deviceBidAdjustments, ageBidAdjustments, genderBidAdjustments are set only") {
+			t.Fatalf("CreateCampaign = (%+v, %v)", res, err)
+		}
+		calls, _ := a.snapshot()
+		for _, p := range calls {
+			if p == "Campaigns" || p == "CampaignCriterions" || p == "AdGroups" {
+				t.Fatalf("a mutation was sent to a reused campaign: %v", calls)
+			}
+		}
+	})
+}
+
+// A filled-in device criterion's result is checked like a requested one: Microsoft refusing the
+// Computers criterion sent at 0 for {"Tablets":-100} stops the create, fail-closed.
+func TestCreateCampaign_BidAdjustmentFilledDeviceResultIsChecked(t *testing.T) {
+	a := &targetingAPI{failCriterion: 2, criterionStatus: http.StatusOK, criterionBody: `{"CampaignCriterionIds":[null,9102,9202],"NestedPartialErrors":[{"Index":0,"Code":1032,"ErrorCode":"X"}]}`}
+	c := newTargetingClient(t, a)
+	in := bidAdjustmentCreateInput()
+	in.BidAdjustments = BidAdjustments{Device: map[string]float64{"Tablets": -100}}
+	res, err := c.CreateCampaign(context.Background(), in)
+	if res == nil || err == nil || !strings.Contains(err.Error(), "carries 2 of 3") {
+		t.Fatalf("CreateCampaign = (%+v, %v)", res, err)
+	}
+	if b := a.bodyOf("CampaignCriterions", 2); strings.Count(b, `"DeviceCriterion"`) != 3 {
+		t.Errorf("want all three devices sent, body = %s", b)
+	}
+}
+
+func TestBidAdjustmentCriteria(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		in     BidAdjustments
+		want   string
+		filled string
+	}{
+		{"no device", BidAdjustments{Gender: map[string]float64{"Male": 5}}, "Male:5", ""},
+		{"one device", BidAdjustments{Device: map[string]float64{"tablets": -100}}, "Computers:0,Smartphones:0,Tablets:-100", "Computers,Smartphones"},
+		{"all devices", BidAdjustments{Device: map[string]float64{"Computers": 1, "Smartphones": 2, "Tablets": 3}, Age: map[string]float64{"SixtyFiveAndAbove": 4}}, "Computers:1,Smartphones:2,Tablets:3,SixtyFiveAndAbove:4", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			valid, err := ValidateBidAdjustments(tc.in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sent, filled := bidAdjustmentCriteria(valid)
+			var got []string
+			for _, a := range sent {
+				got = append(got, fmt.Sprintf("%s:%d", a.Segment, int64(a.Percent)))
+			}
+			if strings.Join(got, ",") != tc.want || strings.Join(filled, ",") != tc.filled {
+				t.Errorf("sent = %v filled = %v, want %s / %s", got, filled, tc.want, tc.filled)
+			}
+		})
+	}
+}
+
+// Microsoft's AgeRange enum spells 35-49 "ThirtyFiveToFourtyNine" (sic): the public key
+// ThirtyFiveToFortyNine is sent in that spelling, and the other ranges as given.
+func TestCreateCampaign_AgeRangeWireSpelling(t *testing.T) {
+	a := &targetingAPI{}
+	c := newTargetingClient(t, a)
+	in := bidAdjustmentCreateInput()
+	in.BidAdjustments = BidAdjustments{Age: map[string]float64{
+		"thirtyfivetofortynine": 10, "EighteenToTwentyFour": 1, "TwentyFiveToThirtyFour": 2, "FiftyToSixtyFour": 3, "SixtyFiveAndAbove": 4,
+	}}
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	b := a.bodyOf("CampaignCriterions", 2)
+	for _, wire := range []string{"EighteenToTwentyFour", "TwentyFiveToThirtyFour", "ThirtyFiveToFourtyNine", "FiftyToSixtyFour", "SixtyFiveAndAbove"} {
+		if !strings.Contains(b, `"AgeRange":"`+wire+`"`) {
+			t.Errorf("body lacks AgeRange %s: %s", wire, b)
+		}
+	}
+	if strings.Contains(b, "ThirtyFiveToFortyNine") {
+		t.Errorf("the public spelling reached Microsoft: %s", b)
+	}
+	// The step names the caller's key, not the wire spelling.
+	if !strings.Contains(strings.Join(res.Steps, "\n"), "ThirtyFiveToFortyNine +10%") {
+		t.Errorf("steps = %v", res.Steps)
+	}
+}

@@ -428,6 +428,10 @@ func TestAddCampaignNegativeKeywords_AmbiguityIsUnconfirmed(t *testing.T) {
 		{"5xx", http.StatusInternalServerError, `{}`},
 		{"200 answering nothing", http.StatusOK, `{}`},
 		{"undecodable 200", http.StatusOK, `[`},
+		// A duplicated code (case variants included) would decode last-key-wins to 0 and erase
+		// the rejection, reading the negative APPLIED.
+		{"duplicate code", http.StatusOK, `{"NegativeKeywordIds":[{"Ids":[9001]}],"NestedPartialErrors":[{"BatchErrors":[{"Index":0,"Code":1005,"Code":0}]}]}`},
+		{"case-variant code", http.StatusOK, `{"NegativeKeywordIds":[{"Ids":[9001]}],"NestedPartialErrors":[{"BatchErrors":[{"Index":0,"Code":1005,"code":0}]}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, calls := kwRecorder(t, func(string, string) (int, string) { return tc.status, tc.body })
@@ -607,5 +611,191 @@ func TestAddCampaignNegativeKeywords_SecretBearingCodesAreWithheld(t *testing.T)
 	}
 	if out[0].Outcome != OutcomeFailed || out[0].ErrorCode != withheldErrorCode {
 		t.Errorf("item = %+v; want FAILED with the code withheld", out[0])
+	}
+}
+
+// An explicit zero-code placeholder ({"Index":0,"Code":0,"ErrorCode":null}) is how a positional
+// PartialErrors marks a clean item: the pause is APPLIED, and in a combined request it does not
+// block the remove. {} and null entries still say nothing, so they stay UNCONFIRMED.
+func TestApplyKeywordActions_ZeroCodePlaceholderIsApplied(t *testing.T) {
+	const placeholder = `{"PartialErrors":[{"Index":0,"Code":0,"ErrorCode":null}]}`
+	t.Run("pause only", func(t *testing.T) {
+		c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, placeholder })
+		out, err := c.ApplyKeywordActions(context.Background(), "654", []KeywordAction{{AdGroupID: "654", KeywordID: "701", Action: "PAUSE"}})
+		if err != nil || strings.Join(outcomesOf(out), ",") != "APPLIED" {
+			t.Fatalf("got %v, %v; want APPLIED", outcomesOf(out), err)
+		}
+	})
+	t.Run("pause and remove", func(t *testing.T) {
+		c, calls := kwRecorder(t, func(method, _ string) (int, string) {
+			if method == http.MethodPut {
+				return http.StatusOK, placeholder
+			}
+			return http.StatusOK, `{"PartialErrors":[{"Index":0,"Code":0,"ErrorCode":""}]}`
+		})
+		out, err := c.ApplyKeywordActions(context.Background(), "654", []KeywordAction{
+			{AdGroupID: "654", KeywordID: "701", Action: "PAUSE"},
+			{AdGroupID: "654", KeywordID: "702", Action: "REMOVE"},
+		})
+		if err != nil || strings.Join(outcomesOf(out), ",") != "APPLIED,APPLIED" {
+			t.Fatalf("got %v, %v; want APPLIED,APPLIED", outcomesOf(out), err)
+		}
+		if cs := calls(); len(cs) != 2 || cs[1].method != http.MethodDelete {
+			t.Errorf("the remove must be sent after a placeholder-only pause answer: %+v", cs)
+		}
+	})
+	for name, body := range map[string]string{
+		"code-less entry":    `{"PartialErrors":[{}]}`,
+		"all-null codes":     `{"PartialErrors":[{"Index":0,"Code":null,"ErrorCode":null}]}`,
+		"placeholder and {}": `{"PartialErrors":[{"Index":0,"Code":0},{}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, body })
+			_, err := c.ApplyKeywordActions(context.Background(), "654", []KeywordAction{{AdGroupID: "654", KeywordID: "701", Action: "PAUSE"}})
+			if err == nil || !IsOutcomeUnconfirmed(err) {
+				t.Fatalf("err = %v, want UNCONFIRMED", err)
+			}
+		})
+	}
+}
+
+// A quoted "0" is the same default as 0 (isDefaultCode), so {"Index":0,"Code":"0"} is a
+// zero-code placeholder, not a refusal: the pause is APPLIED.
+func TestApplyKeywordActions_QuotedZeroCodeIsAPlaceholder(t *testing.T) {
+	for _, body := range []string{
+		`{"PartialErrors":[{"Index":0,"Code":"0"}]}`,
+		`{"PartialErrors":[{"Index":0,"Code":"0","ErrorCode":"0"}]}`,
+	} {
+		c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, body })
+		out, err := c.ApplyKeywordActions(context.Background(), "654", []KeywordAction{{AdGroupID: "654", KeywordID: "701", Action: "PAUSE"}})
+		if err != nil || strings.Join(outcomesOf(out), ",") != "APPLIED" {
+			t.Fatalf("%s: got %v, %v; want APPLIED", body, outcomesOf(out), err)
+		}
+	}
+}
+
+// A placeholder clears only the slot it names. One naming a slot outside the request, or none,
+// does not affirm the request's item, so the pause is UNCONFIRMED — and in a combined request
+// the remove is not sent after it.
+func TestApplyKeywordActions_PlaceholderIndexOutsideRequestIsUnconfirmed(t *testing.T) {
+	for name, body := range map[string]string{
+		"out of range": `{"PartialErrors":[{"Index":7,"Code":0}]}`,
+		"negative":     `{"PartialErrors":[{"Index":-1,"Code":0,"ErrorCode":""}]}`,
+		"no index":     `{"PartialErrors":[{"Code":0,"ErrorCode":null}]}`,
+		"mixed":        `{"PartialErrors":[{"Index":0,"Code":0},{"Index":7,"Code":0}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, calls := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, body })
+			out, err := c.ApplyKeywordActions(context.Background(), "654", []KeywordAction{
+				{AdGroupID: "654", KeywordID: "701", Action: "PAUSE"},
+				{AdGroupID: "654", KeywordID: "702", Action: "REMOVE"},
+			})
+			if got := strings.Join(outcomesOf(out), ","); got == "APPLIED,APPLIED" || strings.HasPrefix(got, "APPLIED") {
+				t.Fatalf("got %v, %v; the pause must not be APPLIED", outcomesOf(out), err)
+			}
+			for _, cs := range calls() {
+				if cs.method == http.MethodDelete {
+					t.Errorf("the remove must not be sent after an unverified pause: %+v", calls())
+				}
+			}
+		})
+	}
+	// An error at an index outside the request is still unattributable in a mixed array, and an
+	// out-of-range placeholder beside a real refusal leaves the other item UNCONFIRMED.
+	c, _ := kwRecorder(t, func(string, string) (int, string) {
+		return http.StatusOK, `{"PartialErrors":[{"Index":0,"Code":1234,"ErrorCode":"X"},{"Index":7,"Code":0}]}`
+	})
+	out, err := c.ApplyKeywordActions(context.Background(), "654", []KeywordAction{
+		{AdGroupID: "654", KeywordID: "701", Action: "PAUSE"},
+		{AdGroupID: "654", KeywordID: "703", Action: "PAUSE"},
+	})
+	if got := strings.Join(outcomesOf(out), ","); got != "FAILED,UNCONFIRMED" {
+		t.Fatalf("got %v, %v; want FAILED,UNCONFIRMED", got, err)
+	}
+}
+
+// An entry with explicitly null codes names no outcome for its keyword, so beside another
+// keyword's real rejection it is UNCONFIRMED, not APPLIED. A null slot in a fully positional
+// array beside a coded entry is padding (APPLIED); a null-only array answers nothing.
+func TestApplyKeywordActions_UnreadableEntriesAreUnconfirmed(t *testing.T) {
+	two := []KeywordAction{
+		{AdGroupID: "654", KeywordID: "701", Action: "PAUSE"},
+		{AdGroupID: "654", KeywordID: "703", Action: "PAUSE"},
+	}
+	for name, tc := range map[string]struct{ body, want string }{
+		"all-null beside a rejection":   {`{"PartialErrors":[{"Index":0,"Code":1234,"ErrorCode":"X"},{"Index":1,"Code":null,"ErrorCode":null}]}`, "FAILED,UNCONFIRMED"},
+		"Code null beside a rejection":  {`{"PartialErrors":[{"Index":0,"Code":1234,"ErrorCode":"X"},{"Index":1,"Code":null}]}`, "FAILED,UNCONFIRMED"},
+		"{} beside a rejection":         {`{"PartialErrors":[{"Index":0,"Code":1234,"ErrorCode":"X"},{}]}`, "FAILED,UNCONFIRMED"},
+		"positional null padding":       {`{"PartialErrors":[{"Index":0,"Code":1234,"ErrorCode":"X"},null]}`, "FAILED,APPLIED"},
+		"placeholder with null padding": {`{"PartialErrors":[{"Index":0,"Code":0},null]}`, "APPLIED,APPLIED"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, tc.body })
+			out, err := c.ApplyKeywordActions(context.Background(), "654", two)
+			if got := strings.Join(outcomesOf(out), ","); got != tc.want {
+				t.Fatalf("got %v, %v; want %s", got, err, tc.want)
+			}
+		})
+	}
+	for _, body := range []string{`{"PartialErrors":[null]}`, `{"PartialErrors":[null,null]}`} {
+		c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, body })
+		out, err := c.ApplyKeywordActions(context.Background(), "654", two)
+		if err == nil || !IsOutcomeUnconfirmed(err) {
+			t.Fatalf("%s: got %v, %v; want UNCONFIRMED", body, outcomesOf(out), err)
+		}
+	}
+}
+
+// A PartialErrors entry that declares its code twice — `"Code":1234,"Code":0`, or a case variant
+// `"code":0` — would decode last-key-wins into a zero-code placeholder and read a rejected item
+// APPLIED. decodeTrusted refuses the body, so the call is UNCONFIRMED and, on the PAUSE call of a
+// combined request, the irreversible REMOVE is never sent.
+func TestApplyKeywordActions_DuplicateCodeIsUnconfirmed(t *testing.T) {
+	bodies := map[string]string{
+		"duplicate Code":    `{"PartialErrors":[{"Index":0,"Code":1234,"Code":0}]}`,
+		"case-variant code": `{"PartialErrors":[{"Index":0,"Code":1234,"code":0}]}`,
+	}
+	for name, body := range bodies {
+		t.Run("pause/"+name, func(t *testing.T) {
+			c, calls := kwRecorder(t, func(method, _ string) (int, string) {
+				if method == http.MethodPut {
+					return http.StatusOK, body
+				}
+				return http.StatusOK, `{"PartialErrors":[]}`
+			})
+			out, err := c.ApplyKeywordActions(context.Background(), "654", []KeywordAction{
+				{AdGroupID: "654", KeywordID: "701", Action: "PAUSE"},
+				{AdGroupID: "654", KeywordID: "702", Action: "REMOVE"},
+			})
+			if err == nil || !IsOutcomeUnconfirmed(err) {
+				t.Fatalf("got %v, %v; want an UNCONFIRMED whole-call error", outcomesOf(out), err)
+			}
+			for _, cs := range calls() {
+				if cs.method == http.MethodDelete {
+					t.Fatalf("the REMOVE was sent after an unconfirmed pause: %+v", calls())
+				}
+			}
+		})
+		t.Run("remove/"+name, func(t *testing.T) {
+			c, _ := kwRecorder(t, func(method, _ string) (int, string) {
+				if method == http.MethodDelete {
+					return http.StatusOK, body
+				}
+				return http.StatusOK, `{"PartialErrors":[]}`
+			})
+			out, err := c.ApplyKeywordActions(context.Background(), "654", []KeywordAction{
+				{AdGroupID: "654", KeywordID: "702", Action: "REMOVE"},
+			})
+			if err == nil || !IsOutcomeUnconfirmed(err) {
+				t.Fatalf("remove-only: got %v, %v; want an UNCONFIRMED whole-call error", outcomesOf(out), err)
+			}
+			out, err = c.ApplyKeywordActions(context.Background(), "654", []KeywordAction{
+				{AdGroupID: "654", KeywordID: "701", Action: "PAUSE"},
+				{AdGroupID: "654", KeywordID: "702", Action: "REMOVE"},
+			})
+			if got := strings.Join(outcomesOf(out), ","); err != nil || got != "APPLIED,UNCONFIRMED" {
+				t.Fatalf("combined: got %s, %v; want APPLIED,UNCONFIRMED", got, err)
+			}
+		})
 	}
 }

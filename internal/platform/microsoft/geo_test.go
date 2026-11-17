@@ -940,10 +940,10 @@ func (p panicOnGeoFile) RoundTrip(r *http.Request) (*http.Response, error) {
 // A TRUNCATED error array cannot be classified as success: a rejection past the decode cap was
 // discarded, so the surviving prefix reads clean while a criterion was actually refused.
 func TestCreateCampaignCriterions_TruncatedErrorArrayIsUnconfirmed(t *testing.T) {
-	// More nested error collections than maxDecodedErrorItems, all null-ish placeholders, so
-	// nothing "has any" error but the array is known-incomplete.
+	// More nested error collections than maxCampaignCriterionResults, all null-ish placeholders,
+	// so nothing "has any" error but the array is known-incomplete.
 	var errs []string
-	for i := 0; i < maxDecodedErrorItems+3; i++ {
+	for i := 0; i < maxCampaignCriterionResults+3; i++ {
 		errs = append(errs, `{"BatchErrors":[],"Index":`+strconv.Itoa(i)+`}`)
 	}
 	g := &geoAPI{
@@ -1029,7 +1029,7 @@ func TestExistingLocationIDs_SendsTheReadCriterionTypeEnum(t *testing.T) {
 // cap was discarded, so under-reporting the existing criteria would re-attach duplicates.
 func TestExistingLocationIDs_TruncatedErrorArrayRefuses(t *testing.T) {
 	var errs []string
-	for i := 0; i < maxDecodedErrorItems+3; i++ {
+	for i := 0; i < maxCampaignCriterionResults+3; i++ {
 		errs = append(errs, `{"Index":`+strconv.Itoa(i)+`}`)
 	}
 	g := &geoAPI{
@@ -1239,5 +1239,17 @@ func TestCreateCampaign_ReusedCampaignWithExactlyTheRequestedTargetsSucceeds(t *
 		if strings.HasSuffix(p, "/CampaignCriterions") {
 			t.Fatal("every requested target is already attached, so nothing may be re-posted")
 		}
+	}
+}
+
+// A criterion that declares LocationId twice is ambiguous identity evidence: the read refuses.
+func TestExistingLocationIDs_DuplicateKeyRefuses(t *testing.T) {
+	g := &geoAPI{
+		fileBody:          geoFileFixture(geoRowUS),
+		criterionReadBody: `{"CampaignCriterions":[{"Type":"BiddableCampaignCriterion","Criterion":{"Type":"LocationCriterion","LocationId":200,"locationid":190}}],"PartialErrors":[]}`,
+	}
+	c := newGeoClient(t, g)
+	if got, _, err := c.existingLocationIDs(context.Background(), "321"); err == nil {
+		t.Fatalf("existingLocationIDs = %v, want a refusal for a duplicated key", got)
 	}
 }

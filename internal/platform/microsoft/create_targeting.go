@@ -103,6 +103,21 @@ type CreateTargeting struct {
 	Languages          []string
 }
 
+// fields names the requested inputs, as the microsoftConfig keys, in a fixed order.
+func (t CreateTargeting) fields() []string {
+	var fields []string
+	if len(t.ExcludedGeoTargets) > 0 {
+		fields = append(fields, FieldExcludedGeoTargets)
+	}
+	if len(t.ProximityTargets) > 0 {
+		fields = append(fields, FieldProximityTargets)
+	}
+	if len(t.Languages) > 0 {
+		fields = append(fields, FieldLanguages)
+	}
+	return fields
+}
+
 // Empty reports whether nothing was requested.
 func (t CreateTargeting) Empty() bool {
 	return len(t.ExcludedGeoTargets) == 0 && len(t.ProximityTargets) == 0 && len(t.Languages) == 0
@@ -215,6 +230,9 @@ type msTargetCampaignCriterion struct {
 	CampaignId json.Number `json:"CampaignId"`
 	Criterion  any         `json:"Criterion"`
 	Type       string      `json:"Type"`
+	// CriterionBid is the BidMultiplier of a biddable day-time or bid-adjustment criterion
+	// (#563); omitted for the negative location and radius criteria, as before.
+	CriterionBid *msBidMultiplier `json:"CriterionBid,omitempty"`
 }
 
 type addTargetCriterionsRequest struct {

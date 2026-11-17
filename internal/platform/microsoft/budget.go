@@ -280,7 +280,7 @@ func (c *Client) queryCampaignByIDGuarded(ctx context.Context, campaignID, what,
 		}
 	}
 	var resp queryCampaignsByIDsResponse
-	if uerr := json.Unmarshal(body, &resp); uerr != nil {
+	if uerr := decodeTrusted(body, &resp); uerr != nil {
 		return nil, id, fmt.Errorf("decode Campaigns/QueryByIds response: %w", uerr)
 	}
 	if resp.PartialErrors.AnyErrors {

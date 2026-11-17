@@ -78,11 +78,12 @@ const (
 	errCodeDuplicateAdGroupCriterionNumeric = "4152"
 )
 
-// isDefaultCode reports whether one code field holds only a default: absent, null, 0 or "".
-// BatchError.Code is a non-nullable int, so a slot with no error may carry 0.
+// isDefaultCode reports whether one code field holds only a default: absent, null, 0, "" or the
+// quoted "0". BatchError.Code is a non-nullable int, so a slot with no error may carry 0, and a
+// serializer that quotes numbers sends it as "0" — the same default isZeroCodePlaceholder names.
 func isDefaultCode(raw json.RawMessage) bool {
 	switch string(bytes.TrimSpace(raw)) {
-	case "", "null", "0", `""`:
+	case "", "null", "0", `""`, `"0"`:
 		return true
 	}
 	return false
@@ -230,7 +231,7 @@ func (c *Client) CheckRemarketingLists(ctx context.Context, include, exclude []s
 	// client asked for, and reading it as "no such list" would blame a possibly valid id.
 	var probe map[string]json.RawMessage
 	var resp getAudiencesByIDsResponse
-	if json.Unmarshal(raw, &probe) != nil || json.Unmarshal(raw, &resp) != nil {
+	if json.Unmarshal(raw, &probe) != nil || decodeTrusted(raw, &resp) != nil {
 		return fmt.Errorf("%w: the response is not the documented shape", errAudienceLookupMalformed)
 	}
 	if aud, ok := probe["Audiences"]; !ok || isJSONNullRaw(aud) {
@@ -451,7 +452,7 @@ func (c *Client) addAudienceCriteria(ctx context.Context, adGroupID string, ids 
 	if json.Unmarshal(raw, &probe) == nil {
 		_, sawIDs = probe["AdGroupCriterionIds"]
 	}
-	if !sawIDs || json.Unmarshal(raw, &resp) != nil || len(resp.AdGroupCriterionIds) > len(ids) {
+	if !sawIDs || decodeTrusted(raw, &resp) != nil || len(resp.AdGroupCriterionIds) > len(ids) {
 		all(OutcomeUnconfirmed, "")
 		return out, fmt.Errorf("microsoft-ads %s audience lists UNCONFIRMED: the response could not be read", kind)
 	}

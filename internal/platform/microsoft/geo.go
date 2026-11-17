@@ -694,9 +694,17 @@ type createCampaignCriterionsResponse struct {
 	NestedPartialErrors  boundedNestedErrorItems `json:"NestedPartialErrors"`
 }
 
-// boundedGeoIDs is boundedNumberIDs bounded by maxGeoTargets. Every id matters here (one per
-// requested country), so the 16-item error-array bound would silently truncate a 30-country
-// request — the same defect boundedKeywordIDs exists to avoid.
+// maxCampaignCriterionResults bounds what one AddCampaignCriterions response decode retains,
+// ids and nested error collections alike. It must cover the largest criterion call this client
+// sends: an ad schedule of MaxAdSchedules (49) windows, more than the geographic calls (at most
+// maxGeoTargets, 30) or the device-expanded bid adjustments (at most 3 + 5 + 2). It bounds the
+// DECODE only; the geographic input limit stays maxGeoTargets.
+const maxCampaignCriterionResults = 64
+
+// boundedGeoIDs is boundedNumberIDs bounded by maxCampaignCriterionResults. Every id matters
+// here (one per criterion sent), so a smaller bound would silently truncate a full call — a
+// 31-49 window ad schedule read as short, so UNCONFIRMED, on every success — the same defect
+// boundedKeywordIDs exists to avoid.
 type boundedGeoIDs []*json.Number
 
 func (b *boundedGeoIDs) UnmarshalJSON(data []byte) error {
@@ -716,7 +724,7 @@ func (b *boundedGeoIDs) UnmarshalJSON(data []byte) error {
 		if err := dec.Decode(&n); err != nil {
 			return err
 		}
-		if len(*b) < maxGeoTargets {
+		if len(*b) < maxCampaignCriterionResults {
 			*b = append(*b, n)
 		}
 	}
@@ -757,7 +765,10 @@ func (b *boundedNestedErrorItems) UnmarshalJSON(data []byte) error {
 		if rawCodePresent(it.Code) || rawCodePresent(it.ErrorCode) || it.BatchErrors.AnyErrors {
 			b.AnyErrors = true
 		}
-		if len(b.Items) < maxDecodedErrorItems {
+		// Retained up to maxCampaignCriterionResults, not maxDecodedErrorItems: the array can be
+		// positional (one slot per criterion, null-padded), and a 49-criterion call must not read
+		// as truncated, so UNCONFIRMED, merely because its placeholders outnumber 16.
+		if len(b.Items) < maxCampaignCriterionResults {
 			b.Items = append(b.Items, it)
 			continue
 		}
@@ -766,20 +777,34 @@ func (b *boundedNestedErrorItems) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// nestedErrorsHaveAny reports whether the collection carries at least one ACTUAL error,
-// checking BOTH the collection level and each nested BatchErrors list. Mirrors
-// partialErrorsHaveAny's null-placeholder filtering: a position-aligned array can contain
-// nulls that decode to zero-value items, and those are not errors.
-func nestedErrorsHaveAny(items []msNestedErrorCollection) bool {
-	for _, it := range items {
-		if codeString(it.ErrorCode) != "" || codeString(it.Code) != "" {
-			return true
+// nestedErrorState classifies a NestedPartialErrors array with audienceErrorCode's rule, at the
+// collection level and for each nested BatchErrors entry: an entry is an error unless BOTH codes
+// are defaults (absent, null, 0 or ""), and a present code this client cannot read is still an
+// error. So a zero-code placeholder ({"Code":0,"ErrorCode":null}) is not a rejection and an
+// unreadable code ({"Code":true}) is never read as success. unreadable reports an entry with an
+// explicitly null code and no other (codePairUnreadable: {"Code":null}, {"ErrorCode":null} or
+// both null — the complement of isZeroCodePlaceholder among non-errors): it names neither an
+// error nor a clean slot, so a caller must not read it as success. A pair with NEITHER key and a
+// null slot are padding here, unlike in attribute's PartialErrors: NestedPartialErrors is
+// index-aligned and null-padded on the wire, so a key-less slot is the documented shape of a
+// clean criterion rather than an entry that says nothing.
+func nestedErrorState(items []msNestedErrorCollection) (anyErr, unreadable bool) {
+	classify := func(errorCode, code json.RawMessage) {
+		if present, _ := audienceErrorCode(errorCode, code); present {
+			anyErr = true
+			return
 		}
-		if partialErrorsHaveAny(it.BatchErrors.Items) {
-			return true
+		if codePairUnreadable(errorCode, code) {
+			unreadable = true
 		}
 	}
-	return false
+	for _, it := range items {
+		classify(it.ErrorCode, it.Code)
+		for _, b := range it.BatchErrors.Items {
+			classify(b.ErrorCode, b.Code)
+		}
+	}
+	return anyErr, unreadable
 }
 
 // nestedErrorCodes renders the machine-readable codes from a NestedPartialErrors array for an
@@ -788,18 +813,20 @@ func nestedErrorsHaveAny(items []msNestedErrorCollection) bool {
 // this client.
 func nestedErrorCodes(items []msNestedErrorCollection) string {
 	var codes []string
-	for _, it := range items {
-		for _, raw := range []json.RawMessage{it.ErrorCode, it.Code} {
-			if v := codeString(raw); v != "" && len(v) <= maxErrorCodeLen {
-				codes = append(codes, v)
-				if len(codes) >= maxRetainedErrorCodes {
-					return strings.Join(codes, ",")
-				}
-			}
+	// Rendered with audienceErrorCode, so a zero-code placeholder adds no "0" and an unreadable
+	// code is shown as withheld.
+	add := func(errorCode, code json.RawMessage) bool {
+		if present, rendered := audienceErrorCode(errorCode, code); present {
+			codes = append(codes, rendered)
 		}
-		if nested := partialErrorCodes(it.BatchErrors.Items); nested != "" && nested != "unspecified" {
-			codes = append(codes, nested)
-			if len(codes) >= maxRetainedErrorCodes {
+		return len(codes) >= maxRetainedErrorCodes
+	}
+	for _, it := range items {
+		if add(it.ErrorCode, it.Code) {
+			return strings.Join(codes, ",")
+		}
+		for _, b := range it.BatchErrors.Items {
+			if add(b.ErrorCode, b.Code) {
 				return strings.Join(codes, ",")
 			}
 		}
@@ -922,7 +949,7 @@ func (c *Client) existingLocationIDs(ctx context.Context, campaignID string) (ma
 		return nil, nil, err
 	}
 	var resp queryCampaignCriterionsResponse
-	if uErr := json.Unmarshal(body, &resp); uErr != nil {
+	if uErr := decodeTrusted(body, &resp); uErr != nil {
 		return nil, nil, fmt.Errorf("decode CampaignCriterions/QueryByIds response: %w", uErr)
 	}
 	// A TRUNCATED error array cannot be read as "no errors" here for the same reason it cannot
@@ -1063,15 +1090,16 @@ func (c *Client) postCampaignCriterions(ctx context.Context, campaignID, what, n
 	}
 
 	var resp createCampaignCriterionsResponse
-	if uErr := json.Unmarshal(body, &resp); uErr != nil {
+	if uErr := decodeTrusted(body, &resp); uErr != nil {
 		// A 2xx whose body will not parse is UNCONFIRMED: the criteria may have been attached
 		// and a blind retry would duplicate them. errNoID is the sentinel the call site maps to
-		// UNCONFIRMED.
+		// UNCONFIRMED. decodeTrusted also refuses a key declared twice (case variants included),
+		// which last-key-wins decoding would let erase a rejection code.
 		return nil, fmt.Errorf("decode CampaignCriterionIds response (%v): %w", uErr, errNoID)
 	}
 
 	// A TRUNCATED error array is NOT evidence of success. boundedNestedErrorItems retains
-	// maxDecodedErrorItems entries while this call sends up to maxGeoTargets, so a rejection
+	// maxCampaignCriterionResults entries, at least as many as any call sends, so a rejection
 	// past the cap was DISCARDED during decode and the surviving prefix can read as clean.
 	// Absence of a rejection in a truncated array is not absence of a rejection — refusing
 	// beats reporting an untargeted campaign as targeted. (Same invariant the keyword path
@@ -1079,7 +1107,21 @@ func (c *Client) postCampaignCriterions(ctx context.Context, campaignID, what, n
 	if resp.NestedPartialErrors.Truncated || nestedTruncated(resp.NestedPartialErrors.Items) {
 		return nil, fmt.Errorf("microsoft-ads %s returned a truncated error array for campaign %s, so the outcome cannot be classified: %w", what, campaignID, errNoID)
 	}
-	if nestedErrorsHaveAny(resp.NestedPartialErrors.Items) {
+	anyErr, unreadable := nestedErrorState(resp.NestedPartialErrors.Items)
+	if unreadable {
+		// An entry whose codes are both explicitly null says neither "rejected" nor "clean", so
+		// the outcome is UNCONFIRMED — even beside a coded rejection, which would otherwise read
+		// as a definite partial failure. The ids that WERE returned are kept, so the caller
+		// records them for reconciliation.
+		created := make([]string, 0, len(resp.CampaignCriterionIds))
+		for _, raw := range resp.CampaignCriterionIds {
+			if id := numberID(raw); id != "" {
+				created = append(created, id)
+			}
+		}
+		return created, fmt.Errorf("microsoft-ads %s returned an error entry with no readable code for campaign %s (%d of %d %s returned an id), so the outcome cannot be classified: %w", what, campaignID, len(created), n, noun, errNoID)
+	}
+	if anyErr {
 		created := make([]string, 0, len(resp.CampaignCriterionIds))
 		for _, raw := range resp.CampaignCriterionIds {
 			if id := numberID(raw); id != "" {

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -28,6 +29,8 @@ import (
 var microsoftGatedFields = map[string]bool{
 	"audienceIds":         true,
 	"excludedAudienceIds": true,
+	// #563 gap 9: shared negative keyword lists are existing resources of the shared account.
+	"sharedNegativeKeywordListIds": true,
 }
 
 // microsoftUngatedFields are every other microsoftConfig key, each deliberately outside the check:
@@ -40,6 +43,16 @@ var microsoftUngatedFields = map[string]bool{
 	"negativeKeywords": true, "audienceBidAdjustment": true,
 	// #563 gaps 5-6: ISO countries, coordinates and languages name no account resource.
 	"excludedGeoTargets": true, "proximityTargets": true, "languages": true,
+	// #563 gap 11: a search network choice names no account resource.
+	"searchPartners": true,
+	// #563 gap 10: days and hours name no account resource.
+	"adSchedules": true,
+	// #563 gap 8: devices, age ranges and genders name no account resource.
+	"deviceBidAdjustments": true, "ageBidAdjustments": true, "genderBidAdjustments": true,
+	// #563 gap 13: structured snippets are created new for the campaign and name no resource.
+	"structuredSnippets": true,
+	// #563 gap 13: the logo is a newly uploaded image; its business name is free text.
+	"logoAssetId": true, "logoBusinessName": true,
 }
 
 // TestEveryMicrosoftConfigFieldIsClassifiedForTheMarketingOpsGate fails when a microsoftConfig
@@ -70,6 +83,9 @@ func TestMicrosoftSharedAccountInputDetectionAgreesWithTheCreateGate(t *testing.
 		`{"microsoftConfig":{"AudienceIds":["1"],"EXCLUDEDAUDIENCEIDS":["2"]}}`,
 		`{"microsoftConfig":{"audienceIds":["1"],"budget":"x"}}`,
 		`{"MicrosoftConfig":{"audienceIds":["1"]}}`,
+		`{"microsoftConfig":{"sharedNegativeKeywordListIds":["4001"]}}`,
+		`{"microsoftConfig":{"SHAREDNEGATIVEKEYWORDLISTIDS":["4001"],"audienceIds":["1"]}}`,
+		`{"microsoftConfig":{"sharedNegativeKeywordListIds":[]}}`,
 	} {
 		var cfg microsoftConfig
 		_ = unmarshalPlatformConfig([]byte(raw), "microsoftConfig", &cfg)
@@ -79,6 +95,9 @@ func TestMicrosoftSharedAccountInputDetectionAgreesWithTheCreateGate(t *testing.
 		}
 		if len(cfg.ExcludedAudienceIDs) > 0 {
 			sent = append(sent, "excludedAudienceIds")
+		}
+		if len(cfg.SharedNegativeKeywordListIDs) > 0 {
+			sent = append(sent, "sharedNegativeKeywordListIds")
 		}
 		gate := service.MicrosoftMarketingOpsInputs(json.RawMessage(raw))
 		if !slices.Equal(gate, sent) {
@@ -143,7 +162,13 @@ func newMSAudDispatcher(t *testing.T, api *msAudAPI) *MicrosoftDispatcher {
 		case "Keywords":
 			_, _ = io.WriteString(w, `{"KeywordIds":[1111],"PartialErrors":[]}`)
 		case "CampaignCriterions":
-			_, _ = io.WriteString(w, `{"CampaignCriterionIds":[8001],"NestedPartialErrors":[]}`)
+			// One id per criterion sent (8001, 8002, ...), so a multi-criterion call is answered
+			// in full.
+			ids := []string{"8001"}
+			for i := 2; i <= strings.Count(string(b), `"CampaignId"`); i++ {
+				ids = append(ids, fmt.Sprint(8000+i))
+			}
+			_, _ = fmt.Fprintf(w, `{"CampaignCriterionIds":[%s],"NestedPartialErrors":[]}`, strings.Join(ids, ","))
 		case "AdGroupCriterions":
 			api.mu.Lock()
 			api.critCalls++

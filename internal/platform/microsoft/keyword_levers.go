@@ -319,6 +319,9 @@ type indexedErrorItem struct {
 	Index     *int            `json:"Index"`
 	Code      json.RawMessage `json:"Code"`
 	ErrorCode json.RawMessage `json:"ErrorCode"`
+	// null records that the array slot itself was the JSON literal null (not {}), the only
+	// shape attribute accepts as positional padding.
+	null bool
 }
 
 // code renders the item's machine-readable code, symbolic first.
@@ -351,9 +354,14 @@ func outputCode(c string) string {
 	return withheldErrorCode
 }
 
-// isError reports whether the entry carries an actual code (a null placeholder does not).
+// isError reports whether the entry carries an actual code (a null or zero-code placeholder does
+// not).
 func (it indexedErrorItem) isError() bool {
-	return rawCodePresent(it.ErrorCode) || rawCodePresent(it.Code)
+	// One rule with audienceErrorCode: an item is an error unless BOTH codes are defaults
+	// (absent, null, 0 or ""), so a zero-code placeholder such as
+	// {"Index":0,"Code":0,"ErrorCode":null} is not a refusal, while an unreadable code still is.
+	present, _ := audienceErrorCode(it.ErrorCode, it.Code)
+	return present
 }
 
 // indexedErrors streams a BatchError array, retaining at most maxIndexedErrorItems entries and
@@ -377,8 +385,14 @@ func (b *indexedErrors) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("expected a JSON array of errors")
 	}
 	for dec.More() {
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return err
+		}
 		var it indexedErrorItem
-		if err := dec.Decode(&it); err != nil {
+		if isJSONNullRaw(raw) {
+			it.null = true
+		} else if err := json.Unmarshal(raw, &it); err != nil {
 			return err
 		}
 		if len(b.Items) < maxIndexedErrorItems {
@@ -397,25 +411,63 @@ type attribution struct {
 	byIndex map[int]string
 	// errored records every index an error was attributed to.
 	errored map[int]bool
+	// unconfirmed records every index an UNREADABLE entry named (see attribute): the item's
+	// outcome is unknown, so it is never reported applied. errored takes precedence.
+	unconfirmed map[int]bool
 	// unattributable is set when an error carried no usable index, an index outside the
-	// request, or the array was truncated. Then NO un-named item can be proven applied.
+	// request, or the array was truncated — or when a zero-code placeholder or an unreadable
+	// entry named no slot of the request. Then NO un-named item can be proven applied.
 	unattributable bool
 }
 
 func attribute(errs indexedErrors, n int) attribution {
-	a := attribution{byIndex: map[int]string{}, errored: map[int]bool{}, unattributable: errs.Truncated}
+	a := attribution{byIndex: map[int]string{}, errored: map[int]bool{}, unconfirmed: map[int]bool{}, unattributable: errs.Truncated}
+	// POSITIONAL PADDING is a null slot in a fully positional array: exactly one entry per
+	// request item, at least one of them coded (an error or a zero-code placeholder), and not
+	// truncated. That is the null-padded shape geo.go reads for NestedPartialErrors. A
+	// code-less-only array ([null], [{}]) is not one — it answers nothing about any item, unlike
+	// the null or [] that affirms no error.
+	coded := false
 	for _, it := range errs.Items {
-		if !it.isError() {
-			continue
+		if it.isError() || it.isZeroCodePlaceholder() {
+			coded = true
+			break
 		}
-		if it.Index == nil || *it.Index < 0 || *it.Index >= n {
-			a.unattributable = true
-			continue
+	}
+	positional := coded && !errs.Truncated && len(errs.Items) == n
+	for _, it := range errs.Items {
+		outOfRange := it.Index == nil || *it.Index < 0 || *it.Index >= n
+		switch {
+		case it.isError():
+			if outOfRange {
+				a.unattributable = true
+				continue
+			}
+			if !a.errored[*it.Index] {
+				a.byIndex[*it.Index] = it.code()
+			}
+			a.errored[*it.Index] = true
+		case it.isZeroCodePlaceholder():
+			// A zero-code placeholder marks a clean item AT ITS INDEX, so it is evidence only
+			// about a slot of this request. One with no index, or one naming a slot outside the
+			// request, cannot be matched to the items it claims to clear: no un-named item is
+			// proven applied.
+			if outOfRange {
+				a.unattributable = true
+			}
+		case it.null && positional:
+			// Padding: the slot's item had no error.
+		default:
+			// UNREADABLE: an entry that names no outcome — codes explicitly null
+			// (codePairUnreadable), {} or an index with no code, or a null slot outside a
+			// positional array. The item it names is UNCONFIRMED; naming none, it may be any
+			// item's.
+			if outOfRange {
+				a.unattributable = true
+				continue
+			}
+			a.unconfirmed[*it.Index] = true
 		}
-		if !a.errored[*it.Index] {
-			a.byIndex[*it.Index] = it.code()
-		}
-		a.errored[*it.Index] = true
 	}
 	return a
 }
@@ -650,6 +702,33 @@ func (c *Client) ApplyKeywordActions(ctx context.Context, adGroupID string, acti
 	return out, nil
 }
 
+// isZeroCodePlaceholder reports whether the entry is an EXPLICIT zero-code placeholder: no error
+// (isError is false) yet at least one code field present as a non-null default (0, "" or "0"),
+// e.g. {"Index":0,"Code":0,"ErrorCode":null}. Microsoft answers a clean item that way in a
+// positional array. A null slot, {} or all-null codes are not one: they say nothing.
+func (it indexedErrorItem) isZeroCodePlaceholder() bool {
+	if it.isError() {
+		return false
+	}
+	return rawCodePresent(it.Code) || rawCodePresent(it.ErrorCode)
+}
+
+// codePairUnreadable reports whether a code pair names NO outcome although a code field was
+// sent: neither code is an error or a non-null default (so it is not a refusal and not a
+// zero-code placeholder), yet at least one is the explicit JSON null — {"Code":null},
+// {"ErrorCode":null} or both null. A pair with neither key is not this: whether an absent pair
+// is padding is each decoder's decision (geo.go: always; attribute: only a null slot in a
+// positional array).
+func codePairUnreadable(errorCode, code json.RawMessage) bool {
+	if present, _ := audienceErrorCode(errorCode, code); present {
+		return false
+	}
+	if (rawCodePresent(errorCode) && !isJSONNullRaw(errorCode)) || (rawCodePresent(code) && !isJSONNullRaw(code)) {
+		return false
+	}
+	return isJSONNullRaw(errorCode) || isJSONNullRaw(code)
+}
+
 // anyIndexedError reports whether at least one entry carries an actual code.
 func anyIndexedError(items []indexedErrorItem) bool {
 	for _, it := range items {
@@ -677,17 +756,24 @@ func (c *Client) keywordMutation(ctx context.Context, method, what string, body 
 		return nil, err
 	}
 	var resp keywordMutateResponse
-	if uerr := json.Unmarshal(raw, &resp); uerr != nil || !resp.sawPartialErrors {
+	// decodeTrusted refuses a key declared twice (case variants included): last-key-wins would
+	// let `"Code":1234,"Code":0` erase a rejection and read it as a zero-code placeholder.
+	if uerr := decodeTrusted(raw, &resp); uerr != nil || !resp.sawPartialErrors {
 		return nil, &keywordMutationUnconfirmedError{what: what, err: errMalformedKeywordResponse}
 	}
-	// A NON-EMPTY PartialErrors whose every entry is a null or code-less placeholder (`[null]`,
-	// `[{}]`) names no rejection, yet is not the `[]`/null that affirms none: read leniently it
-	// would report every item APPLIED. Fail closed as UpdateCampaignStatus does for the same
-	// shape — the call was answered, so it may have applied, and the outcome is UNCONFIRMED.
-	if len(resp.PartialErrors.Items) > 0 && !anyIndexedError(resp.PartialErrors.Items) {
-		return nil, &keywordMutationUnconfirmedError{what: what, err: errMalformedKeywordResponse}
-	}
+	// A NON-EMPTY PartialErrors that names no rejection is APPLIED only when every entry is an
+	// explicit zero-code placeholder ({"Index":0,"Code":0,"ErrorCode":null}), which is how a
+	// positional array marks a clean item. A null or code-less entry (`[null]`, `[{}]`) is not
+	// the `[]`/null that affirms no error: read leniently it would report every item APPLIED.
+	// Fail closed as UpdateCampaignStatus does for that shape — the call was answered, so it may
+	// have applied, and the outcome is UNCONFIRMED.
+	// A placeholder clears only the slot it names, so one with no index or an index outside
+	// this request's n items is not that affirmation either; a null slot is accepted only as
+	// positional padding (attribute).
 	att := attribute(resp.PartialErrors, n)
+	if len(resp.PartialErrors.Items) > 0 && !anyIndexedError(resp.PartialErrors.Items) && (att.unattributable || len(att.unconfirmed) > 0) {
+		return nil, &keywordMutationUnconfirmedError{what: what, err: errMalformedKeywordResponse}
+	}
 	out := make([]itemOutcome, n)
 	for i := range out {
 		switch {
@@ -696,7 +782,7 @@ func (c *Client) keywordMutation(ctx context.Context, method, what string, body 
 			out[i] = itemOutcome{OutcomeUnconfirmed, att.byIndex[i]}
 		case att.errored[i]:
 			out[i] = itemOutcome{OutcomeFailed, att.byIndex[i]}
-		case att.unattributable:
+		case att.unconfirmed[i], att.unattributable:
 			// An error Microsoft did not pin to an index may be this item's.
 			out[i] = itemOutcome{OutcomeUnconfirmed, ""}
 		default:
@@ -807,7 +893,7 @@ func (c *Client) AddCampaignNegativeKeywords(ctx context.Context, campaignID str
 	_, sawIDs := probe["NegativeKeywordIds"]
 	_, sawErrs := probe["NestedPartialErrors"]
 	var resp addNegativeKeywordsResponse
-	if uerr := json.Unmarshal(raw, &resp); uerr != nil || (!sawIDs && !sawErrs) {
+	if uerr := decodeTrusted(raw, &resp); uerr != nil || (!sawIDs && !sawErrs) {
 		return nil, &keywordMutationUnconfirmedError{what: "negative keyword add", err: errMalformedKeywordResponse}
 	}
 

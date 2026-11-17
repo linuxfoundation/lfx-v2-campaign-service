@@ -209,6 +209,26 @@ type CampaignInput struct {
 	ExcludedGeoTargets []string
 	ProximityTargets   []ProximityTarget
 	Languages          []string
+	// SearchPartners chooses the ad group's search network (#563 gap 11, AdGroup.Network): true
+	// is OwnedAndOperatedAndSyndicatedSearch (Microsoft's sites and its syndicated search
+	// partners), false is OwnedAndOperatedOnly (Microsoft's own sites). nil sends no Network,
+	// so Microsoft keeps its default (partners included), exactly as before the field existed.
+	// Applied only to an ad group this run creates; a reused one keeps its network and the
+	// steps say so, as they do for the flight dates.
+	SearchPartners *bool
+	// AdSchedules are the campaign's day-time windows (#563 gap 10, ad_schedule.go), checked by
+	// ValidateAdSchedules before anything is created and attached as DayTimeCriterion entries
+	// right after the radius targets, before the ad group, under the same fail-closed rules.
+	// The hours are read in the Microsoft Advertising account's time zone, not TimeZone (the
+	// create omits AdScheduleUseSearcherTimeZone). Applied only to a campaign this run creates. Empty sends none: the campaign serves at
+	// every hour, as before.
+	AdSchedules []AdSchedule
+	// BidAdjustments are the campaign's device, age and gender bid adjustments (#563 gap 8,
+	// bid_adjustments.go), checked by ValidateBidAdjustments before anything is created and
+	// attached as biddable campaign criteria right after the ad schedule, before the ad group,
+	// under the same fail-closed rules. Applied only to a campaign this run creates. Empty sends
+	// none, as before.
+	BidAdjustments BidAdjustments
 }
 
 // CampaignResult reports what CreateCampaign created (or found). The campaign NAME
@@ -275,6 +295,11 @@ type CampaignResult struct {
 	// criteria THIS RUN attached to the campaign (#563), set like GeoCriterionIDs.
 	ExcludedGeoCriterionIDs []string `json:"excludedGeoCriterionIds,omitempty"`
 	RadiusCriterionIDs      []string `json:"radiusCriterionIds,omitempty"`
+	// AdScheduleCriterionIDs are the day-time criteria THIS RUN attached (#563 gap 10).
+	AdScheduleCriterionIDs []string `json:"adScheduleCriterionIds,omitempty"`
+	// BidAdjustmentCriterionIDs are the device, age and gender criteria THIS RUN attached (#563
+	// gap 8), in send order.
+	BidAdjustmentCriterionIDs []string `json:"bidAdjustmentCriterionIds,omitempty"`
 	// AlreadyExisted is true ONLY when this run created NOTHING — i.e. the campaign, the ad
 	// group, AND the ad were all matched as pre-existing (by name / by destination) and no
 	// create was issued at any level. If ANY level was created this run, it is false, even
@@ -307,6 +332,16 @@ type CampaignResult struct {
 	// already had is skipped, and the Steps entry says so.
 	SitelinkAdExtensionIDs []string `json:"sitelinkAdExtensionIds,omitempty"`
 	CalloutAdExtensionIDs  []string `json:"calloutAdExtensionIds,omitempty"`
+	// StructuredSnippetAdExtensionIDs are the structured snippet extensions THIS RUN created and
+	// associated with the campaign (#563 gap 13), set by the DISPATCHER after
+	// AttachCampaignStructuredSnippets; empty does not mean the campaign has none, as above.
+	StructuredSnippetAdExtensionIDs []string `json:"structuredSnippetAdExtensionIds,omitempty"`
+	// LogoMediaID / LogoAdExtensionID record the campaign logo extension (#563 gap 13), set by
+	// the DISPATCHER after AttachCampaignLogo, as the image ids are: MediaID is "" when nothing
+	// was uploaded (no logo requested, or the campaign already had one), and either may be set
+	// beside a degraded outcome so a partially-built extension can be found.
+	LogoMediaID       string `json:"logoMediaId,omitempty"`
+	LogoAdExtensionID string `json:"logoAdExtensionId,omitempty"`
 	// NegativeKeywords is the positional outcome of the create-time campaign negatives
 	// (microsoftConfig.negativeKeywords, #563), one entry per requested keyword in request
 	// order. Like the image ids it is set by the DISPATCHER after AddCampaignNegativeKeywords —
@@ -316,9 +351,14 @@ type CampaignResult struct {
 	// Audiences is the positional outcome of the create-time remarketing lists
 	// (microsoftConfig.excludedAudienceIds then audienceIds, #563 gap 4) on the ad group. Set by
 	// the DISPATCHER after AttachAdGroupAudiences; empty when none were requested.
-	Audiences       []AudienceOutcome `json:"audiences,omitempty"`
-	MicrosoftAdsURL string            `json:"microsoftAdsUrl"`
-	Steps           []string          `json:"steps"`
+	Audiences []AudienceOutcome `json:"audiences,omitempty"`
+	// SharedNegativeKeywordLists is the positional outcome of the create-time shared negative
+	// keyword lists (microsoftConfig.sharedNegativeKeywordListIds, #563 gap 9) on the campaign.
+	// Set by the DISPATCHER after AttachCampaignSharedNegativeKeywordLists; empty when none were
+	// requested.
+	SharedNegativeKeywordLists []SharedListOutcome `json:"sharedNegativeKeywordLists,omitempty"`
+	MicrosoftAdsURL            string              `json:"microsoftAdsUrl"`
+	Steps                      []string            `json:"steps"`
 }
 
 // msCampaign is one Campaign in the POST CampaignManagement/v13/Campaigns body. Only
@@ -676,6 +716,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, domain.PreflightRefusalf("invalid microsoftConfig.%s", err.Error())
 	}
+	schedules, err := ValidateAdSchedules(in.AdSchedules)
+	if err != nil {
+		return nil, domain.PreflightRefusalf("invalid microsoftConfig.%s", err.Error())
+	}
+	adjustments, err := ValidateBidAdjustments(in.BidAdjustments)
+	if err != nil {
+		return nil, domain.PreflightRefusalf("invalid microsoftConfig.%s", err.Error())
+	}
 
 	// Flight dates go on the ad group, which is created only AFTER the campaign, so a date that
 	// is malformed or out of order is refused here, before anything exists. Whether it is already
@@ -846,13 +894,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// clean success path sets AlreadyExisted, and only when ALL three levels pre-existed.
 	// geoCriterionIDs accumulates the ids of the location criteria attached below, so a later
 	// ad-group/ad failure still reports the targeting this run put on the campaign.
-	var geoCriterionIDs, excludedCriterionIDs, radiusCriterionIDs []string
+	var geoCriterionIDs, excludedCriterionIDs, radiusCriterionIDs, scheduleCriterionIDs, adjustmentCriterionIDs []string
 	campaignPartial := func() *CampaignResult {
 		r := namePartial()
 		r.CampaignID = campaignID
 		r.GeoCriterionIDs = geoCriterionIDs
 		r.ExcludedGeoCriterionIDs = excludedCriterionIDs
 		r.RadiusCriterionIDs = radiusCriterionIDs
+		r.AdScheduleCriterionIDs = scheduleCriterionIDs
+		r.BidAdjustmentCriterionIDs = adjustmentCriterionIDs
 		return r
 	}
 
@@ -862,20 +912,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// creating an ad group under it with no Language could leave the ad group languageless or
 	// (with English) mask the campaign's languages. So the create stops here, before the ad group,
 	// with the campaign reported for reconciliation.
-	if alreadyExisted && !extra.Empty() {
-		var fields []string
-		if len(extra.ExcludedGeoTargets) > 0 {
-			fields = append(fields, FieldExcludedGeoTargets)
-		}
-		if len(extra.ProximityTargets) > 0 {
-			fields = append(fields, FieldProximityTargets)
-		}
-		if len(extra.Languages) > 0 {
-			fields = append(fields, FieldLanguages)
-		}
-		steps = append(steps, fmt.Sprintf("Stopped before the ad group: campaign %s was found by name (an earlier attempt made it), and %s are applied only to a campaign this run creates; check its exclusions, radius targets and languages in Microsoft Advertising and finish the campaign there", campaignID, strings.Join(fields, ", ")))
+	reusedFields := extra.fields()
+	if len(schedules) > 0 {
+		reusedFields = append(reusedFields, FieldAdSchedules)
+	}
+	if len(adjustments) > 0 {
+		reusedFields = append(reusedFields, in.BidAdjustments.fields()...)
+	}
+	if alreadyExisted && len(reusedFields) > 0 {
+		steps = append(steps, fmt.Sprintf("Stopped before the ad group: campaign %s was found by name (an earlier attempt made it), and %s are applied only to a campaign this run creates; check its exclusions, radius targets, languages, schedule and bid adjustments in Microsoft Advertising and finish the campaign there", campaignID, strings.Join(reusedFields, ", ")))
 		return campaignPartial(), fmt.Errorf("microsoft-ads create-time targeting NOT applied to reused campaign %s (%s are set only on a campaign this run creates; nothing below the campaign was created): verify the campaign in Microsoft Advertising",
-			campaignID, strings.Join(fields, ", "))
+			campaignID, strings.Join(reusedFields, ", "))
 	}
 
 	// Step 2.5: attach the CAMPAIGN-level location criteria, before the ad-group cascade.
@@ -1004,6 +1051,31 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		steps = append(steps, fmt.Sprintf("Radius targeting attached: %d radius criteria (%s)", len(ids), proximityLabel(extra.ProximityTargets)))
 	}
+	// The ad schedule (#563 gap 10) follows the radii, fail-closed for the same reason: a
+	// campaign whose schedule did not land would serve at every hour.
+	if len(schedules) > 0 {
+		ids, serr := c.createAdScheduleCriterions(ctx, campaignID, schedules)
+		scheduleCriterionIDs = ids
+		if serr != nil {
+			return campaignPartial(), criterionStepError(campaignID, "ad schedule", "would serve outside the requested schedule if enabled", len(ids), len(schedules), serr)
+		}
+		steps = append(steps, fmt.Sprintf("Ad schedule attached: %d day-time criteria (%s, in the Microsoft Advertising account's time zone, not the campaign's)", len(ids), adScheduleLabel(schedules)))
+	}
+	// The device, age and gender bid adjustments (#563 gap 8) follow, fail-closed with the rest of
+	// the campaign criteria: a device at -100 that did not land would serve on that device.
+	if len(adjustments) > 0 {
+		sent, filled := bidAdjustmentCriteria(adjustments)
+		ids, berr := c.createBidAdjustmentCriterions(ctx, campaignID, sent)
+		adjustmentCriterionIDs = ids
+		if berr != nil {
+			return campaignPartial(), criterionStepError(campaignID, "bid adjustments", "would bid without the requested device, age and gender adjustments if enabled", len(ids), len(sent), berr)
+		}
+		step := fmt.Sprintf("Bid adjustments attached: %d criteria (%s)", len(ids), bidAdjustmentLabel(adjustments))
+		if len(filled) > 0 {
+			step += fmt.Sprintf("; %s sent at +0%% because Microsoft requires all three devices in one request", strings.Join(filled, ", "))
+		}
+		steps = append(steps, step)
+	}
 	if len(extra.Languages) > 0 {
 		steps = append(steps, fmt.Sprintf("Campaign languages set: %s (the ad group carries no language of its own, so these apply)", strings.Join(extra.Languages, ", ")))
 	}
@@ -1014,8 +1086,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// re-running validateKeywords/validateCpcBid inside the ad-group step would let the
 	// up-front check and the sent value drift apart, and the up-front check is the one that
 	// guarantees nothing is orphaned.
-	return c.createAdGroupAndAd(ctx, in, campaignID, alreadyExisted, &steps, campaignPartial,
-		targeting{keywords: keywords, cpcBid: cpcBid, cpcBidSet: cpcBidSet, flight: flightDates, campaignLanguages: len(extra.Languages) > 0})
+	tgt := targeting{keywords: keywords, cpcBid: cpcBid, cpcBidSet: cpcBidSet, flight: flightDates, campaignLanguages: len(extra.Languages) > 0,
+		network: adGroupNetwork(in.SearchPartners)}
+	return c.createAdGroupAndAd(ctx, in, campaignID, alreadyExisted, &steps, campaignPartial, tgt)
 }
 
 // findCampaignByName returns the id of the campaign whose Name matches name, or "" if
@@ -1299,7 +1372,7 @@ func firstCampaignID(body []byte) (string, error) {
 	var partials []msErrorItem
 	id, err := firstEntityID(body, "CampaignIds", func(b []byte) ([]*json.Number, []msErrorItem, error) {
 		var resp createCampaignsResponse
-		if uerr := json.Unmarshal(b, &resp); uerr != nil {
+		if uerr := decodeTrusted(b, &resp); uerr != nil {
 			return nil, nil, uerr
 		}
 		partials = resp.PartialErrors.Items
@@ -1668,10 +1741,11 @@ func putUpdateOutcome(body []byte, err error, path, what string) error {
 		return err
 	}
 	var resp updateStatusResponse
-	if uerr := json.Unmarshal(body, &resp); uerr != nil {
-		// A malformed 200 leaves the outcome UNKNOWN: the update MAY have applied, so do not
-		// report success. transportError reports Unconfirmed, matching the create path's
-		// treatment of an undecodable success body.
+	if uerr := decodeTrusted(body, &resp); uerr != nil {
+		// A malformed 200 — or one decodeTrusted refuses because a key is declared twice —
+		// leaves the outcome UNKNOWN: the update MAY have applied, so do not report success.
+		// transportError reports Unconfirmed, matching the create path's treatment of an
+		// undecodable success body.
 		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s response: %w", what, uerr)}
 	}
 	// A syntactically valid body that OMITS PartialErrors (`{}`, or a top-level `null`) decodes

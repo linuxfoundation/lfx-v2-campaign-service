@@ -137,6 +137,36 @@ type microsoftConfig struct {
 	ExcludedGeoTargets []string                   `json:"excludedGeoTargets,omitempty"`
 	ProximityTargets   []microsoftProximityConfig `json:"proximityTargets,omitempty"`
 	Languages          []string                   `json:"languages,omitempty"`
+	// SearchPartners is the new ad group's search network (#563 gap 11,
+	// microsoft_search_network.go): true includes Microsoft's syndicated search partners, false
+	// keeps the ads on Microsoft's own sites; nil sends no Network (Microsoft's default). Behind
+	// MICROSOFT_SEARCH_NETWORK_ENABLED; not role-gated.
+	SearchPartners *bool `json:"searchPartners,omitempty"`
+	// AdSchedules are the campaign's day-time windows (#563 gap 10, microsoft_ad_schedule.go),
+	// attached before the ad group. Behind MICROSOFT_AD_SCHEDULE_ENABLED; not role-gated.
+	AdSchedules []microsoftAdScheduleConfig `json:"adSchedules,omitempty"`
+	// DeviceBidAdjustments, AgeBidAdjustments and GenderBidAdjustments are the campaign's bid
+	// adjustments (#563 gap 8, microsoft_bid_adjustments.go), segment name to whole percent,
+	// attached before the ad group. Behind MICROSOFT_BID_ADJUSTMENTS_ENABLED; not role-gated.
+	DeviceBidAdjustments map[string]float64 `json:"deviceBidAdjustments,omitempty"`
+	AgeBidAdjustments    map[string]float64 `json:"ageBidAdjustments,omitempty"`
+	GenderBidAdjustments map[string]float64 `json:"genderBidAdjustments,omitempty"`
+	// SharedNegativeKeywordListIDs are existing account-level negative keyword lists to associate
+	// with the confirmed campaign (#563 gap 9, microsoft_shared_negative_lists.go), each verified
+	// before anything is created. Behind MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED, and
+	// global_marketing_ops only (service.MicrosoftMarketingOpsInputs): the lists belong to the
+	// shared LF account.
+	SharedNegativeKeywordListIDs []string `json:"sharedNegativeKeywordListIds,omitempty"`
+	// StructuredSnippets are OPTIONAL campaign-level StructuredSnippetAdExtension entries (#563 gap
+	// 13, microsoft_structured_snippets.go), {header, values}, attached only to a confirmed
+	// campaign. Behind MICROSOFT_STRUCTURED_SNIPPETS_ENABLED; not role-gated.
+	StructuredSnippets []microsoftStructuredSnippetConfig `json:"structuredSnippets,omitempty"`
+	// LogoAssetID and LogoBusinessName are the OPTIONAL campaign-level LogoAdExtension (#563 gap
+	// 13, microsoft_logo_extension.go): a stored PNG/JPEG creative asset of THIS brief, square,
+	// 128-2048 px, uploaded as an Image1x1 media, and the BusinessName shown beside it. Behind
+	// MICROSOFT_LOGO_EXTENSION_ENABLED; not role-gated.
+	LogoAssetID      string `json:"logoAssetId,omitempty"`
+	LogoBusinessName string `json:"logoBusinessName,omitempty"`
 }
 
 // MicrosoftDispatcher creates Microsoft Advertising (Bing) campaigns for the orchestrator.
@@ -232,6 +262,30 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err := checkMicrosoftCreateTargetingShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	// And a non-boolean searchPartners (#563 gap 11).
+	if err := checkMicrosoftSearchNetworkShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	// And a wrong-typed adSchedules (#563 gap 10).
+	if err := checkMicrosoftAdScheduleShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	// And a wrong-typed device, age or gender bid adjustment object (#563 gap 8).
+	if err := checkMicrosoftBidAdjustmentsShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	// And a wrong-typed sharedNegativeKeywordListIds (#563 gap 9).
+	if err := checkMicrosoftSharedNegativeListsShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	// And a wrong-typed structuredSnippets (#563 gap 13).
+	if err := checkMicrosoftStructuredSnippetsShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	// And a wrong-typed logoAssetId or logoBusinessName (#563 gap 13).
+	if err := checkMicrosoftLogoShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg microsoftConfig
 	if err := unmarshalPlatformConfig(config, "microsoftConfig", &cfg); err != nil {
 		return nil, notCreated(err)
@@ -283,6 +337,32 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err := checkMicrosoftCreateTargeting(cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// The search network (#563 gap 11): gated BEFORE any upstream call.
+	if err := checkMicrosoftSearchNetwork(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// The ad schedule (#563 gap 10): gated and validated BEFORE any upstream call.
+	if err := checkMicrosoftAdSchedule(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// The bid adjustments (#563 gap 8): gated and validated BEFORE any upstream call.
+	if err := checkMicrosoftBidAdjustments(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// Shared negative keyword lists (#563 gap 9): gated and validated BEFORE any upstream call.
+	// The role check ran before the job existed (service.MicrosoftMarketingOpsInputs).
+	if err := checkMicrosoftSharedNegativeLists(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// Structured snippets (#563 gap 13): gated and validated BEFORE any upstream call.
+	if err := checkMicrosoftStructuredSnippets(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// The logo extension's config-level rules (#563 gap 13), BEFORE any upstream call; the asset
+	// itself is resolved with the campaign image below.
+	if err := checkMicrosoftLogo(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -297,6 +377,13 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// release is never nil and never double-released).
 	img, releaseImage, err := d.resolveMicrosoftImage(ctx, brief, &cfg, bf.EventName)
 	defer releaseImage()
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	// The logo (#563 gap 13) on the same terms: loaded and checked against the logo limits
+	// (bytes, PNG/JPEG, square, 128-2048 px) here, so an unusable asset creates nothing.
+	logo, releaseLogo, err := d.resolveMicrosoftLogo(ctx, brief, &cfg)
+	defer releaseLogo()
 	if err != nil {
 		return nil, notCreated(err)
 	}
@@ -325,6 +412,13 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		ExcludedGeoTargets: cfg.ExcludedGeoTargets,
 		ProximityTargets:   microsoftProximityTargets(cfg.ProximityTargets),
 		Languages:          cfg.Languages,
+		// The ad group's search network (#563 gap 11), gated above by checkMicrosoftSearchNetwork.
+		SearchPartners: cfg.SearchPartners,
+		// The campaign's ad schedule (#563 gap 10), validated above by checkMicrosoftAdSchedule.
+		AdSchedules: microsoftAdSchedules(cfg.AdSchedules),
+		// The campaign's bid adjustments (#563 gap 8), validated above by
+		// checkMicrosoftBidAdjustments.
+		BidAdjustments: microsoftBidAdjustments(cfg),
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: Microsoft
 		// enforces case-insensitive campaign-name uniqueness, so a retry composes the SAME name
 		// and the client's find-first lookup cleanly REUSES the existing campaign
@@ -365,6 +459,13 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 			return nil, notCreated(err)
 		}
 	}
+	// Likewise every shared negative keyword list must be one on this account BEFORE anything is
+	// created (one GetSharedEntities read), so an unknown id fails the job with nothing created.
+	if len(cfg.SharedNegativeKeywordListIDs) > 0 {
+		if err := client.CheckSharedNegativeKeywordLists(ctx, cfg.SharedNegativeKeywordListIDs); err != nil {
+			return nil, notCreated(err)
+		}
+	}
 
 	// The Microsoft client's contract (mirrors the siblings): a non-nil result with an error is
 	// an UNCONFIRMED partial (the campaign/tree MAY exist upstream — verify before retrying),
@@ -396,9 +497,23 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if d.attachMicrosoftTextExtensions(ctx, client, result, cfg) {
 		degraded = true
 	}
+	// The structured snippets follow the same rule (attachMicrosoftStructuredSnippets).
+	if attachMicrosoftStructuredSnippets(ctx, client, result, cfg) {
+		degraded = true
+	}
+	// And the logo extension (attachMicrosoftLogo): one per campaign, none added on a retry onto
+	// a campaign that already has one.
+	if attachMicrosoftLogo(ctx, client, result, logo) {
+		degraded = true
+	}
 	// The negatives follow the same rule: only on a CONFIRMED campaign, and a shortfall degrades
 	// it rather than failing the job (applyMicrosoftNegativeKeywords).
 	if applyMicrosoftNegativeKeywords(ctx, client, result, negatives) {
+		degraded = true
+	}
+	// And the shared negative keyword lists, on the confirmed campaign
+	// (applyMicrosoftSharedNegativeLists).
+	if applyMicrosoftSharedNegativeLists(ctx, client, result, cfg) {
 		degraded = true
 	}
 	// And the remarketing lists, on the confirmed ad group (applyMicrosoftAudiences).
@@ -448,13 +563,38 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 	if err := checkMicrosoftCreateTargetingShape(config); err != nil {
 		return err
 	}
+	// And a non-boolean searchPartners (#563 gap 11).
+	if err := checkMicrosoftSearchNetworkShape(config); err != nil {
+		return err
+	}
+	// And a wrong-typed adSchedules (#563 gap 10).
+	if err := checkMicrosoftAdScheduleShape(config); err != nil {
+		return err
+	}
+	// And a wrong-typed bid adjustment object (#563 gap 8).
+	if err := checkMicrosoftBidAdjustmentsShape(config); err != nil {
+		return err
+	}
+	// And a wrong-typed sharedNegativeKeywordListIds (#563 gap 9).
+	if err := checkMicrosoftSharedNegativeListsShape(config); err != nil {
+		return err
+	}
+	// And a wrong-typed structuredSnippets (#563 gap 13).
+	if err := checkMicrosoftStructuredSnippetsShape(config); err != nil {
+		return err
+	}
+	// And a wrong-typed logoAssetId or logoBusinessName (#563 gap 13).
+	if err := checkMicrosoftLogoShape(config); err != nil {
+		return err
+	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
 	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
 	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
 	// not decode is its zero value, which no plan rule reads as a refusal. The decode error itself
 	// stays "not applicable" — only bidding, the caller ad copy, sitelinks/callouts,
-	// negativeKeywords, the remarketing lists and the create-time targeting are promised as
-	// synchronous 400s.
+	// negativeKeywords, the remarketing lists, the create-time targeting, the search network, the ad
+	// schedule, the bid adjustments, the shared negative keyword lists, the structured snippets
+	// and the logo extension are promised as synchronous 400s.
 	var cfg microsoftConfig
 	_ = unmarshalPlatformConfig(config, "microsoftConfig", &cfg)
 	if _, err := microsoftBidPlan(cfg); err != nil {
@@ -474,6 +614,24 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 		return err
 	}
 	if err := checkMicrosoftCreateTargeting(cfg); err != nil {
+		return err
+	}
+	if err := checkMicrosoftSearchNetwork(cfg); err != nil {
+		return err
+	}
+	if err := checkMicrosoftAdSchedule(cfg); err != nil {
+		return err
+	}
+	if err := checkMicrosoftBidAdjustments(cfg); err != nil {
+		return err
+	}
+	if err := checkMicrosoftSharedNegativeLists(cfg); err != nil {
+		return err
+	}
+	if err := checkMicrosoftStructuredSnippets(cfg); err != nil {
+		return err
+	}
+	if err := checkMicrosoftLogo(cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -602,6 +760,9 @@ func microsoftSnapshotConfig(cfg microsoftConfig) microsoftConfig {
 	// ImageAltText is caller free text like TimeZone. ImageAssetID needs no reduction: by the
 	// time a snapshot is written resolveMicrosoftImage has replaced it with the canonical uuid.
 	snapshot.ImageAltText = sanitizeSnapshotText(cfg.ImageAltText)
+	// The logo's business name (#563 gap 13) likewise; LogoAssetID is the canonical uuid by then
+	// (resolveMicrosoftLogo).
+	snapshot.LogoBusinessName = sanitizeSnapshotText(cfg.LogoBusinessName)
 	// The caller ad copy (#563) is caller free text bound for the same unencrypted column, so it
 	// is reduced the same way. Both slices are REALLOCATED before they are rewritten.
 	snapshot.Headlines = sanitizeSnapshotTexts(cfg.Headlines)
@@ -630,6 +791,17 @@ func microsoftSnapshotConfig(cfg microsoftConfig) microsoftConfig {
 		}
 	}
 	snapshot.Callouts = sanitizeSnapshotTexts(cfg.Callouts)
+	// Structured snippets (#563 gap 13) are caller free text too, copied before they are reduced
+	// for the same reason.
+	if cfg.StructuredSnippets != nil {
+		snapshot.StructuredSnippets = make([]microsoftStructuredSnippetConfig, len(cfg.StructuredSnippets))
+		for i, s := range cfg.StructuredSnippets {
+			snapshot.StructuredSnippets[i] = microsoftStructuredSnippetConfig{
+				Header: sanitizeSnapshotText(s.Header),
+				Values: sanitizeSnapshotTexts(s.Values),
+			}
+		}
+	}
 	// A radius target's name (#563) is caller free text too: copied before it is reduced, since
 	// the caller's slice shares its backing array with the config sent to Microsoft.
 	if cfg.ProximityTargets != nil {
