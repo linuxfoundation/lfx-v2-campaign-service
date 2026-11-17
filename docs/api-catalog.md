@@ -526,7 +526,7 @@ be changed later; `automatic` is refused there (409) until an operator switches 
 | Platform | automatic (default) | manual | extra manual rules |
 | --- | --- | --- | --- |
 | Microsoft | campaign `BiddingScheme` `MaxClicks`, ad group without `CpcBid` | campaign `BiddingScheme` `EnhancedCpc`, ad group `CpcBid` = bid (Microsoft silently converts `ManualCpc` to `EnhancedCpc` on Search campaigns) | 0.01–1,000 (the bid lever's bounds); at most two decimals (a zero-decimal account currency is Microsoft's to judge — the currency is not known before dispatch) |
-| Meta | ad set `LOWEST_COST_WITHOUT_CAP`, `billing_event` `IMPRESSIONS` (unchanged) | ad set `LOWEST_COST_WITH_BID_CAP`, `billing_event` `LINK_CLICKS`, `bid_amount` in minor units | objective `traffic` or `leads` only; at most two decimals; a whole minor unit of the account currency (checked against the currency Meta reports, at dispatch, before anything is created); a DAILY budget of at least 5 × the bid (Meta's Ad Set reference: "Clicks/Actions: 5x the bid_amount"), compared in the account currency's ENCODED minor units at dispatch, before anything is created (in JPY a 4.6 budget encodes to 5 and satisfies 5 × 1) |
+| Meta | ad set `LOWEST_COST_WITHOUT_CAP`, `billing_event` `IMPRESSIONS` (unchanged) | ad set `LOWEST_COST_WITH_BID_CAP`, `billing_event` `LINK_CLICKS`, `bid_amount` in minor units | objective `traffic` or `leads` (without `leadFormId`) only; at most two decimals; a whole minor unit of the account currency (checked against the currency Meta reports, at dispatch, before anything is created); a DAILY budget of at least 5 × the bid (Meta's Ad Set reference: "Clicks/Actions: 5x the bid_amount"), compared in the account currency's ENCODED minor units at dispatch, before anything is created (in JPY a 4.6 budget encodes to 5 and satisfies 5 × 1) |
 | Reddit | campaign and ad group `BIDLESS` (unchanged) | campaign and ad group `MANUAL_BIDDING`, `bid_type` `CPC`, ad group `bid_value` in micro-units | objective `traffic` only (the default, `conversions`, bids CPM) |
 | X | line item `bid_strategy` `AUTO` (unchanged), named `… \| AUTO` | line item `bid_strategy` `MAX`, `pay_by` `LINK_CLICK`, `bid_amount_local_micro`, named `… \| MAX` | the bid may not exceed the daily `budgetAmount` (X: a line item's bid "should not exceed daily_budget_amount_local_micro … of the parent campaign"), compared in micro-units |
 | LinkedIn | `objectiveType` `WEBSITE_VISIT`, `optimizationTargetType` `MAX_CLICK`, `costType` `CPM`, no `unitCost`; name segment `Traffic` | `objectiveType` `WEBSITE_CONVERSION`, `costType` `CPC`, `optimizationTargetType` `NONE`, `unitCost` = bid (USD); name segment `Conversions` | whole cents; the OBJECTIVE follows the strategy (see below) |
@@ -3028,12 +3028,14 @@ endDate: string                 — YYYY-MM-DD. Must be STRICTLY AFTER startDate
                                   platform job pre-create, not a synchronous 4xx.)
 objective?: string              — awareness | traffic | engagement | leads | conversions.
                                   Omitted or blank → defaults to `traffic`.
-                                  NOTE: `leads` is INTERIM — it runs a website-traffic campaign
-                                  (OUTCOME_TRAFFIC optimizing for LINK_CLICKS to the registration
-                                  URL); it does NOT create an on-Facebook instant lead form. Full
-                                  LEAD_GENERATION parity is deferred (LFXV2-2665).
+                                  NOTE: `leads` WITHOUT `leadFormId` is INTERIM — it runs a
+                                  website-traffic campaign (OUTCOME_TRAFFIC optimizing for
+                                  LINK_CLICKS to the registration URL). With `leadFormId` (below)
+                                  it is a real Instant Form lead ad (OUTCOME_LEADS). This service
+                                  never creates a form.
 geoTargets?: string[]           — ISO country codes, e.g. ['US', 'JP']. Optional: omitted or an
-                                  empty list defaults to ['US']. Supplied entries are uppercased,
+                                  empty list defaults to ['US'] (unless targeting.regions or
+                                  targeting.cities is set; see there). Supplied entries are uppercased,
                                   trimmed, and filtered to valid ISO-2 codes; if entries were
                                   supplied but NONE survive validation the request is REJECTED
                                   (it does not silently fall back to US). The client also DROPS
@@ -3105,10 +3107,66 @@ conversionEvent?: string        — OPTIONAL `promoted_object.custom_event_type`
                                   LEAD, SUBMIT_APPLICATION, SUBSCRIBE. On any other objective, or
                                   outside the list, a synchronous 400. Refused with a 400 unless
                                   META_CONVERSION_EVENT_ENABLED is exactly "true".
+optimizationGoal?: string       — OPTIONAL ad set `optimization_goal` for the `traffic`
+                                  objective (#550), case-insensitive: LINK_CLICKS (default — the
+                                  only goal before #550) or LANDING_PAGE_VIEWS (delivers to people
+                                  likely to load the page, not just click). On any other objective
+                                  (leads included, with or without `leadFormId`), or outside the
+                                  list, a synchronous 400. With manual
+                                  `bidding` (a link-click bid cap) LANDING_PAGE_VIEWS is a
+                                  synchronous 400 too. Refused with a 400 unless
+                                  META_OPTIMIZATION_GOAL_ENABLED is exactly "true".
+frequencyCap?:                  — OPTIONAL impressions-per-person cap on the ad set (#550), for
+  {maxImpressions: integer,       the `awareness` objective only (Meta takes a frequency cap only
+   intervalDays: integer}         on a REACH ad set): at most `maxImpressions` impressions per
+                                  person every `intervalDays` days, each 1–90 →
+                                  `frequency_control_specs: [{"event": "IMPRESSIONS",
+                                  "interval_days", "max_frequency"}]`. Another objective, a
+                                  missing or out-of-range field, or a non-object is a synchronous
+                                  400. Refused with a 400 unless META_FREQUENCY_CAP_ENABLED is
+                                  exactly "true". null/absent → no cap.
+adSchedule?:                    — OPTIONAL ad scheduling (#550): the ad set runs only on `days`
+  {days: integer[],               (0 Sunday … 6 Saturday, de-duplicated) between `startMinute` and
+   startMinute: integer,          `endMinute` of the day, in the AD ACCOUNT's time zone →
+   endMinute: integer}            `adset_schedule: [{"start_minute", "end_minute", "days",
+                                  "timezone_type": "ADVERTISER"}]` plus `pacing_type:
+                                  ["day_parting"]`. Requires `lifetimeBudget: true` (Meta
+                                  schedules only lifetime budgets). Whole hours only:
+                                  multiples of 60 with 0 ≤ startMinute < endMinute ≤ 1440. A
+                                  daily budget, no day, a day outside 0–6, bad minutes or a
+                                  non-object is a synchronous 400. Refused with a 400 unless
+                                  META_AD_SCHEDULE_ENABLED is exactly "true". null/absent → runs
+                                  all day.
+leadFormId?: string             — OPTIONAL existing Meta Instant Form id (#550), for the `leads`
+                                  objective only. The form is created in Meta Ads Manager on the
+                                  connection's Page, with the Page's lead terms already accepted;
+                                  this service never creates a form or accepts terms. With it the
+                                  campaign is `objective: OUTCOME_LEADS`, the ad set
+                                  `optimization_goal: LEAD_GENERATION`, `billing_event:
+                                  IMPRESSIONS`, `destination_type: ON_AD`, `promoted_object:
+                                  {"page_id"}`, and every creative's
+                                  `link_data.call_to_action.value` is `{"lead_gen_form_id"}`
+                                  (the link stays the tracked registration URL). Refused with a
+                                  synchronous 400 on any other objective, when not a numeric
+                                  string of at most 20 digits, with manual `bidding` (a
+                                  link-click cap), with a `callToAction` a form cannot carry
+                                  (only LEARN_MORE, SIGN_UP, APPLY_NOW, SUBSCRIBE, DOWNLOAD), with
+                                  a non-string type, and unless META_LEAD_FORMS_ENABLED is
+                                  exactly "true". Before anything is created the form is read
+                                  (`GET /{form}?fields=id,page,status`): a form of another Page
+                                  or not ACTIVE, a read that fails, or an answer without the form
+                                  and its Page fails the job with nothing created. Any value
+                                  but null or "" needs global_marketing_ops on the project (403;
+                                  503 when the check cannot be made): for a project without its
+                                  own connection the Page is the shared LF Page, which holds
+                                  every foundation's forms, so it is gated like the form list.
 targeting?: object              — OPTIONAL audience targeting on the ad set (#550). Refused
                                   with a 400 before any job exists unless the deployment sets
                                   META_AUDIENCE_TARGETING_ENABLED to exactly "true" (not yet
-                                  live-verified). null/absent → targeting unchanged. Keys:
+                                  live-verified); a block that sets only keys with their own
+                                  flag (locales, devicePlatforms, interests, regions, cities,
+                                  behaviors, workPositions, userOs) needs only that flag. null/absent → targeting
+                                  unchanged. Keys:
   ageMin?, ageMax?: integer      — 18–65 each, ageMin ≤ ageMax → `age_min` / `age_max`. null or
                                   absent is Meta's default; an explicit 0 is out of range (400).
   genders?: string[]             — subset of male, female (case-insensitive, de-duplicated);
@@ -3118,12 +3176,83 @@ targeting?: object              — OPTIONAL audience targeting on the ad set (#
   excludedCustomAudiences?: string[] — same rules → `excluded_custom_audiences`; an id may not
                                   be in both lists.
   advantageAudience?: boolean    — `targeting_automation.advantage_audience`. When any INCLUSION
-                                  is set (an age other than 18/65, one gender, customAudiences)
+                                  is set (an age other than 18/65, one gender, customAudiences,
+                                  interests, behaviors, workPositions)
                                   the flag is always sent, defaulting to 0 so the chosen
                                   targeting is a hard constraint (Meta v23+ errors on a
                                   non-default inclusion without it); otherwise it is sent only
                                   when given. true is refused with ageMin > 25 or ageMax < 65
                                   (Meta's Advantage+ limits).
+  locales?: integer[]            — Meta locale keys (the Targeting Search `adlocale` type, e.g.
+                                  6 English (US), 1001 English (All)), positive, de-duplicated,
+                                  at most 50 distinct → `locales`. A language is a hard
+                                  constraint even with Advantage+ on, so it is not an inclusion.
+                                  Refused with a 400 unless META_LOCALE_TARGETING_ENABLED is
+                                  exactly "true"; not gated by global_marketing_ops.
+  devicePlatforms?: string[]     — subset of mobile, desktop (case-insensitive, de-duplicated);
+                                  one device → `device_platforms: ["mobile"|"desktop"]`; both
+                                  or none sends nothing. Not an inclusion. ["desktop"] with
+                                  placements.audienceNetwork true is a synchronous 400 (Audience
+                                  Network is mobile only). Refused with a 400 unless
+                                  META_DEVICE_TARGETING_ENABLED is exactly "true"; not gated by
+                                  global_marketing_ops.
+  interests?: string[]           — numeric Meta detailed-targeting interest ids (the Targeting
+                                  Search `adinterest` type), de-duplicated, at most 25 →
+                                  `flexible_spec: [{"interests": [{"id"}]}]` (any one matches).
+                                  An INCLUSION: the advantageAudience rule above applies. Before
+                                  anything is created every id is checked in one
+                                  `GET /search?type=adinterestvalid&interest_fbid_list=[…]`; an
+                                  id Meta marks invalid, or a read that fails or leaves an id
+                                  unanswered, fails the job with nothing created. Refused with a
+                                  400 unless META_INTEREST_TARGETING_ENABLED is exactly "true";
+                                  not gated by global_marketing_ops.
+  regions?, cities?: string[]    — numeric Meta geo-location keys (the Targeting Search
+                                  `adgeolocation` type, e.g. region 3847 California), each list
+                                  de-duplicated, at most 25 → ADDED to the country targeting as
+                                  `geo_locations.regions` / `geo_locations.cities`
+                                  (`[{"key"}]`). With no geoTargets supplied the US default is
+                                  NOT applied: the regions and cities are the whole targeting,
+                                  and the campaign name's region segment follows their country.
+                                  Not an inclusion. Before anything is created every key is
+                                  looked up in one `GET /search?type=adgeolocationmeta&regions=[…]
+                                  &cities=[…]`; a key in a sanctioned or ineligible country (the
+                                  geoTargets list's), a regulated market (SG, TW, KR), a country
+                                  geoTargets already targets (Meta refuses overlapping
+                                  locations), a city inside one of the regions listed, or an
+                                  EU territory without dsaBeneficiary and
+                                  dsaPayor, a key of the other type, a read that fails, or a key
+                                  left unanswered or without a country fails the job with
+                                  nothing created. Refused with a 400 unless
+                                  META_REGION_TARGETING_ENABLED is exactly "true"; not gated by
+                                  global_marketing_ops.
+  behaviors?, workPositions?: string[] — numeric Meta detailed-targeting ids (the Targeting
+                                  Search `adTargetingCategory` class `behaviors` and the
+                                  `adworkposition` type), each list
+                                  de-duplicated, at most 25 → `behaviors` / `work_positions`
+                                  (`[{"id"}]`) in the SAME `flexible_spec` entry as interests, so
+                                  matching any one interest, behavior or work position qualifies.
+                                  INCLUSIONS: the advantageAudience rule above applies. Before
+                                  anything is created every id is checked in one
+                                  `GET /act_<id>/targetingvalidation?targeting_list=[{"type":
+                                  "behaviors"|"work_positions","id"}]`; an id Meta marks invalid,
+                                  or a read that fails, leaves an id unanswered or omits `valid`,
+                                  fails the job with nothing created. Refused with a 400 unless
+                                  META_BEHAVIOR_TARGETING_ENABLED is exactly "true"; not gated by
+                                  global_marketing_ops.
+  userOs?: string[]              — Meta `user_os` values (Advanced Targeting, Mobile): iOS,
+                                  Android, <OS>_ver_<x.x>_and_above or <OS>_ver_<x.x>_to_<y.y>
+                                  (x.x below y.y; iOS 2.0 3.0 4.0 4.3 5.0 6.0 7.0 8.0 9.0, Android
+                                  2.0–8.0 as Meta lists them), case-insensitive, sent in Meta's
+                                  spelling, de-duplicated, at most 10 → `user_os`. Not an
+                                  inclusion. Synchronous 400s: a value outside those formats; a
+                                  version of one family with any value of the other (Meta: "You
+                                  cannot target the minimum version of one platform with the
+                                  other platform"; iOS with Android unversioned is fine); userOs
+                                  with devicePlatforms ["desktop"] (an OS list matches mobile
+                                  devices only); an OS version on the awareness objective (Meta
+                                  allows only iOS or Android there). Refused with a 400 unless
+                                  META_OS_TARGETING_ENABLED is exactly "true"; not gated by
+                                  global_marketing_ops.
                                   Every invalid value is a synchronous 400 ("invalid campaign
                                   config: metaConfig.targeting: …"). Before anything is created
                                   each audience is read (`GET /{id}?fields=id,account_id,subtype`);
