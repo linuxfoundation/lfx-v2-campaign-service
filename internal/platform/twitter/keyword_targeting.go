@@ -91,9 +91,17 @@ type TargetingCriterion struct {
 	Deleted        bool
 }
 
-// PositiveKeyword reports whether the criterion is a live, non-negated keyword.
+// PositiveKeyword reports whether the criterion is a live, non-negated keyword. A missing
+// operator_type reads as EQ, X's default, the same way the write path's echo check
+// (echoedOperator) does, so the keyword read, the removal and the add lever all see one set.
 func (t TargetingCriterion) PositiveKeyword() bool {
-	return !t.Deleted && IsKeywordTargetingType(t.TargetingType) && t.OperatorType == OperatorEQ && t.TargetingValue != ""
+	return !t.Deleted && IsKeywordTargetingType(t.TargetingType) && t.TargetingValue != "" && echoedOperator(t.OperatorType, OperatorEQ)
+}
+
+// PositiveBroadKeyword reports whether the criterion is a live BROAD_KEYWORD that is not negated
+// (PositiveKeyword, BROAD only): the criteria the add lever counts as already present.
+func (t TargetingCriterion) PositiveBroadKeyword() bool {
+	return t.PositiveKeyword() && t.TargetingType == TargetingBroadKeyword
 }
 
 type targetingCriterionWire struct {

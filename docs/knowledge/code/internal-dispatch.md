@@ -4795,7 +4795,10 @@ removal does).
   An acknowledged PATCH is then confirmed by a re-read: the ad group missing, a read error, an
   excluded list other than the one written (`reddit.SameKeywords`), or any other targeting member's
   fingerprint changed (logged at ERROR) is UNCONFIRMED; otherwise APPLIED. No id is returned.
-- *X:* one `CreateNegativeKeywordCriterion` per remaining keyword, in request order. A context
+- *X:* first, under the positive add's per-line-item lock (`lockTwitterTargeting`, released by
+  `settleTwitterTargetingLock` — kept for the cooldown after any UNCONFIRMED item), the shared
+  60-criterion cap (`checkTwitterCriteriaCap`): live criteria plus the negatives to send over 60 is
+  `ErrKeywordTargetingLimit` (409), nothing sent. Then one `CreateNegativeKeywordCriterion` per remaining keyword, in request order. A context
   already done before an item is sent → FAILED `NOT_SENT`; success → APPLIED with the criterion id
   as `NegativeKeywordID`; `ErrWriteNotSent` → FAILED `NOT_SENT`; `twitter.IsOutcomeUnconfirmed` →
   UNCONFIRMED; any other error → FAILED `REJECTED` (see the pre-send gap noted in the X client
@@ -4832,7 +4835,10 @@ failure with nothing sent, and a refused X echo is UNCONFIRMED, because the writ
   `_DeadlineSendsNothing`; `_RefusalsPostNothing` (over 20, unknown match type, duplicate, a
   revision, provenance unknown, account mismatch, no recorded line item, another campaign's or a
   deleted line item, an unreadable criteria list); `TestTwitterNegativeKey_AgreesAcrossBothSources`,
-  `_StillSeparatesDifferentKeywords`, `_TargetingTypeStillSeparates`.
+  `_StillSeparatesDifferentKeywords`, `_TargetingTypeStillSeparates`;
+  `TestTwitter_AddNegativeKeywords_CountsAgainstTheCriteriaCap`, `_HoldsThePerLineItemLock`, and
+  (in `twitter_keyword_add_test.go`) `TestTwitter_OverlappingPositiveAndNegativeAddsStayUnderTheCap`
+  (from 59 live criteria, either order, the second add is refused by the cap and one POST is sent).
 - `microsoft_keywords_test.go`: `TestMicrosoft_AddNegativeKeywords_HappyPath` (an id → APPLIED, a
   4335 → ALREADY_PRESENT, the campaign id taken from the row); `_RefusedBeforeAnyCall` (Broad, over
   100 characters, a malformed batch beating unprovisioned, a revision, a Unicode-folded duplicate,
