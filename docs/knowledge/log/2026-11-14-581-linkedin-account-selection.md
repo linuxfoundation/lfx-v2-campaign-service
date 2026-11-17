@@ -14,7 +14,9 @@ created in a granted account is already pausable, readable and monitorable.
   `make apigen`), restricted to the resolved account or a grant (`model.WithPickerAccount`).
 - With the flag on, the system scope's `connection-linkedin-ads/accounts` returns the default account
   and the grants, with no LinkedIn call.
-- Docs: api-catalog (LinkedInConfig ad account, pickers, accounts), design/brief.go config text.
+- Docs: api-catalog (LinkedInConfig ad account, pickers, accounts). The `config` attribute text in
+  design/brief.go is left alone: it is one ~26 KB string that every OpenAPI file repeats, so any
+  edit to it re-emits it everywhere.
 - Tests: `TestLinkedIn_CreateInAGrantedAccount`, `TestLinkedIn_AdAccountIDRefusals`,
   `TestLinkedIn_PickersAndAccountsListFollowTheGrants`, `TestLinkedInMarketingOpsInputs_AdAccountID`,
   `TestLinkedInPickerContextCarriesTheAccount`; each fails under its mutation.

@@ -332,6 +332,16 @@ func TestLinkedIn_PickersAndAccountsListFollowTheGrants(t *testing.T) {
 	}
 	d := grantCreateDispatcher(srv.URL, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}})
 
+	// Selection off: a grant is not nameable from the pickers either, and nothing is sent.
+	t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, "")
+	if _, _, err := d.ListConversionActions(model.WithPickerAccount(context.Background(), "500928401"), "cncf", model.ProviderLinkedInAds); !errors.Is(err, domain.ErrAccountNotManagedByConnection) {
+		t.Fatalf("picker on a granted account with selection off err = %v", err)
+	}
+	if q := drain(); len(q) != 0 {
+		t.Fatalf("a flag-off picker read sent %v", q)
+	}
+
+	t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, "true")
 	res, _, err := d.ListConversionActions(model.WithPickerAccount(context.Background(), "500928401"), "cncf", model.ProviderLinkedInAds)
 	if err != nil || res.AccountID != "500928401" {
 		t.Fatalf("picker on a granted account = %+v, %v", res, err)
@@ -346,7 +356,6 @@ func TestLinkedIn_PickersAndAccountsListFollowTheGrants(t *testing.T) {
 		t.Fatalf("an ungranted picker read sent %v", q)
 	}
 
-	t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, "true")
 	accts, err := d.ListAccounts(context.Background(), "cncf", model.ProviderLinkedInAds)
 	if err != nil || len(accts) != 2 || accts[0].ID != "538170226" || accts[1].ID != "500928401" || !strings.Contains(accts[1].Label, "CNCF") {
 		t.Fatalf("accounts with selection on = %+v, %v; want the default then the grant", accts, err)

@@ -2383,6 +2383,30 @@ func BuildListLinkedinAdsConversionsPayload(lfxV2CampaignServiceConnectionsListL
 	return v, nil
 }
 
+// BuildGetLinkedinAdsCreateAccountPayload builds the payload for the
+// lfx-v2-campaign-service-connections get-linkedin-ads-create-account endpoint
+// from CLI flags.
+func BuildGetLinkedinAdsCreateAccountPayload(lfxV2CampaignServiceConnectionsGetLinkedinAdsCreateAccountProjectID *string, lfxV2CampaignServiceConnectionsGetLinkedinAdsCreateAccountBearerToken *string) (*lfxv2campaignserviceconnections.GetLinkedinAdsCreateAccountPayload, error) {
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsGetLinkedinAdsCreateAccountProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsGetLinkedinAdsCreateAccountProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsGetLinkedinAdsCreateAccountBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsGetLinkedinAdsCreateAccountBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.GetLinkedinAdsCreateAccountPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildGetMicrosoftAdsKeywordsPayload builds the payload for the
 // lfx-v2-campaign-service-connections get-microsoft-ads-keywords endpoint from
 // CLI flags.

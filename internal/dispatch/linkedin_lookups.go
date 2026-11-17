@@ -26,12 +26,13 @@ func (d *LinkedInDispatcher) createLookupClient(ctx context.Context, projectID s
 	if err != nil {
 		return nil, nil, "", err
 	}
-	// An account the caller named (#581): the resolved account itself, or one of the LF system
-	// row's grants, read through the grant-scoped copy. Any other is refused before a request, as
-	// the monitor refuses an account the connection does not manage.
+	// An account the caller named (#581): the resolved account itself, or — while
+	// LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is on, the one switch for naming grants — one of the
+	// LF system row's grants, read through the grant-scoped copy. Any other is refused before a
+	// request, as the monitor refuses an account the connection does not manage.
 	if want := model.PickerAccount(ctx); want != "" && want != strings.TrimSpace(res.accountID) {
 		granted, ok := res.grantScoped(want)
-		if !ok {
+		if !ok || !linkedinAccountSelectionEnabled() {
 			return nil, nil, "", fmt.Errorf("%w: linkedin account %s is neither this project's connection account nor one of the LF system account's granted accounts",
 				domain.ErrAccountNotManagedByConnection, want)
 		}

@@ -3558,8 +3558,8 @@ grant — returns the grant-scoped copy, so `Dispatch` builds its `RuntimeConfig
 org, single-entry allowlist) from the grant and records that account. Every other value is a
 pre-flight 400 (`ErrCreateConfigInvalid`); `PreflightCreate` runs the same check after a
 database-only `creds.resolve`, leaving a resolution failure to `Dispatch`. The pickers
-(`createLookupClient`) read `model.PickerAccount(ctx)` and accept the resolved account or a grant
-(else `ErrAccountNotManagedByConnection`). With the flag on, `ListAccounts` on the system row returns
+(`createLookupClient`) read `model.PickerAccount(ctx)` and accept the resolved account, or a grant
+while the flag is on (else `ErrAccountNotManagedByConnection`). With the flag on, `ListAccounts` on the system row returns
 `linkedInGrantAccounts` (default + grants, no LinkedIn call). Pinned by
 `TestLinkedIn_CreateInAGrantedAccount`, `TestLinkedIn_AdAccountIDRefusals` and
 `TestLinkedIn_PickersAndAccountsListFollowTheGrants`.

@@ -71,13 +71,14 @@ const linkedInLookupCommon = "Credentials resolve as for a LinkedIn create: the 
 	"{project_id} (the LF marketing team), not campaign_manager, which also admits a foundation's executive director. " +
 	"The read pages LinkedIn's finder 100 at a time and never truncates: more than 1000 entries, a page that repeats " +
 	"an earlier one, or an entry of another ad account fails it with 503. account_id (optional, #581) names the " +
-	"account to list instead: the resolved account itself, or one of the LF system account's operator-installed " +
-	"grants (the accounts linkedInConfig.adAccountId may name); any other account is a 400. " +
+	"account to list instead: the resolved account itself, or, while LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is on, one " +
+	"of the LF system account's operator-installed grants (the accounts linkedInConfig.adAccountId may name); any " +
+	"other account is a 400. " +
 	"A pure read: nothing is persisted."
 
 // linkedInLookupAccountAttr is the optional account_id both pickers take (#581).
 func linkedInLookupAccountAttr() {
-	Attribute("account_id", String, "The LinkedIn ad account to list. Optional: omitted, the account a create for this project uses; otherwise that account or one of the LF system account's granted accounts.", func() {
+	Attribute("account_id", String, "The LinkedIn ad account to list. Optional: omitted, the account a create for this project uses; otherwise that account or, while LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED is on, one of the LF system account's granted accounts.", func() {
 		Pattern(`^[0-9]+$`)
 		MaxLength(64)
 		Example("500928401")
