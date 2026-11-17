@@ -20,8 +20,7 @@ import (
 //     while X reports processing_info — at most maxVideoStatusPolls checks, each wait capped at
 //     mediaPollCap (5 s), so at most 30 s of waiting, inside the two-minute provider call;
 //  2. the media_key added to the ad account's Media Library under the deterministic SHA-256 name;
-//  3. that key sent as media_keys on every authored tweet, or as the MEDIA component of the website
-//     card (#564 gap 6) when one is requested.
+//  3. that key sent as media_keys on the authored tweet.
 //
 // RETRY SAFETY. All of it runs BEFORE the campaign POST, so any failure is (nil, err): nothing
 // billable exists and no tweet was published. The library entry is looked up by name before any

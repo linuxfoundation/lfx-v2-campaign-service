@@ -437,9 +437,11 @@ app:
     REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED:
       value: "false"
 
-    # Opts this deployment IN to twitterConfig.geoTargets, languages, keywords
-    # and interestIds (#564), sent at create time as LOCATION, LANGUAGE,
-    # BROAD_KEYWORD and INTEREST targeting criteria on the new X line item.
+    # Opts this deployment IN to twitterConfig.geoTargets, languages, keywords,
+    # interestIds, conversationTopics, platforms, devices, ageBucket and gender
+    # (#564), sent at create time as LOCATION, LANGUAGE, BROAD_KEYWORD, INTEREST,
+    # CONVERSATION, PLATFORM, DEVICE, AGE and GENDER targeting criteria on the
+    # new X line item.
     # Default off: the
     # shape is built from X's published v12 reference and no live create has
     # sent it. It names no account resource; it keeps an unverified shape off
@@ -447,6 +449,23 @@ app:
     # refused with a 400 before any job exists. Any value other than "true" is
     # treated as off, so a typo fails closed.
     TWITTER_CREATE_TARGETING_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to twitterConfig.audienceExpansion (#564 gap 11),
+    # sent as audience_expansion (BROAD, DEFINED or EXPANDED) on the new X line
+    # item. Default off: built from X's published v12 reference and no live
+    # create has sent it. It names no account resource. While off, a create
+    # setting it is refused with a 400 before any job exists. Any value other
+    # than "true" is treated as off.
+    TWITTER_AUDIENCE_EXPANSION_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to twitterConfig.followerLookalikeUserIds (#564 gap 4c),
+    # SIMILAR_TO_FOLLOWERS_OF_USER criteria on the new X line item. Default off: no live
+    # create has sent it. X has no user lookup, so an id X refuses fails at its criterion
+    # POST and leaves a PAUSED partial for reconciliation. While off, a create setting it is
+    # refused with a 400 before any job exists. Any value other than "true" is treated as off.
+    TWITTER_FOLLOWER_LOOKALIKES_ENABLED:
       value: "false"
 
     # Opts this deployment IN to twitterConfig.videoAssetId (#564 gap 7): a stored MP4 uploaded
