@@ -407,8 +407,13 @@ type microsoftAdGroupFinder interface {
 //     enough to have settled (absentClears): unconfirmed is cleared, so it
 //     no longer blocks — there is no ad group to re-bid;
 //   - otherwise (the lookup failed, the list was unreadable, the name matched an entry with no
-//     usable id, the id is one another entry already records, or no name was recorded) it stays
-//     unconfirmed and is returned, named "entry N (suffix)", for the caller to refuse.
+//     usable id, or the id is one another entry already records) it stays unconfirmed and is
+//     returned, named "entry N (suffix)", for the caller to refuse.
+//
+// A row written before createAdGroups recorded every group's name may hold an entry with none:
+// its name is recomposed from a sibling's (microsoftRecomposedAdGroupName) and recorded with
+// the outcome. If none can be recomposed it is returned in unnamed: no lookup can ever
+// establish it, so the caller's refusal must not say a retry clears it.
 //
 // Changes are written back into campaign.Result, so the caller that persists the row on success
 // (update-campaign-bid's ReplaceCampaign, which writes the result column) records them; on any
@@ -419,14 +424,14 @@ type microsoftAdGroupFinder interface {
 // had microsoftUnconfirmedSettleWindow to settle, since a timed-out create can commit after the
 // lookup. Inside the window an absent group is returned in unsettled instead (unresolved stays
 // for lookups that could not answer); a found group is recorded either way.
-func reconcileMicrosoftUnaddressedAdGroups(ctx context.Context, client microsoftAdGroupFinder, campaign *model.Campaign, campaignID, firstAdGroupID string, absentClears bool) (unresolved, unsettled []string) {
+func reconcileMicrosoftUnaddressedAdGroups(ctx context.Context, client microsoftAdGroupFinder, campaign *model.Campaign, campaignID, firstAdGroupID string, absentClears bool) (unresolved, unsettled, unnamed []string) {
 	if len(microsoftUnaddressedAdGroups(campaign.Result)) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	var top map[string]json.RawMessage
 	var entries []map[string]json.RawMessage
 	if json.Unmarshal(campaign.Result, &top) != nil || json.Unmarshal(top["adGroups"], &entries) != nil {
-		return microsoftUnaddressedAdGroups(campaign.Result), nil
+		return microsoftUnaddressedAdGroups(campaign.Result), nil, nil
 	}
 	var typed []microsoft.AdGroupResult
 	_ = json.Unmarshal(top["adGroups"], &typed)
@@ -442,7 +447,22 @@ func reconcileMicrosoftUnaddressedAdGroups(ctx context.Context, client microsoft
 			continue
 		}
 		label := fmt.Sprintf("entry %d (%s)", i+1, clipAdGroupSuffix(g.NameSuffix))
-		id, found, err := client.FindAdGroupByName(ctx, campaignID, g.AdGroupName)
+		name, recomposed := strings.TrimSpace(g.AdGroupName), false
+		if name == "" {
+			// A row written before every group's name was recorded: recompose it from a sibling.
+			if name = microsoftRecomposedAdGroupName(top, typed, i); name == "" {
+				unnamed = append(unnamed, label)
+				continue
+			}
+			recomposed = true
+		}
+		recordName := func() {
+			if recomposed {
+				raw, _ := json.Marshal(name)
+				entries[i]["adGroupName"] = raw
+			}
+		}
+		id, found, err := client.FindAdGroupByName(ctx, campaignID, name)
 		switch {
 		case err != nil:
 			unresolved = append(unresolved, label)
@@ -450,6 +470,7 @@ func reconcileMicrosoftUnaddressedAdGroups(ctx context.Context, client microsoft
 			unsettled = append(unsettled, label)
 		case !found:
 			delete(entries[i], "unconfirmed")
+			recordName()
 			changed = true
 		case known[id] || !microsoftCampaignIDRE.MatchString(id):
 			// The name resolved to an ad group another entry already records (or to an unusable
@@ -459,6 +480,7 @@ func reconcileMicrosoftUnaddressedAdGroups(ctx context.Context, client microsoft
 			raw, _ := json.Marshal(id)
 			entries[i]["adGroupId"] = raw
 			delete(entries[i], "unconfirmed")
+			recordName()
 			known[id] = true
 			changed = true
 		}
@@ -471,7 +493,30 @@ func reconcileMicrosoftUnaddressedAdGroups(ctx context.Context, client microsoft
 			}
 		}
 	}
-	return unresolved, unsettled
+	return unresolved, unsettled, unnamed
+}
+
+// microsoftRecomposedAdGroupName recomposes entry i's ad group name for a row that recorded none
+// (written before createAdGroups recorded every group's name): from any other entry's recorded
+// name and suffix (microsoft.SiblingAdGroupName), else from the top-level adGroupName, which is
+// the first group's. Empty when no sibling yields one.
+func microsoftRecomposedAdGroupName(top map[string]json.RawMessage, typed []microsoft.AdGroupResult, i int) string {
+	suffix := typed[i].NameSuffix
+	for j, g := range typed {
+		if j == i || strings.TrimSpace(g.AdGroupName) == "" {
+			continue
+		}
+		if name, ok := microsoft.SiblingAdGroupName(strings.TrimSpace(g.AdGroupName), g.NameSuffix, suffix); ok {
+			return name
+		}
+	}
+	var first string
+	if len(typed) > 0 && json.Unmarshal(top["adGroupName"], &first) == nil {
+		if name, ok := microsoft.SiblingAdGroupName(strings.TrimSpace(first), typed[0].NameSuffix, suffix); ok {
+			return name
+		}
+	}
+	return ""
 }
 
 var _ service.BriefCreatePreflighter = (*MicrosoftDispatcher)(nil)

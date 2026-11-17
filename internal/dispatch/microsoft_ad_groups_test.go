@@ -935,6 +935,66 @@ func TestMicrosoftAdGroups_WriteBidReconcilesAnUnconfirmedLaterGroup(t *testing.
 	}
 }
 
+// A row written before createAdGroups recorded every group's name can hold an UNCONFIRMED later
+// group with no adGroupName (Cursor Bugbot, #623). Its name is recomposed from a sibling's
+// recorded name and suffix, looked up, and recorded with the outcome; with no sibling to
+// recompose from, the 409 says a retry will not clear it and what to do instead, rather than
+// promising a lookup that can never run.
+func TestMicrosoftAdGroups_WriteBidRecomposesALegacyUnnamedGroup(t *testing.T) {
+	legacy := func(siblingName string) *model.Campaign {
+		camp := msMultiGroupCampaign()
+		res := strings.Replace(string(camp.Result),
+			`{"nameSuffix":"B","status":"failed","error":"rejected"}`,
+			`{"nameSuffix":"B","status":"failed","error":"ad group create UNCONFIRMED","unconfirmed":true}`, 1)
+		if siblingName != "" {
+			res = strings.Replace(res, `{"nameSuffix":"C",`, `{"nameSuffix":"C","adGroupName":"`+siblingName+`",`, 1)
+		}
+		camp.Result = json.RawMessage(res)
+		return camp
+	}
+	t.Run("recomposed and found", func(t *testing.T) {
+		camp := legacy("LFX | Ad Group | cncf | C")
+		var looked []string
+		d, calls := msBudgetDispatcherRouted(t, func(path string) (int, string, bool) {
+			if !strings.HasSuffix(path, "/AdGroups/QueryByCampaignId") {
+				return 0, "", false
+			}
+			looked = append(looked, path)
+			return http.StatusOK, `{"AdGroups":[{"Id":654,"Name":"LFX | Ad Group | cncf | A"},{"Id":656,"Name":"LFX | Ad Group | cncf | B"},{"Id":655,"Name":"LFX | Ad Group | cncf | C"}]}`, true
+		}, msBidStrategy("EnhancedCpc"), func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"PartialErrors":[]}`) })
+		if err := writeMSBid(d, camp, 2.35); err != nil {
+			t.Fatalf("WriteBid: %v", err)
+		}
+		if len(looked) == 0 {
+			t.Fatal("the recomposed name was never looked up")
+		}
+		if n := len(msWrites(calls())); n != 3 {
+			t.Errorf("%d bid writes, want 654, 656 and 655", n)
+		}
+		g := msGroupResultBlob(t, camp.Result).AdGroups[1]
+		if g.AdGroupID != "656" || g.Unconfirmed || g.AdGroupName != "LFX | Ad Group | cncf | B" {
+			t.Errorf("reconciled group = %+v, want id 656, unconfirmed cleared, the recomposed name recorded", g)
+		}
+	})
+	t.Run("nothing to recompose from", func(t *testing.T) {
+		camp := legacy("")
+		before := string(camp.Result)
+		d, calls := msBudgetDispatcherRouted(t, msAdGroupLookup(http.StatusOK, `{"AdGroups":[]}`),
+			msBidStrategy("EnhancedCpc"), func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"PartialErrors":[]}`) })
+		err := writeMSBid(d, camp, 2.35)
+		if !errors.Is(err, domain.ErrBidUnwritable) || !strings.Contains(err.Error(), "entry 2 (B)") ||
+			!strings.Contains(err.Error(), "a retry will not clear this") || strings.Contains(err.Error(), "clears once the lookup") {
+			t.Fatalf("err = %v, want a 409 naming entry 2 (B) that says a retry will not clear it", err)
+		}
+		if w := msWrites(calls()); len(w) != 0 {
+			t.Fatalf("writes = %+v, want none", w)
+		}
+		if string(camp.Result) != before {
+			t.Errorf("the refusal must not change the result: %s", camp.Result)
+		}
+	})
+}
+
 func msGroupResultBlob(t *testing.T, raw json.RawMessage) microsoft.CampaignResult {
 	t.Helper()
 	var r microsoft.CampaignResult

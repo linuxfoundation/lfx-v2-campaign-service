@@ -176,3 +176,61 @@ func TestFindAdGroupByName_TrustedListOnly(t *testing.T) {
 		})
 	}
 }
+
+// Every group's composed ad group name is recorded, even for a later group whose step returned
+// no result (or one without the name) after an UNCONFIRMED failure: the bid write reconciles that
+// group by this name, and FindAdGroupByName refuses an empty one (Cursor Bugbot, #623).
+func TestCreateAdGroups_RecordsEveryGroupsComposedName(t *testing.T) {
+	in := CampaignInput{EventName: "KubeCon NA", Project: "cncf"}
+	groups := []validatedAdGroup{{in: AdGroupInput{NameSuffix: "A"}}, {in: AdGroupInput{NameSuffix: "B"}}, {in: AdGroupInput{NameSuffix: "C"}}, {in: AdGroupInput{NameSuffix: "D"}}}
+	want := func(suffix string) string { return "LFX | Ad Group | cncf | KubeCon NA | " + suffix }
+	orig := createAdGroupStep
+	t.Cleanup(func() { createAdGroupStep = orig })
+	createAdGroupStep = func(_ *Client, _ context.Context, gin CampaignInput, _ string, _ bool, _ *[]string, campaignPartial func() *CampaignResult, _ targeting) (*CampaignResult, error) {
+		unconfirmed := &hierarchyStepUnconfirmedError{err: errors.New("ad group create UNCONFIRMED")}
+		switch gin.adGroupNameSuffix {
+		case "B":
+			return nil, unconfirmed // no result at all
+		case "C":
+			return campaignPartial(), unconfirmed // a result without the name
+		}
+		id := map[string]string{"A": "654", "D": "655"}[gin.adGroupNameSuffix]
+		return &CampaignResult{CampaignID: "321", AdGroupName: composeAdGroupName(gin), AdGroupID: id}, nil
+	}
+	var steps []string
+	out, err := (&Client{}).createAdGroups(context.Background(), in, groups, "321", false, &steps,
+		func() *CampaignResult { return &CampaignResult{CampaignID: "321"} }, targeting{})
+	if err != nil {
+		t.Fatalf("createAdGroups: %v", err)
+	}
+	for i, suffix := range []string{"A", "B", "C", "D"} {
+		g := out.AdGroups[i]
+		if g.AdGroupName != want(suffix) {
+			t.Errorf("group %s adGroupName = %q, want %q", suffix, g.AdGroupName, want(suffix))
+		}
+		if unconfirmed := suffix == "B" || suffix == "C"; g.Unconfirmed != unconfirmed {
+			t.Errorf("group %s unconfirmed = %v, want %v", suffix, g.Unconfirmed, unconfirmed)
+		}
+	}
+}
+
+func TestSiblingAdGroupName(t *testing.T) {
+	for _, tc := range []struct {
+		name, sibling, siblingSuffix, suffix, want string
+		ok                                         bool
+	}{
+		{"swaps the suffix", "LFX | Ad Group | cncf | KubeCon | A", "A", "Cloud  Native", "LFX | Ad Group | cncf | KubeCon | Cloud Native", true},
+		{"sanitized sibling suffix", "LFX | Ad Group | Two Words", " Two\tWords ", "B", "LFX | Ad Group | B", true},
+		{"name without the suffix", "LFX | Ad Group | X", "A", "B", "", false},
+		{"empty sibling suffix", "LFX | Ad Group", "", "B", "", false},
+		{"empty suffix", "LFX | Ad Group | A", "A", " ", "", false},
+		{"over the limit", "LFX | Ad Group | A", "A", strings.Repeat("x", maxAdGroupNameRunes), "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := SiblingAdGroupName(tc.sibling, tc.siblingSuffix, tc.suffix)
+			if got != tc.want || ok != tc.ok {
+				t.Errorf("SiblingAdGroupName = %q, %v; want %q, %v", got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}

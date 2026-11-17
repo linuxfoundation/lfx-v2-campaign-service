@@ -226,6 +226,29 @@ func validateAdGroups(in CampaignInput, authority string) ([]validatedAdGroup, e
 	return out, nil
 }
 
+// createAdGroupStep is the per-group create createAdGroups calls; a variable only so a test can
+// stand in a step that returns no result.
+var createAdGroupStep = (*Client).createAdGroupAndAd
+
+// SiblingAdGroupName recomposes the name createAdGroups gave the ad group with suffix from a
+// sibling group of the same create: its recorded name and suffix. Every group's name is the
+// shared prefix (project and event) plus its own sanitized suffix last, so the sibling's suffix is
+// swapped for this one. For a row recorded before every group's name was (a later group whose
+// step returned no result recorded none). ok is false when the sibling's name does not end in its
+// suffix or the result is not a valid ad group name.
+func SiblingAdGroupName(siblingName, siblingSuffix, suffix string) (string, bool) {
+	tail := " | " + sanitizeNamePart(siblingSuffix)
+	s := sanitizeNamePart(suffix)
+	if sanitizeNamePart(siblingSuffix) == "" || s == "" || !strings.HasSuffix(siblingName, tail) {
+		return "", false
+	}
+	name := strings.TrimSuffix(siblingName, tail) + " | " + s
+	if validateEntityName("ad group", name, utf8.RuneCountInString(name), maxAdGroupNameRunes, "characters") != nil {
+		return "", false
+	}
+	return name, true
+}
+
 // createAdGroups builds every requested ad group under the confirmed campaign, in request order,
 // under the partial rules at the top of this file. tgt carries the campaign-wide ad group
 // settings (bid, flight, language, network); each group gets its own keywords.
@@ -239,9 +262,15 @@ func (c *Client) createAdGroups(
 	campaignPartial func() *CampaignResult,
 	tgt targeting,
 ) (*CampaignResult, error) {
+	// Every group's ad group name is composed up front, exactly as createAdGroupAndAd composes it
+	// for the create, and recorded whatever the step returns: the bid write reconciles a later
+	// group left UNCONFIRMED by looking it up by this name (FindAdGroupByName refuses an empty
+	// one), so a step that returned no result, or one without the name, must not leave it blank.
 	results := make([]AdGroupResult, len(groups))
 	for i, g := range groups {
-		results[i] = AdGroupResult{NameSuffix: g.in.NameSuffix, Status: AdGroupStatusNotAttempted}
+		gin := in
+		gin.adGroupNameSuffix = g.in.NameSuffix
+		results[i] = AdGroupResult{NameSuffix: g.in.NameSuffix, AdGroupName: composeAdGroupName(gin), Status: AdGroupStatusNotAttempted}
 	}
 	var first *CampaignResult
 	bidApplied, flightApplied, untouched := true, true, true
@@ -259,10 +288,13 @@ func (c *Client) createAdGroups(
 		gin.Path1, gin.Path2 = g.in.Path1, g.in.Path2
 		gt := tgt
 		gt.keywords = g.keywords
-		r, err := c.createAdGroupAndAd(ctx, gin, campaignID, alreadyExisted, steps, campaignPartial, gt)
+		r, err := createAdGroupStep(c, ctx, gin, campaignID, alreadyExisted, steps, campaignPartial, gt)
 		res := &results[i]
 		if r != nil {
-			res.AdGroupName, res.AdGroupID, res.AdGroupReused, res.AdID, res.KeywordIDs = r.AdGroupName, r.AdGroupID, r.AdGroupReused, r.AdID, r.KeywordIDs
+			res.AdGroupID, res.AdGroupReused, res.AdID, res.KeywordIDs = r.AdGroupID, r.AdGroupReused, r.AdID, r.KeywordIDs
+			if r.AdGroupName != "" {
+				res.AdGroupName = r.AdGroupName
+			}
 		}
 		if err == nil && i > 0 {
 			// Defence in depth behind ValidateAdGroupNameSuffixes: a later group that resolved to an

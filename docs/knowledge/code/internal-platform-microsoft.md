@@ -1856,7 +1856,10 @@ unreadable body, errNoID; `createAdGroupAndAd` marks its UNCONFIRMED steps with
 `hierarchyStepUnconfirmedError` so `IsOutcomeUnconfirmed` agrees) is recorded `failed` with
 `Unconfirmed`; while any is,
 the bid lever first reconciles it (`reconcileMicrosoftUnaddressedAdGroups`): `FindAdGroupByName`
-looks up its recorded `adGroupName` under the campaign; found, its id is written into the result
+looks up its recorded `adGroupName` under the campaign (`createAdGroups` composes and records
+every group's name up front, whatever its step returns; a legacy row with none recomposes it from
+a sibling's recorded name and suffix via `SiblingAdGroupName`, and with no sibling to recompose
+from the 409 says a retry will not clear it); found, its id is written into the result
 (`unconfirmed` cleared, status still `failed`) and it is re-bid; definitely absent (a complete,
 readable list without it), the flag is cleared — but only after
 `microsoftUnconfirmedSettleWindow` (1 hour) measured from the row's `UpdatedAt` (never earlier
