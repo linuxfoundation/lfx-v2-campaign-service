@@ -2661,6 +2661,16 @@ type AdoptCampaignServiceUnavailableResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// AdoptCampaignForbiddenResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "adopt-campaign" endpoint HTTP
+// response body for the "Forbidden" error.
+type AdoptCampaignForbiddenResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // AdoptCampaignInternalServerErrorResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "adopt-campaign" endpoint HTTP
 // response body for the "InternalServerError" error.
@@ -8152,6 +8162,17 @@ func NewAdoptCampaignConflictResponseBody(res *lfxv2campaignservicebriefs.Confli
 // "lfx-v2-campaign-service-briefs" service.
 func NewAdoptCampaignServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *AdoptCampaignServiceUnavailableResponseBody {
 	body := &AdoptCampaignServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewAdoptCampaignForbiddenResponseBody builds the HTTP response body from the
+// result of the "adopt-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewAdoptCampaignForbiddenResponseBody(res *lfxv2campaignservicebriefs.ForbiddenError) *AdoptCampaignForbiddenResponseBody {
+	body := &AdoptCampaignForbiddenResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}

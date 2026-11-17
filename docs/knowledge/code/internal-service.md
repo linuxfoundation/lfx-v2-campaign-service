@@ -926,7 +926,9 @@ lookup then reads that account through the LF system row (its default account or
 missing or broken LF row is a 500 (`ErrSystemConnectionMissing` / `ErrSystemConnectionNotUsable`,
 reachable only here), an account the row cannot address is a 400, and an exact repeat of an
 adoption that already succeeded (same brief, campaign and account) returns the bound campaign
-(201) without contacting LinkedIn.
+(201) without contacting LinkedIn. The repeat is found among every live campaign on the brief
+(`ListCampaignsForBrief`), not the slot's latest version alone, so a later `new_version` create
+does not hide it.
 `ErrInvalidPlatformCampaignID`
 is a 400: the adapter rejected the id locally and issued no query, so the 503 would invite a
 retry of input that can never succeed. Two more 409s come back from the repository, which is

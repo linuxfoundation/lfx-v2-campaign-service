@@ -6450,6 +6450,15 @@ paths:
                             example:
                                 code: "401"
                                 message: Unauthorized.
+                "403":
+                    description: 'Forbidden: The caller lacks the role an input requires'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ForbiddenError'
+                            example:
+                                code: "403"
+                                message: 'googleAdsConfig inputs that name a resource on the shared Google Ads account require the global_marketing_ops role on this project: demandGenAudience'
                 "404":
                     description: 'NotFound: Resource not found'
                     content:

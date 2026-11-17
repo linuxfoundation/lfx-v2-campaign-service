@@ -2585,6 +2585,19 @@ func EncodeAdoptCampaignError(encoder func(context.Context, http.ResponseWriter)
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return enc.Encode(body)
+		case "Forbidden":
+			var res *lfxv2campaignservicebriefs.ForbiddenError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewAdoptCampaignForbiddenResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusForbidden)
+			return enc.Encode(body)
 		case "InternalServerError":
 			var res *lfxv2campaignservicebriefs.InternalServerError
 			errors.As(v, &res)

@@ -2642,6 +2642,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		})
 		Result(Campaign)
 		commonBriefErrors()
+		Error("Forbidden", ForbiddenError, "The caller lacks the role an input requires")
 		HTTP(func() {
 			// POST to a sub-collection rather than PUT on the campaign: no campaign
 			// resource exists yet at any URL. Not idempotent by design — a second adopt of
@@ -2650,6 +2651,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Header("bearer_token:Authorization")
 			Response(StatusCreated, func() { Header("etag:ETag") })
 			briefErrorResponses()
+			Response("Forbidden", StatusForbidden)
 		})
 	})
 

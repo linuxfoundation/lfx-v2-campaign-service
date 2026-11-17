@@ -395,6 +395,7 @@ func (c *Client) CreateSendWorkflow(ctx context.Context, p *CreateSendWorkflowPa
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "Forbidden" (type *ForbiddenError): The caller lacks the role an input requires
 //   - error: internal error
 func (c *Client) AdoptCampaign(ctx context.Context, p *AdoptCampaignPayload) (res *Campaign, err error) {
 	var ires any

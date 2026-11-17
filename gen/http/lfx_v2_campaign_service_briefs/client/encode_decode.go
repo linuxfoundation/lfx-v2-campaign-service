@@ -3232,6 +3232,7 @@ func EncodeAdoptCampaignRequest(encoder func(*http.Request) goahttp.Encoder) fun
 //   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
 //   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "Forbidden" (type *lfxv2campaignservicebriefs.ForbiddenError): http.StatusForbidden
 //   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
 //   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
@@ -3322,6 +3323,20 @@ func DecodeAdoptCampaignResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
 			}
 			return nil, NewAdoptCampaignServiceUnavailable(&body)
+		case http.StatusForbidden:
+			var (
+				body AdoptCampaignForbiddenResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
+			}
+			err = ValidateAdoptCampaignForbiddenResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
+			}
+			return nil, NewAdoptCampaignForbidden(&body)
 		case http.StatusInternalServerError:
 			var (
 				body AdoptCampaignInternalServerErrorResponseBody

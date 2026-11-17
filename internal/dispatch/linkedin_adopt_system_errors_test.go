@@ -19,12 +19,17 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
-// adoptE2ECampaignRepo answers every slot lookup "free"; every other method is the embedded nil
-// interface, so a refused adoption that reached a write would panic.
+// adoptE2ECampaignRepo answers every slot lookup "free" and the brief as holding no campaign;
+// every other method is the embedded nil interface, so a refused adoption that reached a write
+// would panic.
 type adoptE2ECampaignRepo struct{ domain.CampaignRepository }
 
 func (adoptE2ECampaignRepo) GetCampaignByPlatform(context.Context, string, string, model.Provider, string) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
+}
+
+func (adoptE2ECampaignRepo) ListCampaignsForBrief(context.Context, string, string) ([]*model.Campaign, error) {
+	return nil, nil
 }
 
 type adoptE2EVerifier struct{}

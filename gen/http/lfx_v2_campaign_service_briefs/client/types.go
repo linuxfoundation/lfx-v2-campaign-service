@@ -2661,6 +2661,16 @@ type AdoptCampaignServiceUnavailableResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// AdoptCampaignForbiddenResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "adopt-campaign" endpoint HTTP
+// response body for the "Forbidden" error.
+type AdoptCampaignForbiddenResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // AdoptCampaignInternalServerErrorResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "adopt-campaign" endpoint HTTP
 // response body for the "InternalServerError" error.
@@ -7879,6 +7889,17 @@ func NewAdoptCampaignConflict(body *AdoptCampaignConflictResponseBody) *lfxv2cam
 // service adopt-campaign endpoint ServiceUnavailable error.
 func NewAdoptCampaignServiceUnavailable(body *AdoptCampaignServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
 	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewAdoptCampaignForbidden builds a lfx-v2-campaign-service-briefs service
+// adopt-campaign endpoint Forbidden error.
+func NewAdoptCampaignForbidden(body *AdoptCampaignForbiddenResponseBody) *lfxv2campaignservicebriefs.ForbiddenError {
+	v := &lfxv2campaignservicebriefs.ForbiddenError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -13652,6 +13673,18 @@ func ValidateAdoptCampaignConflictResponseBody(body *AdoptCampaignConflictRespon
 // ValidateAdoptCampaignServiceUnavailableResponseBody runs the validations
 // defined on AdoptCampaignServiceUnavailableResponseBody
 func ValidateAdoptCampaignServiceUnavailableResponseBody(body *AdoptCampaignServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateAdoptCampaignForbiddenResponseBody runs the validations defined on
+// AdoptCampaignForbiddenResponseBody
+func ValidateAdoptCampaignForbiddenResponseBody(body *AdoptCampaignForbiddenResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

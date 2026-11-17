@@ -885,14 +885,18 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 	// real slot.
 	// An exact repeat of an adoption from the LF system row that already succeeded answers the
 	// bound campaign, without contacting LinkedIn (#581). Only on this path: the project-connection
-	// path keeps its published 409 for a second adopt.
+	// path keeps its published 409 for a second adopt. Every live campaign on the brief is
+	// searched, not just the slot's latest version: after a new_version create the adopted row is
+	// an older version, and GetCampaignByPlatform would answer only the newer one.
 	if accountID != "" {
-		if existing, gerr := campaignRepo.GetCampaignByPlatform(ctx, p.ProjectID, p.BriefID, platform, model.VariantDefault); gerr == nil {
-			if sameSystemAdoption(existing, platformCampaignID, accountID) {
+		live, lerr := campaignRepo.ListCampaignsForBrief(ctx, p.ProjectID, p.BriefID)
+		if lerr != nil {
+			return nil, mapBriefErr(lerr)
+		}
+		for _, existing := range live {
+			if existing != nil && existing.Platform == platform && sameSystemAdoption(existing, platformCampaignID, accountID) {
 				return campaignResult(existing), nil
 			}
-		} else if !errors.Is(gerr, domain.ErrNotFound) {
-			return nil, mapBriefErr(gerr)
 		}
 	}
 	if occupied, cerr := allAdoptableSlotsOccupied(ctx, campaignRepo, p.ProjectID, p.BriefID, platform); cerr != nil {

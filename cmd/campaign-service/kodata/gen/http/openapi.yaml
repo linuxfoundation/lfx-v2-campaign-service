@@ -4208,6 +4208,13 @@ paths:
                         WWW-Authenticate:
                             description: Authentication challenge (RFC 9110 §15.5.2)
                             type: string
+                "403":
+                    description: 'Forbidden: The caller lacks the role an input requires'
+                    schema:
+                        $ref: '#/definitions/ForbiddenError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: 'NotFound: Resource not found'
                     schema:

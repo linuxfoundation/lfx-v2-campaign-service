@@ -10,9 +10,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	goahttp "goa.design/goa/v3/http"
+	"goa.design/goa/v3/security"
+
+	briefssrv "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/server"
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -323,5 +329,77 @@ func TestListLinkedinAdsAdoptableCampaigns(t *testing.T) {
 	}
 	if _, err := svc.ListLinkedinAdsAdoptableCampaigns(context.Background(), &conn.ListLinkedinAdsAdoptableCampaignsPayload{ProjectID: model.SystemProjectID, AccountID: "500928401"}); err == nil {
 		t.Fatal("the reserved LF scope was addressable")
+	}
+}
+
+// TestAdoptCampaign_RepeatFindsTheAdoptedRowBehindANewerVersion: after campaign 312 is adopted and
+// a new_version create puts 313 on the same slot, GetCampaignByPlatform answers 313 alone. An exact
+// repeat of the 312 adoption must still find 312 (it is still bound to this brief) and answer it,
+// without contacting LinkedIn, rather than the 409 for an occupied slot.
+func TestAdoptCampaign_RepeatFindsTheAdoptedRowBehindANewerVersion(t *testing.T) {
+	t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, "true")
+	disp := &systemAccountAdopter{}
+	s, camps := newAdoptService(t, model.ProviderLinkedInAds, disp)
+	s.SetMarketingOpsChecker(&fakeMarketingOps{allow: true})
+	ctx := ctxWithActor(testActor)
+	first, err := s.AdoptCampaign(ctx, systemAdoptPayload("500928401"))
+	if err != nil {
+		t.Fatalf("first adoption: %v", err)
+	}
+	// What a new_version create leaves behind: a newer live version on the same slot.
+	camps.mu.Lock()
+	camps.storeRow(&model.Campaign{ID: "c-313", ProjectID: "cncf", BriefID: "b1",
+		Platform: model.ProviderLinkedInAds, Variant: model.VariantDefault, SlotVersion: 2,
+		PlatformCampaignID: "313", Status: "active"})
+	camps.mu.Unlock()
+
+	again, err := s.AdoptCampaign(ctx, systemAdoptPayload("500928401"))
+	if err != nil {
+		t.Fatalf("repeat adoption behind a newer version = %T %v, want the bound campaign", err, err)
+	}
+	if again.ID != first.ID || again.PlatformCampaignID == nil || *again.PlatformCampaignID != "312" {
+		t.Fatalf("repeat answered %s, want the adopted 312 row %s", again.ID, first.ID)
+	}
+	if disp.calls != 1 || len(camps.adopted) != 1 {
+		t.Fatalf("%d lookups, %d adopted rows; want 1 and 1 (the repeat must not contact LinkedIn)", disp.calls, len(camps.adopted))
+	}
+}
+
+// TestAdoptCampaignHandler_DeniedAccountIDIs403 drives a denied account_id adoption through the
+// generated HTTP handler and encoder: the service's ForbiddenError must reach the wire as 403,
+// which needs adopt-campaign to declare and map Forbidden. Undeclared, it falls through to Goa's
+// generic error encoder and the caller is told 500.
+func TestAdoptCampaignHandler_DeniedAccountIDIs403(t *testing.T) {
+	t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, "true")
+	const briefID = "11111111-1111-4111-8111-111111111111"
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", briefID)] = &model.CampaignBrief{ID: briefID, ProjectID: "cncf", Status: model.BriefApproved}
+	camps := &fakeCampaignRepo{byID: map[string]*model.Campaign{}}
+	jobs := newFakeJobRepo()
+	disp := &systemAccountAdopter{}
+	s := NewBriefService(repo, camps, jobs, NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: disp}))
+	s.SetMarketingOpsChecker(&fakeMarketingOps{})
+
+	auth := func(ctx context.Context, _ string, _ *security.JWTScheme) (context.Context, error) {
+		return context.WithValue(ctx, actorCtxKey{}, testActor), nil
+	}
+	mux := goahttp.NewMuxer()
+	briefssrv.MountAdoptCampaignHandler(mux, briefssrv.NewAdoptCampaignHandler(
+		briefs.NewAdoptCampaignEndpoint(s, auth), mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, nil, nil))
+
+	req := httptest.NewRequest(http.MethodPost, "/projects/cncf/briefs/"+briefID+"/campaigns/adopt",
+		strings.NewReader(`{"platform":"linkedin-ads","platform_campaign_id":"312","account_id":"500928401"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer t")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "global_marketing_ops") {
+		t.Fatalf("body %s does not name the role", rec.Body.String())
+	}
+	if disp.calls != 0 || len(camps.adopted) != 0 {
+		t.Fatalf("a denied adoption reached LinkedIn %d time(s) / bound %d row(s)", disp.calls, len(camps.adopted))
 	}
 }
