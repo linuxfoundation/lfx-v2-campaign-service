@@ -1550,23 +1550,44 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 	// ACTIVATE: the further ad groups first, each narrowed to its live keywords, while the
 	// campaign gate is still Paused, so nothing serves until every group is ready; the gate opens
 	// last in UpdateCampaignAndChildrenStatus below.
+	//
+	// activated names the further ad groups Microsoft already confirmed Active. Once it is
+	// non-empty, every later failure — a keyword read, a "no live keyword" refusal, a definite
+	// rejection of a later group's or the first group's write — is a PARTIAL toggle, reported
+	// through unconfirmedToggleError so the service holds the write lock for its cooldown and
+	// says "verify before retrying" rather than "nothing was changed". The gate may not be the
+	// safety net either: an already-active campaign reaches this loop too, so an activated
+	// group may already be serving. While activated is empty, every failure is as definite as
+	// before.
+	var activated []string
+	partialAfter := func(err error) error {
+		if len(activated) == 0 {
+			return err
+		}
+		// %v, not %w: the cause can carry a sentinel (ErrCampaignNotProvisioned) that the
+		// service's switch matches BEFORE its unconfirmed arm, which would answer a definite 409
+		// and release the lock for a campaign this call already partly changed.
+		return &unconfirmedToggleError{err: fmt.Errorf("microsoft campaign %s: ad group(s) %s were already activated before this step failed, so the campaign is partly changed: %v",
+			campaign.PlatformCampaignID, strings.Join(activated, ", "), err)}
+	}
 	if msStatus == microsoft.StatusActive {
 		for _, g := range extras {
 			readCtx, cancel := context.WithTimeout(ctx, microsoftActivateKeywordReadBudget)
 			live, lerr := microsoftLiveKeywordIDs(readCtx, client, g.adGroupID, g.keywordIDs)
 			cancel()
 			if lerr != nil {
-				return fmt.Errorf("toggle microsoft campaign status: read ad group %s's keywords before activating (the campaign was not activated): %w", g.adGroupID, lerr)
+				return partialAfter(fmt.Errorf("toggle microsoft campaign status: read ad group %s's keywords before activating (the campaign was not activated): %w", g.adGroupID, lerr))
 			}
 			if len(live) == 0 {
-				return fmt.Errorf("%w: microsoft campaign %s cannot be activated because every keyword ad group %s was created with has since been removed", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID, g.adGroupID)
+				return partialAfter(fmt.Errorf("%w: microsoft campaign %s cannot be activated because every keyword ad group %s was created with has since been removed", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID, g.adGroupID))
 			}
 			if gerr := client.UpdateAdGroupChildrenStatus(ctx, campaign.PlatformCampaignID, g.adGroupID, g.adID, live, msStatus); gerr != nil {
 				if microsoft.IsOutcomeUnconfirmed(gerr) {
 					return &unconfirmedToggleError{err: gerr}
 				}
-				return fmt.Errorf("toggle microsoft campaign status: activate ad group %s (the campaign gate stayed Paused, so nothing serves): %w", g.adGroupID, gerr)
+				return partialAfter(fmt.Errorf("toggle microsoft campaign status: activate ad group %s (the campaign gate stayed Paused): %w", g.adGroupID, gerr))
 			}
+			activated = append(activated, g.adGroupID)
 		}
 	}
 	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, keywordIDs, msStatus); uerr != nil {
@@ -1583,7 +1604,7 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 		if microsoft.IsOutcomeUnconfirmed(uerr) {
 			return &unconfirmedToggleError{err: uerr}
 		}
-		return uerr
+		return partialAfter(uerr)
 	}
 	if msStatus == microsoft.StatusPaused {
 		pauseMicrosoftExtraAdGroups(ctx, client, projectID, campaign.PlatformCampaignID, extras)

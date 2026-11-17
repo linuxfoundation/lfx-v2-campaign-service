@@ -1910,7 +1910,12 @@ by name, which the suffix check should already prevent) is recorded `failed` the
 campaign. The dispatcher's toggle activates every further created group (narrowed to its live
 keywords) BEFORE `UpdateCampaignAndChildrenStatus` opens the gate, and pauses them AFTER the gate
 is closed (a failure there is logged; delivery is already stopped); it addresses only `created`
-groups (`microsoftExtraAdGroups`), so activation never opens a partly built one. The bid lever
+groups (`microsoftExtraAdGroups`), so activation never opens a partly built one. Once any
+further group has activated, every later failure (a keyword read, a no-live-keyword refusal, a
+definite rejection of a later group or of the first group) is a partial toggle, returned as
+`unconfirmedToggleError` without the `ErrCampaignNotProvisioned` sentinel. The service then holds
+the lock for its cooldown and does not say nothing changed. An already-active campaign reaches
+this loop too, so an activated group may already be serving. The bid lever
 re-bids, and the keyword lever accepts (one per batch), every distinct group with a CONFIRMED
 `AdGroupID` (`microsoftConfirmedExtraAdGroupIDs`), a `failed` one included: a group whose ad or
 keyword step failed after Microsoft confirmed it still exists at the old bid with its confirmed

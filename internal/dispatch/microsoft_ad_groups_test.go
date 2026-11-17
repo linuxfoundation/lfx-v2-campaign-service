@@ -441,6 +441,137 @@ func TestMicrosoftAdGroups_ToggleActivateRefusesAnUnprovisionedGroup(t *testing.
 	}
 }
 
+// msFourGroupCampaign records four created ad groups: the first (654) plus three further ones
+// (655, 656, 657), so a failure can land on a further group after an earlier one activated.
+func msFourGroupCampaign() *model.Campaign {
+	return &model.Campaign{
+		ID: "camp-1", Platform: model.ProviderMicrosoftAds, PlatformCampaignID: "321",
+		Result: json.RawMessage(`{"accountId":"1234567","campaignId":"321","adGroupId":"654","adId":"987","keywordIds":["701"],"adGroups":[
+			{"nameSuffix":"A","adGroupId":"654","adId":"987","keywordIds":["701"],"status":"created"},
+			{"nameSuffix":"B","adGroupId":"655","adId":"988","keywordIds":["702"],"status":"created"},
+			{"nameSuffix":"C","adGroupId":"656","adId":"989","keywordIds":["703"],"status":"created"},
+			{"nameSuffix":"D","adGroupId":"657","adId":"990","keywordIds":["704"],"status":"created"}]}`),
+	}
+}
+
+// Once a further ad group has activated, a LATER group's failure is a partial toggle, never the
+// definite "nothing was changed": the read and the definite write rejection of the next group,
+// its "every keyword removed" refusal, and the first group's own rejection all report
+// Unconfirmed() and drop the ErrCampaignNotProvisioned sentinel (the service matches it before
+// the unconfirmed arm). Group 655 activates in every case; the failure lands after it.
+func TestMicrosoftAdGroups_ToggleActivateLaterGroupFailureAfterAnActivatedGroupIsPartial(t *testing.T) {
+	allLive := `{"Keywords":[{"Id":701,"Status":"Paused"},{"Id":702,"Status":"Paused"},{"Id":703,"Status":"Paused"},{"Id":704,"Status":"Paused"}]}`
+	rejected := `{"Errors":[{"Code":1201,"ErrorCode":"CampaignServiceInvalidAdGroupStatus","Message":"rejected"}]}`
+	cases := []struct {
+		name string
+		// handle answers the n-th keyword read (1 = the first group, 2 = 655, 3 = 656) and the
+		// n-th AdGroups PUT (1 = 655, 2 = 656, ...).
+		handle func(read, adGroupPut int, method, path string) (int, string)
+	}{
+		{"next group's keyword read fails", func(read, _ int, _, path string) (int, string) {
+			if path == "Keywords/QueryByAdGroupId" {
+				if read == 3 {
+					return http.StatusBadRequest, rejected
+				}
+				return http.StatusOK, allLive
+			}
+			return http.StatusOK, `{"PartialErrors":[]}`
+		}},
+		{"next group's every keyword removed", func(read, _ int, _, path string) (int, string) {
+			if path == "Keywords/QueryByAdGroupId" {
+				if read == 3 {
+					return http.StatusOK, `{"Keywords":[]}`
+				}
+				return http.StatusOK, allLive
+			}
+			return http.StatusOK, `{"PartialErrors":[]}`
+		}},
+		{"next group's first status write rejected", func(_, put int, method, path string) (int, string) {
+			if path == "Keywords/QueryByAdGroupId" {
+				return http.StatusOK, allLive
+			}
+			if method == http.MethodPut && path == "AdGroups" && put == 2 {
+				return http.StatusBadRequest, rejected
+			}
+			return http.StatusOK, `{"PartialErrors":[]}`
+		}},
+		{"first group's status write rejected", func(_, put int, method, path string) (int, string) {
+			if path == "Keywords/QueryByAdGroupId" {
+				return http.StatusOK, allLive
+			}
+			if method == http.MethodPut && path == "AdGroups" && put == 4 {
+				return http.StatusBadRequest, rejected
+			}
+			return http.StatusOK, `{"PartialErrors":[]}`
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var (
+				mu         sync.Mutex
+				reads, put int
+			)
+			d, calls, _ := msLeverDispatcher(t, func(method, path string) (int, string) {
+				mu.Lock()
+				if path == "Keywords/QueryByAdGroupId" {
+					reads++
+				}
+				if method == http.MethodPut && path == "AdGroups" {
+					put++
+				}
+				r, p := reads, put
+				mu.Unlock()
+				return tc.handle(r, p, method, path)
+			})
+			err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, msFourGroupCampaign(), model.CampaignRunActive)
+			if err == nil {
+				t.Fatal("ToggleStatus succeeded, want a partial failure")
+			}
+			var u interface{ Unconfirmed() bool }
+			if !errors.As(err, &u) || !u.Unconfirmed() {
+				t.Fatalf("ad group 655 was already activated, so the failure must be partial (Unconfirmed), got %v", err)
+			}
+			if errors.Is(err, domain.ErrCampaignNotProvisioned) {
+				t.Errorf("a partial toggle must not match ErrCampaignNotProvisioned (the service would answer 409 and skip the cooldown): %v", err)
+			}
+			if !strings.Contains(err.Error(), "655") {
+				t.Errorf("err does not name the activated ad group 655: %v", err)
+			}
+			activated := false
+			for _, c := range msMutations(calls()) {
+				if c.Path == "AdGroups" && strings.Contains(c.Body, "655") && strings.Contains(c.Body, `"Active"`) {
+					activated = true
+				}
+			}
+			if !activated {
+				t.Fatalf("precondition: ad group 655 was never activated: %+v", calls())
+			}
+		})
+	}
+}
+
+// The first further group failing changes nothing, so its failure stays definite, exactly as
+// before: no Unconfirmed(), and the "every keyword removed" refusal keeps its 409 sentinel.
+func TestMicrosoftAdGroups_ToggleActivateFirstFurtherGroupFailureStaysDefinite(t *testing.T) {
+	d, calls, _ := msLeverDispatcher(t, func(_, path string) (int, string) {
+		if path == "Keywords/QueryByAdGroupId" {
+			return http.StatusOK, `{"Keywords":[{"Id":701,"Status":"Paused"}]}`
+		}
+		return http.StatusOK, `{"PartialErrors":[]}`
+	})
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, msFourGroupCampaign(), model.CampaignRunActive)
+	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
+		t.Fatalf("err = %v, want ErrCampaignNotProvisioned", err)
+	}
+	var u interface{ Unconfirmed() bool }
+	if errors.As(err, &u) && u.Unconfirmed() {
+		t.Errorf("nothing was changed, so the refusal must be definite, got %v", err)
+	}
+	if m := msMutations(calls()); len(m) != 0 {
+		t.Errorf("mutations = %+v, want none", m)
+	}
+}
+
 // The keyword lever acts on any of the campaign's ad groups, one per batch.
 func TestMicrosoftAdGroups_KeywordLeverAddressesAnyOwnedGroup(t *testing.T) {
 	d, calls, _ := msLeverDispatcher(t, func(_, path string) (int, string) {
