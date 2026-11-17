@@ -3537,6 +3537,46 @@ whitespace case asserts both a pre-create refusal with zero upstream requests AN
 whitespace `tweetId` with no `asUserId` still INHERITS the declared identity — the half a fix
 aimed only at the refusal would have left broken.
 
+## LinkedIn account grants on the system row (#581)
+
+The LF system LinkedIn row may carry operator-installed account grants
+(`model.Connection.LinkedInGrants`, migration 000058, installed by
+`bootstrap-system-account -linkedin-grant`). `credsSource.resolveConn` attaches the row's grants
+to every `resolved` (not cached with the credential), and `resolved.grantScoped(account)`
+returns a copy addressing a granted account: `accountID` and `providerConfig["org_id"]` are the
+grant's, the providerConfig map is copied (the original comes from the shared cache), and
+`grantAccount` is set. Only a resolution from the system row is ever scoped; a project-owned row
+never honours a grant.
+
+Existing-campaign operations (pause/resume, metrics, budget, bid, settings readback) follow the
+campaign's recorded account through `resolveExisting`. Its system arms now ask
+`existingOnSystem(sys, created)`: the row's default account, else one of its grants. So a
+campaign created in a granted account is addressable however the project resolves today: no
+row of its own, its own row on another account, or a disconnected row. An account that is
+neither the default nor granted gets the same refusal as before. `systemCreated` counts a granted
+account as the system row's, so when both scopes fail the system row's error is returned.
+
+`cachedLinkedInClient` adds `grantAccount` to its cache key: one row now serves several accounts
+and the client's `RuntimeConfig` names exactly one.
+
+The LinkedIn account monitor and audience insights read through the same rule (step 3 of #581):
+`resolveLinkedInMonitorCredentials` and `ReadLinkedInAudienceInsights` use
+`existingResolver(account)`, LinkedIn implements `service.AccountMonitorScoper` and
+`AccountMonitorDefaulter`, and the system credential is served only for its default account or a
+grant, and only to a campaign-scoped read (see the account-monitor architecture concept).
+
+It also implements `service.AccountMonitorConnectionScoper` (#628): `MonitorScoperForConnection`
+resolves the read's credential, and on the project's own connection keeps a campaign that records
+no creation account (as that connection's account); on the system row `linkedInMonitorScope` omits
+and logs it. When the credential cannot be resolved it returns `resolveLinkedInMonitorCredentials`'
+error unchanged, the one `ReadAccountMonitor` would return, and the orchestrator fails the read
+with it rather than judging the scope by the system rule. Pinned by
+`TestLinkedInMonitorScopeByConnection`.
+
+Pinned by `TestLinkedIn_PauseReachesACampaignInAGrantedAccount`,
+`TestLinkedIn_GrantedAndDefaultAccountsDoNotShareAClient`, `TestGrantScopedHonoursOnlyTheSystemRow`
+and `TestLinkedIn_BrokenSystemRowIsBlamedForAGrantedCampaign`.
+
 ## Forced-primary mode: the system account as the account of record
 
 The section above is the DEFAULT — the system row is a fallback, used only when a project has no

@@ -4247,6 +4247,21 @@ pacingLabel: string             — underspending | normal | constrained | overs
 - `callToAction` field not accepted; "Learn More" is automatic for article ads
 - Idempotency: search by name across all statuses before creating
 - Exclude employers: LF (`urn:li:company:33275771`) + CNCF (`urn:li:company:12893459`)
+- Account grants (#581): the LF system LinkedIn connection may address operator-installed grants
+  (`bootstrap-system-account -linkedin-grant account:org[:label]`) besides its own account. Pause,
+  budget, bid, settings and metrics reach a campaign recorded in a granted account through the
+  system credential, under the grant's org.
+- Account monitor (#581): `GET .../connection-linkedin-ads/account-monitor` is project-scoped like
+  Google Ads, Meta, Reddit and X (the `{provider}` row above predates this and still lists LinkedIn as
+  account-scoped): only campaigns this service recorded for the project are returned. `account_id`
+  is optional; omitted, it is the account the project's campaigns were created under. A live
+  recorded campaign created under a different account is `409`
+  (`AccountMonitorScopeConflictError`). A campaign that records no account (created before
+  accounts were recorded) is shown on the project's own connection, as that connection's account,
+  and omitted (logged) on the system credential; omitting `account_id` when no live campaign
+  records one is still `409`. The system credential reads only its own account or a
+  grant; any other account, for a project with no usable connection of its own, is `404`.
+  Audience insights resolve the same way.
 
 ### Meta Ads
 - ISO geo codes for targeting

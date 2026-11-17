@@ -55,6 +55,21 @@ type ConnectionRepository interface {
 	ConnectionWriter
 }
 
+// LinkedInGrantWriter replaces the LinkedIn account grants on one project's live LinkedIn
+// connection (#581). It is a separate port, not a ConnectionWriter method, because its only
+// caller is the bootstrap-system-account installer: the public connection API never writes
+// grants, so no HTTP-facing repository has to implement it.
+//
+// ReplaceLinkedInAccountGrants swaps the whole grant set for grants (an empty slice removes every
+// grant) and bumps the row's version in the SAME transaction, gated on expectedVersion, so a
+// cached credential or client for the old set is invalidated exactly as a credential rotation
+// invalidates one. It returns the updated connection with its new grant set. Errors:
+// ErrNotFound when the project has no live LinkedIn row, ErrPreconditionFailed on a version
+// mismatch.
+type LinkedInGrantWriter interface {
+	ReplaceLinkedInAccountGrants(ctx context.Context, projectID string, grants []model.LinkedInAccountGrant, by *model.Actor, expectedVersion int64) (*model.Connection, error)
+}
+
 // Encryptor encrypts and decrypts credential payloads at the application layer
 // (AES-256-GCM). The key lives only in the application (from a k8s secret), not
 // in the database.
