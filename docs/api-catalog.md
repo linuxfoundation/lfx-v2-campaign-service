@@ -1407,7 +1407,10 @@ clause would tell whether that stricter refusal can be relaxed.
 
 `adAccountId` (optional, a bare LinkedIn account number) chooses the ad account the campaign is
 created in. Omitted, it is the connection's account: the project's own LinkedIn connection, else
-the LF system account. Naming that same account is always accepted.
+the LF system account. Naming that same account passes the account check, but while
+`LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED` is on any `adAccountId` (the default included) also
+needs `global_marketing_ops`, because the create gate cannot tell the default account from a
+grant. A caller that means the default account should omit `adAccountId`.
 
 Any other account is accepted only when all three hold:
 
