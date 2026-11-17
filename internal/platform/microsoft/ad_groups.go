@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -113,9 +114,9 @@ func (e *AdGroupError) Error() string {
 
 // ValidateAdGroupNameSuffixes checks the suffixes alone, without contacting Microsoft: each
 // trimmed of nothing (sent as given), 1-MaxAdGroupNameSuffixRunes characters, at least one letter
-// or digit, no control character and no "|" (the name delimiter), nothing redact.SnapshotText
-// would change (a URL or credentials, since the suffix is stored and logged as
-// given), and no two that compose the
+// or digit, no control character and no "|" (the name delimiter), no URL or credentials (nothing
+// redact.SnapshotText would change and no "scheme://" or "www." host, urlShapedSuffixRE, since
+// the suffix is stored and logged as given), and no two that compose the
 // same ad group name: compared after sanitizeNamePart (the normalization the composed name gets,
 // which collapses whitespace runs and Unicode spaces) and with strings.EqualFold, the comparison
 // lookupNamedEntity finds an existing ad group by (Microsoft's ad group names are unique
@@ -138,10 +139,11 @@ func ValidateAdGroupNameSuffixes(suffixes []string) error {
 			return &AdGroupError{Entry: entry, Field: "nameSuffix", Msg: "must not contain a control character or \"|\""}
 		case !hasWord(s):
 			return &AdGroupError{Entry: entry, Field: "nameSuffix", Msg: "must contain a letter or digit"}
-		case redact.SnapshotText(s) != s:
+		case redact.SnapshotText(s) != s || urlShapedSuffixRE.MatchString(s):
 			// The suffix is persisted (the result, the steps and the composed ad group name) and
 			// logged verbatim, so one the snapshot redactor would change, such as a URL or
-			// credentials, is refused rather than stored.
+			// credentials, is refused rather than stored. The redactor keeps scheme + host, so
+			// it leaves "https://x.co" unchanged; urlShapedSuffixRE refuses that shape too.
 			return &AdGroupError{Entry: entry, Field: "nameSuffix", Msg: "must not contain a URL or credentials; a suffix is a label"}
 		}
 		key := sanitizeNamePart(s)
@@ -154,6 +156,12 @@ func ValidateAdGroupNameSuffixes(suffixes []string) error {
 	}
 	return nil
 }
+
+// urlShapedSuffixRE matches a suffix that holds a URL redact.SnapshotText leaves as written: any
+// "scheme://" (an origin-only "https://x.co" is unchanged by the redactor) or a "www." host. A
+// bare host alone ("example.com") is not matched: it cannot be told apart from a label such as
+// "Node.js", and one with a path, query or credentials is already changed by SnapshotText.
+var urlShapedSuffixRE = regexp.MustCompile(`(?i)://|\bwww\.`)
 
 // ValidateKeywords is validateKeywords for a caller outside the client (the dispatcher's
 // synchronous check of adGroups[].keywords), so a create and the 400 cannot disagree.

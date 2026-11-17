@@ -30,6 +30,17 @@ func TestValidateAdGroupNameSuffixes(t *testing.T) {
 		{"url with a query", []string{"A", "https://x.co/t?key=abc"}, "entry 2: nameSuffix: must not contain a URL or credentials"},
 		{"url with credentials", []string{"https://u:p@x.co"}, "entry 1: nameSuffix: must not contain a URL or credentials"},
 		{"schemeless url", []string{"x.co/kubecon"}, "entry 1: nameSuffix: must not contain a URL or credentials"},
+		// SnapshotText keeps scheme + host, so an origin-only URL is unchanged by it; the
+		// explicit URL-shape check refuses these (#623 review).
+		{"origin-only https url", []string{"https://x.co"}, "entry 1: nameSuffix: must not contain a URL or credentials"},
+		{"origin-only http url", []string{"A", "http://example.org"}, "entry 2: nameSuffix: must not contain a URL or credentials"},
+		{"url mid-suffix", []string{"Go to https://x.co"}, "entry 1: nameSuffix: must not contain a URL or credentials"},
+		{"other scheme", []string{"ftp://x.co"}, "entry 1: nameSuffix: must not contain a URL or credentials"},
+		{"www host", []string{"www.example.com"}, "entry 1: nameSuffix: must not contain a URL or credentials"},
+		{"www host mid-suffix", []string{"Brand WWW.Example.com"}, "entry 1: nameSuffix: must not contain a URL or credentials"},
+		// A bare host alone is not treated as a URL: it cannot be told apart from a label such
+		// as "Node.js", and with a path or query SnapshotText already changes it (above).
+		{"labels with dots and digits", []string{"Brand", "Generic 2", "Node.js", "v1.2", "U.S."}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := ValidateAdGroupNameSuffixes(tc.suffixes)

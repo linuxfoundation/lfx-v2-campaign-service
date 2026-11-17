@@ -1814,7 +1814,9 @@ single-group path unchanged: the same `createAdGroupAndAd` call, the same ad gro
 
 `validateAdGroups` runs inside CreateCampaign's up-front checks, before anything exists: the
 suffixes (`ValidateAdGroupNameSuffixes`: 1-40 characters, a letter or digit, no control character
-or `|`, unique by the composed name: compared after `sanitizeNamePart` with `strings.EqualFold`,
+or `|`, no URL or credentials (nothing `redact.SnapshotText` would change, and no `scheme://` or
+`www.` host, which the redactor keeps as written; a bare host such as `example.com` alone is
+allowed, indistinguishable from a label like `Node.js`), unique by the composed name: compared after `sanitizeNamePart` with `strings.EqualFold`,
 so suffixes differing only in case or spacing are refused), each composed name (`composeAdGroupName` plus ` | <suffix>`)
 against the 256-character limit, at least one keyword per group, the copy, and each group's
 display paths against the registration URL's domain. That display check also runs at the create

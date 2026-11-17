@@ -199,12 +199,6 @@ func microsoftBidAmountRejected(err error) error {
 // about to exist; an hour is far beyond any request Microsoft is still processing.
 const microsoftUnconfirmedSettleWindow = time.Hour
 
-// microsoftCreateSettled reports whether the campaign's unconfirmed creates have had
-// microsoftUnconfirmedSettleWindow to settle, measured from the row's UpdatedAt: the row's last
-// write, which is never earlier than the dispatch result that recorded the unconfirmed group
-// (CreatedAt is the claim, BEFORE the create ran, so it could clear too early). A later write
-// only moves UpdatedAt forward, extending the window — the safe direction. An unknown (zero)
-// UpdatedAt is never settled.
 // microsoftCreateSettlesAt reports when microsoftCreateSettled turns true for the row, or false
 // when it never will (an unknown UpdatedAt).
 func microsoftCreateSettlesAt(campaign *model.Campaign) (time.Time, bool) {
@@ -214,6 +208,12 @@ func microsoftCreateSettlesAt(campaign *model.Campaign) (time.Time, bool) {
 	return campaign.UpdatedAt.Add(microsoftUnconfirmedSettleWindow), true
 }
 
+// microsoftCreateSettled reports whether the campaign's unconfirmed creates have had
+// microsoftUnconfirmedSettleWindow to settle, measured from the row's UpdatedAt: the row's last
+// write, which is never earlier than the dispatch result that recorded the unconfirmed group
+// (CreatedAt is the claim, BEFORE the create ran, so it could clear too early). A later write
+// only moves UpdatedAt forward, extending the window — the safe direction. An unknown (zero)
+// UpdatedAt is never settled.
 func (d *MicrosoftDispatcher) microsoftCreateSettled(campaign *model.Campaign) bool {
 	if campaign.UpdatedAt.IsZero() {
 		return false
