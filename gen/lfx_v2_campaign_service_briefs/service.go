@@ -1538,26 +1538,27 @@ type CampaignCreateInput struct {
 	// others and nothing is rolled back, since a published tweet cannot be
 	// unpublished: the row is created_degraded with a step naming the failed
 	// variants. On a line item reused by name, no variant is authored when its
-	// promoted tweets cannot be read or their count differs from the variants;
-	// exactly as many are reused. Pause, resume, budget, bid and keyword levers
-	// act on the campaign and line item, so they govern every variant at once. OFF
-	// unless TWITTER_TWEET_VARIANTS_ENABLED is exactly "true"; a non-empty list
-	// while off, a rule breach or a wrong shape (null reads as absent) is refused
-	// with 400 "invalid campaign config: twitterConfig.variants: ..." before any
-	// job exists. Not role-gated. X WEBSITE CARD (#564 gap 6): twitterConfig takes
-	// `card`, {"headline": string} (trimmed, 1-70 characters, no control
-	// character; headline is the only key). It needs media (imageAssetId or
-	// videoAssetId, never both) and an authored tweet (tweetText or variants,
-	// never tweetId). Once the campaign and line item exist and a tweet is about
-	// to be authored, one website card is created with POST
-	// accounts/:account_id/cards (a MEDIA component carrying the creative image's
-	// or video's media_key and a DETAILS component carrying the headline and a
-	// WEBSITE destination: the registration URL with this service's UTMs and
-	// utm_content=website-card), and its card_uri is sent on every tweet the
-	// create authors (media_keys is then not sent; the image rides in the card).
-	// The result records it as CardURI. A card that cannot be created publishes
-	// nothing: the row is created_degraded with a step to post the tweet manually
-	// (UNCONFIRMED when the card may exist; a card is neither public nor
+	// promoted tweets cannot be read or their count is nonzero and differs from
+	// the variants; exactly as many are reused. A reused line item with no
+	// promoted tweet has every variant authored. Pause, resume, budget, bid and
+	// keyword levers act on the campaign and line item, so they govern every
+	// variant at once. OFF unless TWITTER_TWEET_VARIANTS_ENABLED is exactly
+	// "true"; a non-empty list while off, a rule breach or a wrong shape (null
+	// reads as absent) is refused with 400 "invalid campaign config:
+	// twitterConfig.variants: ..." before any job exists. Not role-gated. X
+	// WEBSITE CARD (#564 gap 6): twitterConfig takes `card`, {"headline": string}
+	// (trimmed, 1-70 characters, no control character; headline is the only key).
+	// It needs media (imageAssetId or videoAssetId, never both) and an authored
+	// tweet (tweetText or variants, never tweetId). Once the campaign and line
+	// item exist and a tweet is about to be authored, one website card is created
+	// with POST accounts/:account_id/cards (a MEDIA component carrying the
+	// creative image's or video's media_key and a DETAILS component carrying the
+	// headline and a WEBSITE destination: the registration URL with this service's
+	// UTMs and utm_content=website-card), and its card_uri is sent on every tweet
+	// the create authors (media_keys is then not sent; the image rides in the
+	// card). The result records it as CardURI. A card that cannot be created
+	// publishes nothing: the row is created_degraded with a step to post the tweet
+	// manually (UNCONFIRMED when the card may exist; a card is neither public nor
 	// billable). A create that reuses an earlier attempt's promoted tweet creates
 	// no card. OFF unless TWITTER_WEBSITE_CARD_ENABLED is exactly "true"; a card
 	// while off, a rule breach or a wrong shape (null reads as absent) is refused

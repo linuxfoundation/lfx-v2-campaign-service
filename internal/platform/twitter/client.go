@@ -4083,6 +4083,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	var lineItemID string
 	var lineItemReused bool
 	var authoredTweetID string
+	// promotedTweetID is captured for the same reason: on the variant path an abort after a
+	// confirmed promotion must still name it in the single PromotedTweetID field.
+	var promotedTweetID string
 	// promotedTweets is the variant path's per-variant record (#564 gap 10), captured by the
 	// closure for the same reason as authoredTweetID: it names every tweet already published.
 	var promotedTweets []PromotedTweetResult
@@ -4096,6 +4099,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			LineItemName:    lineItemName,
 			LineItemID:      lineItemID,
 			AuthoredTweetID: authoredTweetID,
+			PromotedTweetID: promotedTweetID,
 			PromotedTweets:  append([]PromotedTweetResult(nil), promotedTweets...),
 			MediaKey:        mediaKey,
 			CardURI:         cardURI,
@@ -4292,10 +4296,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// reaches here — it fails before the campaign + line item are created.
 	// composedTweetText was similarly precomputed and validated up front.
 	tweetID := in.TweetID
-	var promotedTweetID string
 	var promotedTweetWarning string
-	// authoredTweetID is declared above the partialResult closure, not here, so an
-	// abort after a successful authoring still returns the tweet's id.
+	// authoredTweetID and promotedTweetID are declared above the partialResult closure, not
+	// here, so an abort after a successful authoring or promotion still returns their ids.
 
 	if tweetID != "" && strings.TrimSpace(in.TweetText) != "" {
 		// Explicit TweetID always wins (mirrors the reddit client's
@@ -4338,9 +4341,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if len(composedVariants) > 0 {
 		var aborted error
 		promotedTweets, promotedTweetWarning, aborted = c.promoteTweetVariants(ctx, composedVariants, in.AsUserID, mediaKey, ensureCard, lineItemID, lineItemReused, &steps)
-		if aborted != nil {
-			return partialResult(), fmt.Errorf("x tweet variants aborted (%s / %s%s): %w", campaignStatus(), lineItemStatus(), authoredTweetsStatus(promotedTweets), aborted)
-		}
+		// The single fields repeat the FIRST authored / promoted variant, and they are filled
+		// BEFORE the abort check so a partial result carries them too (PromotedTweets' contract).
 		for _, r := range promotedTweets {
 			if authoredTweetID == "" && r.Authored {
 				authoredTweetID = r.TweetID
@@ -4348,6 +4350,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			if promotedTweetID == "" && r.PromotedTweetID != "" {
 				promotedTweetID = r.PromotedTweetID
 			}
+		}
+		if aborted != nil {
+			return partialResult(), fmt.Errorf("x tweet variants aborted (%s / %s%s): %w", campaignStatus(), lineItemStatus(), authoredTweetsStatus(promotedTweets), aborted)
 		}
 		if promotedTweetID == "" {
 			steps = append(steps, fmt.Sprintf("Destination URL template (sanitized — utm_* only; reapply any required params from the brief's registration URL): %s", displayTwitterUtmURL(in)))
