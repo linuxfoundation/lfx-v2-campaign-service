@@ -160,6 +160,13 @@ func linkedInGrantAccounts(res *resolved) []model.AccessibleAccount {
 // linkedInConfig.adAccountId may name, as selectLinkedInAccount would accept them: the resolved
 // account, plus the system row's grants while account selection is on. A database read only;
 // nothing is sent to LinkedIn.
+//
+// creds.resolve decrypts the row but does not validate the credential document, so a system row
+// is put through resolveLinkedInCredentials' checks as well: an LF row a create cannot use
+// (inactive, undecodable, no access token, no account id) answers ErrSystemConnectionNotUsable,
+// the documented 500, rather than reporting a default account a create would then fail on. A
+// project-owned row is NOT validated: its stored status is what this read reports, so the
+// Implement tab can tell the project to repair a connection it owns.
 func (d *LinkedInDispatcher) CreateAccount(ctx context.Context, projectID string, platform model.Provider) (*model.LinkedInCreateAccount, error) {
 	res, err := d.creds.resolve(ctx, projectID, platform)
 	if err != nil {
@@ -167,6 +174,12 @@ func (d *LinkedInDispatcher) CreateAccount(ctx context.Context, projectID string
 	}
 	if res == nil {
 		return nil, noOwnConnection(projectID, platform)
+	}
+	if res.fromSystem {
+		resolvedRow := func(context.Context, string, model.Provider) (*resolved, error) { return res, nil }
+		if _, _, verr := d.resolveLinkedInCredentials(ctx, projectID, platform, resolvedRow); verr != nil {
+			return nil, verr
+		}
 	}
 	out := &model.LinkedInCreateAccount{
 		AccountID:        strings.TrimSpace(res.accountID),

@@ -482,4 +482,27 @@ func TestLinkedIn_CreateAccountReportsWhatACreateUses(t *testing.T) {
 			t.Fatalf("CreateAccount with no connection = %v, want ErrNotFound", err)
 		}
 	})
+	// creds.resolve decrypts without validating, so an active LF row whose credential document is
+	// `{}` (no access token) must still answer the system-connection 500 a create would hit, not a
+	// 200 naming an account nothing can spend in. A project-owned row with the same document keeps
+	// reporting its stored status: the project owns it and can repair it.
+	t.Run("an unusable system credential is the system-connection error", func(t *testing.T) {
+		sys := grantedSystemRow()
+		sys.EncryptedCredentials = []byte(`{}`)
+		d := grantCreateDispatcher(srv.URL, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: sys}})
+		got, err := d.CreateAccount(context.Background(), "cncf", model.ProviderLinkedInAds)
+		if !errors.Is(err, domain.ErrSystemConnectionNotUsable) || !errors.Is(err, domain.ErrCredentialsIncomplete) {
+			t.Fatalf("CreateAccount on a system row with no access token = %+v, %v; want ErrSystemConnectionNotUsable (missing access token)", got, err)
+		}
+	})
+	t.Run("an unusable project credential still reports its stored status", func(t *testing.T) {
+		own := *ownRow
+		own.EncryptedCredentials = []byte(`{}`)
+		own.Status = model.StatusActive
+		d := grantCreateDispatcher(srv.URL, &scopedConnReader{rows: map[string]*model.Connection{"cncf": &own, model.SystemProjectID: grantedSystemRow()}})
+		got, err := d.CreateAccount(context.Background(), "cncf", model.ProviderLinkedInAds)
+		if err != nil || got.FromSystem || got.AccountID != "111111111" || got.Status != model.StatusActive {
+			t.Fatalf("CreateAccount on a project row with no access token = %+v, %v; want its stored account and status", got, err)
+		}
+	})
 }
