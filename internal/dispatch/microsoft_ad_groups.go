@@ -482,6 +482,9 @@ func reconcileMicrosoftUnaddressedAdGroups(ctx context.Context, client microsoft
 		id, found, err := client.FindAdGroupByName(ctx, campaignID, name)
 		switch {
 		case err != nil:
+			// The cause stays in the log; the client-safe 409 reason carries only the label.
+			slog.WarnContext(ctx, "microsoft bid reconcile: ad group lookup failed",
+				"project_id", campaign.ProjectID, "campaign_id", campaignID, "entry", label, "error", err)
 			unresolved = append(unresolved, label)
 		case !found && !absentClears:
 			unsettled = append(unsettled, label)
