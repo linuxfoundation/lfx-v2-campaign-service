@@ -1024,6 +1024,147 @@ languages?: string[]            — The campaign's ad languages (#563 gap 6), 1-
                                   while the flag is off is a synchronous 400 "invalid campaign
                                   config: microsoftConfig.<field>: ..." before any job exists. Not
                                   role-gated.
+searchPartners?: boolean        — The new ad group's search network (#563 gap 11), sent as
+                                  AdGroup.Network: true = OwnedAndOperatedAndSyndicatedSearch
+                                  (Microsoft's sites and syndicated search partners), false =
+                                  OwnedAndOperatedOnly. Omitted: no Network is sent, Microsoft's
+                                  default (partners included) applies, as before. Set only on an
+                                  ad group this run creates; a reused ad group keeps its network
+                                  and a warning step says so. OFF unless
+                                  MICROSOFT_SEARCH_NETWORK_ENABLED is exactly "true". A non-boolean
+                                  (null reads as absent), or the field while the flag is off (false
+                                  included), is a synchronous 400 "invalid campaign config:
+                                  microsoftConfig.searchPartners: ..." before any job exists. Not
+                                  role-gated.
+adSchedules?: object[]          — Dayparting (#563 gap 10), at most 7 windows per day (49 total):
+                                  {day (Monday..Sunday, any casing), startHour (whole hour 0-23,
+                                  required), endHour (whole hour 1-24, after startHour, required),
+                                  bidAdjustment? (whole percent -90..900, default 0)}. Windows on
+                                  the same day may touch (9-12, 12-17) but not overlap. Sent as
+                                  BiddableCampaignCriterion / DayTimeCriterion (minutes Zero) with
+                                  a BidMultiplier, in one call right after the radius targets and
+                                  before the ad group. The hours are read in the Microsoft
+                                  Advertising ACCOUNT's time zone, NOT the campaign's timeZone
+                                  (the create omits AdScheduleUseSearcherTimeZone); they are sent
+                                  as given, never translated, so convert campaign-local hours to
+                                  the account's zone first. Once any
+                                  window exists the ads serve only inside the windows. Fail-closed
+                                  like geoTargets: a failed, partial or unconfirmed attach stops
+                                  the create before the ad group (PAUSED campaign reported and
+                                  retained); a create that finds its campaign by name stops before
+                                  the ad group. The ids are recorded as adScheduleCriterionIds in
+                                  the result. OFF unless MICROSOFT_AD_SCHEDULE_ENABLED is exactly
+                                  "true". A wrong JSON type (null reads as absent), a missing or
+                                  fractional hour, an explicit null bidAdjustment (omit it for 0),
+                                  more than 7 windows on one day, a rule breach, or the list while
+                                  the flag is off is a synchronous 400 "invalid campaign config:
+                                  microsoftConfig.adSchedules: ..." before any job exists. Not
+                                  role-gated.
+deviceBidAdjustments?: object   — Bid adjustments (#563 gap 8), each an object of segment name
+ageBidAdjustments?: object        (any casing, each segment once) to a whole percent.
+genderBidAdjustments?: object     Device keys Computers, Smartphones, Tablets, -100..900 (-100
+                                  stops serving on that device). Age keys EighteenToTwentyFour,
+                                  TwentyFiveToThirtyFour, ThirtyFiveToFortyNine, FiftyToSixtyFour,
+                                  SixtyFiveAndAbove (ThirtyFiveToFortyNine is sent in Microsoft's
+                                  AgeRange spelling, ThirtyFiveToFourtyNine); gender keys Male,
+                                  Female; both -90..900. Set
+                                  on the CAMPAIGN as BiddableCampaignCriterion with a
+                                  DeviceCriterion / AgeCriterion / GenderCriterion and a
+                                  BidMultiplier, in one call right after the ad schedule and before
+                                  the ad group; the ids are recorded as bidAdjustmentCriterionIds.
+                                  Microsoft requires all three devices in one add, so any device
+                                  adjustment sends Computers, Smartphones and Tablets, an
+                                  unrequested one at 0 (no change); every result is checked and
+                                  all three ids are recorded, and the step names the requested
+                                  ones and the devices sent at +0%.
+                                  Fail-closed like the other campaign criteria (a failed, partial
+                                  or unconfirmed attach stops the create before the ad group); a
+                                  create that finds its campaign by name stops before the ad
+                                  group. OFF unless MICROSOFT_BID_ADJUSTMENTS_ENABLED is exactly
+                                  "true". A value that is not an object of numbers (a null field
+                                  reads as absent; a null segment value is refused), an unknown or
+                                  repeated segment, an out-of-range or
+                                  fractional percent, or any of them while the flag is off is a
+                                  synchronous 400 "invalid campaign config:
+                                  microsoftConfig.<field>: ..." before any job exists. Not
+                                  role-gated.
+sharedNegativeKeywordListIds?:  — EXISTING account-level negative keyword lists to associate with
+  string[]                        the campaign (#563 gap 9). At most 20 (Microsoft's per-campaign
+                                  limit), each the canonical decimal spelling of a positive int64,
+                                  no repeat. Checked before anything is created: one
+                                  GetSharedEntities read (POST SharedEntities/Query,
+                                  NegativeKeywordList, Account scope) must hold every id as a
+                                  negative keyword list, or the job fails with nothing created
+                                  (an unknown id, or another shared entity type, is named in the
+                                  refusal). After the campaign is confirmed (created, or reused by
+                                  name: a negative list only narrows serving) they are associated
+                                  in one SetSharedEntityAssociations call (POST
+                                  SharedEntityAssociations/Set, EntityType Campaign). Each list's
+                                  outcome (APPLIED, FAILED with Microsoft's code, UNCONFIRMED) is
+                                  recorded positionally as sharedNegativeKeywordLists
+                                  [{listId, outcome, errorCode?}] in the result; anything but
+                                  APPLIED leaves the campaign created_degraded with a step, and the
+                                  job never fails at this stage. OFF unless
+                                  MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED is exactly "true". A
+                                  wrong JSON type (null reads as absent), a bad, repeated or
+                                  over-cap id, or the list while the flag is off is a synchronous
+                                  400 "invalid campaign config:
+                                  microsoftConfig.sharedNegativeKeywordListIds: ..." before any
+                                  job exists. The lists belong to the shared LF account, so the
+                                  field needs global_marketing_ops on the path project (403, or
+                                  503 when the check cannot be made).
+structuredSnippets?:            — Structured snippet extensions (#563 gap 13), at most 10. `header`
+  {header, values[]}[]            is one of Microsoft's English headers, matched ignoring case and
+                                  sent in Microsoft's spelling: Amenities, Brands, Courses, Degree
+                                  programs, Destinations, Featured hotels, Insurance coverage,
+                                  Models, Neighborhoods, Service catalog, Shows, Styles, Types; a
+                                  header may appear once. `values` holds 3-10 entries, each
+                                  trimmed, 1-25 characters (12 with a double-width character), no
+                                  control character, no case-insensitive repeat. Created as
+                                  StructuredSnippetAdExtension entries (POST AdExtensions, one per
+                                  snippet) and associated with the CONFIRMED campaign
+                                  (AdExtensionsAssociations/Set, Campaign), the sitelink/callout
+                                  transport: a campaign that already has a structured snippet (a
+                                  retry) gets none added, with a step; a requested snippet whose
+                                  header and values are not among the existing ones is then a
+                                  failed (or, when their contents were not reported, UNCONFIRMED)
+                                  snippet, so the campaign is created_degraded, not created. Ids are recorded as
+                                  structuredSnippetAdExtensionIds; a failed or UNCONFIRMED snippet
+                                  leaves the campaign created_degraded with a step and never fails
+                                  the job. OFF unless MICROSOFT_STRUCTURED_SNIPPETS_ENABLED is
+                                  exactly "true". A wrong JSON type (null reads as absent), a rule
+                                  breach, or the list while the flag is off is a synchronous 400
+                                  "invalid campaign config: microsoftConfig.structuredSnippets:
+                                  ..." before any job exists. Not role-gated.
+logoAssetId?: string,           — Campaign logo extension (#563 gap 13), the two set together.
+logoBusinessName?: string         logoAssetId is a stored creative asset of THIS brief
+                                  (upload-creative-asset), a UUID; logoBusinessName is the
+                                  BusinessName shown beside the logo, trimmed, 1-25 characters, no
+                                  control or format character. Before anything is created the asset is
+                                  loaded and must be PNG or JPEG (any other type, video/mp4 included, is
+                                  refused), square (1:1), 128-2048 pixels a side and at most 76,800
+                                  bytes (Image.Data takes at most 102,400 base64 characters); a
+                                  missing asset or a breach fails the job with nothing created.
+                                  After the campaign is confirmed: AdExtensionsAssociations/Query
+                                  for a LogoAdExtension on it (Microsoft allows one per campaign;
+                                  a campaign that has one, such as a retry, gets nothing uploaded
+                                  or added, with a step; the read shows that logo's business name
+                                  and media id but not its image, so one with another business
+                                  name is NOT attached and one that may be the requested logo is
+                                  UNCONFIRMED, both created_degraded), then AddMedia (POST Media, one Image,
+                                  MediaType Image1x1), AddAdExtensions (one LogoAdExtension
+                                  {BusinessLogo: the media id, BusinessName}) and
+                                  AdExtensionsAssociations/Set (Campaign). The ids are recorded as
+                                  logoMediaId / logoAdExtensionId; a logo that is not, or may not
+                                  be, attached leaves the campaign created_degraded with a "NOT
+                                  attached" or "UNCONFIRMED" step and never fails the job. OFF
+                                  unless MICROSOFT_LOGO_EXTENSION_ENABLED is exactly "true". A
+                                  value that is not a string (null reads as absent), an id that is
+                                  not a UUID, one field without the other, a bad business name, or
+                                  either field while the flag is off is a synchronous 400 "invalid
+                                  campaign config: microsoftConfig.<field>: ..." before any job
+                                  exists, re-checked at dispatch. Not role-gated: the image is
+                                  uploaded new for the campaign and names no shared resource.
 ```
 
 **Caller ad copy (#563).** `headlines`, `descriptions`, `path1` and `path2` replace the
