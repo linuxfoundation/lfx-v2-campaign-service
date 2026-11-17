@@ -630,8 +630,9 @@ func requireMetaAccountID(res *resolved, projectID string) (string, error) {
 	return accountID, nil
 }
 
-// requireMetaManagedAccount proves the caller-supplied accountID is the one THIS project's
-// own connection is bound to. It layers the mismatch check onto requireMetaAccountID rather
+// requireMetaManagedAccount proves the caller-supplied accountID is the one the resolved
+// connection is bound to: this project's own, or the LF system row when the monitor fell back
+// to it (#615, resolveMetaMonitorClient). It layers the mismatch check onto requireMetaAccountID rather
 // than repeating its empty-account handling, so the two paths cannot drift.
 //
 // A connection stores exactly one account: `account_id TEXT NOT NULL` on every provider
@@ -639,7 +640,7 @@ func requireMetaAccountID(res *resolved, projectID string) (string, error) {
 // `WHERE status <> 'deleted'` (migration 000001, the sole authority). So a request naming
 // any OTHER account is a request mismatch and must not be served. Mirrors reddit.go's resolveMonitorClient.
 //
-// Refusing the LF system fallback is NOT a substitute: that is about whose CREDENTIAL is
+// The monitor's credential rule is NOT a substitute: that is about whose CREDENTIAL is
 // used, this is about which ACCOUNT the request named. A project with its own active
 // connection passes the fallback check and can still name another project's account.
 //
@@ -1420,12 +1421,36 @@ func (d *MetaDispatcher) resolveMetaDiscoveryClient(ctx context.Context, project
 	return meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{}, d.opts...), nil
 }
 
+// resolveMetaMonitorClient builds the account-agnostic client for the account-monitor read of
+// accountID (#615), returning the resolved row as well so requireMetaManagedAccount can check the
+// requested account against it.
+//
+// It resolves through credsSource.monitorResolver, the rule Google's monitor adopted in #591
+// (googleads.go's resolveGoogleAdsMonitorClient): the project's own connection when it is
+// configured for accountID; otherwise the LF system row when THAT is configured for it; otherwise
+// the project's own connection again, whose guard then answers as before. So a project whose
+// campaigns were created on the LF system account — every project with no Meta connection of its
+// own, every project that disconnected its own, and every project while forced-system creation
+// is on — can monitor them.
+//
+// The round-16 review refused the system fallback here outright, because the read then returned
+// every campaign on the account, and the shared LF credential would have shown one foundation
+// another's spend. Orchestrator.ReadAccountCampaignMetrics now reduces the read to the campaigns
+// this service recorded for the project before anything leaves the service (scopeAccountMonitor,
+// filterMonitorRows), and MonitorScopeForAccount refuses one recorded under another account with
+// a 409. The rule kept from the refusal: the LF system credential reads only the account the LF
+// system row is configured for; any other account is a 404 (noOwnConnection) with no upstream
+// call.
+func (d *MetaDispatcher) resolveMetaMonitorClient(ctx context.Context, projectID string, platform model.Provider, accountID string) (*meta.Client, *resolved, error) {
+	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform, d.creds.monitorResolver(accountID))
+	if err != nil {
+		return nil, res, err
+	}
+	return meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{}, d.opts...), res, nil
+}
+
 // resolveOwnedMetaDiscovery is resolveMetaDiscoveryClient WITHOUT the LF system fallback, for
-// the monitor read. Round-16 review escalated the pre-existing credential-scope gap to Critical,
-// and membership-checking against ListAccounts would not have closed it given the shared-tenancy
-// exposure through the fallback. Google has since dropped the same refusal for its monitor
-// (#591, googleads.go's resolveGoogleAdsMonitorClient) because the read is now reduced to the
-// project's own recorded campaigns; Meta's is too, and is a candidate for the same change.
+// the connection test.
 //
 // It calls resolveMetaCredentials bound to d.creds.resolveOwned instead of d.creds.resolve, so
 // a project with no Meta connection of its own gets domain.ErrNotFound (via noOwnConnection)
@@ -1548,11 +1573,13 @@ func (d *MetaDispatcher) ListAccounts(ctx context.Context, projectID string, pla
 // cross-account read this guard exists to prevent. It then reads every campaign visible on
 // that account via meta.Client.ListAccountCampaigns.
 //
-// Trust boundary (round-16 review, fixed): resolveOwnedMetaDiscovery refuses the LF
-// system fallback entirely, so a project with no Meta connection of its own gets a 404 instead
-// of a read served from a credential that could reach another project's data. See that
-// resolver's doc comment, and GoogleAdsDispatcher.ListAccountCampaignMetrics
-// (internal/dispatch/googleads.go) for the shared rationale.
+// Credentials (#615): resolveMetaMonitorClient reads accountID with the stored row configured for
+// it — the project's own, or the LF system row for the system account only — and
+// Orchestrator.ReadAccountCampaignMetrics reduces the read to the project's own recorded
+// campaigns. A project with no Meta connection of its own, monitoring an account the LF system
+// row is not configured for, gets a 404 with no upstream call. See that resolver's doc comment,
+// and GoogleAdsDispatcher.ListAccountCampaignMetrics (internal/dispatch/googleads.go) for the
+// shared rationale.
 func (d *MetaDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
 	read, err := d.ReadAccountMonitor(ctx, projectID, platform, accountID, days)
 	if err != nil {
@@ -1579,13 +1606,14 @@ func (d *MetaDispatcher) ReadAccountMonitor(ctx context.Context, projectID strin
 		return nil, err
 	}
 	// The resolved ROW is needed as well as the client: the account-scope check below
-	// reads it to know which account this project's connection is bound to.
-	client, res, err := d.resolveOwnedMetaDiscovery(ctx, projectID, platform)
+	// reads it to know which account the resolved row (the project's own, or the LF system
+	// row for its configured account, #615) is bound to.
+	client, res, err := d.resolveMetaMonitorClient(ctx, projectID, platform, accountID)
 	if err != nil {
 		return nil, err
 	}
-	// Before any request is issued: the account the caller named must be the one this
-	// project's connection manages. See requireMetaManagedAccount.
+	// Before any request is issued: the account the caller named must be the one the
+	// resolved row manages. See requireMetaManagedAccount.
 	// The guard's trimmed return is what flows onward, not the caller's raw value: one
 	// validated value, used once. See requireLinkedInManagedAccount's call site for why the
 	// caller's string would only be safe by leaning on ValidateAccountID a second time.
