@@ -1871,8 +1871,12 @@ group failing is recorded (`AdGroupResult.Status` `failed`, with the error), the
 are still built unless the context ended (`not_attempted`), and the result is returned without an
 error; `FailedAdGroups` names those with no confirmed ad group of their own ("NOT created": create
 them), `IncompleteAdGroups` names those whose ad group Microsoft confirmed before the ad or
-keyword step failed (the group exists upstream: finish its ad or keywords there, never create it
-again), and the dispatcher marks the campaign `created_degraded` with one step for each kind. A later group whose `AdGroupID` equals an earlier group's (it resolved to that ad group
+keyword step DEFINITELY failed (the group exists upstream: finish its ad or keywords there, never
+create it again), `UncertainAdGroups` names those whose ad group Microsoft confirmed but whose ad
+or keyword step was UNCONFIRMED (`AdGroupResult.StepUnconfirmed`, set from `IsOutcomeUnconfirmed`
+when an ad group id was recorded: a timeout or unreadable success leaves no `AdID` although the ad
+may exist, so the step says to verify in Microsoft Advertising before adding anything, never "add the
+missing ad"), and the dispatcher marks the campaign `created_degraded` with one step for each kind. A later group whose `AdGroupID` equals an earlier group's (it resolved to that ad group
 by name, which the suffix check should already prevent) is recorded `failed` the same way, never
 `created`, so the toggle, bid and keyword levers cannot address one ad group twice. The top-level `AdGroupID`/`AdID`/`KeywordIDs` are the first group's; `BidApplied`,
 `FlightApplied` and `AlreadyExisted` hold only when they hold for every group.

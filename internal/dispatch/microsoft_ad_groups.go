@@ -222,8 +222,9 @@ func checkMicrosoftAdGroupLists(ctx context.Context, client *microsoft.Client, c
 }
 
 // applyMicrosoftAdGroupExtras finishes a multi-ad-group create on the CONFIRMED campaign: it
-// records every group that was not created, and every group whose ad group exists but whose ad or
-// keyword step failed (degrading the campaign with one step for each kind, naming them),
+// records every group that was not created, every group whose ad group exists but whose ad or
+// keyword step definitely failed, and every one whose ad or keyword step was UNCONFIRMED
+// (degrading the campaign with one step for each kind, naming them),
 // then attaches each CREATED group's negatives (ad-group level) and remarketing lists, under the
 // single-group rules (a list is never written to a reused ad group). Outcomes are recorded on the
 // group's AdGroupResult. It reports whether the campaign is DEGRADED and never returns an error:
@@ -239,7 +240,15 @@ func applyMicrosoftAdGroupExtras(ctx context.Context, client *microsoft.Client, 
 		slog.WarnContext(ctx, "microsoft create: some ad groups not created", "campaign_id", result.CampaignID, "failed", failed)
 	}
 	// A failed group whose ad group Microsoft DID confirm exists upstream: telling the operator to
-	// create it would make a duplicate. Name the step that failed so they finish it instead.
+	// create it would make a duplicate. When its ad or keyword step was UNCONFIRMED, the missing
+	// id is not proof the ad or keywords are missing either, so that group gets its own
+	// verify-first step and never "add the missing ad". Only a DEFINITE failure is told to finish
+	// the step.
+	if uncertain := result.UncertainAdGroups(); len(uncertain) > 0 {
+		degraded = true
+		result.Steps = append(result.Steps, fmt.Sprintf("Ad groups created in Microsoft whose ad or keyword step is UNCONFIRMED: %s. Do not create them again, and verify first: their ad or keywords were not confirmed and may or may not exist — verify in Microsoft Advertising before adding anything; repeating the create does not retry them", strings.Join(uncertain, "; ")))
+		slog.WarnContext(ctx, "microsoft create: some ad groups created with an unconfirmed ad or keyword step", "campaign_id", result.CampaignID, "uncertain", uncertain)
+	}
 	if incomplete := result.IncompleteAdGroups(); len(incomplete) > 0 {
 		degraded = true
 		result.Steps = append(result.Steps, fmt.Sprintf("Ad groups created in Microsoft but NOT completed: %s. Do not create them again; finish them in Microsoft Advertising (add the missing ad and/or keywords) — repeating the create does not retry them", strings.Join(incomplete, "; ")))

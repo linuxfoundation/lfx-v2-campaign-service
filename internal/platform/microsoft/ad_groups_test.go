@@ -253,3 +253,42 @@ func TestFailedAndIncompleteAdGroups(t *testing.T) {
 		t.Errorf("IncompleteAdGroups = %q\nwant %q", got, want)
 	}
 }
+
+// An ad or keyword step that was UNCONFIRMED after Microsoft confirmed the ad group is recorded as
+// StepUnconfirmed and named by UncertainAdGroups, not IncompleteAdGroups; a DEFINITE ad failure
+// stays IncompleteAdGroups' (Greptile, #623).
+func TestCreateAdGroups_UnconfirmedAdStepIsUncertain(t *testing.T) {
+	in := CampaignInput{EventName: "KubeCon NA", Project: "cncf"}
+	groups := []validatedAdGroup{{in: AdGroupInput{NameSuffix: "A"}}, {in: AdGroupInput{NameSuffix: "B"}}, {in: AdGroupInput{NameSuffix: "C"}}, {in: AdGroupInput{NameSuffix: "D"}}}
+	orig := createAdGroupStep
+	t.Cleanup(func() { createAdGroupStep = orig })
+	createAdGroupStep = func(_ *Client, _ context.Context, gin CampaignInput, _ string, _ bool, _ *[]string, _ func() *CampaignResult, _ targeting) (*CampaignResult, error) {
+		switch gin.adGroupNameSuffix {
+		case "B": // the ad request timed out after the ad group was confirmed
+			return &CampaignResult{CampaignID: "321", AdGroupID: "655"}, &hierarchyStepUnconfirmedError{err: errors.New("ad creation UNCONFIRMED")}
+		case "C": // the keyword request returned an unreadable success
+			return &CampaignResult{CampaignID: "321", AdGroupID: "656", AdID: "989"}, &hierarchyStepUnconfirmedError{err: errors.New("keyword targeting UNCONFIRMED")}
+		case "D": // the ad was definitely rejected
+			return &CampaignResult{CampaignID: "321", AdGroupID: "657"}, errors.New("ad creation rejected")
+		}
+		return &CampaignResult{CampaignID: "321", AdGroupID: "654", AdID: "987"}, nil
+	}
+	var steps []string
+	out, err := (&Client{}).createAdGroups(context.Background(), in, groups, "321", false, &steps,
+		func() *CampaignResult { return &CampaignResult{CampaignID: "321"} }, targeting{})
+	if err != nil {
+		t.Fatalf("createAdGroups: %v", err)
+	}
+	for i, want := range []bool{false, true, true, false} {
+		if g := out.AdGroups[i]; g.StepUnconfirmed != want || g.Unconfirmed {
+			t.Errorf("group %s stepUnconfirmed = %v unconfirmed = %v, want %v false", g.NameSuffix, g.StepUnconfirmed, g.Unconfirmed, want)
+		}
+	}
+	wantUncertain := "entry 2 (B): ad group 655 exists but its ad may or may not exist (the ad step was UNCONFIRMED); entry 3 (C): ad group 656 exists but its keywords may or may not all exist (the keyword step was UNCONFIRMED)"
+	if got := strings.Join(out.UncertainAdGroups(), "; "); got != wantUncertain {
+		t.Errorf("UncertainAdGroups = %q\nwant %q", got, wantUncertain)
+	}
+	if got := strings.Join(out.IncompleteAdGroups(), "; "); got != "entry 4 (D): ad group 657 exists but its ad (and so its keywords) was not created" {
+		t.Errorf("IncompleteAdGroups = %q", got)
+	}
+}

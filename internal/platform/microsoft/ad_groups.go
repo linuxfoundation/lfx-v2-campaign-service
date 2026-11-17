@@ -81,7 +81,11 @@ type AdGroupResult struct {
 	// (timeout, 5xx, unreadable success) while no ad group id was confirmed: an ad group may
 	// exist upstream that this row cannot address. The levers that must reach every group (the
 	// bid write) refuse until it is reconciled.
-	Unconfirmed      bool                     `json:"unconfirmed,omitempty"`
+	Unconfirmed bool `json:"unconfirmed,omitempty"`
+	// StepUnconfirmed marks a failed group whose OWN ad group Microsoft confirmed but whose ad or
+	// keyword step was ambiguous (timeout, 5xx, unreadable success): that ad or those keywords may
+	// exist upstream although no id was recorded, so the operator must check before adding any.
+	StepUnconfirmed  bool                     `json:"stepUnconfirmed,omitempty"`
 	NegativeKeywords []NegativeKeywordOutcome `json:"negativeKeywords,omitempty"`
 	Audiences        []AudienceOutcome        `json:"audiences,omitempty"`
 }
@@ -102,19 +106,35 @@ func (r *CampaignResult) FailedAdGroups() []string {
 }
 
 // IncompleteAdGroups names, in request order, every failed entry whose OWN ad group Microsoft
-// confirmed before a later step (the ad, or the keywords) failed: the ad group exists upstream,
-// so the operator must finish it there, not create it. Each names the ad group id and the step
-// to finish ("entry N (suffix): ad group ID exists but its ad was not created"). The create runs
-// ad group, then ad, then keywords, so a recorded ad id means the keyword step failed.
+// confirmed before a later step (the ad, or the keywords) DEFINITELY failed: the ad group exists
+// upstream and the step left is known not to have landed, so the operator must finish it there,
+// not create the group again. Each names the ad group id and the step to finish ("entry N
+// (suffix): ad group ID exists but its ad was not created"). The create runs ad group, then ad,
+// then keywords, so a recorded ad id means the keyword step failed. An entry whose ad or keyword
+// step was UNCONFIRMED is UncertainAdGroups', not this: a missing id there is not proof the ad or
+// keywords were not created.
 func (r *CampaignResult) IncompleteAdGroups() []string {
+	return r.confirmedButFailedAdGroups(false, "its ad (and so its keywords) was not created", "its keywords were not all created")
+}
+
+// UncertainAdGroups names, in request order, every failed entry whose OWN ad group Microsoft
+// confirmed but whose ad or keyword step was UNCONFIRMED (StepUnconfirmed): the ad, or the
+// keywords, may exist upstream without an id here, so adding them blind could duplicate them.
+func (r *CampaignResult) UncertainAdGroups() []string {
+	return r.confirmedButFailedAdGroups(true, "its ad may or may not exist (the ad step was UNCONFIRMED)", "its keywords may or may not all exist (the keyword step was UNCONFIRMED)")
+}
+
+// confirmedButFailedAdGroups names the failed entries with a confirmed ad group of their own
+// whose StepUnconfirmed equals unconfirmed, with noAd or noKeywords as the step left.
+func (r *CampaignResult) confirmedButFailedAdGroups(unconfirmed bool, noAd, noKeywords string) []string {
 	var out []string
 	for i, g := range r.AdGroups {
-		if g.Status == AdGroupStatusCreated || !r.ownAdGroupConfirmed(i) {
+		if g.Status == AdGroupStatusCreated || !r.ownAdGroupConfirmed(i) || g.StepUnconfirmed != unconfirmed {
 			continue
 		}
-		missing := "its ad (and so its keywords) was not created"
+		missing := noAd
 		if g.AdID != "" {
-			missing = "its keywords were not all created"
+			missing = noKeywords
 		}
 		out = append(out, fmt.Sprintf("entry %d (%s): ad group %s exists but %s", i+1, g.NameSuffix, g.AdGroupID, missing))
 	}
@@ -348,6 +368,7 @@ func (c *Client) createAdGroups(
 		if err != nil {
 			res.Status, res.Error = AdGroupStatusFailed, err.Error()
 			res.Unconfirmed = res.AdGroupID == "" && IsOutcomeUnconfirmed(err)
+			res.StepUnconfirmed = res.AdGroupID != "" && IsOutcomeUnconfirmed(err)
 			if i == 0 {
 				// No ad group exists yet: today's failure, with the group recorded.
 				if r == nil {
