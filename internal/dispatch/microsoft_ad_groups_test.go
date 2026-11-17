@@ -64,6 +64,8 @@ func newMSGroupDispatcher(t *testing.T, api *msGroupAPI) *MicrosoftDispatcher {
 		switch p {
 		case "Audiences/QueryByIds":
 			_, _ = io.WriteString(w, `{"Audiences":[{"Id":77,"Type":"RemarketingList"}],"PartialErrors":[]}`)
+		case "ConversionGoals/QueryByIds":
+			_, _ = io.WriteString(w, `{"ConversionGoals":[{"Id":5001,"Name":"Registration","Status":"Active","Type":"Url","Scope":"Account"}],"PartialErrors":[]}`)
 		case "Campaigns/QueryByAccountId":
 			_, _ = io.WriteString(w, `{"Campaigns":[]}`)
 		case "AdGroups/QueryByCampaignId":
@@ -265,6 +267,63 @@ func TestMicrosoftAdGroups_DispatchBuildsEveryGroup(t *testing.T) {
 	}
 	if len(r.AdGroups[1].NegativeKeywords) != 1 || len(r.AdGroups[2].Audiences) != 1 {
 		t.Errorf("extras = %+v / %+v", r.AdGroups[1].NegativeKeywords, r.AdGroups[2].Audiences)
+	}
+}
+
+// Conversion goals and conversion bidding are campaign-level (#563 gap 7), so they are allowed
+// beside adGroups (#563 gap 12), unlike the single-group fields: the preflight accepts them, the
+// goals are checked before anything is created, set on the one campaign, and every group is built
+// under its MaxConversions scheme with no ad-group CpcBid.
+func TestMicrosoftAdGroups_WithConversionGoalsAndMaxConversions(t *testing.T) {
+	t.Setenv(constants.EnvMicrosoftAdGroupsEnabled, "true")
+	t.Setenv(constants.EnvMicrosoftConversionGoalsEnabled, "true")
+	config := json.RawMessage(`{"microsoftConfig":{"budget":50,"conversionGoalIds":["5001"],"bidding":{"strategy":"maxConversions"},"adGroups":[
+ {"nameSuffix":"Alpha","keywords":[{"text":"kubecon","matchType":"Exact"}]},
+ {"nameSuffix":"Beta","keywords":[{"text":"cloud native","matchType":"Phrase"}]}
+]}}`)
+	api := &msGroupAPI{}
+	d := newMSGroupDispatcher(t, api)
+	if err := d.PreflightCreate(context.Background(), "cncf", model.ProviderMicrosoftAds, config); !errors.Is(err, domain.ErrPreflightNotApplicable) {
+		t.Fatalf("PreflightCreate = %v, want not applicable (accepted)", err)
+	}
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMicrosoftAds, config)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if camp.Status != campaignStatusCreated {
+		t.Errorf("status = %q, want created", camp.Status)
+	}
+	calls, bodies := api.snapshot()
+	lookup, create := slices.Index(calls, "ConversionGoals/QueryByIds"), slices.Index(calls, "Campaigns")
+	if lookup < 0 || create < 0 || lookup > create {
+		t.Fatalf("the goals were not read before the campaign was created: %v", calls)
+	}
+	if !strings.Contains(bodies[create], `"GoalIds":[5001]`) || !strings.Contains(bodies[create], `"BiddingScheme":{"Type":"MaxConversions"}`) {
+		t.Errorf("campaign body = %s, want GoalIds and MaxConversions", bodies[create])
+	}
+	var groupBodies []string
+	for i, c := range calls {
+		if c == "AdGroups" {
+			groupBodies = append(groupBodies, bodies[i])
+		}
+	}
+	if len(groupBodies) != 2 {
+		t.Fatalf("ad group creates = %d, want 2 (%v)", len(groupBodies), calls)
+	}
+	for i, b := range groupBodies {
+		if strings.Contains(b, "CpcBid") {
+			t.Errorf("ad group %d body carries a CpcBid under MaxConversions: %s", i+1, b)
+		}
+	}
+	var blob struct {
+		Goals    []string                  `json:"conversionGoalIds"`
+		AdGroups []microsoft.AdGroupResult `json:"adGroups"`
+	}
+	if jerr := json.Unmarshal(camp.Result, &blob); jerr != nil || !slices.Equal(blob.Goals, []string{"5001"}) || len(blob.AdGroups) != 2 {
+		t.Errorf("result goals = %v, groups = %d (%v)", blob.Goals, len(blob.AdGroups), jerr)
+	}
+	if camp.BiddingStrategy == nil || *camp.BiddingStrategy != model.BiddingAutomatic || camp.MaxCPCBid != nil {
+		t.Errorf("row bidding = %v / %v, want automatic with no bid", camp.BiddingStrategy, camp.MaxCPCBid)
 	}
 }
 

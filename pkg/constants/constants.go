@@ -371,6 +371,27 @@ const (
 	// reference) off the shared account until a live create confirms it.
 	EnvMicrosoftLogoExtensionEnabled = "MICROSOFT_LOGO_EXTENSION_ENABLED"
 
+	// EnvMicrosoftRemarketingListsEnabled opts a deployment IN to the remarketing-list picker read
+	// (#563 gap 4 follow-up, GET /projects/{project_id}/microsoft-ads/remarketing-lists): every
+	// remarketing list on the account a Microsoft create for the project uses, live from
+	// GetAudiencesByIds. Only the exact value "true" enables it; unset or any other value answers
+	// the read 400 "not supported" before Microsoft is contacted. The read lists every
+	// foundation's lists on the shared account, so the gateway admits only global_marketing_ops to
+	// it; the flag keeps an UNVERIFIED read (from the v13 reference) off until a live call confirms
+	// it.
+	EnvMicrosoftRemarketingListsEnabled = "MICROSOFT_REMARKETING_LISTS_ENABLED"
+
+	// EnvMicrosoftConversionGoalsEnabled opts a deployment IN to microsoftConfig.conversionGoalIds
+	// and the conversion bidding strategies (bidding.strategy "maxConversions" and "targetCpa")
+	// (#563 gap 7): EXISTING conversion goals verified with one GetConversionGoalsByIds read before
+	// anything is created and set as the new campaign's GoalIds, and a MaxConversions bid strategy
+	// with an optional TargetCpa. Only the exact value "true" enables it; unset or any other value
+	// fails closed, and a create naming any of it is refused with a 400 before any job exists (and
+	// again at dispatch). The goals belong to the shared account, so conversionGoalIds also needs
+	// global_marketing_ops. It keeps an UNVERIFIED request shape (from the v13 reference) off the
+	// shared account until a live create confirms it.
+	EnvMicrosoftConversionGoalsEnabled = "MICROSOFT_CONVERSION_GOALS_ENABLED"
+
 	// EnvMicrosoftAdExtensionsEnabled opts a deployment IN to microsoftConfig.sitelinks and
 	// microsoftConfig.callouts (#563), created at create time as SitelinkAdExtension and
 	// CalloutAdExtension entries and associated with the new Search campaign. Only the exact value

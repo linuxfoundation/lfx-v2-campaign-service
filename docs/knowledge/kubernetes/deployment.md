@@ -242,6 +242,19 @@ reference and has not been sent live.
 create (#563) on the same terms, defaulting to `"false"`: the `Image1x1` upload and the
 `LogoAdExtension` shape are from the v13 reference and have not been sent live.
 
+`MICROSOFT_REMARKETING_LISTS_ENABLED` is a gate of the same kind on the same terms, defaulting to
+`"false"` (#563): the remarketing-list picker read
+(`GET /projects/{project_id}/microsoft-ads/remarketing-lists`) is built from the Campaign
+Management v13 `GetAudiencesByIds` reference and has not been exercised live. Only exactly
+`"true"` enables it, read per call; off, the read answers 400 "not supported" before Microsoft is
+contacted.
+
+`MICROSOFT_CONVERSION_GOALS_ENABLED` gates `microsoftConfig.conversionGoalIds`, the conversion
+bidding strategies (`bidding.strategy` `maxConversions` / `targetCpa`) and the conversion-goal
+picker read (#563 gap 7) on the same terms, defaulting to `"false"`: the `GetConversionGoalsByIds`
+pre-create read, `Campaign.GoalIds` and `MaxConversionsBiddingScheme` are from the v13 reference and
+have not been sent live. The picker route is on the gateway's `marketing-ops-api` rule.
+
 `TWITTER_METRICS_ENABLED` is the third gate of this kind, defaulting to `"false"`, and it
 covers BOTH X Ads features built on stats jobs (LFXV2-2665) — the ACCOUNT MONITOR and the
 AUDIENCE READ (`twitter-ads/audience`, `twitterAudienceEnabled` in

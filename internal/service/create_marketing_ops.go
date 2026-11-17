@@ -268,9 +268,10 @@ func TwitterMarketingOpsInputs(config json.RawMessage) []string {
 // MicrosoftMarketingOpsInputs names, in config order, the microsoftConfig inputs this config
 // sets that name an EXISTING remarketing list on the connected Microsoft Advertising account
 // (#563 gap 4): audienceIds and excludedAudienceIds, and an existing shared negative keyword list
-// (#563 gap 9): sharedNegativeKeywordListIds, and the same remarketing lists on any adGroups
-// entry (#563 gap 12). That account is the LF one every foundation shares,
-// so only global_marketing_ops may send them. audienceBidAdjustment names no resource
+// (#563 gap 9): sharedNegativeKeywordListIds, the same remarketing lists on any adGroups entry
+// (#563 gap 12), and an existing conversion goal (#563 gap 7): conversionGoalIds. That account is
+// the LF one every foundation shares, so only global_marketing_ops may send them.
+// audienceBidAdjustment names no resource
 // and is not gated on its own.
 //
 // Any non-empty list counts, whatever its entries hold, as the dispatcher's own gate
@@ -294,6 +295,7 @@ func MicrosoftMarketingOpsInputs(config json.RawMessage) []string {
 		AudienceIDs                  []string `json:"audienceIds"`
 		ExcludedAudienceIDs          []string `json:"excludedAudienceIds"`
 		SharedNegativeKeywordListIDs []string `json:"sharedNegativeKeywordListIds"`
+		ConversionGoalIDs            []string `json:"conversionGoalIds"`
 		AdGroups                     []struct {
 			AudienceIDs         []string `json:"audienceIds"`
 			ExcludedAudienceIDs []string `json:"excludedAudienceIds"`
@@ -319,6 +321,9 @@ func MicrosoftMarketingOpsInputs(config json.RawMessage) []string {
 		if len(g.ExcludedAudienceIDs) > 0 {
 			set = append(set, "adGroups entry "+strconv.Itoa(i+1)+" excludedAudienceIds")
 		}
+	}
+	if len(cfg.ConversionGoalIDs) > 0 {
+		set = append(set, "conversionGoalIds")
 	}
 	return set
 }
