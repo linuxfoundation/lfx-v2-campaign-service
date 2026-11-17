@@ -754,7 +754,7 @@ port: it paginates fully via `paging.next` (the BFF silently truncates past 100
 campaigns) and renders an explicit `time_range` from the caller's `days` using the
 client's injected clock, rather than the BFF's hardcoded `date_preset=last_30d`. See
 [Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md) for both
-departures, the credential-scoping (`resolveOwned`, no system-account fallback), and
+departures, the credential rule (`credsSource.monitorResolver`, #615: the project's own row, or the LF system row for the system account only), and
 the ported rule engine (`internal/service/rules/monitor_meta.go`).
 
 **Read order and the campaign list (PR #316 review).** `ListAccountCampaigns` reads Insights
