@@ -106,6 +106,25 @@ func TestCreateCampaign_VideoProcessingIsBoundedAndCreatesNothing(t *testing.T) 
 	}
 }
 
+// The video is the website card's media when a card is requested.
+func TestCreateCampaign_VideoIsTheCardMedia(t *testing.T) {
+	f := newMediaFakeX()
+	f.wantCategory = "amplify_video"
+	f.finalizeBody = `{"data":{"id":"777","media_key":"7_777"}}`
+	c := newMediaTestClient(t, f)
+	in := videoInput(testMP4(500))
+	in.WebsiteCard = &WebsiteCardInput{Headline: "Keynote"}
+	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	f.mu.Lock()
+	body := f.cardBody
+	f.mu.Unlock()
+	if !strings.Contains(body, `"media_key":"7_777"`) {
+		t.Fatalf("card body %s, want the video's media_key", body)
+	}
+}
+
 // Refused before any request: a video with an image, without an authored tweet, of the wrong type
 // or not an MP4, and a create naming more criteria than a video leaves room for.
 func TestCreateCampaign_VideoRefusedBeforeAnyRequest(t *testing.T) {
