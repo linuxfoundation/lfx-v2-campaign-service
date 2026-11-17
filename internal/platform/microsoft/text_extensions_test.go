@@ -134,7 +134,11 @@ type textExtAPI struct {
 	mu       sync.Mutex
 	next     int
 	existing map[string]string // AdExtensionType -> existing id
-	override func(path, body string) (int, string, bool)
+	// existingFields is extra JSON members for each existing extension's AdExtension object
+	// (`"Header":"Courses","Values":[..]`), keyed like existing; a raw association list
+	// replaces the default one-entry list when it starts with '['.
+	existingFields map[string]string
+	override       func(path, body string) (int, string, bool)
 }
 
 func (a *textExtAPI) handle(path, body string) (int, string) {
@@ -150,7 +154,14 @@ func (a *textExtAPI) handle(path, body string) (int, string) {
 		var q struct{ AdExtensionType string }
 		_ = json.Unmarshal([]byte(body), &q)
 		if id, ok := a.existing[q.AdExtensionType]; ok {
-			return 200, fmt.Sprintf(`{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[{"AdExtension":{"Id":%s,"Type":%q},"AssociationType":"Campaign","EntityId":321}]}]}`, id, q.AdExtensionType)
+			extra := a.existingFields[q.AdExtensionType]
+			if strings.HasPrefix(extra, "[") {
+				return 200, `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":` + extra + `}]}`
+			}
+			if extra != "" {
+				extra = "," + extra
+			}
+			return 200, fmt.Sprintf(`{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[{"AdExtension":{"Id":%s,"Type":%q%s},"AssociationType":"Campaign","EntityId":321}]}]}`, id, q.AdExtensionType, extra)
 		}
 		return 200, noImageAssociations
 	case "AdExtensions":
@@ -158,6 +169,8 @@ func (a *textExtAPI) handle(path, body string) (int, string) {
 		return 200, fmt.Sprintf(`{"AdExtensionIdentities":[{"Id":%d,"Version":1}],"NestedPartialErrors":[]}`, 9000+a.next)
 	case "AdExtensionsAssociations/Set":
 		return 200, `{"PartialErrors":[]}`
+	case "Media":
+		return 200, `{"MediaIds":[5551]}`
 	}
 	return 404, `{}`
 }

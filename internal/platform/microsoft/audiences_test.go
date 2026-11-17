@@ -108,6 +108,7 @@ func TestCheckRemarketingLists_Refusals(t *testing.T) {
 		{"null Audiences", `{"Audiences":null}`, 200, false, "no Audiences array"},
 		{"unreadable error code", `{"Audiences":[{"Id":77,"Type":"RemarketingList"},{"Id":11,"Type":"RemarketingList"}],"PartialErrors":[{"Index":1,"ErrorCode":true}]}`, 200, false, "cannot read"},
 		{"500", `{}`, 500, false, "lookup failed"},
+		{"duplicate code", `{"Audiences":[{"Id":77,"Type":"RemarketingList"},null],"PartialErrors":[{"Index":1,"Code":1032,"code":0}]}`, 200, false, "documented shape"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := kwRecorder(t, func(string, string) (int, string) { return tc.status, tc.body })
@@ -176,6 +177,7 @@ func TestAttachAdGroupAudiences_CallFailures(t *testing.T) {
 		{"500", http.StatusInternalServerError, `{}`, "exc:77=UNCONFIRMED,obs:11=APPLIED"},
 		{"no id array", http.StatusOK, `{"NestedPartialErrors":[]}`, "exc:77=UNCONFIRMED,obs:11=APPLIED"},
 		{"too many ids", http.StatusOK, `{"AdGroupCriterionIds":[1,2]}`, "exc:77=UNCONFIRMED,obs:11=APPLIED"},
+		{"duplicate code", http.StatusOK, `{"AdGroupCriterionIds":[6001],"NestedPartialErrors":[{"Index":0,"Code":4100,"Code":0}]}`, "exc:77=UNCONFIRMED,obs:11=APPLIED"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			n := 0

@@ -224,6 +224,20 @@ platform's: an asynchronous submit/poll/download returning a zipped CSV rather t
 one synchronous JSON GET. With the gate off, a Microsoft metrics read returns the
 same 400 as Reddit's.
 
+`MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED` gates `microsoftConfig.sharedNegativeKeywordListIds` at
+create (#563) the same way, defaulting to `"false"`: the `GetSharedEntities` pre-create read and the
+`SetSharedEntityAssociations` write are built from the v13 reference and have not been sent live.
+Only exactly `"true"` enables it, read per call; off, a create naming it is a 400 before any job
+exists, and Dispatch refuses it again before any Microsoft call.
+
+`MICROSOFT_STRUCTURED_SNIPPETS_ENABLED` gates `microsoftConfig.structuredSnippets` at create (#563)
+on the same terms, defaulting to `"false"`: the `StructuredSnippetAdExtension` shape is from the v13
+reference and has not been sent live.
+
+`MICROSOFT_LOGO_EXTENSION_ENABLED` gates `microsoftConfig.logoAssetId` and `logoBusinessName` at
+create (#563) on the same terms, defaulting to `"false"`: the `Image1x1` upload and the
+`LogoAdExtension` shape are from the v13 reference and have not been sent live.
+
 `TWITTER_METRICS_ENABLED` is the third gate of this kind, defaulting to `"false"`, and it
 covers BOTH X Ads features built on stats jobs (LFXV2-2665) — the ACCOUNT MONITOR and the
 AUDIENCE READ (`twitter-ads/audience`, `twitterAudienceEnabled` in

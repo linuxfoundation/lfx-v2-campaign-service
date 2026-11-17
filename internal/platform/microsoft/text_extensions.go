@@ -275,6 +275,9 @@ type msTextAdExtension struct {
 	Description2 string   `json:"Description2,omitempty"`
 	FinalUrls    []string `json:"FinalUrls,omitempty"`
 	Text         string   `json:"Text,omitempty"`
+	// Header and Values are a StructuredSnippetAdExtension's (#563 gap 13, structured_snippets.go).
+	Header string   `json:"Header,omitempty"`
+	Values []string `json:"Values,omitempty"`
 }
 
 type addTextAdExtensionsRequest struct {
@@ -289,7 +292,9 @@ type addTextAdExtensionsRequest struct {
 type TextExtensionsResult struct {
 	SitelinkAdExtensionIDs []string
 	CalloutAdExtensionIDs  []string
-	Steps                  []string
+	// StructuredSnippetAdExtensionIDs is set only by AttachCampaignStructuredSnippets.
+	StructuredSnippetAdExtensionIDs []string
+	Steps                           []string
 	// Failed counts extensions NOT attached (definite); Unconfirmed counts those that may be.
 	// A type skipped because its lookup failed counts every requested item of it as Failed.
 	Failed, Unconfirmed int
@@ -343,7 +348,7 @@ func (c *Client) AttachCampaignTextExtensions(ctx context.Context, campaignID st
 // attachTextExtensionsOfType runs the find-first lookup for one type and then creates and
 // associates each extension, recording outcomes on r. It returns the ids attached.
 func (c *Client) attachTextExtensionsOfType(ctx context.Context, r *TextExtensionsResult, account, campaign json.Number, extType, label string, exts []msTextAdExtension) []string {
-	existing, count, err := c.findCampaignExtension(ctx, account, campaign, extType, "a "+label)
+	existing, count, contents, err := c.findCampaignExtensionContents(ctx, account, campaign, extType, "a "+label)
 	if err != nil {
 		// Only a read was sent for this type, so nothing of it can have been attached.
 		r.Failed += len(exts)
@@ -357,6 +362,15 @@ func (c *Client) attachTextExtensionsOfType(ctx context.Context, r *TextExtensio
 		if extType == adExtensionTypeCallout && count < MinCallouts {
 			r.CalloutsBelowMinimum = true
 			r.Steps = append(r.Steps, fmt.Sprintf("Callout extensions: only %d associated with the campaign; Microsoft serves none with fewer than %d — add more in Microsoft Advertising", count, MinCallouts))
+		}
+		// A structured snippet already there is a success only when it IS the requested one:
+		// a reused campaign holding a different snippet would otherwise read as attached.
+		if extType == adExtensionTypeStructuredSnippet {
+			snippets := make([]StructuredSnippet, len(contents))
+			for i, e := range contents {
+				snippets[i] = StructuredSnippet{Header: e.Header, Values: e.Values}
+			}
+			reportExistingSnippets(r, exts, snippets)
 		}
 		return nil
 	}

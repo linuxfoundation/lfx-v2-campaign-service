@@ -86,6 +86,7 @@ type targetingAPI struct {
 	criterionStatus   int
 	criterionBody     string
 	campaignQueryBody string
+	adGroupQueryBody  string
 }
 
 func (a *targetingAPI) snapshot() (calls, bodies []string) {
@@ -130,7 +131,7 @@ func newTargetingClient(t *testing.T, a *targetingAPI) *Client {
 		case "CampaignCriterions/QueryByIds":
 			_, _ = io.WriteString(w, `{"CampaignCriterions":[],"PartialErrors":[]}`)
 		case "AdGroups/QueryByCampaignId":
-			_, _ = io.WriteString(w, `{"AdGroups":[]}`)
+			writeOr(w, a.adGroupQueryBody, `{"AdGroups":[]}`)
 		case "Ads/QueryByAdGroupId":
 			_, _ = io.WriteString(w, `{"Ads":[]}`)
 		case "Campaigns":
@@ -145,7 +146,13 @@ func newTargetingClient(t *testing.T, a *targetingAPI) *Client {
 				_, _ = io.WriteString(w, a.criterionBody)
 				return
 			}
-			_, _ = fmt.Fprintf(w, `{"CampaignCriterionIds":[%d],"NestedPartialErrors":[]}`, 9000+n)
+			// One id per criterion sent, so a multi-criterion call (an ad schedule, bid
+			// adjustments) is answered in full; the first id stays 9000+n.
+			ids := make([]string, 0, 1)
+			for i := 0; i < max(1, strings.Count(string(b), `"CampaignId"`)); i++ {
+				ids = append(ids, fmt.Sprint(9000+n+i*100))
+			}
+			_, _ = fmt.Fprintf(w, `{"CampaignCriterionIds":[%s],"NestedPartialErrors":[]}`, strings.Join(ids, ","))
 		case "AdGroups":
 			_, _ = io.WriteString(w, `{"AdGroupIds":[654],"PartialErrors":[]}`)
 		case "Ads":

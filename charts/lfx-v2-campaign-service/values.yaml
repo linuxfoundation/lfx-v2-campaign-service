@@ -502,6 +502,62 @@ app:
     MICROSOFT_CREATE_TARGETING_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to microsoftConfig.searchPartners (#563): the new
+    # ad group's search network (AdGroup.Network), with or without Microsoft's
+    # syndicated search partners. Built from the v13 Campaign Management
+    # reference and not yet sent by a live create. It names no account
+    # resource. While off, a create naming it is refused with a 400 before any
+    # job exists. Any value other than "true" is treated as off.
+    MICROSOFT_SEARCH_NETWORK_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to microsoftConfig.adSchedules (#563): day-time
+    # windows (dayparting) on the new campaign, attached before its ad group.
+    # Built from the v13 Campaign Management reference and not yet sent by a
+    # live create. It names no account resource. While off, a create naming it
+    # is refused with a 400 before any job exists. Any value other than "true"
+    # is treated as off.
+    MICROSOFT_AD_SCHEDULE_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to microsoftConfig.deviceBidAdjustments,
+    # ageBidAdjustments and genderBidAdjustments (#563): bid adjustments on the
+    # new campaign, attached before its ad group. Built from the v13 Campaign
+    # Management reference and not yet sent by a live create. They name no
+    # account resource. While off, a create naming any of them is refused with
+    # a 400 before any job exists. Any value other than "true" is treated as
+    # off.
+    MICROSOFT_BID_ADJUSTMENTS_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to microsoftConfig.sharedNegativeKeywordListIds
+    # (#563): existing account-level negative keyword lists, verified before
+    # anything is created and associated with the confirmed campaign. Built from
+    # the v13 Campaign Management reference and not yet sent by a live create.
+    # The lists belong to the shared account, so the field also needs
+    # global_marketing_ops. While off, a create naming it is refused with a 400
+    # before any job exists. Any value other than "true" is treated as off.
+    MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to microsoftConfig.structuredSnippets (#563):
+    # StructuredSnippetAdExtension entries created at create time and associated
+    # with the confirmed campaign. Built from the v13 Campaign Management
+    # reference and not yet sent by a live create. They name no account
+    # resource. While off, a create naming them is refused with a 400 before any
+    # job exists. Any value other than "true" is treated as off.
+    MICROSOFT_STRUCTURED_SNIPPETS_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to microsoftConfig.logoAssetId / logoBusinessName (#563): a
+    # stored square PNG/JPEG creative asset uploaded as an Image1x1 media and attached to the
+    # confirmed campaign as a LogoAdExtension. Built from the v13 Campaign Management reference
+    # and not yet sent by a live create. The image is uploaded new and names no account
+    # resource. While off, a create naming either field is refused with a 400 before any job
+    # exists. Any value other than "true" is treated as off.
+    MICROSOFT_LOGO_EXTENSION_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to googleAdsConfig.demandGenAudience (#459): one
     # existing Google Ads Audience on a Demand Gen ad group. The same flag
     # gates each googleAdsConfig.demandGenAdGroups[].audience (#460), the same

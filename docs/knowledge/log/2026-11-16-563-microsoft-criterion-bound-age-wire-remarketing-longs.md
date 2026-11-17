@@ -1,0 +1,3 @@
+# 2026-11-16 — #563 Microsoft criterion response bound, AgeRange wire spelling
+
+**Fix** — Two more #613 review findings. The shared `AddCampaignCriterions` response decode (`boundedGeoIDs`, `boundedNestedErrorItems`) now retains up to `maxCampaignCriterionResults` (64) ids and positional error collections. It used to keep only 30 ids and 16 error entries, so every 31-49 window ad schedule read as short or truncated, and so UNCONFIRMED. The geographic input limit stays 30. Microsoft's `AgeRange` enum spells 35-49 `ThirtyFiveToFourtyNine` (sic). The public key stays `ThirtyFiveToFortyNine`, and `ageRangeWire` sends Microsoft's spelling; the other adult ranges match the v13 reference.

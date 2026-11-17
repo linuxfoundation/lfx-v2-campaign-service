@@ -1478,6 +1478,60 @@ on the campaign, after this run or as a retry's lookup counted them (`findCampai
 returns the count), serve none. `CampaignResult.SitelinkAdExtensionIDs` /
 `CalloutAdExtensionIDs` are set by the dispatcher. Not verified live.
 
+## Campaign structured snippet extensions (`structured_snippets.go`, #563 gap 13)
+
+`microsoftConfig.structuredSnippets` adds campaign-level `StructuredSnippetAdExtension` entries
+(`{Type, Header, Values}`) on the sitelink/callout transport: `AttachCampaignStructuredSnippets`
+runs `attachTextExtensionsOfType` for the type, so one association read decides whether the
+campaign already has a snippet (then none is added, with a step), and each snippet is then one
+`AddAdExtensions` and one `SetAdExtensionsAssociations`, classified definite or UNCONFIRMED like
+the image extension. When the campaign already has snippets, the lookup's `Header`/`Values`
+(`findCampaignExtensionContents`) decide the outcome (`reportExistingSnippets`): a requested
+snippet counts as present only when an existing one has its header and every one of its values;
+otherwise it is counted Failed, or Unconfirmed when an existing snippet that may be it came back
+unreadable (no recognized header, or the requested header with missing, null or empty `Values`, or `Values` with a null or blank entry — a null decodes as "", so `["Keynotes","Talks",null]` is not a complete list; visible values that already cover the request still count as present), so a reused campaign holding a different snippet is degraded, not a clean create. `ValidateStructuredSnippets` holds the rules before any request: at most 10
+snippets (this service's cap, as for Google); `Header` one of Microsoft's 13 English headers,
+matched ignoring case and inner-space runs and sent in Microsoft's spelling, each once; 3-10
+`Values`, each trimmed, 1-25 characters (12 with a double-width character), no control character,
+no repeat ignoring case. The dispatcher (`internal/dispatch/microsoft_structured_snippets.go`)
+refuses a wrong JSON type and the list while `MICROSOFT_STRUCTURED_SNIPPETS_ENABLED` is off (a 400,
+re-checked in Dispatch), attaches only to a confirmed campaign right after the sitelinks and
+callouts, records `StructuredSnippetAdExtensionIDs`, and degrades the campaign on any shortfall.
+The snapshot reduces header and values as caller free text. Not verified live; not role-gated.
+
+## Campaign logo extension (`logo_extension.go`, #563 gap 13)
+
+`microsoftConfig.logoAssetId` names a stored creative asset of the brief and `logoBusinessName` the
+`BusinessName` Microsoft requires beside it (both or neither). `AttachCampaignLogo` runs the image
+extension's sequence for a `LogoAdExtension`: one `AdExtensionsAssociations/Query` filtered to
+`LogoAdExtension` on the campaign (Microsoft allows one logo per level, so a campaign that has one
+gets nothing uploaded or added, with a step, and `existingLogoOutcome` compares it: the read
+(`findCampaignExtensionContents`) carries its `BusinessName` and `BusinessLogo` media id but not
+the image, so another business name is a definite failure and a matching or unreported one is
+UNCONFIRMED; never a clean success, so a reused campaign is `created_degraded` (#613 review); a lookup that cannot answer adds nothing and is a
+definite failure), then `AddMedia` with one `Image` of `MediaType` `Image1x1` (the 1:1 sub type,
+minimum 128x128), `AddAdExtensions` with one `{Type "LogoAdExtension", BusinessLogo <media id>,
+BusinessName}` and `SetAdExtensionsAssociations` at `Campaign` level, each failure classified
+definite or UNCONFIRMED by `classifyImageStep`. No `DomainName` is sent. `ValidateLogo` holds the
+limits before any request: at most `MaxImageBytes` (76,800) decoded bytes, the upload path's
+102,400-base64-character `Image.Data` ceiling, which is tighter than the 5,120 KB the
+`LogoAdExtension` reference allows; PNG or JPEG only, header decoded and matched to the recorded
+MIME type (any other type, `video/mp4` included, is refused); width equal to height; 128-2048 px a
+side (2048 is Microsoft's maximum height); `ValidateLogoBusinessName` trims and allows 1-25
+characters with no control or format character.
+
+The dispatcher (`internal/dispatch/microsoft_logo_extension.go`) refuses a non-string value, either
+field while `MICROSOFT_LOGO_EXTENSION_ENABLED` is off, a non-UUID id, one field without the other
+and a bad business name as a synchronous 400 (`domain.WrapPreflightRefusal` over
+`ErrCreateConfigInvalid`), re-checked in Dispatch. `resolveMicrosoftLogo` then loads the asset
+like `resolveMicrosoftImage` (brief-scoped, priced on `byte_size`, charged to the shared
+`AssetReserver`) and validates it, so a missing or unusable asset fails the job before any
+Microsoft call. The logo is attached to a confirmed campaign after the structured snippets;
+`CampaignResult.LogoMediaID` / `LogoAdExtensionID` record the ids, and a shortfall marks the
+campaign `created_degraded` with a "NOT attached" or "UNCONFIRMED" step. The snapshot reduces the
+business name as caller free text and records the canonical asset id. Not role-gated (the image is
+uploaded new). Not verified live: that `BusinessLogo` takes an `AddMedia` id of an `Image1x1`.
+
 ## Create-time campaign bid strategy (`CampaignInput.BiddingScheme`, LFXV2-2665)
 
 `BiddingScheme` sets the CAMPAIGN's `BiddingScheme` (`msBiddingScheme`, `{"Type": ...}`) on the
@@ -1583,6 +1637,53 @@ Not verified live: no Microsoft call was made. The dispatcher keeps all three fi
 `MICROSOFT_AUDIENCES_ENABLED` (default off). The lists belong to the shared LF account, so they
 also need `global_marketing_ops` (`service.MicrosoftMarketingOpsInputs`).
 
+## Shared negative keyword lists at create (`shared_negative_lists.go`, #563 gap 9)
+
+`microsoftConfig.sharedNegativeKeywordListIds` associates EXISTING account-level negative keyword
+lists with the campaign. `ValidateSharedNegativeKeywordLists` holds the pure rules: at most 20
+(Microsoft's per-campaign limit), each the canonical spelling of a positive int64, no repeat.
+
+`CheckSharedNegativeKeywordLists` runs BEFORE anything is created, right after the remarketing-list
+check: ONE `POST SharedEntities/Query` (`GetSharedEntities`, `SharedEntityType:
+"NegativeKeywordList"`, `SharedEntityScope: "Account"`). Every requested id must be in
+`SharedEntities` with that type; a missing id, or one of another type, is a `PreflightRefusal`
+naming the field and the id. An answer that cannot be believed (no array, a null entry, an entry
+with no usable id, more than 5,000 entries) is a plain error. Either way the job fails with nothing
+created.
+
+`AttachCampaignSharedNegativeKeywordLists` runs on the CONFIRMED campaign, after the create-time
+negatives: ONE `POST SharedEntityAssociations/Set` with an association per list (`EntityType:
+"Campaign"`, account scope), not retried on 429. Outcomes are positional (`SharedListOutcome`):
+`FAILED` with the code for a `PartialErrors` entry naming the index (or every list on a definite
+refusal, or `NOT_SENT` when the context ended first); `UNCONFIRMED` for every list without its own
+error when an error carries no usable index or the array was truncated, and for all of them on an
+ambiguous call or an unreadable 2xx; `APPLIED` otherwise. A `PartialErrors` entry whose codes
+are both defaults (absent, null, 0, "" or the quoted "0" — `isDefaultCode` — the
+`audienceErrorCode` rule `indexedErrorItem.isError` now shares) is a placeholder, not an error (the keyword lever's `keywordMutation` treats an
+answer of only explicit zero-code placeholders, `isZeroCodePlaceholder`, as APPLIED, while `[{}]`
+or `[null]` stays UNCONFIRMED). A placeholder
+clears only the slot it names: one with no index or an index outside the request (or any entry
+naming an out-of-range index) makes `attribute` unattributable, so every list without its own
+error is UNCONFIRMED, and `keywordMutation` treats such a placeholder-only answer as UNCONFIRMED
+as a whole (#613 review). An UNREADABLE entry — codes explicitly null (`codePairUnreadable`), `{}`
+or an index with no code — makes the item it names UNCONFIRMED (every un-named item when it names
+none), keeping known failures. The only padding is a JSON `null` slot in a fully positional array:
+exactly one entry per request item, at least one of them coded, not truncated. So a
+code-less-only array (`[null]`, `[{}]`) is UNCONFIRMED, and so is an indexed all-null entry beside
+another item's rejection (#613 review). A null or empty `PartialErrors` is no
+error, but a 200 that omits the field (`{}`) is `UNCONFIRMED` for every list: it answered nothing
+about the associations (#613 review). The dispatcher (`applyMicrosoftSharedNegativeLists`) records them as
+`CampaignResult.SharedNegativeKeywordLists`; anything but `APPLIED` makes the campaign
+`created_degraded` with a step, and the job never fails here. It runs on a campaign reused by name
+too, as the create-time negatives do, since a negative list only narrows serving; what Microsoft
+answers for a list that is already associated is undocumented and is reported as the call yields.
+
+Not verified live. The dispatcher keeps the field behind `MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED`
+(default off; a 400 while off, re-checked in Dispatch before any call). The lists belong to the
+shared LF account, so the field also needs `global_marketing_ops`
+(`service.MicrosoftMarketingOpsInputs`, pinned field for field to the dispatcher by
+`TestMicrosoftSharedAccountInputDetectionAgreesWithTheCreateGate`).
+
 ## Excluded countries, radius targets and campaign languages (`create_targeting.go`, #563 gaps 5-6)
 
 `ValidateCreateTargeting` holds the pure rules once, so the dispatcher's synchronous preflight and
@@ -1619,3 +1720,85 @@ group created under it could be left without a language or could mask its langua
 Not verified live: no Microsoft call was made. The dispatcher keeps all three behind
 `MICROSOFT_CREATE_TARGETING_ENABLED` (default off). They name no account resource and are not
 role-gated.
+
+## Search network at create (#563 gap 11)
+
+`CampaignInput.SearchPartners` (`*bool`) sets the new ad group's `AdGroup.Network` through
+`adGroupNetwork`: true is `OwnedAndOperatedAndSyndicatedSearch`, false `OwnedAndOperatedOnly`, and
+nil sends no `Network` at all (`msAdGroup.Network` is `omitempty`), so a create without the field is
+byte-for-byte what it was and Microsoft's default (partners included) applies.
+`SyndicatedSearchOnly` is not offered. The value travels in `targeting.network`;
+`findOrCreateAdGroup` now takes the whole `targeting` instead of its fields one by one. Like the
+flight dates, the network is set only on an ad group this run creates: a reused ad group is not
+written to, and a warning step says its network is unchanged.
+
+The dispatcher (`internal/dispatch/microsoft_search_network.go`) refuses a non-boolean, and the
+field (false included) while `MICROSOFT_SEARCH_NETWORK_ENABLED` is off, with a synchronous 400.
+Not verified live; not role-gated.
+
+## Ad schedule at create (#563 gap 10)
+
+`CampaignInput.AdSchedules` (`ad_schedule.go`) is checked by `ValidateAdSchedules` before anything
+is created: at most seven windows on any one day and 49 in total (Microsoft's per-day limit of
+seven day-time criteria, which it would otherwise refuse only after the campaign exists), a `Day` enum value matched
+ignoring case, whole hours `[StartHour 0-23, EndHour 1-24)` with the end after the start, a
+whole-percent `BidAdjustment` of -90..900, and no two windows overlapping on one day (touching is
+fine). The windows come back sorted by day and start hour, which is the order they are sent.
+
+On a campaign this run created, `createAdScheduleCriterions` attaches them right after the radius
+targets and before the ad group, one `AddCampaignCriterions` call (`CriterionType: Targets`) of
+`BiddableCampaignCriterion` entries carrying a `DayTimeCriterion` (both minutes `Zero`) and a
+`BidMultiplier` `CriterionBid`; `msTargetCampaignCriterion` gained the optional `CriterionBid` for
+it. The call goes through `postCampaignCriterions` and a failure is classified by
+`criterionStepError`, so the schedule is fail-closed exactly like the exclusions and radii: a
+campaign whose schedule did not land would serve at every hour. `adSchedules` joins the fields
+(`CreateTargeting.fields`) that stop a create on a campaign found by name before its ad group.
+The ids are recorded as `AdScheduleCriterionIDs`.
+
+The windows run in the Microsoft Advertising ACCOUNT's time zone, not `CampaignInput.TimeZone`:
+the create omits `AdScheduleUseSearcherTimeZone`, and Microsoft then reads day-time criteria in
+the account's zone. The hours are sent as given, never translated; the comments, the result step
+("in the Microsoft Advertising account's time zone, not the campaign's") and the API catalog
+say so (#613 review).
+
+The dispatcher (`internal/dispatch/microsoft_ad_schedule.go`) decodes the hours as `*float64`, so a
+missing hour (0 is midnight) or a fractional one is refused on its own, refuses an explicit
+`"bidAdjustment": null` from the raw entries (it would decode as 0; omitting it is still 0), and
+gates the list behind
+`MICROSOFT_AD_SCHEDULE_ENABLED`. Not verified live; not role-gated.
+
+## Device, age and gender bid adjustments at create (#563 gap 8)
+
+`CampaignInput.BidAdjustments` (`bid_adjustments.go`) holds three maps of segment name to whole
+percent. `ValidateBidAdjustments` matches each key ignoring case against Microsoft's enum
+(`DeviceName` Computers, Smartphones, Tablets; the five adult `AgeRange` values; `GenderType` Male,
+Female), refuses a segment named twice, and holds devices to -100..900 and age and gender to
+-90..900. Keys are visited sorted so a refusal is deterministic, and the result comes back in send
+order: devices, ages, genders, each in enum order.
+
+They are set on the CAMPAIGN, not the ad group the issue sketched: the one ad group inherits them,
+and the campaign-criterion path already has the fail-closed outcome rules. On a campaign this run
+created, `createBidAdjustmentCriterions` sends them in one `AddCampaignCriterions` call
+(`CriterionType: Targets`) of `BiddableCampaignCriterion` entries with a `BidMultiplier`, right
+after the ad schedule and before the ad group, through `postCampaignCriterions` and
+`criterionStepError`. Microsoft requires all three `DeviceCriterion` types in the same add, so
+`bidAdjustmentCriteria` expands any device request to Computers, Smartphones and Tablets (an
+unrequested one at 0, no change); every result is checked and every id recorded, and the step
+names the requested adjustments plus the devices sent at +0% (#613 review). Microsoft's `AgeRange`
+enum misspells 35-49 as `ThirtyFiveToFourtyNine`; the public key stays `ThirtyFiveToFortyNine`
+and `ageRangeWire` sends Microsoft's spelling (the other four adult ranges match the v13
+reference as spelled). The `AddCampaignCriterions` response decode (`boundedGeoIDs` and
+`boundedNestedErrorItems`) retains up to `maxCampaignCriterionResults` (64) ids and error
+collections, covering a 49-window ad schedule (an entry with an explicitly null code and no other — `{"Code":null}`, `{"ErrorCode":null}` or both null, `codePairUnreadable` — makes the
+outcome UNCONFIRMED even beside a coded rejection, keeping the returned ids); the geographic input limit stays `maxGeoTargets`
+(30). Its error entries, at the collection and nested `BatchErrors` levels, are classified by
+`nestedErrorState` with `audienceErrorCode`'s rule: a zero-code placeholder is not a rejection, an
+unreadable code is one (never success), and an entry with an explicitly null code and no other is
+UNCONFIRMED, while a key-less pair or null slot is index-aligned padding; the ad schedule, bid adjustments and geo criteria all share it (#613 review). The three keys join the fields that stop a create on a campaign found by
+name. The ids are recorded as `BidAdjustmentCriterionIDs`.
+
+The dispatcher (`internal/dispatch/microsoft_bid_adjustments.go`) refuses a value that is not an
+object of numbers, checking each raw segment value for null first (encoding/json would decode a
+null as 0, a real adjustment), and any of the three while `MICROSOFT_BID_ADJUSTMENTS_ENABLED` is off. Not
+verified live. In particular it is unconfirmed whether Microsoft accepts an ADD of a device
+criterion on a new campaign; a refusal would stop the create, fail-closed. Not role-gated.

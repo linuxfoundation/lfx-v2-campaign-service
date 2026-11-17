@@ -308,6 +308,60 @@ const (
 	// account until a live create confirms them. Turn it on per environment, in lfx-v2-argocd.
 	EnvMicrosoftCreateTargetingEnabled = "MICROSOFT_CREATE_TARGETING_ENABLED"
 
+	// EnvMicrosoftSearchNetworkEnabled opts a deployment IN to microsoftConfig.searchPartners
+	// (#563 gap 11): the new ad group's AdGroup.Network, Microsoft's own sites with or without its
+	// syndicated search partners. Only the exact value "true" enables it; unset or any other value
+	// fails closed, and a create naming it is refused with a 400 before any job exists (and again
+	// at dispatch, before anything upstream). It names no account resource; it keeps an
+	// UNVERIFIED request shape (from the v13 reference) off the shared account until a live create
+	// confirms it.
+	EnvMicrosoftSearchNetworkEnabled = "MICROSOFT_SEARCH_NETWORK_ENABLED"
+
+	// EnvMicrosoftAdScheduleEnabled opts a deployment IN to microsoftConfig.adSchedules (#563 gap
+	// 10): day-time criteria (dayparting, with an optional bid adjustment per window) on the new
+	// campaign. Only the exact value "true" enables it; unset or any other value fails closed, and
+	// a create naming it is refused with a 400 before any job exists (and again at dispatch). It
+	// names no account resource; it keeps an UNVERIFIED request shape (from the v13 reference) off
+	// the shared account until a live create confirms it.
+	EnvMicrosoftAdScheduleEnabled = "MICROSOFT_AD_SCHEDULE_ENABLED"
+
+	// EnvMicrosoftBidAdjustmentsEnabled opts a deployment IN to microsoftConfig.deviceBidAdjustments,
+	// ageBidAdjustments and genderBidAdjustments (#563 gap 8): biddable device, age and gender
+	// criteria on the new campaign. Only the exact value "true" enables them; unset or any other
+	// value fails closed, and a create naming any of them is refused with a 400 before any job
+	// exists (and again at dispatch). They name no account resource; the flag keeps UNVERIFIED
+	// request shapes (from the v13 reference) off the shared account until a live create confirms
+	// them, notably that a device criterion can be ADDED to a new campaign.
+	EnvMicrosoftBidAdjustmentsEnabled = "MICROSOFT_BID_ADJUSTMENTS_ENABLED"
+
+	// EnvMicrosoftSharedNegativeListsEnabled opts a deployment IN to
+	// microsoftConfig.sharedNegativeKeywordListIds (#563 gap 9): existing account-level negative
+	// keyword lists, verified by a GetSharedEntities read before anything is created and associated
+	// with the confirmed campaign (SetSharedEntityAssociations). Only the exact value "true" enables
+	// it; unset or any other value fails closed, and a create naming it is refused with a 400
+	// before any job exists (and again at dispatch). The lists belong to the shared LF account, so
+	// they also need global_marketing_ops; the flag keeps an UNVERIFIED request shape (from the v13
+	// reference) off the shared account until a live create confirms it.
+	EnvMicrosoftSharedNegativeListsEnabled = "MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED"
+
+	// EnvMicrosoftStructuredSnippetsEnabled opts a deployment IN to
+	// microsoftConfig.structuredSnippets (#563 gap 13): StructuredSnippetAdExtension entries created
+	// at create time and associated with the confirmed campaign. Only the exact value "true"
+	// enables it; unset or any other value fails closed, and a create naming it is refused with a
+	// 400 before any job exists (and again at dispatch). It names no account resource; it keeps an
+	// UNVERIFIED request shape (from the v13 reference) off the shared account until a live create
+	// confirms it.
+	EnvMicrosoftStructuredSnippetsEnabled = "MICROSOFT_STRUCTURED_SNIPPETS_ENABLED"
+
+	// EnvMicrosoftLogoExtensionEnabled opts a deployment IN to microsoftConfig.logoAssetId and
+	// logoBusinessName (#563 gap 13): a stored PNG/JPEG creative asset uploaded as an Image1x1
+	// media and attached to the confirmed campaign as a LogoAdExtension. Only the exact value
+	// "true" enables it; unset or any other value fails closed, and a create naming either field
+	// is refused with a 400 before any job exists (and again at dispatch). A newly uploaded image
+	// names no account resource; the flag keeps an UNVERIFIED request shape (from the v13
+	// reference) off the shared account until a live create confirms it.
+	EnvMicrosoftLogoExtensionEnabled = "MICROSOFT_LOGO_EXTENSION_ENABLED"
+
 	// EnvMicrosoftAdExtensionsEnabled opts a deployment IN to microsoftConfig.sitelinks and
 	// microsoftConfig.callouts (#563), created at create time as SitelinkAdExtension and
 	// CalloutAdExtension entries and associated with the new Search campaign. Only the exact value
