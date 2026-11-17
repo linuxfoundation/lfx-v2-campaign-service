@@ -757,10 +757,7 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 	// that is knowably unsatisfiable (an A/B test on an email that sends by recipients' time
 	// zones) is only actionable here, where a typed 409 reaches the caller. Fail-open: the
 	// orchestrator turns only a recognised sentinel into a refusal and ignores anything else.
-	//
-	// The brief rides on the context so a check that depends on it (X's tweet text, composed with
-	// the brief's destination URL exactly as the job will compose it) refuses here too.
-	if err := orch.PreflightCreate(model.WithCreatePreflightBrief(ctx, brief), p.ProjectID, platforms, config); err != nil {
+	if err := orch.PreflightCreate(ctx, p.ProjectID, platforms, config); err != nil {
 		return nil, mapBriefErr(err)
 	}
 	// Pass the version we just observed as 'approved'. Start gates job creation on

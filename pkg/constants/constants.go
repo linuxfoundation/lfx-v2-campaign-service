@@ -250,8 +250,7 @@ const (
 
 	// EnvTwitterCreateTargetingEnabled opts a deployment IN to twitterConfig.geoTargets and
 	// twitterConfig.languages (#564): country and language targeting criteria added to the line
-	// item an X create makes (keywords, interestIds, conversationTopics, platforms, devices,
-	// ageBucket and gender joined later, #564 gaps 4, 8 and 9). Only the exact value "true" enables them; unset or any other value
+	// item an X create makes. Only the exact value "true" enables them; unset or any other value
 	// fails closed, and a create naming either is refused with a 400 before any job exists (and
 	// again at dispatch, before anything upstream).
 	//
@@ -275,66 +274,14 @@ const (
 	// (service.TwitterMarketingOpsInputs) and the read sits in the gateway's marketing-ops-api rule.
 	EnvTwitterCustomAudiencesEnabled = "TWITTER_CUSTOM_AUDIENCES_ENABLED"
 
-	// EnvTwitterAudienceExpansionEnabled opts a deployment IN to twitterConfig.audienceExpansion
-	// (#564 gap 11): the line item an X create makes is sent with audience_expansion BROAD, DEFINED
-	// or EXPANDED. Only the exact value "true" enables it; unset or any other value fails closed,
-	// and a create setting it is refused with a 400 before any job exists (and again at dispatch,
-	// before anything upstream).
-	//
-	// It names no account resource: it keeps an UNVERIFIED line-item parameter (from X's published
-	// v12 reference; no live create has sent it) off the shared ad account until a live create
-	// confirms X accepts it on a WEBSITE_CLICKS line item. Turn it on per environment, in
-	// lfx-v2-argocd.
-	EnvTwitterAudienceExpansionEnabled = "TWITTER_AUDIENCE_EXPANSION_ENABLED"
-
-	// EnvTwitterFollowerLookalikesEnabled opts a deployment IN to
-	// twitterConfig.followerLookalikeUserIds (#564 gap 4c): each id becomes a
-	// SIMILAR_TO_FOLLOWERS_OF_USER criterion on the line item an X create makes. Only the exact
-	// value "true" enables it; unset or any other value fails closed, and a create setting it is
-	// refused with a 400 before any job exists (and again at dispatch, before anything upstream).
-	//
-	// It names no account resource (a public user id). It keeps an UNVERIFIED targeting type off
-	// the shared ad account until a live create confirms it: X has no user lookup, so an id X
-	// refuses fails at its criterion POST and leaves a PAUSED partial for reconciliation.
-	EnvTwitterFollowerLookalikesEnabled = "TWITTER_FOLLOWER_LOOKALIKES_ENABLED"
-
-	// EnvTwitterTweetVariantsEnabled opts a deployment IN to twitterConfig.variants (#564 gap 10):
-	// one authored, promoted tweet per variant (at most 5) on the line item an X create makes. Only
-	// the exact value "true" enables it; unset or any other value fails closed, and a create setting
-	// it is refused with a 400 before any job exists (and again at dispatch). It names no account
-	// resource; it keeps several tweet publishes per create off the shared ad account until a live
-	// create confirms them.
-	EnvTwitterTweetVariantsEnabled = "TWITTER_TWEET_VARIANTS_ENABLED"
-
-	// EnvTwitterWebsiteCardEnabled opts a deployment IN to twitterConfig.card (#564 gap 6): a
-	// website card (POST accounts/:account_id/cards: the creative's media, a headline, the UTM'd
-	// registration URL) attached by card_uri to the tweet(s) an X create authors. Only the exact
-	// value "true" enables it; unset or any other value fails closed, and a create setting it is
-	// refused with a 400 before any job exists (and again at dispatch). It names no account
-	// resource; it keeps an UNVERIFIED request body (from X's published reference) off the shared
-	// ad account until a live create confirms it.
-	EnvTwitterWebsiteCardEnabled = "TWITTER_WEBSITE_CARD_ENABLED"
-
 	// EnvTwitterVideoEnabled opts a deployment IN to twitterConfig.videoAssetId (#564 gap 7): a
 	// stored MP4 uploaded as amplify_video (chunked initialize/append/finalize, then STATUS polled
-	// for at most 30 s) and attached to the tweet(s) an X create authors. Only the exact value
+	// for at most 30 s) and attached to the tweet an X create authors. Only the exact value
 	// "true" enables it; unset or any other value fails closed, and a create setting it is refused
 	// with a 400 before any job exists (and again at dispatch). Blocker before enabling: measure
 	// X's amplify_video processing time for a 20-30 MiB MP4 against the 30 s bound, which runs
 	// inside the two-minute provider call and must not be lengthened.
 	EnvTwitterVideoEnabled = "TWITTER_VIDEO_ENABLED"
-
-	// EnvTwitterKeywordAddEnabled opts a deployment IN to the positive keyword add lever on an
-	// existing X campaign (#564 gap 12): POST .../keyword-targeting/additions, one BROAD_KEYWORD
-	// targeting criterion (operator_type EQ) per keyword on the line item this service created.
-	// Only the exact value "true" enables it; unset or any other value fails closed, and the
-	// endpoint answers 400 "not supported or not enabled" before X is contacted.
-	//
-	// It names no account resource: it keeps an UNVERIFIED write (a positive keyword criterion
-	// POST on a live line item, built from X's published v12 reference; no live call has added
-	// one) off the shared ad account until a live add confirms the criterion shape. Turn it on per
-	// environment, in lfx-v2-argocd.
-	EnvTwitterKeywordAddEnabled = "TWITTER_KEYWORD_ADD_ENABLED"
 
 	// EnvMetaConversionsMetricsEnabled opts a deployment IN to conversions in the Meta metrics read
 	// (#550 gap 6): for a campaign whose create result records a conversion event (the

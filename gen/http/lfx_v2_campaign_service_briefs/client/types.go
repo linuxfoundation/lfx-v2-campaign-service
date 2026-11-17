@@ -147,15 +147,6 @@ type RemoveKeywordTargetingRequestBody struct {
 	Revision *string `form:"revision,omitempty" json:"revision,omitempty" xml:"revision,omitempty"`
 }
 
-// AddKeywordTargetingRequestBody is the type of the
-// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint
-// HTTP request body.
-type AddKeywordTargetingRequestBody struct {
-	// The keywords to add, as broad keywords: 1-80 characters each after trimming,
-	// no control character.
-	Keywords []string `form:"keywords" json:"keywords" xml:"keywords"`
-}
-
 // ToggleMetaAdSetStatusRequestBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
 // endpoint HTTP request body.
@@ -1286,21 +1277,6 @@ type RemoveKeywordTargetingResponseBody struct {
 	// last keyword is not sent (WOULD_EMPTY).
 	Results []*KeywordTargetingRemovalResultResponseBody `form:"results,omitempty" json:"results,omitempty" xml:"results,omitempty"`
 	// How many results are APPLIED.
-	AppliedCount *int `form:"applied_count,omitempty" json:"applied_count,omitempty" xml:"applied_count,omitempty"`
-}
-
-// AddKeywordTargetingResponseBody is the type of the
-// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint
-// HTTP response body.
-type AddKeywordTargetingResponseBody struct {
-	// The campaign whose targeting was changed
-	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
-	// Exactly one entry per DISTINCT requested keyword after normalization
-	// (trimmed; a case-insensitive repeat is dropped, first spelling kept), in
-	// request order. One POST per keyword sent, each with its own outcome.
-	Results []*KeywordTargetingAdditionResultResponseBody `form:"results,omitempty" json:"results,omitempty" xml:"results,omitempty"`
-	// How many requested keywords the line item now targets: results whose outcome
-	// is APPLIED or ALREADY_PRESENT.
 	AppliedCount *int `form:"applied_count,omitempty" json:"applied_count,omitempty" xml:"applied_count,omitempty"`
 }
 
@@ -3715,79 +3691,6 @@ type RemoveKeywordTargetingUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
-// AddKeywordTargetingBadRequestResponseBody is the type of the
-// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint
-// HTTP response body for the "BadRequest" error.
-type AddKeywordTargetingBadRequestResponseBody struct {
-	// HTTP status code
-	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
-	// Error message
-	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
-}
-
-// AddKeywordTargetingConflictResponseBody is the type of the
-// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint
-// HTTP response body for the "Conflict" error.
-type AddKeywordTargetingConflictResponseBody struct {
-	// HTTP status code
-	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
-	// Error message
-	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
-	// Stable machine-readable discriminator, present only where an endpoint
-	// returns more than one kind of conflict. Absent means unspecified.
-	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
-}
-
-// AddKeywordTargetingServiceUnavailableResponseBody is the type of the
-// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint
-// HTTP response body for the "ServiceUnavailable" error.
-type AddKeywordTargetingServiceUnavailableResponseBody struct {
-	// HTTP status code
-	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
-	// Error message
-	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
-}
-
-// AddKeywordTargetingInternalServerErrorResponseBody is the type of the
-// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint
-// HTTP response body for the "InternalServerError" error.
-type AddKeywordTargetingInternalServerErrorResponseBody struct {
-	// HTTP status code
-	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
-	// Error message
-	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
-}
-
-// AddKeywordTargetingNotFoundResponseBody is the type of the
-// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint
-// HTTP response body for the "NotFound" error.
-type AddKeywordTargetingNotFoundResponseBody struct {
-	// HTTP status code
-	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
-	// Error message
-	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
-}
-
-// AddKeywordTargetingPayloadTooLargeResponseBody is the type of the
-// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint
-// HTTP response body for the "PayloadTooLarge" error.
-type AddKeywordTargetingPayloadTooLargeResponseBody struct {
-	// HTTP status code
-	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
-	// Error message
-	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
-}
-
-// AddKeywordTargetingUnauthorizedResponseBody is the type of the
-// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint
-// HTTP response body for the "Unauthorized" error.
-type AddKeywordTargetingUnauthorizedResponseBody struct {
-	// HTTP status code
-	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
-	// Error message
-	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
-}
-
 // ListMetaAdSetsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "list-meta-ad-sets" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -5200,26 +5103,6 @@ type KeywordTargetingRemovalResultResponseBody struct {
 	ErrorCode *string `form:"error_code,omitempty" json:"error_code,omitempty" xml:"error_code,omitempty"`
 }
 
-// KeywordTargetingAdditionResultResponseBody is used to define fields on
-// response body types.
-type KeywordTargetingAdditionResultResponseBody struct {
-	// The keyword this result answers, as normalized: trimmed, first spelling of a
-	// case-insensitive duplicate kept.
-	Keyword *string `form:"keyword,omitempty" json:"keyword,omitempty" xml:"keyword,omitempty"`
-	// The X targeting criterion that holds the keyword: the one this request
-	// created (APPLIED), or the one the line item already had (ALREADY_PRESENT).
-	// Absent for FAILED and UNCONFIRMED.
-	CriterionID *string `form:"criterion_id,omitempty" json:"criterion_id,omitempty" xml:"criterion_id,omitempty"`
-	// APPLIED — added by this request; ALREADY_PRESENT — the line item already
-	// targets it as a broad keyword, so nothing was sent; FAILED — definitely not
-	// added (see error_code); UNCONFIRMED — may have been added, read the keyword
-	// targeting again before retrying.
-	Outcome *string `form:"outcome,omitempty" json:"outcome,omitempty" xml:"outcome,omitempty"`
-	// Why a keyword is FAILED: NOT_SENT (the request carrying it was never sent)
-	// or REJECTED (X refused it). X's own text is never returned.
-	ErrorCode *string `form:"error_code,omitempty" json:"error_code,omitempty" xml:"error_code,omitempty"`
-}
-
 // MetaAdSetResponseBody is used to define fields on response body types.
 type MetaAdSetResponseBody struct {
 	// The Meta ad set id
@@ -5650,123 +5533,45 @@ type CampaignCreateInputRequestBody struct {
 	// `interestIds` (X interest ids, 1-19 digits, each listed by GET
 	// targeting_criteria/interests, which is walked to its end before anything is
 	// created; at most 60), sent as BROAD_KEYWORD and INTEREST criteria (operator
-	// EQ) after the languages, with the same failure and reuse rules (#564 gap 4),
-	// and `conversationTopics` (X conversation topic values, 1-32 letters or
-	// digits, lowercased, each listed by GET targeting_criteria/conversations,
-	// which is walked to its end before anything is created; at most 60), sent as
-	// CONVERSATION criteria (operator EQ) after the interests, with the same rules
-	// (#564 gap 8), and `platforms` (X device platform values such as 0 for iOS,
-	// not the request's ad platforms; 1-32 letters or digits, lowercased, each
-	// listed by GET targeting_criteria/platforms before anything is created; at
-	// most 10), sent as PLATFORM criteria (operator EQ) after the conversation
-	// topics, with the same rules (#564 gap 9), plus `devices` (X device values
-	// such as 1q for the iPhone 3GS; 1-32 letters or digits, lowercased, each
-	// listed by GET targeting_criteria/devices before anything is created; at most
-	// 60), sent as DEVICE criteria after the platforms, `ageBucket` (a string: one
-	// of X's AGE_BUCKET values such as AGE_18_TO_34 or AGE_OVER_25, uppercased; X
-	// allows a single age bucket per line item), sent as one AGE criterion, and
-	// `gender` (a string: MALE or FEMALE, case-insensitive), sent as one GENDER
-	// criterion with X's value 1 or 2; a blank ageBucket or gender is unset (every
-	// age, every gender) (#564 gap 9). All nine are OFF unless
-	// TWITTER_CREATE_TARGETING_ENABLED is exactly "true". A blank or malformed
-	// entry, a list over its cap, a value that is not an array of strings (or, for
-	// ageBucket and gender, not a string; null reads as absent), an age bucket or
-	// gender outside its set, or any of them while the flag is off, is refused
-	// with 400 "invalid campaign config: twitterConfig.<field>: ..." before any
-	// job exists. X AUDIENCE EXPANSION (#564 gap 11): twitterConfig takes
-	// `audienceExpansion` (BROAD, DEFINED or EXPANDED, case-insensitive), sent as
-	// the new line item's audience_expansion; omitted or blank sends nothing (X
-	// applies no expansion), and a line item reused by name keeps its own. It is
-	// OFF unless TWITTER_AUDIENCE_EXPANSION_ENABLED is exactly "true"; a non-blank
-	// value while off, a value outside the set, or a non-string is refused with
-	// 400 "invalid campaign config: twitterConfig..." before any job exists. X
-	// FOLLOWER LOOK-ALIKES (#564 gap 4c): twitterConfig takes
-	// `followerLookalikeUserIds` (numeric X user ids, 1-19 digits with no leading
-	// zero and within int64, trimmed and de-duplicated, at most 60), each sent as
-	// a SIMILAR_TO_FOLLOWERS_OF_USER criterion (operator EQ) after the platforms
-	// and before the included custom audiences; they count toward the 60-criteria
-	// per-create total. Only the shape is checked before create: X has no user
-	// lookup, so an id X refuses fails at its own criterion POST, which stops the
-	// create before any tweet with the PAUSED campaign and line item retained for
-	// reconciliation, exactly as for any other criterion failure. OFF unless
-	// TWITTER_FOLLOWER_LOOKALIKES_ENABLED is exactly "true"; a non-empty list
-	// while off, a malformed id, a list over its cap, or a value that is not an
-	// array of strings (null reads as absent) is refused with 400 "invalid
-	// campaign config: twitterConfig.followerLookalikeUserIds: ..." before any job
-	// exists. Not role-gated. X TWEET VARIANTS (#564 gap 10): twitterConfig takes
-	// `variants`, [{"tweetText": string}] (1-5 entries, each trimmed and
-	// non-blank, no two the same ignoring case, tweetText the only key), and never
-	// with tweetId or a top-level tweetText. Each variant is authored as its own
-	// nullcast tweet (the same composition, length and credential-screen rules as
-	// tweetText, its destination tagged utm_content=variant-N) and promoted on the
-	// one line item, in order, each authored then promoted before the next;
-	// imageAssetId, when set, is attached to every variant. Every promoted tweet
-	// is recorded in the campaign result as PromotedTweets ([{Variant, TweetID,
-	// Authored, PromotedTweetID, Warning}]); PromotedTweetID and AuthoredTweetID
-	// repeat the first. A variant that fails (authoring refused or UNCONFIRMED,
-	// promotion refused, UNCONFIRMED or reported duplicate) does not stop the
-	// others and nothing is rolled back, since a published tweet cannot be
-	// unpublished: the row is created_degraded with a step naming the failed
-	// variants. On a line item reused by name, no variant is authored when its
-	// promoted tweets cannot be read or their count differs from the variants;
-	// exactly as many are reused. Pause, resume, budget, bid and keyword levers
-	// act on the campaign and line item, so they govern every variant at once. OFF
-	// unless TWITTER_TWEET_VARIANTS_ENABLED is exactly "true"; a non-empty list
-	// while off, a rule breach or a wrong shape (null reads as absent) is refused
-	// with 400 "invalid campaign config: twitterConfig.variants: ..." before any
-	// job exists. Not role-gated. X WEBSITE CARD (#564 gap 6): twitterConfig takes
-	// `card`, {"headline": string} (trimmed, 1-70 characters, no control
-	// character; headline is the only key). It needs media (imageAssetId or
-	// videoAssetId, never both) and an authored tweet (tweetText or variants,
-	// never tweetId). Once the campaign and line item exist and a tweet is about
-	// to be authored, one website card is created with POST
-	// accounts/:account_id/cards (a MEDIA component carrying the creative image's
-	// or video's media_key and a DETAILS component carrying the headline and a
-	// WEBSITE destination: the registration URL with this service's UTMs and
-	// utm_content=website-card), and its card_uri is sent on every tweet the
-	// create authors (media_keys is then not sent; the image rides in the card).
-	// The result records it as CardURI. A card that cannot be created publishes
-	// nothing: the row is created_degraded with a step to post the tweet manually
-	// (UNCONFIRMED when the card may exist; a card is neither public nor
-	// billable). A create that reuses an earlier attempt's promoted tweet creates
-	// no card. OFF unless TWITTER_WEBSITE_CARD_ENABLED is exactly "true"; a card
-	// while off, a rule breach or a wrong shape (null reads as absent) is refused
-	// with 400 "invalid campaign config: twitterConfig.card: ..." before any job
-	// exists. Not role-gated. X VIDEO (#564 gap 7): twitterConfig takes
+	// EQ) after the languages, with the same failure and reuse rules (#564 gap 4).
+	// All four are OFF unless TWITTER_CREATE_TARGETING_ENABLED is exactly "true".
+	// A blank or malformed entry, a list over its cap, a value that is not an
+	// array of strings (null reads as absent), or any list while the flag is off,
+	// is refused with 400 "invalid campaign config: twitterConfig.<field>: ..."
+	// before any job exists. X VIDEO (#564 gap 7): twitterConfig takes
 	// `videoAssetId`, the id of an MP4 creative asset uploaded to this brief
 	// (upload-creative-asset, content_type video/mp4, at most 30 MiB), attached to
-	// the authored tweet(s) instead of an image, or used as the website card's
-	// media. It requires an authored tweet (tweetText or variants, never tweetId)
-	// and is never combined with imageAssetId. Before anything billable exists the
-	// video is uploaded through X's chunked media upload (initialize with
-	// media_category amplify_video and media_type video/mp4, one append per 4 MiB
-	// segment, finalize, then the STATUS command while X reports processing, at
-	// most 6 checks of at most 5 seconds each) and added to the ad account's Media
-	// Library under a name derived from its SHA-256, which a later create of the
-	// same bytes finds and reuses instead of uploading again; its media_key is
-	// then sent as media_keys on every authored tweet. A video that cannot be
-	// uploaded, is rejected during processing, or does not finish processing
-	// within that bound fails the job with nothing created. A create with a
-	// videoAssetId may name at most 30 targeting criteria in total (the upload and
-	// processing share the dispatch budget). An asset that does not exist for this
-	// brief, is over 30 MiB or is not video/mp4 fails the job before any X
-	// request. OFF unless TWITTER_VIDEO_ENABLED is exactly "true"; a videoAssetId
-	// while off, a malformed id, one beside imageAssetId or tweetId or without
-	// tweetText or variants, more than 30 criteria, or a non-string (null reads as
-	// absent) is refused with 400 "invalid campaign config: twitterConfig..."
-	// before any job exists. Not role-gated. X CUSTOM AUDIENCES (#564):
-	// twitterConfig takes `customAudienceIds` and `excludedCustomAudienceIds`,
-	// arrays of X custom audience ids (list-twitter-ads-custom-audiences offers
-	// them) to target and to exclude, sent as CUSTOM_AUDIENCE targeting criteria
-	// on the new line item with operator EQ and NE. Each id is 1-32 letters or
-	// digits, sent exactly as given; at most 60 per list; no id twice and none in
-	// both lists. geoTargets, languages, keywords, interestIds,
-	// conversationTopics, platforms, devices, ageBucket, gender,
-	// followerLookalikeUserIds, customAudienceIds and excludedCustomAudienceIds
-	// together may name at most 60 criteria per create, since each is a separate X
-	// write paced at one per second inside the two-minute dispatch budget; more is
-	// refused with the same 400. Before anything is created every id is read with
-	// GET accounts/:account_id/custom_audiences and must be live and targetable; a
+	// the authored tweet instead of an image. It requires an authored tweet
+	// (tweetText, never tweetId) and is never combined with imageAssetId. Before
+	// anything billable exists the video is uploaded through X's chunked media
+	// upload (initialize with media_category amplify_video and media_type
+	// video/mp4, one append per 4 MiB segment, finalize, then the STATUS command
+	// while X reports processing, at most 6 checks of at most 5 seconds each) and
+	// added to the ad account's Media Library under a name derived from its
+	// SHA-256, which a later create of the same bytes finds and reuses instead of
+	// uploading again; its media_key is then sent as media_keys on the authored
+	// tweet. A video that cannot be uploaded, is rejected during processing, or
+	// does not finish processing within that bound fails the job with nothing
+	// created. A create with a videoAssetId may name at most 30 targeting criteria
+	// in total (the upload and processing share the dispatch budget). An asset
+	// that does not exist for this brief, is over 30 MiB or is not video/mp4 fails
+	// the job before any X request. OFF unless TWITTER_VIDEO_ENABLED is exactly
+	// "true"; a videoAssetId while off, a malformed id, one beside imageAssetId or
+	// tweetId or without tweetText, more than 30 criteria, or a non-string (null
+	// reads as absent) is refused with 400 "invalid campaign config:
+	// twitterConfig..." before any job exists. Not role-gated. X CUSTOM AUDIENCES
+	// (#564): twitterConfig takes `customAudienceIds` and
+	// `excludedCustomAudienceIds`, arrays of X custom audience ids
+	// (list-twitter-ads-custom-audiences offers them) to target and to exclude,
+	// sent as CUSTOM_AUDIENCE targeting criteria on the new line item with
+	// operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
+	// given; at most 60 per list; no id twice and none in both lists. geoTargets,
+	// languages, keywords, interestIds, customAudienceIds and
+	// excludedCustomAudienceIds together may name at most 60 criteria per create,
+	// since each is a separate X write paced at one per second inside the
+	// two-minute dispatch budget; more is refused with the same 400. Before
+	// anything is created every id is read with GET
+	// accounts/:account_id/custom_audiences and must be live and targetable; a
 	// missing, deleted or non-targetable audience fails the job with nothing
 	// created. The exclusions are posted first of all the criteria and the
 	// inclusions last, after the line item and before the promoted tweet; a
@@ -6188,22 +5993,6 @@ func NewRemoveKeywordTargetingRequestBody(p *lfxv2campaignservicebriefs.RemoveKe
 		}
 	} else {
 		body.Keywords = []*KeywordTargetingRemovalInputRequestBody{}
-	}
-	return body
-}
-
-// NewAddKeywordTargetingRequestBody builds the HTTP request body from the
-// payload of the "add-keyword-targeting" endpoint of the
-// "lfx-v2-campaign-service-briefs" service.
-func NewAddKeywordTargetingRequestBody(p *lfxv2campaignservicebriefs.AddKeywordTargetingPayload) *AddKeywordTargetingRequestBody {
-	body := &AddKeywordTargetingRequestBody{}
-	if p.Keywords != nil {
-		body.Keywords = make([]string, len(p.Keywords))
-		for i, val := range p.Keywords {
-			body.Keywords[i] = val
-		}
-	} else {
-		body.Keywords = []string{}
 	}
 	return body
 }
@@ -9379,108 +9168,6 @@ func NewRemoveKeywordTargetingUnauthorized(body *RemoveKeywordTargetingUnauthori
 	return v
 }
 
-// NewAddKeywordTargetingKeywordTargetingAdditionsOK builds a
-// "lfx-v2-campaign-service-briefs" service "add-keyword-targeting" endpoint
-// result from a HTTP "OK" response.
-func NewAddKeywordTargetingKeywordTargetingAdditionsOK(body *AddKeywordTargetingResponseBody) *lfxv2campaignservicebriefs.KeywordTargetingAdditions {
-	v := &lfxv2campaignservicebriefs.KeywordTargetingAdditions{
-		CampaignID:   *body.CampaignID,
-		AppliedCount: *body.AppliedCount,
-	}
-	v.Results = make([]*lfxv2campaignservicebriefs.KeywordTargetingAdditionResult, len(body.Results))
-	for i, val := range body.Results {
-		if val == nil {
-			v.Results[i] = nil
-			continue
-		}
-		v.Results[i] = unmarshalKeywordTargetingAdditionResultResponseBodyToLfxv2campaignservicebriefsKeywordTargetingAdditionResult(val)
-	}
-
-	return v
-}
-
-// NewAddKeywordTargetingBadRequest builds a lfx-v2-campaign-service-briefs
-// service add-keyword-targeting endpoint BadRequest error.
-func NewAddKeywordTargetingBadRequest(body *AddKeywordTargetingBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
-	v := &lfxv2campaignservicebriefs.BadRequestError{
-		Code:    *body.Code,
-		Message: *body.Message,
-	}
-
-	return v
-}
-
-// NewAddKeywordTargetingConflict builds a lfx-v2-campaign-service-briefs
-// service add-keyword-targeting endpoint Conflict error.
-func NewAddKeywordTargetingConflict(body *AddKeywordTargetingConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
-	v := &lfxv2campaignservicebriefs.ConflictError{
-		Code:    *body.Code,
-		Message: *body.Message,
-		Reason:  body.Reason,
-	}
-
-	return v
-}
-
-// NewAddKeywordTargetingServiceUnavailable builds a
-// lfx-v2-campaign-service-briefs service add-keyword-targeting endpoint
-// ServiceUnavailable error.
-func NewAddKeywordTargetingServiceUnavailable(body *AddKeywordTargetingServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
-	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
-		Code:    *body.Code,
-		Message: *body.Message,
-	}
-
-	return v
-}
-
-// NewAddKeywordTargetingInternalServerError builds a
-// lfx-v2-campaign-service-briefs service add-keyword-targeting endpoint
-// InternalServerError error.
-func NewAddKeywordTargetingInternalServerError(body *AddKeywordTargetingInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
-	v := &lfxv2campaignservicebriefs.InternalServerError{
-		Code:    *body.Code,
-		Message: *body.Message,
-	}
-
-	return v
-}
-
-// NewAddKeywordTargetingNotFound builds a lfx-v2-campaign-service-briefs
-// service add-keyword-targeting endpoint NotFound error.
-func NewAddKeywordTargetingNotFound(body *AddKeywordTargetingNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
-	v := &lfxv2campaignservicebriefs.NotFoundError{
-		Code:    *body.Code,
-		Message: *body.Message,
-	}
-
-	return v
-}
-
-// NewAddKeywordTargetingPayloadTooLarge builds a
-// lfx-v2-campaign-service-briefs service add-keyword-targeting endpoint
-// PayloadTooLarge error.
-func NewAddKeywordTargetingPayloadTooLarge(body *AddKeywordTargetingPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
-	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
-		Code:    *body.Code,
-		Message: *body.Message,
-	}
-
-	return v
-}
-
-// NewAddKeywordTargetingUnauthorized builds a lfx-v2-campaign-service-briefs
-// service add-keyword-targeting endpoint Unauthorized error.
-func NewAddKeywordTargetingUnauthorized(body *AddKeywordTargetingUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
-	v := &lfxv2campaignservicebriefs.UnauthorizedError{
-		Code:    *body.Code,
-		Message: *body.Message,
-	}
-	v.WwwAuthenticate = wwwAuthenticate
-
-	return v
-}
-
 // NewListMetaAdSetsMetaAdSetsOK builds a "lfx-v2-campaign-service-briefs"
 // service "list-meta-ad-sets" endpoint result from a HTTP "OK" response.
 func NewListMetaAdSetsMetaAdSetsOK(body *ListMetaAdSetsResponseBody) *lfxv2campaignservicebriefs.MetaAdSets {
@@ -11900,28 +11587,6 @@ func ValidateRemoveKeywordTargetingResponseBody(body *RemoveKeywordTargetingResp
 	for _, e := range body.Results {
 		if e != nil {
 			if err2 := validateKeywordTargetingRemovalResultResponseBody(e, "body.results[*]"); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
-	}
-	return
-}
-
-// ValidateAddKeywordTargetingResponseBody runs the validations defined on
-// AddKeywordTargetingResponseBody
-func ValidateAddKeywordTargetingResponseBody(body *AddKeywordTargetingResponseBody) (err error) {
-	if body.CampaignID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
-	}
-	if body.Results == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("results", "body"))
-	}
-	if body.AppliedCount == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("applied_count", "body"))
-	}
-	for _, e := range body.Results {
-		if e != nil {
-			if err2 := validateKeywordTargetingAdditionResultResponseBody(e, "body.results[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -14923,95 +14588,6 @@ func ValidateRemoveKeywordTargetingUnauthorizedResponseBody(body *RemoveKeywordT
 	return
 }
 
-// ValidateAddKeywordTargetingBadRequestResponseBody runs the validations
-// defined on AddKeywordTargetingBadRequestResponseBody
-func ValidateAddKeywordTargetingBadRequestResponseBody(body *AddKeywordTargetingBadRequestResponseBody) (err error) {
-	if body.Code == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
-	}
-	if body.Message == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
-	}
-	return
-}
-
-// ValidateAddKeywordTargetingConflictResponseBody runs the validations defined
-// on AddKeywordTargetingConflictResponseBody
-func ValidateAddKeywordTargetingConflictResponseBody(body *AddKeywordTargetingConflictResponseBody) (err error) {
-	if body.Code == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
-	}
-	if body.Message == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
-	}
-	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted" || *body.Reason == "campaign_dispatch_in_flight" || *body.Reason == "creative_asset_quota_exceeded" || *body.Reason == "creative_asset_in_use" || *body.Reason == "creative_asset_reference_missing") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted", "campaign_dispatch_in_flight", "creative_asset_quota_exceeded", "creative_asset_in_use", "creative_asset_reference_missing"}))
-		}
-	}
-	return
-}
-
-// ValidateAddKeywordTargetingServiceUnavailableResponseBody runs the
-// validations defined on AddKeywordTargetingServiceUnavailableResponseBody
-func ValidateAddKeywordTargetingServiceUnavailableResponseBody(body *AddKeywordTargetingServiceUnavailableResponseBody) (err error) {
-	if body.Code == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
-	}
-	if body.Message == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
-	}
-	return
-}
-
-// ValidateAddKeywordTargetingInternalServerErrorResponseBody runs the
-// validations defined on AddKeywordTargetingInternalServerErrorResponseBody
-func ValidateAddKeywordTargetingInternalServerErrorResponseBody(body *AddKeywordTargetingInternalServerErrorResponseBody) (err error) {
-	if body.Code == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
-	}
-	if body.Message == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
-	}
-	return
-}
-
-// ValidateAddKeywordTargetingNotFoundResponseBody runs the validations defined
-// on AddKeywordTargetingNotFoundResponseBody
-func ValidateAddKeywordTargetingNotFoundResponseBody(body *AddKeywordTargetingNotFoundResponseBody) (err error) {
-	if body.Code == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
-	}
-	if body.Message == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
-	}
-	return
-}
-
-// ValidateAddKeywordTargetingPayloadTooLargeResponseBody runs the validations
-// defined on AddKeywordTargetingPayloadTooLargeResponseBody
-func ValidateAddKeywordTargetingPayloadTooLargeResponseBody(body *AddKeywordTargetingPayloadTooLargeResponseBody) (err error) {
-	if body.Code == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
-	}
-	if body.Message == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
-	}
-	return
-}
-
-// ValidateAddKeywordTargetingUnauthorizedResponseBody runs the validations
-// defined on AddKeywordTargetingUnauthorizedResponseBody
-func ValidateAddKeywordTargetingUnauthorizedResponseBody(body *AddKeywordTargetingUnauthorizedResponseBody) (err error) {
-	if body.Code == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
-	}
-	if body.Message == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
-	}
-	return
-}
-
 // ValidateListMetaAdSetsBadRequestResponseBody runs the validations defined on
 // ListMetaAdSetsBadRequestResponseBody
 func ValidateListMetaAdSetsBadRequestResponseBody(body *ListMetaAdSetsBadRequestResponseBody) (err error) {
@@ -16951,41 +16527,6 @@ func validateKeywordTargetingRemovalResultResponseBody(body *KeywordTargetingRem
 	if body.Outcome != nil {
 		if !(*body.Outcome == "APPLIED" || *body.Outcome == "FAILED" || *body.Outcome == "UNCONFIRMED") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".outcome", *body.Outcome, []any{"APPLIED", "FAILED", "UNCONFIRMED"}))
-		}
-	}
-	return
-}
-
-// ValidateKeywordTargetingAdditionResultResponseBody runs the validations
-// defined on keyword-targeting-addition-result
-func ValidateKeywordTargetingAdditionResultResponseBody(body *KeywordTargetingAdditionResultResponseBody) (err error) {
-	if body.Keyword == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("keyword", "body"))
-	}
-	if body.Outcome == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("outcome", "body"))
-	}
-	if body.Outcome != nil {
-		if !(*body.Outcome == "APPLIED" || *body.Outcome == "ALREADY_PRESENT" || *body.Outcome == "FAILED" || *body.Outcome == "UNCONFIRMED") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.outcome", *body.Outcome, []any{"APPLIED", "ALREADY_PRESENT", "FAILED", "UNCONFIRMED"}))
-		}
-	}
-	return
-}
-
-// validateKeywordTargetingAdditionResultResponseBody checks
-// keyword-targeting-addition-result and reports errors using the path supplied
-// by its caller
-func validateKeywordTargetingAdditionResultResponseBody(body *KeywordTargetingAdditionResultResponseBody, path string) (err error) {
-	if body.Keyword == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("keyword", path))
-	}
-	if body.Outcome == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("outcome", path))
-	}
-	if body.Outcome != nil {
-		if !(*body.Outcome == "APPLIED" || *body.Outcome == "ALREADY_PRESENT" || *body.Outcome == "FAILED" || *body.Outcome == "UNCONFIRMED") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".outcome", *body.Outcome, []any{"APPLIED", "ALREADY_PRESENT", "FAILED", "UNCONFIRMED"}))
 		}
 	}
 	return

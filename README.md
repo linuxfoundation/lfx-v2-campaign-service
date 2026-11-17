@@ -314,11 +314,9 @@ openssl rand -base64 32
   the exact value `true` enables it. Not role-gated. No live create has put
   more than one ad in an ad group yet. The chart sets it to `"false"`.
 - `TWITTER_CREATE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
-  deployment IN to `twitterConfig.geoTargets`, `languages`, `keywords`,
-  `interestIds`, `conversationTopics`, `platforms`, `devices`, `ageBucket`
-  and `gender` (#564), country, language, broad keyword, interest,
-  conversation topic, device platform, device, age and gender targeting
-  criteria added to the line item an X create makes. Only the
+  deployment IN to `twitterConfig.geoTargets`, `languages`, `keywords` and
+  `interestIds` (#564), country, language, broad keyword and interest
+  targeting criteria added to the line item an X create makes. Only the
   exact value `true` enables them; anything else fails closed, and a create
   naming any of them is refused with a 400
   before any job exists. It names no account resource; it keeps a shape no
@@ -326,56 +324,14 @@ openssl rand -base64 32
   `"false"` (`app.environment.TWITTER_CREATE_TARGETING_ENABLED.value`);
   enable it per-environment in the ArgoCD overlay once a live create
   confirms it.
-- `TWITTER_AUDIENCE_EXPANSION_ENABLED` (default unset, i.e. OFF) — opts a
-  deployment IN to `twitterConfig.audienceExpansion` (#564 gap 11): the line
-  item an X create makes is sent with `audience_expansion` `BROAD`, `DEFINED`
-  or `EXPANDED`. Only the exact value `true` enables it; anything else fails
-  closed, and a create setting it is refused with a 400 before any job
-  exists. It names no account resource; it keeps a line-item parameter no
-  live create has sent off the shared ad account. The chart sets it to
-  `"false"` (`app.environment.TWITTER_AUDIENCE_EXPANSION_ENABLED.value`).
-- `TWITTER_FOLLOWER_LOOKALIKES_ENABLED` (default unset, i.e. OFF) — opts a
-  deployment IN to `twitterConfig.followerLookalikeUserIds` (#564 gap 4c):
-  each numeric X user id becomes a `SIMILAR_TO_FOLLOWERS_OF_USER` criterion on
-  the line item an X create makes. Only the exact value `true` enables it;
-  anything else fails closed, and a create setting it is refused with a 400
-  before any job exists. X has no user lookup, so an id X refuses fails at its
-  criterion POST and leaves a PAUSED partial for reconciliation (accepted
-  risk). The chart sets it to `"false"`
-  (`app.environment.TWITTER_FOLLOWER_LOOKALIKES_ENABLED.value`).
-- `TWITTER_TWEET_VARIANTS_ENABLED` (default unset, i.e. OFF) — opts a
-  deployment IN to `twitterConfig.variants` (#564 gap 10): one authored,
-  promoted tweet per variant (at most 5) on the line item an X create makes.
-  Only the exact value `true` enables it; anything else fails closed, and a
-  create setting it is refused with a 400 before any job exists. A variant
-  that fails after another was published leaves the row `created_degraded`;
-  nothing is rolled back. The chart sets it to `"false"`
-  (`app.environment.TWITTER_TWEET_VARIANTS_ENABLED.value`).
-- `TWITTER_WEBSITE_CARD_ENABLED` (default unset, i.e. OFF) — opts a deployment
-  IN to `twitterConfig.card` (#564 gap 6): a website card (the creative image,
-  a headline, the UTM'd registration URL; `POST accounts/:id/cards`) attached
-  by `card_uri` to the tweet(s) an X create authors. Only the exact value
-  `true` enables it; anything else fails closed, and a create setting it is
-  refused with a 400 before any job exists. The chart sets it to `"false"`
-  (`app.environment.TWITTER_WEBSITE_CARD_ENABLED.value`).
 - `TWITTER_VIDEO_ENABLED` (default unset, i.e. OFF) — opts a deployment IN to
   `twitterConfig.videoAssetId` (#564 gap 7): a stored MP4 uploaded as
   `amplify_video` (chunked initialize/append/finalize, then STATUS polled for at
-  most 30 s) and attached to the tweet(s) an X create authors. Only the exact
+  most 30 s) and attached to the tweet an X create authors. Only the exact
   value `true` enables it; anything else fails closed, and a create setting it
   is refused with a 400 before any job exists. Before enabling, measure X's
   processing time for a 20-30 MiB MP4 against the 30 s bound. The chart sets it
   to `"false"` (`app.environment.TWITTER_VIDEO_ENABLED.value`).
-- `TWITTER_KEYWORD_ADD_ENABLED` (default unset, i.e. OFF) — opts a
-  deployment IN to the positive keyword add lever on an existing X campaign
-  (#564 gap 12): `POST .../campaigns/{campaign_id}/keyword-targeting/additions`
-  (`add-keyword-targeting`), one `BROAD_KEYWORD` targeting criterion
-  (`operator_type` `EQ`) per keyword on the line item this service created.
-  Only the exact value `true` enables it; anything else fails closed, and the
-  endpoint answers 400 before X is contacted. It names no account resource
-  (role gating is the removal's: `campaign_manager`); it keeps a write no live
-  call has made off the shared ad account. The chart sets it to `"false"`
-  (`app.environment.TWITTER_KEYWORD_ADD_ENABLED.value`).
 - `META_CONVERSIONS_METRICS_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to conversions in the Meta metrics read (#550): for a
   campaign this service created with the conversions objective, the Insights

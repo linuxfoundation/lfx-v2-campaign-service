@@ -106,31 +106,12 @@ func TestCreateCampaign_VideoProcessingIsBoundedAndCreatesNothing(t *testing.T) 
 	}
 }
 
-// The video is the website card's media when a card is requested.
-func TestCreateCampaign_VideoIsTheCardMedia(t *testing.T) {
-	f := newMediaFakeX()
-	f.wantCategory = "amplify_video"
-	f.finalizeBody = `{"data":{"id":"777","media_key":"7_777"}}`
-	c := newMediaTestClient(t, f)
-	in := videoInput(testMP4(500))
-	in.WebsiteCard = &WebsiteCardInput{Headline: "Keynote"}
-	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
-		t.Fatalf("CreateCampaign: %v", err)
-	}
-	f.mu.Lock()
-	body := f.cardBody
-	f.mu.Unlock()
-	if !strings.Contains(body, `"media_key":"7_777"`) {
-		t.Fatalf("card body %s, want the video's media_key", body)
-	}
-}
-
 // Refused before any request: a video with an image, without an authored tweet, of the wrong type
 // or not an MP4, and a create naming more criteria than a video leaves room for.
 func TestCreateCampaign_VideoRefusedBeforeAnyRequest(t *testing.T) {
 	over := make([]string, MaxCreateTargetingCriteriaWithVideo+1)
 	for i := range over {
-		over[i] = fmt.Sprint(i + 1)
+		over[i] = fmt.Sprint("kw", i+1)
 	}
 	for name, mut := range map[string]func(*CampaignInput){
 		"with an image":  func(in *CampaignInput) { in.Image = &ImageInput{Bytes: testPNG(100), MIME: "image/png"} },
@@ -138,11 +119,7 @@ func TestCreateCampaign_VideoRefusedBeforeAnyRequest(t *testing.T) {
 		"wrong type":     func(in *CampaignInput) { in.Video.MIME = "video/quicktime" },
 		"not an mp4":     func(in *CampaignInput) { in.Video.Bytes = testPNG(100) },
 		"too large":      func(in *CampaignInput) { in.Video.Bytes = testMP4(MaxVideoBytes + 1) },
-		"over criteria":  func(in *CampaignInput) { in.FollowerLookalikeUserIDs = over },
-		// #564 gap 9: an age bucket and a gender each count as a criterion.
-		"over criteria with age and gender": func(in *CampaignInput) {
-			in.FollowerLookalikeUserIDs, in.AgeBucket, in.Gender = over[:MaxCreateTargetingCriteriaWithVideo-1], "AGE_OVER_18", "FEMALE"
-		},
+		"over criteria":  func(in *CampaignInput) { in.Keywords = over },
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newMediaFakeX()

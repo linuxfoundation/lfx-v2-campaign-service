@@ -134,21 +134,12 @@ type Service interface {
 	// nor exactly one interest name: that check reads Reddit, fails open when the
 	// read cannot run, and is repeated at dispatch fail-closed, before anything is
 	// created; resolved creates send Reddit's community spelling and interest ids.
-	// So is a twitterConfig.geoTargets, languages, keywords, interestIds,
-	// conversationTopics, platforms, devices, ageBucket or gender that breaks its
-	// rules, or is sent while TWITTER_CREATE_TARGETING_ENABLED is off (#564). So
-	// is a twitterConfig.audienceExpansion outside BROAD, DEFINED and EXPANDED, or
-	// sent while TWITTER_AUDIENCE_EXPANSION_ENABLED is off (#564 gap 11). So is a
-	// twitterConfig.followerLookalikeUserIds that breaks its rules, or is sent
-	// while TWITTER_FOLLOWER_LOOKALIKES_ENABLED is off (#564 gap 4c). So is a
-	// twitterConfig.variants list that breaks its rules, or is sent while
-	// TWITTER_TWEET_VARIANTS_ENABLED is off (#564 gap 10). So is a
-	// twitterConfig.card that breaks its rules, or is sent while
-	// TWITTER_WEBSITE_CARD_ENABLED is off (#564 gap 6). So is a
-	// twitterConfig.videoAssetId that breaks its rules, or is sent while
-	// TWITTER_VIDEO_ENABLED is off (#564 gap 7). So is a microsoftConfig.sitelinks
-	// or callouts list that breaks its rules, or is sent while
-	// MICROSOFT_AD_EXTENSIONS_ENABLED is off (#563). So is a
+	// So is a twitterConfig.geoTargets, languages, keywords or interestIds that
+	// breaks its rules, or is sent while TWITTER_CREATE_TARGETING_ENABLED is off
+	// (#564). So is a twitterConfig.videoAssetId that breaks its rules, or is sent
+	// while TWITTER_VIDEO_ENABLED is off (#564 gap 7). So is a
+	// microsoftConfig.sitelinks or callouts list that breaks its rules, or is sent
+	// while MICROSOFT_AD_EXTENSIONS_ENABLED is off (#563). So is a
 	// microsoftConfig.negativeKeywords list that breaks its rules or is sent while
 	// MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is off (see the config
 	// attribute). So is a microsoftConfig.headlines, descriptions, path1 or path2
@@ -720,43 +711,6 @@ type Service interface {
 	// answered. Its MESSAGE separates a DEFINITE failure (nothing was removed —
 	// retry) from an UNCONFIRMED one (read the targeting again before retrying).
 	RemoveKeywordTargeting(context.Context, *RemoveKeywordTargetingPayload) (res *KeywordTargetingRemovals, err error)
-	// Add POSITIVE keywords to the keyword TARGETING of an X campaign (#564 gap
-	// 12) — the counterpart of remove-keyword-targeting. Each keyword becomes one
-	// BROAD_KEYWORD targeting criterion (operator_type EQ) on the ONE line item
-	// this service created for the campaign, the criterion an X create sends for
-	// twitterConfig.keywords. Any platform but X is **400** (Reddit's positive add
-	// is not built). A MUTATION on a live paid campaign that can WIDEN delivery,
-	// guarded like the removal, all before X is mutated: the batch, the campaign's
-	// provisioning, its recorded ad account (a row that records none is refused,
-	// never assumed) and the account's match with the project's connection; then
-	// the line item is read and must report THIS campaign, and its targeting
-	// criteria are listed completely. It persists nothing, so it takes no
-	// If-Match. KEYWORDS follow the create-time rules: each is trimmed, must be
-	// 1-80 characters with no control character, and a case-insensitive repeat is
-	// dropped (first spelling kept); 1 to 20 distinct keywords per request (each
-	// is its own paced POST). THE LINE ITEM IS CAPPED AT 60 TARGETING CRITERIA,
-	// the per-create cap, counting every live criterion it already holds
-	// (locations, languages, keywords, negatives, audiences …) plus the keywords
-	// this request would send: over it is **409** with nothing sent. IDEMPOTENT: a
-	// keyword the line item already targets as a live broad keyword (compared
-	// ignoring case and repeated whitespace) is ALREADY_PRESENT, reports that
-	// criterion's id, and is not sent again. One POST per remaining keyword, in
-	// order, paced and sent ONCE (never retried on a 429), each APPLIED (+
-	// criterion id), FAILED (NOT_SENT, REJECTED) or UNCONFIRMED. A per-line-item
-	// lock shared by every replica is held from the criteria read through the last
-	// POST, so two LFX adds to one line item never both pass the cap or both send
-	// the same keyword; after an UNCONFIRMED POST it is kept a further 15 seconds.
-	// OFF until TWITTER_KEYWORD_ADD_ENABLED is "true" (answered 400 like an
-	// unsupported platform), because no positive criterion has yet been added to a
-	// live line item. **400** for a malformed batch, an unsupported platform or
-	// the gate off. **409** as for the removal (unprovisioned, a different or
-	// unrecorded ad account, an unusable connection, a line item this service did
-	// not record or X no longer reports under this campaign, unreadable
-	// targeting), the 60-criterion cap, or another LFX add to the same line item
-	// still in progress after a short wait. **503** only when no keyword got a
-	// definite answer; its MESSAGE separates a DEFINITE failure (nothing was added
-	// — retry) from an UNCONFIRMED one (read the targeting again).
-	AddKeywordTargeting(context.Context, *AddKeywordTargetingPayload) (res *KeywordTargetingAdditions, err error)
 	// Read the AD SETS of a Meta campaign live (LFXV2-2665): each ad set's name,
 	// configured and effective status, bid strategy and own budget, with its
 	// impressions, clicks, spend and CTR over the window. A pure read — the
@@ -925,23 +879,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [42]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "list-creative-assets", "get-creative-asset", "get-asset-plan", "delete-creative-asset", "create-campaigns", "create-send-workflow", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "add-keyword-targeting", "list-meta-ad-sets", "list-meta-ads", "toggle-meta-ad-set-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
-
-// AddKeywordTargetingPayload is the payload type of the
-// lfx-v2-campaign-service-briefs service add-keyword-targeting method.
-type AddKeywordTargetingPayload struct {
-	// JWT token issued by Heimdall
-	BearerToken *string
-	// Project UUID or slug that scopes the connection
-	ProjectID string
-	// Brief UUID
-	BriefID string
-	// Campaign UUID
-	CampaignID string
-	// The keywords to add, as broad keywords: 1-80 characters each after trimming,
-	// no control character.
-	Keywords []string
-}
+var MethodNames = [41]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "list-creative-assets", "get-creative-asset", "get-asset-plan", "delete-creative-asset", "create-campaigns", "create-send-workflow", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "list-meta-ad-sets", "list-meta-ads", "toggle-meta-ad-set-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
 
 // AddNegativeKeywordsPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service add-negative-keywords method.
@@ -1404,123 +1342,45 @@ type CampaignCreateInput struct {
 	// `interestIds` (X interest ids, 1-19 digits, each listed by GET
 	// targeting_criteria/interests, which is walked to its end before anything is
 	// created; at most 60), sent as BROAD_KEYWORD and INTEREST criteria (operator
-	// EQ) after the languages, with the same failure and reuse rules (#564 gap 4),
-	// and `conversationTopics` (X conversation topic values, 1-32 letters or
-	// digits, lowercased, each listed by GET targeting_criteria/conversations,
-	// which is walked to its end before anything is created; at most 60), sent as
-	// CONVERSATION criteria (operator EQ) after the interests, with the same rules
-	// (#564 gap 8), and `platforms` (X device platform values such as 0 for iOS,
-	// not the request's ad platforms; 1-32 letters or digits, lowercased, each
-	// listed by GET targeting_criteria/platforms before anything is created; at
-	// most 10), sent as PLATFORM criteria (operator EQ) after the conversation
-	// topics, with the same rules (#564 gap 9), plus `devices` (X device values
-	// such as 1q for the iPhone 3GS; 1-32 letters or digits, lowercased, each
-	// listed by GET targeting_criteria/devices before anything is created; at most
-	// 60), sent as DEVICE criteria after the platforms, `ageBucket` (a string: one
-	// of X's AGE_BUCKET values such as AGE_18_TO_34 or AGE_OVER_25, uppercased; X
-	// allows a single age bucket per line item), sent as one AGE criterion, and
-	// `gender` (a string: MALE or FEMALE, case-insensitive), sent as one GENDER
-	// criterion with X's value 1 or 2; a blank ageBucket or gender is unset (every
-	// age, every gender) (#564 gap 9). All nine are OFF unless
-	// TWITTER_CREATE_TARGETING_ENABLED is exactly "true". A blank or malformed
-	// entry, a list over its cap, a value that is not an array of strings (or, for
-	// ageBucket and gender, not a string; null reads as absent), an age bucket or
-	// gender outside its set, or any of them while the flag is off, is refused
-	// with 400 "invalid campaign config: twitterConfig.<field>: ..." before any
-	// job exists. X AUDIENCE EXPANSION (#564 gap 11): twitterConfig takes
-	// `audienceExpansion` (BROAD, DEFINED or EXPANDED, case-insensitive), sent as
-	// the new line item's audience_expansion; omitted or blank sends nothing (X
-	// applies no expansion), and a line item reused by name keeps its own. It is
-	// OFF unless TWITTER_AUDIENCE_EXPANSION_ENABLED is exactly "true"; a non-blank
-	// value while off, a value outside the set, or a non-string is refused with
-	// 400 "invalid campaign config: twitterConfig..." before any job exists. X
-	// FOLLOWER LOOK-ALIKES (#564 gap 4c): twitterConfig takes
-	// `followerLookalikeUserIds` (numeric X user ids, 1-19 digits with no leading
-	// zero and within int64, trimmed and de-duplicated, at most 60), each sent as
-	// a SIMILAR_TO_FOLLOWERS_OF_USER criterion (operator EQ) after the platforms
-	// and before the included custom audiences; they count toward the 60-criteria
-	// per-create total. Only the shape is checked before create: X has no user
-	// lookup, so an id X refuses fails at its own criterion POST, which stops the
-	// create before any tweet with the PAUSED campaign and line item retained for
-	// reconciliation, exactly as for any other criterion failure. OFF unless
-	// TWITTER_FOLLOWER_LOOKALIKES_ENABLED is exactly "true"; a non-empty list
-	// while off, a malformed id, a list over its cap, or a value that is not an
-	// array of strings (null reads as absent) is refused with 400 "invalid
-	// campaign config: twitterConfig.followerLookalikeUserIds: ..." before any job
-	// exists. Not role-gated. X TWEET VARIANTS (#564 gap 10): twitterConfig takes
-	// `variants`, [{"tweetText": string}] (1-5 entries, each trimmed and
-	// non-blank, no two the same ignoring case, tweetText the only key), and never
-	// with tweetId or a top-level tweetText. Each variant is authored as its own
-	// nullcast tweet (the same composition, length and credential-screen rules as
-	// tweetText, its destination tagged utm_content=variant-N) and promoted on the
-	// one line item, in order, each authored then promoted before the next;
-	// imageAssetId, when set, is attached to every variant. Every promoted tweet
-	// is recorded in the campaign result as PromotedTweets ([{Variant, TweetID,
-	// Authored, PromotedTweetID, Warning}]); PromotedTweetID and AuthoredTweetID
-	// repeat the first. A variant that fails (authoring refused or UNCONFIRMED,
-	// promotion refused, UNCONFIRMED or reported duplicate) does not stop the
-	// others and nothing is rolled back, since a published tweet cannot be
-	// unpublished: the row is created_degraded with a step naming the failed
-	// variants. On a line item reused by name, no variant is authored when its
-	// promoted tweets cannot be read or their count differs from the variants;
-	// exactly as many are reused. Pause, resume, budget, bid and keyword levers
-	// act on the campaign and line item, so they govern every variant at once. OFF
-	// unless TWITTER_TWEET_VARIANTS_ENABLED is exactly "true"; a non-empty list
-	// while off, a rule breach or a wrong shape (null reads as absent) is refused
-	// with 400 "invalid campaign config: twitterConfig.variants: ..." before any
-	// job exists. Not role-gated. X WEBSITE CARD (#564 gap 6): twitterConfig takes
-	// `card`, {"headline": string} (trimmed, 1-70 characters, no control
-	// character; headline is the only key). It needs media (imageAssetId or
-	// videoAssetId, never both) and an authored tweet (tweetText or variants,
-	// never tweetId). Once the campaign and line item exist and a tweet is about
-	// to be authored, one website card is created with POST
-	// accounts/:account_id/cards (a MEDIA component carrying the creative image's
-	// or video's media_key and a DETAILS component carrying the headline and a
-	// WEBSITE destination: the registration URL with this service's UTMs and
-	// utm_content=website-card), and its card_uri is sent on every tweet the
-	// create authors (media_keys is then not sent; the image rides in the card).
-	// The result records it as CardURI. A card that cannot be created publishes
-	// nothing: the row is created_degraded with a step to post the tweet manually
-	// (UNCONFIRMED when the card may exist; a card is neither public nor
-	// billable). A create that reuses an earlier attempt's promoted tweet creates
-	// no card. OFF unless TWITTER_WEBSITE_CARD_ENABLED is exactly "true"; a card
-	// while off, a rule breach or a wrong shape (null reads as absent) is refused
-	// with 400 "invalid campaign config: twitterConfig.card: ..." before any job
-	// exists. Not role-gated. X VIDEO (#564 gap 7): twitterConfig takes
+	// EQ) after the languages, with the same failure and reuse rules (#564 gap 4).
+	// All four are OFF unless TWITTER_CREATE_TARGETING_ENABLED is exactly "true".
+	// A blank or malformed entry, a list over its cap, a value that is not an
+	// array of strings (null reads as absent), or any list while the flag is off,
+	// is refused with 400 "invalid campaign config: twitterConfig.<field>: ..."
+	// before any job exists. X VIDEO (#564 gap 7): twitterConfig takes
 	// `videoAssetId`, the id of an MP4 creative asset uploaded to this brief
 	// (upload-creative-asset, content_type video/mp4, at most 30 MiB), attached to
-	// the authored tweet(s) instead of an image, or used as the website card's
-	// media. It requires an authored tweet (tweetText or variants, never tweetId)
-	// and is never combined with imageAssetId. Before anything billable exists the
-	// video is uploaded through X's chunked media upload (initialize with
-	// media_category amplify_video and media_type video/mp4, one append per 4 MiB
-	// segment, finalize, then the STATUS command while X reports processing, at
-	// most 6 checks of at most 5 seconds each) and added to the ad account's Media
-	// Library under a name derived from its SHA-256, which a later create of the
-	// same bytes finds and reuses instead of uploading again; its media_key is
-	// then sent as media_keys on every authored tweet. A video that cannot be
-	// uploaded, is rejected during processing, or does not finish processing
-	// within that bound fails the job with nothing created. A create with a
-	// videoAssetId may name at most 30 targeting criteria in total (the upload and
-	// processing share the dispatch budget). An asset that does not exist for this
-	// brief, is over 30 MiB or is not video/mp4 fails the job before any X
-	// request. OFF unless TWITTER_VIDEO_ENABLED is exactly "true"; a videoAssetId
-	// while off, a malformed id, one beside imageAssetId or tweetId or without
-	// tweetText or variants, more than 30 criteria, or a non-string (null reads as
-	// absent) is refused with 400 "invalid campaign config: twitterConfig..."
-	// before any job exists. Not role-gated. X CUSTOM AUDIENCES (#564):
-	// twitterConfig takes `customAudienceIds` and `excludedCustomAudienceIds`,
-	// arrays of X custom audience ids (list-twitter-ads-custom-audiences offers
-	// them) to target and to exclude, sent as CUSTOM_AUDIENCE targeting criteria
-	// on the new line item with operator EQ and NE. Each id is 1-32 letters or
-	// digits, sent exactly as given; at most 60 per list; no id twice and none in
-	// both lists. geoTargets, languages, keywords, interestIds,
-	// conversationTopics, platforms, devices, ageBucket, gender,
-	// followerLookalikeUserIds, customAudienceIds and excludedCustomAudienceIds
-	// together may name at most 60 criteria per create, since each is a separate X
-	// write paced at one per second inside the two-minute dispatch budget; more is
-	// refused with the same 400. Before anything is created every id is read with
-	// GET accounts/:account_id/custom_audiences and must be live and targetable; a
+	// the authored tweet instead of an image. It requires an authored tweet
+	// (tweetText, never tweetId) and is never combined with imageAssetId. Before
+	// anything billable exists the video is uploaded through X's chunked media
+	// upload (initialize with media_category amplify_video and media_type
+	// video/mp4, one append per 4 MiB segment, finalize, then the STATUS command
+	// while X reports processing, at most 6 checks of at most 5 seconds each) and
+	// added to the ad account's Media Library under a name derived from its
+	// SHA-256, which a later create of the same bytes finds and reuses instead of
+	// uploading again; its media_key is then sent as media_keys on the authored
+	// tweet. A video that cannot be uploaded, is rejected during processing, or
+	// does not finish processing within that bound fails the job with nothing
+	// created. A create with a videoAssetId may name at most 30 targeting criteria
+	// in total (the upload and processing share the dispatch budget). An asset
+	// that does not exist for this brief, is over 30 MiB or is not video/mp4 fails
+	// the job before any X request. OFF unless TWITTER_VIDEO_ENABLED is exactly
+	// "true"; a videoAssetId while off, a malformed id, one beside imageAssetId or
+	// tweetId or without tweetText, more than 30 criteria, or a non-string (null
+	// reads as absent) is refused with 400 "invalid campaign config:
+	// twitterConfig..." before any job exists. Not role-gated. X CUSTOM AUDIENCES
+	// (#564): twitterConfig takes `customAudienceIds` and
+	// `excludedCustomAudienceIds`, arrays of X custom audience ids
+	// (list-twitter-ads-custom-audiences offers them) to target and to exclude,
+	// sent as CUSTOM_AUDIENCE targeting criteria on the new line item with
+	// operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
+	// given; at most 60 per list; no id twice and none in both lists. geoTargets,
+	// languages, keywords, interestIds, customAudienceIds and
+	// excludedCustomAudienceIds together may name at most 60 criteria per create,
+	// since each is a separate X write paced at one per second inside the
+	// two-minute dispatch budget; more is refused with the same 400. Before
+	// anything is created every id is read with GET
+	// accounts/:account_id/custom_audiences and must be live and targetable; a
 	// missing, deleted or non-targetable audience fails the job with nothing
 	// created. The exclusions are posted first of all the criteria and the
 	// inclusions last, after the line item and before the promoted tweet; a
@@ -2567,38 +2427,6 @@ type KeywordTargeting struct {
 	// targeting has changed since, so a removal is never applied to a targeting
 	// the caller did not see. Absent on X.
 	Revision *string
-}
-
-type KeywordTargetingAdditionResult struct {
-	// The keyword this result answers, as normalized: trimmed, first spelling of a
-	// case-insensitive duplicate kept.
-	Keyword string
-	// The X targeting criterion that holds the keyword: the one this request
-	// created (APPLIED), or the one the line item already had (ALREADY_PRESENT).
-	// Absent for FAILED and UNCONFIRMED.
-	CriterionID *string
-	// APPLIED — added by this request; ALREADY_PRESENT — the line item already
-	// targets it as a broad keyword, so nothing was sent; FAILED — definitely not
-	// added (see error_code); UNCONFIRMED — may have been added, read the keyword
-	// targeting again before retrying.
-	Outcome string
-	// Why a keyword is FAILED: NOT_SENT (the request carrying it was never sent)
-	// or REJECTED (X refused it). X's own text is never returned.
-	ErrorCode *string
-}
-
-// KeywordTargetingAdditions is the result type of the
-// lfx-v2-campaign-service-briefs service add-keyword-targeting method.
-type KeywordTargetingAdditions struct {
-	// The campaign whose targeting was changed
-	CampaignID string
-	// Exactly one entry per DISTINCT requested keyword after normalization
-	// (trimmed; a case-insensitive repeat is dropped, first spelling kept), in
-	// request order. One POST per keyword sent, each with its own outcome.
-	Results []*KeywordTargetingAdditionResult
-	// How many requested keywords the line item now targets: results whose outcome
-	// is APPLIED or ALREADY_PRESENT.
-	AppliedCount int
 }
 
 type KeywordTargetingEntry struct {

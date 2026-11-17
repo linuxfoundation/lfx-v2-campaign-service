@@ -75,37 +75,8 @@ type twitterConfig struct {
 	// TWITTER_CREATE_TARGETING_ENABLED flag.
 	Keywords    []string `json:"keywords,omitempty"`
 	InterestIDs []string `json:"interestIds,omitempty"`
-	// ConversationTopics (CONVERSATION, values from GET targeting_criteria/conversations) target
-	// the new line item too (#564 gap 8), behind the same TWITTER_CREATE_TARGETING_ENABLED flag.
-	ConversationTopics []string `json:"conversationTopics,omitempty"`
-	// Platforms (PLATFORM, values from GET targeting_criteria/platforms) narrow the new line item to
-	// device platforms (#564 gap 9), behind the same TWITTER_CREATE_TARGETING_ENABLED flag. These
-	// are X's device platforms (iOS, Android, desktop), not the request's ad platforms.
-	Platforms []string `json:"platforms,omitempty"`
-	// Devices (DEVICE, values from GET targeting_criteria/devices), AgeBucket (one AGE bucket such
-	// as AGE_18_TO_34) and Gender (MALE or FEMALE, sent as X's GENDER 1 or 2) narrow the new line
-	// item too (#564 gap 9), behind the same TWITTER_CREATE_TARGETING_ENABLED flag.
-	Devices   []string `json:"devices,omitempty"`
-	AgeBucket string   `json:"ageBucket,omitempty"`
-	Gender    string   `json:"gender,omitempty"`
-	// AudienceExpansion (BROAD, DEFINED or EXPANDED) is sent as the new line item's
-	// audience_expansion (#564 gap 11, twitter_audience_expansion.go). Behind
-	// TWITTER_AUDIENCE_EXPANSION_ENABLED; omitted, X applies no expansion, as before.
-	AudienceExpansion string `json:"audienceExpansion,omitempty"`
-	// FollowerLookalikeUserIDs (numeric X user ids) become SIMILAR_TO_FOLLOWERS_OF_USER criteria on
-	// the new line item (#564 gap 4c, twitter_follower_lookalikes.go). Behind
-	// TWITTER_FOLLOWER_LOOKALIKES_ENABLED; shape-checked only, since X has no user lookup.
-	FollowerLookalikeUserIDs []string `json:"followerLookalikeUserIds,omitempty"`
-	// Variants author and promote one tweet per entry on the one line item (#564 gap 10,
-	// twitter_tweet_variants.go): 1-5 entries, never with tweetId or tweetText. Behind
-	// TWITTER_TWEET_VARIANTS_ENABLED.
-	Variants []twitterTweetVariant `json:"variants,omitempty"`
-	// Card is a website card (headline, the creative image or video, the UTM'd registration URL)
-	// attached to the authored tweet(s) by card_uri (#564 gap 6, twitter_website_card.go). Behind
-	// TWITTER_WEBSITE_CARD_ENABLED; needs imageAssetId or videoAssetId and an authored tweet.
-	Card *twitterWebsiteCard `json:"card,omitempty"`
 	// VideoAssetID references a stored MP4 creative asset (upload-creative-asset, video/mp4) to
-	// upload as amplify_video and attach to the authored tweet(s) instead of an image (#564 gap 7,
+	// upload as amplify_video and attach to the authored tweet instead of an image (#564 gap 7,
 	// twitter_video.go). Behind TWITTER_VIDEO_ENABLED; never with imageAssetId.
 	VideoAssetID string `json:"videoAssetId,omitempty"`
 	// CustomAudienceIDs and ExcludedCustomAudienceIDs are X custom audience ids to target and to
@@ -141,7 +112,7 @@ func twitterBidPlan(cfg twitterConfig) (bidPlan, error) {
 // created as asked. It never calls X, so every other outcome is ErrPreflightNotApplicable; a
 // config that does not decode is left to Dispatch — except a wrong-typed `bidding`, refused here
 // by checkBiddingShape.
-func (d *TwitterDispatcher) PreflightCreate(ctx context.Context, _ string, _ model.Provider, config json.RawMessage) error {
+func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
 	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
 	if err := checkBiddingShape(config, "twitterConfig"); err != nil {
 		return err
@@ -152,22 +123,6 @@ func (d *TwitterDispatcher) PreflightCreate(ctx context.Context, _ string, _ mod
 	}
 	// And a mistyped customAudienceIds / excludedCustomAudienceIds (#564 gap 3).
 	if err := checkTwitterCustomAudienceShape(config); err != nil {
-		return err
-	}
-	// And a mistyped audienceExpansion (#564 gap 11).
-	if err := checkTwitterAudienceExpansionShape(config); err != nil {
-		return err
-	}
-	// And a mistyped followerLookalikeUserIds (#564 gap 4c).
-	if err := checkTwitterFollowerLookalikesShape(config); err != nil {
-		return err
-	}
-	// And a mis-shaped variants list (#564 gap 10).
-	if err := checkTwitterTweetVariantsShape(config); err != nil {
-		return err
-	}
-	// And a mis-shaped card (#564 gap 6).
-	if err := checkTwitterWebsiteCardShape(config); err != nil {
 		return err
 	}
 	// And a mistyped videoAssetId (#564 gap 7).
@@ -191,23 +146,7 @@ func (d *TwitterDispatcher) PreflightCreate(ctx context.Context, _ string, _ mod
 	if err := checkTwitterCustomAudiences(cfg); err != nil {
 		return err
 	}
-	if tgt.lookalikes, err = checkTwitterFollowerLookalikes(cfg); err != nil {
-		return err
-	}
 	if err := checkTwitterCreateCriteriaCount(tgt, cfg); err != nil {
-		return err
-	}
-	if _, err := checkTwitterAudienceExpansion(cfg); err != nil {
-		return err
-	}
-	variants, err := checkTwitterTweetVariants(cfg)
-	if err != nil {
-		return err
-	}
-	if err := checkTwitterComposedTweets(ctx, config, cfg, variants); err != nil {
-		return err
-	}
-	if _, err := checkTwitterWebsiteCard(cfg); err != nil {
 		return err
 	}
 	if _, err := checkTwitterVideo(cfg, tgt.count()+len(cfg.CustomAudienceIDs)+len(cfg.ExcludedCustomAudienceIDs)); err != nil {
@@ -257,14 +196,6 @@ type TwitterDispatcher struct {
 	// asset-referencing config is refused as "store not configured" and the reserver is a no-op.
 	creatives creativeAssetReader
 	assets    *AssetReserver
-	// targetingLock serializes the positive keyword add (AddKeywordTargeting, #564 gap 12) per
-	// line item, from the criteria read that decides ALREADY_PRESENT and the criteria cap through
-	// the last POST: in-process by default, the Postgres advisory lock Reddit's whole-targeting
-	// writes use once the container binds it (SetKeywordTargetingWriteLock), so replicas
-	// serialize too. targetingCooldown is how long it is kept after an UNCONFIRMED POST
-	// (domain.KeywordTargetingUnconfirmedCooldown); a field only so tests can shorten it.
-	targetingLock     domain.KeywordTargetingWriteLock
-	targetingCooldown time.Duration
 }
 
 // SetStatsJobLease binds the cross-pod stats-job lease the audience read and the account
@@ -288,13 +219,7 @@ func NewTwitterDispatcher(repo connReader, enc domain.Encryptor, opts ...twitter
 	// the caller's options: two projects whose connections point at one ad account then pace
 	// (and reserve stats-job batches) against the same state. See twitter.AccountPacers.
 	opts = append(opts[:len(opts):len(opts)], twitter.WithAccountPacers(twitter.NewAccountPacers()))
-	d := &TwitterDispatcher{opts: opts}
-	d.creds = newCredsSource(repo, enc)
-	d.clients = newClientCache()
-	d.audience = newTwitterAudienceGuard()
-	d.targetingLock = newLocalTargetingLock(domain.KeywordTargetingLockWait)
-	d.targetingCooldown = domain.KeywordTargetingUnconfirmedCooldown
-	return d
+	return &TwitterDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts, audience: newTwitterAudienceGuard()}
 }
 
 // cachedTwitterClient returns the client for this connection, building it only when there is
@@ -373,18 +298,6 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if err := checkTwitterCustomAudienceShape(config); err != nil {
 		return nil, notCreated(err)
 	}
-	if err := checkTwitterAudienceExpansionShape(config); err != nil {
-		return nil, notCreated(err)
-	}
-	if err := checkTwitterFollowerLookalikesShape(config); err != nil {
-		return nil, notCreated(err)
-	}
-	if err := checkTwitterTweetVariantsShape(config); err != nil {
-		return nil, notCreated(err)
-	}
-	if err := checkTwitterWebsiteCardShape(config); err != nil {
-		return nil, notCreated(err)
-	}
 	if err := checkTwitterVideoShape(config); err != nil {
 		return nil, notCreated(err)
 	}
@@ -412,26 +325,7 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if err := checkTwitterCustomAudiences(cfg); err != nil {
 		return nil, notCreated(err)
 	}
-	// And the follower look-alike gate and shape (#564 gap 4c), for the same reason.
-	if tgt.lookalikes, err = checkTwitterFollowerLookalikes(cfg); err != nil {
-		return nil, notCreated(err)
-	}
 	if err := checkTwitterCreateCriteriaCount(tgt, cfg); err != nil {
-		return nil, notCreated(err)
-	}
-	// And the audience expansion gate and rule (#564 gap 11), for the same reason.
-	audienceExpansion, err := checkTwitterAudienceExpansion(cfg)
-	if err != nil {
-		return nil, notCreated(err)
-	}
-	// And the tweet variants gate and rules (#564 gap 10).
-	variants, err := checkTwitterTweetVariants(cfg)
-	if err != nil {
-		return nil, notCreated(err)
-	}
-	// And the website card gate and rules (#564 gap 6).
-	card, err := checkTwitterWebsiteCard(cfg)
-	if err != nil {
 		return nil, notCreated(err)
 	}
 	// And the video gate and rules (#564 gap 7).
@@ -496,9 +390,7 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// further out.
 	tweetID := strings.TrimSpace(cfg.TweetID)
 	var asUserID string
-	// Variants (#564 gap 10) author tweets too, so they need the same authorization; they are
-	// never combined with a tweetId (checkTwitterTweetVariants).
-	if tweetID == "" && (strings.TrimSpace(cfg.TweetText) != "" || len(variants) > 0) {
+	if tweetID == "" && strings.TrimSpace(cfg.TweetText) != "" {
 		asUserID, err = authorizedTwitterAsUserID(brief.ProjectID, res, cfg.AsUserID)
 		if err != nil {
 			return nil, notCreated(err)
@@ -509,15 +401,18 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// a request-supplied token takes precedence over the brief blobs so it drives the
 	// promoted-tweet utm_campaign instead of being silently ignored (matches the other
 	// dispatchers via the shared envelopeHSToken helper).
-	hsToken, err := twitterHSToken(config, bf)
+	hsToken, err := envelopeHSToken(config)
 	if err != nil {
 		return nil, notCreated(err) // a wrong-typed hsToken is a caller error (pre-create)
+	}
+	if hsToken == "" {
+		hsToken = bf.HSToken
 	}
 
 	// The creative image is resolved BEFORE the client is built or X contacted: every refusal
 	// here is a pre-create caller/wiring error. The reservation is held until CreateCampaign
 	// has uploaded the bytes.
-	image, releaseImage, err := d.resolveTwitterImage(ctx, brief, cfg, tweetID, len(variants) > 0)
+	image, releaseImage, err := d.resolveTwitterImage(ctx, brief, cfg, tweetID)
 	if err != nil {
 		return nil, notCreated(err)
 	}
@@ -530,15 +425,13 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	defer releaseVideo()
 
 	stageToken, tacticToken := model.DispatchLabels(ctx).NameTokens()
-	// The destination fields come from the helper the synchronous preflight composes the tweet
-	// text with (checkTwitterComposedTweets), so the two build the same destination URL.
-	dest := twitterTweetDestination(brief, bf, hsToken)
 	in := twitter.CampaignInput{
-		EventName:       dest.EventName,
-		EventSlug:       dest.EventSlug,
-		Project:         dest.Project,
-		RegistrationURL: dest.RegistrationURL,
-		HSToken:         dest.HSToken,
+		EventName: bf.EventName,
+		EventSlug: brief.EventSlug,
+		// Project stamped from the authenticated scope, not caller JSON (api-catalog).
+		Project:         brief.ProjectID,
+		RegistrationURL: bf.RegistrationURL,
+		HSToken:         hsToken,
 		BudgetUsd:       cfg.BudgetAmount, // account-currency amount (client field name is legacy)
 		StartDate:       cfg.StartDate,
 		EndDate:         cfg.EndDate,
@@ -562,19 +455,7 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		Keywords:    tgt.keywords,
 		InterestIDs: tgt.interests,
 
-		ConversationTopics: tgt.topics,
-		Platforms:          tgt.platforms,
-		Devices:            tgt.devices,
-		AgeBucket:          tgt.ageBucket,
-		Gender:             tgt.gender,
-
-		AudienceExpansion: audienceExpansion,
-
-		FollowerLookalikeUserIDs: tgt.lookalikes,
-
-		TweetVariants: variants,
-		WebsiteCard:   card,
-		Video:         video,
+		Video: video,
 
 		CustomAudienceIDs:         cfg.CustomAudienceIDs,
 		ExcludedCustomAudienceIDs: cfg.ExcludedCustomAudienceIDs,
@@ -653,18 +534,6 @@ func campaignFromTwitter(ctx context.Context, r *twitter.CampaignResult, cfg twi
 	// Keywords (#564 gap 4) are caller free text bound for the same column, so they are reduced
 	// the same way (sanitizeSnapshotTexts reallocates, leaving the list sent to X untouched).
 	snapshot.Keywords = sanitizeSnapshotTexts(cfg.Keywords)
-	// The card headline (#564 gap 6) is operator text bound for the same column.
-	if cfg.Card != nil {
-		snapshot.Card = &twitterWebsiteCard{Headline: sanitizeSnapshotText(cfg.Card.Headline)}
-	}
-	// Variant copy (#564 gap 10) is the same operator prose as tweetText, reduced the same way, in
-	// a fresh slice so the variants sent to X are untouched.
-	if cfg.Variants != nil {
-		snapshot.Variants = make([]twitterTweetVariant, len(cfg.Variants))
-		for i, v := range cfg.Variants {
-			snapshot.Variants[i] = twitterTweetVariant{TweetText: sanitizeSnapshotText(v.TweetText)}
-		}
-	}
 	applyCampaignConfig(ctx, c, cfg.BudgetAmount, false, cfg.StartDate, cfg.EndDate, snapshot)
 	if raw, err := json.Marshal(r); err != nil {
 		// A marshal failure should be near-impossible for this plain struct, but do NOT

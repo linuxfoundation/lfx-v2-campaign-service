@@ -437,11 +437,9 @@ app:
     REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED:
       value: "false"
 
-    # Opts this deployment IN to twitterConfig.geoTargets, languages, keywords,
-    # interestIds, conversationTopics, platforms, devices, ageBucket and gender
-    # (#564), sent at create time as LOCATION, LANGUAGE, BROAD_KEYWORD, INTEREST,
-    # CONVERSATION, PLATFORM, DEVICE, AGE and GENDER targeting criteria on the
-    # new X line item.
+    # Opts this deployment IN to twitterConfig.geoTargets, languages, keywords
+    # and interestIds (#564), sent at create time as LOCATION, LANGUAGE,
+    # BROAD_KEYWORD and INTEREST targeting criteria on the new X line item.
     # Default off: the
     # shape is built from X's published v12 reference and no live create has
     # sent it. It names no account resource; it keeps an unverified shape off
@@ -451,55 +449,12 @@ app:
     TWITTER_CREATE_TARGETING_ENABLED:
       value: "false"
 
-    # Opts this deployment IN to twitterConfig.audienceExpansion (#564 gap 11),
-    # sent as audience_expansion (BROAD, DEFINED or EXPANDED) on the new X line
-    # item. Default off: built from X's published v12 reference and no live
-    # create has sent it. It names no account resource. While off, a create
-    # setting it is refused with a 400 before any job exists. Any value other
-    # than "true" is treated as off.
-    TWITTER_AUDIENCE_EXPANSION_ENABLED:
-      value: "false"
-
-    # Opts this deployment IN to twitterConfig.followerLookalikeUserIds (#564 gap 4c),
-    # SIMILAR_TO_FOLLOWERS_OF_USER criteria on the new X line item. Default off: no live
-    # create has sent it. X has no user lookup, so an id X refuses fails at its criterion
-    # POST and leaves a PAUSED partial for reconciliation. While off, a create setting it is
-    # refused with a 400 before any job exists. Any value other than "true" is treated as off.
-    TWITTER_FOLLOWER_LOOKALIKES_ENABLED:
-      value: "false"
-
-    # Opts this deployment IN to twitterConfig.variants (#564 gap 10): one authored,
-    # promoted tweet per variant (at most 5) on the new X line item. Default off: no live
-    # create has published several tweets. A variant failing after another was published
-    # leaves the row created_degraded (no rollback). While off, a create setting it is refused
-    # with a 400 before any job exists. Any value other than "true" is treated as off.
-    TWITTER_TWEET_VARIANTS_ENABLED:
-      value: "false"
-
-    # Opts this deployment IN to twitterConfig.card (#564 gap 6): a website card (the
-    # creative image or video, a headline, the UTM'd registration URL) created with POST
-    # accounts/:id/cards and attached by card_uri to the authored tweet(s). Default off: built
-    # from X's published reference; no live create has sent it. While off, a create setting it
-    # is refused with a 400 before any job exists. Any value other than "true" is treated as off.
-    TWITTER_WEBSITE_CARD_ENABLED:
-      value: "false"
-
     # Opts this deployment IN to twitterConfig.videoAssetId (#564 gap 7): a stored MP4 uploaded
-    # as amplify_video and attached to the authored tweet(s). Default off: no live create has
+    # as amplify_video and attached to the authored tweet. Default off: no live create has
     # uploaded one. Blocker before enabling: measure X's processing time for a 20-30 MiB MP4
     # against the 30 s STATUS bound inside the two-minute provider call. While off, a create
     # setting it is refused with a 400 before any job exists. Any value other than "true" is off.
     TWITTER_VIDEO_ENABLED:
-      value: "false"
-
-    # Opts this deployment IN to the positive keyword add lever on an existing X
-    # campaign (#564 gap 12): POST .../keyword-targeting/additions, one
-    # BROAD_KEYWORD criterion (operator_type EQ) per keyword on the line item this
-    # service created. Default off: no positive criterion has been added to a live
-    # line item yet. It names no account resource. While off, the endpoint answers
-    # 400 "not supported or not enabled" before X is contacted. Any value other
-    # than "true" is treated as off.
-    TWITTER_KEYWORD_ADD_ENABLED:
       value: "false"
 
     # Opts this deployment IN to X custom audiences (#564): the create inputs

@@ -40,20 +40,6 @@ var twitterUngatedFields = map[string]bool{
 	"asUserId": true, "imageAssetId": true, "bidding": true, "geoTargets": true, "languages": true,
 	// #564 gap 4: keyword text and X's public interest ids name no account resource.
 	"keywords": true, "interestIds": true,
-	// #564 gap 8: X's public conversation topic values name no account resource.
-	"conversationTopics": true,
-	// #564 gap 9: X's public device platform values name no account resource.
-	"platforms": true,
-	// #564 gap 9: X's public device values, age buckets and genders name no account resource.
-	"devices": true, "ageBucket": true, "gender": true,
-	// #564 gap 11: a line-item setting from X's closed set names no account resource.
-	"audienceExpansion": true,
-	// #564 gap 4c: a public X user id names no account resource.
-	"followerLookalikeUserIds": true,
-	// #564 gap 10: tweet copy names no account resource.
-	"variants": true,
-	// #564 gap 6: a headline and the create's own image name no account resource.
-	"card": true,
 	// #564 gap 7: a stored asset of this brief names no account resource.
 	"videoAssetId": true,
 }
@@ -271,7 +257,7 @@ func TestTwitterCustomAudiences_TotalCriteriaAreCapped(t *testing.T) {
 	over := `,"geoTargets":["US","us"],"languages":["en"],"customAudienceIds":[` + quoted("a", twitter.MaxCreateTargetingCriteria-3) +
 		`],"excludedCustomAudienceIds":[` + quoted("x", 2) + `]`
 	err := d.PreflightCreate(context.Background(), "cncf", model.ProviderTwitterAds, twitterTargetingCfg(over))
-	requireConfigInvalid(t, err, "twitterConfig: geoTargets, languages, keywords, interestIds, conversationTopics, platforms, devices, ageBucket, gender, followerLookalikeUserIds, customAudienceIds and excludedCustomAudienceIds together name 61 targeting criteria; at most 60")
+	requireConfigInvalid(t, err, "twitterConfig: geoTargets, languages, keywords, interestIds, customAudienceIds and excludedCustomAudienceIds together name 61 targeting criteria; at most 60")
 	_, err = d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds, twitterTargetingCfg(over))
 	requirePreCreate(t, err)
 	if !strings.Contains(err.Error(), "together name 61 targeting criteria") {

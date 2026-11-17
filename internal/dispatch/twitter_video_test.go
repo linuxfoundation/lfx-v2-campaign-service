@@ -49,23 +49,20 @@ func TestTwitterVideo_GateAndRules(t *testing.T) {
 	}
 
 	t.Setenv(constants.EnvTwitterVideoEnabled, "true")
-	t.Setenv(constants.EnvTwitterFollowerLookalikesEnabled, "true")
 	t.Setenv(constants.EnvTwitterCreateTargetingEnabled, "true")
-	ids := make([]string, 31)
-	for i := range ids {
-		ids[i] = `"` + strconv.Itoa(100+i) + `"`
+	kws := make([]string, 31)
+	for i := range kws {
+		kws[i] = `"kw` + strconv.Itoa(100+i) + `"`
 	}
-	// The gap 9 age bucket and gender count toward the video cap too (#564): 29 + 1 + 1 = 31.
-	ageGender := `,"followerLookalikeUserIds":[` + strings.Join(ids[:29], ",") + `],"ageBucket":"AGE_OVER_18","gender":"MALE"`
 	base := `{"twitterConfig":{"budgetAmount":500,"startDate":"2099-03-01","endDate":"2099-03-10",`
 	for raw, want := range map[string]string{
-		string(xVideoConfig(`,"imageAssetId":"` + xAssetID + `"`)):                           "image or a video, not both",
-		base + `"tweetId":"123","videoAssetId":"` + xAssetID + `"}}`:                         "requires tweetText (or variants) and no tweetId",
-		base + `"videoAssetId":"` + xAssetID + `"}}`:                                         "requires tweetText (or variants) and no tweetId",
-		base + `"tweetText":"t","videoAssetId":"not-a-uuid"}}`:                               "is not a valid asset id",
-		base + `"tweetText":"t","videoAssetId":7}}`:                                          "twitterConfig.videoAssetId: must be a string",
-		string(xVideoConfig(`,"followerLookalikeUserIds":[` + strings.Join(ids, ",") + `]`)): "at most 30 targeting criteria",
-		string(xVideoConfig(ageGender)):                                                      "this one names 31",
+		string(xVideoConfig(`,"imageAssetId":"` + xAssetID + `"`)):                                    "image or a video, not both",
+		base + `"tweetId":"123","videoAssetId":"` + xAssetID + `"}}`:                                  "requires tweetText and no tweetId",
+		base + `"videoAssetId":"` + xAssetID + `"}}`:                                                  "requires tweetText and no tweetId",
+		base + `"tweetText":"t","videoAssetId":"not-a-uuid"}}`:                                        "is not a valid asset id",
+		base + `"tweetText":"t","videoAssetId":7}}`:                                                   "twitterConfig.videoAssetId: must be a string",
+		string(xVideoConfig(`,"keywords":[` + strings.Join(kws, ",") + `]`)):                          "at most 30 targeting criteria",
+		string(xVideoConfig(`,"geoTargets":["US"],"keywords":[` + strings.Join(kws[:30], ",") + `]`)): "this one names 31",
 	} {
 		requireConfigInvalid(t, d.PreflightCreate(context.Background(), "cncf", model.ProviderTwitterAds, json.RawMessage(raw)), want)
 	}
@@ -112,19 +109,5 @@ func TestTwitterVideo_SlotsRefuseTheOtherMedia(t *testing.T) {
 	x.mu.Unlock()
 	if total != 0 {
 		t.Fatalf("%d X calls; want 0", total)
-	}
-}
-
-// The video can be the website card's media: a card with a videoAssetId and no imageAssetId passes.
-func TestTwitterVideo_IsCardMedia(t *testing.T) {
-	t.Setenv(constants.EnvTwitterVideoEnabled, "true")
-	t.Setenv(constants.EnvTwitterWebsiteCardEnabled, "true")
-	x, srv := newXCreativeServer(t)
-	d := newXCreativeDispatcher(srv.URL, briefVideo(xTestMP4(900)), nil)
-	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds, xVideoConfig(`,"card":{"headline":"Keynote"}`)); err != nil {
-		t.Fatalf("Dispatch: %v", err)
-	}
-	if x.count("card") != 1 {
-		t.Fatalf("cards = %d, want 1", x.count("card"))
 	}
 }

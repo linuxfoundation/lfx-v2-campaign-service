@@ -381,18 +381,16 @@ const createOverheadWrites = 10
 // sized for: every paced write of a create at the cap must finish with at least a third of the
 // dispatch budget left for the unpaced reads (account, lookups, custom audience check).
 func TestCreateTargetingCriteriaFitTheDispatchBudget(t *testing.T) {
-	// Tweet variants (#564 gap 10): each variant past the first adds a tweet and its promotion.
-	variantWrites := 2 * (MaxTweetVariants - 1)
-	paced := time.Duration(MaxCreateTargetingCriteria+createOverheadWrites+variantWrites) * writeDelay
+	paced := time.Duration(MaxCreateTargetingCriteria+createOverheadWrites) * writeDelay
 	if paced > dispatchBudgetMirror*2/3 {
-		t.Fatalf("%d criteria + %d other writes + %d variant writes at %v each take %v, more than two thirds of the %v dispatch budget",
-			MaxCreateTargetingCriteria, createOverheadWrites, variantWrites, writeDelay, paced, dispatchBudgetMirror)
+		t.Fatalf("%d criteria + %d other writes at %v each take %v, more than two thirds of the %v dispatch budget",
+			MaxCreateTargetingCriteria, createOverheadWrites, writeDelay, paced, dispatchBudgetMirror)
 	}
 	// A video (#564 gap 7): its upload writes (initialize, one append per segment of the largest
 	// video, finalize, library add) and its bounded processing wait replace the criteria it leaves
 	// out; the whole must still leave a quarter of the budget for the unpaced reads.
 	videoWrites := 2 + (MaxVideoBytes+defaultMediaChunkSize-1)/defaultMediaChunkSize + 1
-	withVideo := time.Duration(MaxCreateTargetingCriteriaWithVideo+createOverheadWrites+variantWrites+videoWrites)*writeDelay +
+	withVideo := time.Duration(MaxCreateTargetingCriteriaWithVideo+createOverheadWrites+videoWrites)*writeDelay +
 		time.Duration(maxVideoStatusPolls)*defaultMediaPollCap
 	if withVideo > dispatchBudgetMirror*3/4 {
 		t.Fatalf("a create with a video takes %v of paced writes and processing wait, more than three quarters of the %v dispatch budget", withVideo, dispatchBudgetMirror)
@@ -400,7 +398,7 @@ func TestCreateTargetingCriteriaFitTheDispatchBudget(t *testing.T) {
 	if MaxCreateTargetingCriteriaWithVideo > MaxCreateTargetingCriteria {
 		t.Fatal("the video criteria cap exceeds the per-create criteria cap")
 	}
-	if MaxGeoTargets > MaxCreateTargetingCriteria || MaxLanguages > MaxCreateTargetingCriteria || MaxCustomAudienceIDs > MaxCreateTargetingCriteria || MaxCreateFollowerLookalikes > MaxCreateTargetingCriteria {
+	if MaxGeoTargets > MaxCreateTargetingCriteria || MaxLanguages > MaxCreateTargetingCriteria || MaxCustomAudienceIDs > MaxCreateTargetingCriteria {
 		t.Fatal("a per-list cap exceeds the per-create criteria cap")
 	}
 }

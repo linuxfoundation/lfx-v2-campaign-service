@@ -91,17 +91,9 @@ type TargetingCriterion struct {
 	Deleted        bool
 }
 
-// PositiveKeyword reports whether the criterion is a live, non-negated keyword. A missing
-// operator_type reads as EQ, X's default, the same way the write path's echo check
-// (echoedOperator) does, so the keyword read, the removal and the add lever all see one set.
+// PositiveKeyword reports whether the criterion is a live, non-negated keyword.
 func (t TargetingCriterion) PositiveKeyword() bool {
-	return !t.Deleted && IsKeywordTargetingType(t.TargetingType) && t.TargetingValue != "" && echoedOperator(t.OperatorType, OperatorEQ)
-}
-
-// PositiveBroadKeyword reports whether the criterion is a live BROAD_KEYWORD that is not negated
-// (PositiveKeyword, BROAD only): the criteria the add lever counts as already present.
-func (t TargetingCriterion) PositiveBroadKeyword() bool {
-	return t.PositiveKeyword() && t.TargetingType == TargetingBroadKeyword
+	return !t.Deleted && IsKeywordTargetingType(t.TargetingType) && t.OperatorType == OperatorEQ && t.TargetingValue != ""
 }
 
 type targetingCriterionWire struct {
@@ -126,10 +118,6 @@ func (w targetingCriterionWire) criterion() TargetingCriterion {
 		if json.Unmarshal(v, &s) == nil {
 			out.TargetingValue = s
 		}
-	} else if echoedIntegerRe.Match(v) {
-		// X's recommendations example spells a GENDER value as a bare number (1), not "1" (#564
-		// gap 9), so a decimal integer reads as its text. Anything else stays "".
-		out.TargetingValue = string(v)
 	}
 	return out
 }
