@@ -152,3 +152,29 @@ func TestListRemarketingLists_RowCapIsEnforcedWhileStreaming(t *testing.T) {
 		})
 	}
 }
+
+// A PartialErrors entry that names no outcome, a PartialErrors key repeated under another case
+// (the last, empty one would otherwise hide the failure), or a row declaring Id twice does not
+// establish a complete read, so the list is refused whole.
+func TestListRemarketingLists_RefusesUnreadableOrDuplicatedPartialErrors(t *testing.T) {
+	for name, body := range map[string]string{
+		"empty entry":            `{"Audiences":[{"Id":1,"Type":"RemarketingList"}],"PartialErrors":[{}]}`,
+		"null code entry":        `{"Audiences":[{"Id":1,"Type":"RemarketingList"}],"PartialErrors":[{"Code":null}]}`,
+		"PartialErrors repeated": `{"Audiences":[{"Id":1,"Type":"RemarketingList"}],"PartialErrors":[{"Code":4119}],"partialerrors":[]}`,
+		"Id repeated":            `{"Audiences":[{"Id":1,"ID":2,"Type":"RemarketingList"}],"PartialErrors":[]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, body })
+			rows, err := c.ListRemarketingLists(context.Background())
+			if !errors.Is(err, ErrRemarketingListsMalformed) || rows != nil {
+				t.Fatalf("got (%v, %v), want ErrRemarketingListsMalformed and no rows", rows, err)
+			}
+		})
+	}
+	c, _ := kwRecorder(t, func(string, string) (int, string) {
+		return http.StatusOK, `{"Audiences":[{"Id":1,"Type":"RemarketingList"}],"PartialErrors":[null]}`
+	})
+	if rows, err := c.ListRemarketingLists(context.Background()); err != nil || len(rows) != 1 {
+		t.Fatalf("null padding: got (%v, %v)", rows, err)
+	}
+}

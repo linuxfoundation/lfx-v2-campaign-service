@@ -1653,7 +1653,13 @@ canonical spelling of a positive int64 or repeats, an entry of another type (the
 applied), more than 5,000 entries, or any partial error with a present code. A zero or null
 placeholder code is not an error (`audienceErrorCode`). The body is streamed
 (`decodeCappedList`, client.go), so the 5,000-row cap refuses the answer at the first row past it,
-before the rest is read or allocated.
+before the rest is read or allocated. The decoder, shared with the conversion-goal picker, also
+refuses a `PartialErrors` entry that is a non-null object naming no outcome (`{}`,
+`{"Code":null}`), since it does not establish a complete read; a JSON `null` slot and an explicit
+zero-code placeholder still pass. After the capped scan it applies `decodeTrusted`'s identity check
+(`identityjson.Check`) to the whole body, so a key declared twice under the decoder's case fold
+(`PartialErrors` then `partialerrors`, or a row's `Id` twice) is refused rather than resolved to
+its last value (#613 review).
 
 The dispatcher (`internal/dispatch/microsoft_remarketing_lists.go`,
 `ListMicrosoftRemarketingLists`) answers `ErrTargetingLookupUnsupported` (400 "not supported")
@@ -1864,7 +1870,8 @@ answers 409, as for MaxClicks.
 `ListConversionGoals` is the picker read (`GET /projects/{project_id}/microsoft-ads/conversion-goals`,
 the same call with no ids): every goal on the account, or `ErrConversionGoalsMalformed` (503) for
 a null entry, an unusable or repeated id, more than 5,000 rows (streamed with `decodeCappedList`,
-so refused at the first row past the cap) or any partial error.
+so refused at the first row past the cap), any partial error, a `PartialErrors` entry naming no
+outcome, or a key declared twice (the decoder's rules, described under the remarketing-list picker).
 
 Not verified live, in particular `Campaign.GoalIds` (the reference describes it only as "A list of
 goal IDs") and the JSON spelling of the `ConversionGoalTypes` flags. Everything is behind

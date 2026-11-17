@@ -50,6 +50,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 // ---------------------------------------------------------------------------
@@ -1706,9 +1707,21 @@ type cappedListResponse[T any] struct {
 // decodeCappedList decodes a picker read's top-level object by STREAMING it with json.Decoder,
 // so a list longer than max is refused (errListOverCap) as soon as entry max+1 begins, before
 // the rest of the body is read or the rows allocated. Keys are matched case-insensitively, as
-// encoding/json matches them; a repeated key replaces the earlier value, as encoding/json does.
-// Any other key is skipped. A body that is not one JSON object, or a list that is neither an
-// array nor null, is a plain error (the caller classifies both as malformed).
+// encoding/json matches them. Any other key is skipped. A body that is not one JSON object, or a
+// list that is neither an array nor null, is a plain error (the caller classifies both as
+// malformed).
+//
+// Two more shapes are plain errors, so neither picker can return a list as complete on them:
+//
+//   - A PartialErrors entry that is a non-null object naming no outcome — {}, {"Code":null}, an
+//     index with no code — is UNREADABLE (neither isError nor isZeroCodePlaceholder). It does not
+//     establish a complete read. A JSON null slot (padding) and an explicit zero-code placeholder
+//     still pass; a coded entry is left for the caller to refuse as a partial error.
+//   - Once the capped scan has finished (so an oversized list still stops at the first row past
+//     the cap), the whole body gets decodeTrusted's identity check (identityjson.Check): a key
+//     declared twice in one object under the decoder's case fold — PartialErrors then
+//     partialerrors, which would otherwise keep only the last, or a row's Id twice — malformed
+//     UTF-8 or an unpaired surrogate escape is refused rather than silently resolved.
 func decodeCappedList[T any](raw []byte, listKey string, max int) (cappedListResponse[T], error) {
 	var out cappedListResponse[T]
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -1737,6 +1750,11 @@ func decodeCappedList[T any](raw []byte, listKey string, max int) (cappedListRes
 			if err := dec.Decode(&pe); err != nil {
 				return out, err
 			}
+			for _, it := range pe.Items {
+				if !it.null && !it.isError() && !it.isZeroCodePlaceholder() {
+					return out, errors.New("a PartialErrors entry names no outcome")
+				}
+			}
 			out.PartialErrors = pe
 		default:
 			var skip json.RawMessage
@@ -1750,6 +1768,9 @@ func decodeCappedList[T any](raw []byte, listKey string, max int) (cappedListRes
 	}
 	if _, err := dec.Token(); err != io.EOF {
 		return out, errors.New("trailing data after the JSON object")
+	}
+	if err := identityjson.Check(raw); err != nil {
+		return cappedListResponse[T]{}, err
 	}
 	return out, nil
 }

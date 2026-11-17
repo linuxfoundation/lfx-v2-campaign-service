@@ -179,3 +179,22 @@ func TestListConversionGoals_RowCapIsEnforcedWhileStreaming(t *testing.T) {
 		})
 	}
 }
+
+// The conversion-goal picker shares decodeCappedList: an entry naming no outcome, a repeated
+// PartialErrors key, or a row declaring Id twice refuses the list whole.
+func TestListConversionGoals_RefusesUnreadableOrDuplicatedPartialErrors(t *testing.T) {
+	for name, body := range map[string]string{
+		"empty entry":            `{"ConversionGoals":[{"Id":5001}],"PartialErrors":[{}]}`,
+		"null code entry":        `{"ConversionGoals":[{"Id":5001}],"PartialErrors":[{"Code":null}]}`,
+		"PartialErrors repeated": `{"ConversionGoals":[{"Id":5001}],"PartialErrors":[{"Code":4119}],"partialerrors":[]}`,
+		"Id repeated":            `{"ConversionGoals":[{"Id":5001,"id":5002}],"PartialErrors":[]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, body })
+			goals, err := c.ListConversionGoals(context.Background())
+			if !errors.Is(err, ErrConversionGoalsMalformed) || goals != nil {
+				t.Fatalf("got (%v, %v), want ErrConversionGoalsMalformed and no goals", goals, err)
+			}
+		})
+	}
+}
