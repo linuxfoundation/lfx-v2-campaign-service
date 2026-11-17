@@ -343,10 +343,25 @@ openssl rand -base64 32
   criterion POST and leaves a PAUSED partial for reconciliation (accepted
   risk). The chart sets it to `"false"`
   (`app.environment.TWITTER_FOLLOWER_LOOKALIKES_ENABLED.value`).
+- `TWITTER_TWEET_VARIANTS_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `twitterConfig.variants` (#564 gap 10): one authored,
+  promoted tweet per variant (at most 5) on the line item an X create makes.
+  Only the exact value `true` enables it; anything else fails closed, and a
+  create setting it is refused with a 400 before any job exists. A variant
+  that fails after another was published leaves the row `created_degraded`;
+  nothing is rolled back. The chart sets it to `"false"`
+  (`app.environment.TWITTER_TWEET_VARIANTS_ENABLED.value`).
+- `TWITTER_WEBSITE_CARD_ENABLED` (default unset, i.e. OFF) — opts a deployment
+  IN to `twitterConfig.card` (#564 gap 6): a website card (the creative image,
+  a headline, the UTM'd registration URL; `POST accounts/:id/cards`) attached
+  by `card_uri` to the tweet(s) an X create authors. Only the exact value
+  `true` enables it; anything else fails closed, and a create setting it is
+  refused with a 400 before any job exists. The chart sets it to `"false"`
+  (`app.environment.TWITTER_WEBSITE_CARD_ENABLED.value`).
 - `TWITTER_VIDEO_ENABLED` (default unset, i.e. OFF) — opts a deployment IN to
   `twitterConfig.videoAssetId` (#564 gap 7): a stored MP4 uploaded as
   `amplify_video` (chunked initialize/append/finalize, then STATUS polled for at
-  most 30 s) and attached to the tweet an X create authors. Only the exact
+  most 30 s) and attached to the tweet(s) an X create authors. Only the exact
   value `true` enables it; anything else fails closed, and a create setting it
   is refused with a 400 before any job exists. Before enabling, measure X's
   processing time for a 20-30 MiB MP4 against the 30 s bound. The chart sets it

@@ -241,9 +241,9 @@ func TestLinkedInMonitorScopeByConnection(t *testing.T) {
 
 	t.Run("own connection keeps an unrecorded campaign", func(t *testing.T) {
 		d, _ := grantToggleDispatcher(t, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow(), "cncf": own}})
-		scoper := d.MonitorScoperForConnection(ctx, "cncf", own.AccountID)
-		if scoper == nil {
-			t.Fatal("no connection scoper for a project on its own connection")
+		scoper, err := d.MonitorScoperForConnection(ctx, "cncf", own.AccountID)
+		if err != nil || scoper == nil {
+			t.Fatalf("no connection scoper for a project on its own connection: %v", err)
 		}
 		ids, err := scoper.MonitorScopeForAccount([]model.ProjectCampaignScope{rec("555", own.AccountID), unrec}, own.AccountID)
 		if err != nil || !reflect.DeepEqual(ids, []string{"555", "557"}) {
@@ -255,19 +255,34 @@ func TestLinkedInMonitorScopeByConnection(t *testing.T) {
 	})
 	t.Run("system row omits an unrecorded campaign", func(t *testing.T) {
 		d, _ := grantToggleDispatcher(t, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}})
-		scoper := d.MonitorScoperForConnection(ctx, "cncf", "500928401")
-		if scoper == nil {
-			t.Fatal("no connection scoper for a grant served by the system row")
+		scoper, err := d.MonitorScoperForConnection(ctx, "cncf", "500928401")
+		if err != nil || scoper == nil {
+			t.Fatalf("no connection scoper for a grant served by the system row: %v", err)
 		}
 		ids, err := scoper.MonitorScopeForAccount([]model.ProjectCampaignScope{rec("555", "500928401"), unrec}, "500928401")
 		if err != nil || !reflect.DeepEqual(ids, []string{"555"}) {
 			t.Fatalf("system-row scope = %v, %v; want only the recorded 555", ids, err)
 		}
 	})
-	t.Run("an unresolvable read keeps the system rule", func(t *testing.T) {
+	// An unresolvable read is an error, exactly as ReadAccountMonitor reports it, not the system
+	// rule: that rule would omit every unrecorded campaign, and the orchestrator would answer the
+	// emptied scope with an empty monitor before the read could report the failure.
+	t.Run("an unresolvable read is the read's error", func(t *testing.T) {
 		d, _ := grantToggleDispatcher(t, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}})
-		if s := d.MonitorScoperForConnection(ctx, "cncf", "111111111"); s != nil {
-			t.Fatalf("scoper for an account no connection serves = %T, want nil", s)
+		s, err := d.MonitorScoperForConnection(ctx, "cncf", "111111111")
+		if s != nil || !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("scoper for an account no connection serves = %T, %v; want nil and ErrNotFound", s, err)
+		}
+		_, readErr := d.ReadAccountMonitor(ctx, "cncf", model.ProviderLinkedInAds, "111111111", 30)
+		if readErr == nil || readErr.Error() != err.Error() {
+			t.Fatalf("scoper error %v differs from the read's %v", err, readErr)
+		}
+	})
+	t.Run("an own connection on another account is the read's error", func(t *testing.T) {
+		d, _ := grantToggleDispatcher(t, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow(), "cncf": own}})
+		s, err := d.MonitorScoperForConnection(ctx, "cncf", "111111111")
+		if s != nil || !errors.Is(err, domain.ErrAccountNotManagedByConnection) {
+			t.Fatalf("own connection naming another account = %T, %v; want nil and ErrAccountNotManagedByConnection", s, err)
 		}
 	})
 }

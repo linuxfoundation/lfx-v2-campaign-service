@@ -96,8 +96,16 @@ type twitterConfig struct {
 	// the new line item (#564 gap 4c, twitter_follower_lookalikes.go). Behind
 	// TWITTER_FOLLOWER_LOOKALIKES_ENABLED; shape-checked only, since X has no user lookup.
 	FollowerLookalikeUserIDs []string `json:"followerLookalikeUserIds,omitempty"`
+	// Variants author and promote one tweet per entry on the one line item (#564 gap 10,
+	// twitter_tweet_variants.go): 1-5 entries, never with tweetId or tweetText. Behind
+	// TWITTER_TWEET_VARIANTS_ENABLED.
+	Variants []twitterTweetVariant `json:"variants,omitempty"`
+	// Card is a website card (headline, the creative image or video, the UTM'd registration URL)
+	// attached to the authored tweet(s) by card_uri (#564 gap 6, twitter_website_card.go). Behind
+	// TWITTER_WEBSITE_CARD_ENABLED; needs imageAssetId or videoAssetId and an authored tweet.
+	Card *twitterWebsiteCard `json:"card,omitempty"`
 	// VideoAssetID references a stored MP4 creative asset (upload-creative-asset, video/mp4) to
-	// upload as amplify_video and attach to the authored tweet instead of an image (#564 gap 7,
+	// upload as amplify_video and attach to the authored tweet(s) instead of an image (#564 gap 7,
 	// twitter_video.go). Behind TWITTER_VIDEO_ENABLED; never with imageAssetId.
 	VideoAssetID string `json:"videoAssetId,omitempty"`
 	// CustomAudienceIDs and ExcludedCustomAudienceIDs are X custom audience ids to target and to
@@ -133,7 +141,7 @@ func twitterBidPlan(cfg twitterConfig) (bidPlan, error) {
 // created as asked. It never calls X, so every other outcome is ErrPreflightNotApplicable; a
 // config that does not decode is left to Dispatch — except a wrong-typed `bidding`, refused here
 // by checkBiddingShape.
-func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
+func (d *TwitterDispatcher) PreflightCreate(ctx context.Context, _ string, _ model.Provider, config json.RawMessage) error {
 	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
 	if err := checkBiddingShape(config, "twitterConfig"); err != nil {
 		return err
@@ -152,6 +160,14 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 	}
 	// And a mistyped followerLookalikeUserIds (#564 gap 4c).
 	if err := checkTwitterFollowerLookalikesShape(config); err != nil {
+		return err
+	}
+	// And a mis-shaped variants list (#564 gap 10).
+	if err := checkTwitterTweetVariantsShape(config); err != nil {
+		return err
+	}
+	// And a mis-shaped card (#564 gap 6).
+	if err := checkTwitterWebsiteCardShape(config); err != nil {
 		return err
 	}
 	// And a mistyped videoAssetId (#564 gap 7).
@@ -182,6 +198,16 @@ func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model
 		return err
 	}
 	if _, err := checkTwitterAudienceExpansion(cfg); err != nil {
+		return err
+	}
+	variants, err := checkTwitterTweetVariants(cfg)
+	if err != nil {
+		return err
+	}
+	if err := checkTwitterComposedTweets(ctx, config, cfg, variants); err != nil {
+		return err
+	}
+	if _, err := checkTwitterWebsiteCard(cfg); err != nil {
 		return err
 	}
 	if _, err := checkTwitterVideo(cfg, tgt.count()+len(cfg.CustomAudienceIDs)+len(cfg.ExcludedCustomAudienceIDs)); err != nil {
@@ -339,6 +365,12 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if err := checkTwitterFollowerLookalikesShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	if err := checkTwitterTweetVariantsShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	if err := checkTwitterWebsiteCardShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	if err := checkTwitterVideoShape(config); err != nil {
 		return nil, notCreated(err)
 	}
@@ -375,6 +407,16 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	}
 	// And the audience expansion gate and rule (#564 gap 11), for the same reason.
 	audienceExpansion, err := checkTwitterAudienceExpansion(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	// And the tweet variants gate and rules (#564 gap 10).
+	variants, err := checkTwitterTweetVariants(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	// And the website card gate and rules (#564 gap 6).
+	card, err := checkTwitterWebsiteCard(cfg)
 	if err != nil {
 		return nil, notCreated(err)
 	}
@@ -440,7 +482,9 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// further out.
 	tweetID := strings.TrimSpace(cfg.TweetID)
 	var asUserID string
-	if tweetID == "" && strings.TrimSpace(cfg.TweetText) != "" {
+	// Variants (#564 gap 10) author tweets too, so they need the same authorization; they are
+	// never combined with a tweetId (checkTwitterTweetVariants).
+	if tweetID == "" && (strings.TrimSpace(cfg.TweetText) != "" || len(variants) > 0) {
 		asUserID, err = authorizedTwitterAsUserID(brief.ProjectID, res, cfg.AsUserID)
 		if err != nil {
 			return nil, notCreated(err)
@@ -451,18 +495,15 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// a request-supplied token takes precedence over the brief blobs so it drives the
 	// promoted-tweet utm_campaign instead of being silently ignored (matches the other
 	// dispatchers via the shared envelopeHSToken helper).
-	hsToken, err := envelopeHSToken(config)
+	hsToken, err := twitterHSToken(config, bf)
 	if err != nil {
 		return nil, notCreated(err) // a wrong-typed hsToken is a caller error (pre-create)
-	}
-	if hsToken == "" {
-		hsToken = bf.HSToken
 	}
 
 	// The creative image is resolved BEFORE the client is built or X contacted: every refusal
 	// here is a pre-create caller/wiring error. The reservation is held until CreateCampaign
 	// has uploaded the bytes.
-	image, releaseImage, err := d.resolveTwitterImage(ctx, brief, cfg, tweetID)
+	image, releaseImage, err := d.resolveTwitterImage(ctx, brief, cfg, tweetID, len(variants) > 0)
 	if err != nil {
 		return nil, notCreated(err)
 	}
@@ -475,13 +516,15 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	defer releaseVideo()
 
 	stageToken, tacticToken := model.DispatchLabels(ctx).NameTokens()
+	// The destination fields come from the helper the synchronous preflight composes the tweet
+	// text with (checkTwitterComposedTweets), so the two build the same destination URL.
+	dest := twitterTweetDestination(brief, bf, hsToken)
 	in := twitter.CampaignInput{
-		EventName: bf.EventName,
-		EventSlug: brief.EventSlug,
-		// Project stamped from the authenticated scope, not caller JSON (api-catalog).
-		Project:         brief.ProjectID,
-		RegistrationURL: bf.RegistrationURL,
-		HSToken:         hsToken,
+		EventName:       dest.EventName,
+		EventSlug:       dest.EventSlug,
+		Project:         dest.Project,
+		RegistrationURL: dest.RegistrationURL,
+		HSToken:         dest.HSToken,
 		BudgetUsd:       cfg.BudgetAmount, // account-currency amount (client field name is legacy)
 		StartDate:       cfg.StartDate,
 		EndDate:         cfg.EndDate,
@@ -515,7 +558,9 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 
 		FollowerLookalikeUserIDs: tgt.lookalikes,
 
-		Video: video,
+		TweetVariants: variants,
+		WebsiteCard:   card,
+		Video:         video,
 
 		CustomAudienceIDs:         cfg.CustomAudienceIDs,
 		ExcludedCustomAudienceIDs: cfg.ExcludedCustomAudienceIDs,
@@ -594,6 +639,18 @@ func campaignFromTwitter(ctx context.Context, r *twitter.CampaignResult, cfg twi
 	// Keywords (#564 gap 4) are caller free text bound for the same column, so they are reduced
 	// the same way (sanitizeSnapshotTexts reallocates, leaving the list sent to X untouched).
 	snapshot.Keywords = sanitizeSnapshotTexts(cfg.Keywords)
+	// The card headline (#564 gap 6) is operator text bound for the same column.
+	if cfg.Card != nil {
+		snapshot.Card = &twitterWebsiteCard{Headline: sanitizeSnapshotText(cfg.Card.Headline)}
+	}
+	// Variant copy (#564 gap 10) is the same operator prose as tweetText, reduced the same way, in
+	// a fresh slice so the variants sent to X are untouched.
+	if cfg.Variants != nil {
+		snapshot.Variants = make([]twitterTweetVariant, len(cfg.Variants))
+		for i, v := range cfg.Variants {
+			snapshot.Variants[i] = twitterTweetVariant{TweetText: sanitizeSnapshotText(v.TweetText)}
+		}
+	}
 	applyCampaignConfig(ctx, c, cfg.BudgetAmount, false, cfg.StartDate, cfg.EndDate, snapshot)
 	if raw, err := json.Marshal(r); err != nil {
 		// A marshal failure should be near-impossible for this plain struct, but do NOT

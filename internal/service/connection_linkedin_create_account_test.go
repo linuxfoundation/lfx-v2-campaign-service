@@ -81,6 +81,14 @@ func TestGetLinkedinAdsCreateAccount(t *testing.T) {
 		t.Fatalf("no connection = %T %v, want 404", err, err)
 	}
 
+	disp.err = fmt.Errorf("%w: %w: %w: linkedin credentials are incomplete (need accessToken)",
+		domain.ErrSystemConnectionNotUsable, domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
+	var ise *conn.InternalServerError
+	if _, err := createAccountService(disp).GetLinkedinAdsCreateAccount(ctx, payload); !errors.As(err, &ise) {
+		t.Fatalf("an unusable LF system connection = %T %v, want 500", err, err)
+	}
+	disp.err = nil
+
 	var bad *conn.BadRequestError
 	if _, err := createAccountService(noCreateAccountDispatcher{}).GetLinkedinAdsCreateAccount(ctx, payload); !errors.As(err, &bad) {
 		t.Fatalf("a dispatcher without the capability = %T %v, want 400", err, err)

@@ -468,8 +468,24 @@ app:
     TWITTER_FOLLOWER_LOOKALIKES_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to twitterConfig.variants (#564 gap 10): one authored,
+    # promoted tweet per variant (at most 5) on the new X line item. Default off: no live
+    # create has published several tweets. A variant failing after another was published
+    # leaves the row created_degraded (no rollback). While off, a create setting it is refused
+    # with a 400 before any job exists. Any value other than "true" is treated as off.
+    TWITTER_TWEET_VARIANTS_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to twitterConfig.card (#564 gap 6): a website card (the
+    # creative image or video, a headline, the UTM'd registration URL) created with POST
+    # accounts/:id/cards and attached by card_uri to the authored tweet(s). Default off: built
+    # from X's published reference; no live create has sent it. While off, a create setting it
+    # is refused with a 400 before any job exists. Any value other than "true" is treated as off.
+    TWITTER_WEBSITE_CARD_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to twitterConfig.videoAssetId (#564 gap 7): a stored MP4 uploaded
-    # as amplify_video and attached to the authored tweet. Default off: no live create has
+    # as amplify_video and attached to the authored tweet(s). Default off: no live create has
     # uploaded one. Blocker before enabling: measure X's processing time for a 20-30 MiB MP4
     # against the 30 s STATUS bound inside the two-minute provider call. While off, a create
     # setting it is refused with a 400 before any job exists. Any value other than "true" is off.

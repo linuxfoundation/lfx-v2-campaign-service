@@ -4,9 +4,27 @@
 package model
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 )
+
+type createPreflightBriefKey struct{}
+
+// WithCreatePreflightBrief returns ctx carrying the brief a create request is about to start a job
+// for, so a dispatcher's synchronous PreflightCreate can check what depends on it (the X tweet
+// text composed with the brief's destination URL, #564). A context value for the reason
+// WithDispatchLabels gives: only the dispatchers whose checks need the brief read it, and its
+// absence means those checks run on the config alone.
+func WithCreatePreflightBrief(ctx context.Context, b *CampaignBrief) context.Context {
+	return context.WithValue(ctx, createPreflightBriefKey{}, b)
+}
+
+// CreatePreflightBrief returns the brief set by WithCreatePreflightBrief, or nil when none was set.
+func CreatePreflightBrief(ctx context.Context) *CampaignBrief {
+	b, _ := ctx.Value(createPreflightBriefKey{}).(*CampaignBrief)
+	return b
+}
 
 // ProgramType is the funnel context a brief carries.
 type ProgramType string

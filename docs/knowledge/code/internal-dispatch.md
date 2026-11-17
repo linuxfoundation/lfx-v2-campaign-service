@@ -3554,8 +3554,10 @@ grant, and only to a campaign-scoped read (see the account-monitor architecture 
 
 It also implements `service.AccountMonitorConnectionScoper` (#628): `MonitorScoperForConnection`
 resolves the read's credential, and on the project's own connection keeps a campaign that records
-no creation account (as that connection's account); on the system row, or when the credential
-cannot be resolved, `linkedInMonitorScope` omits and logs it. Pinned by
+no creation account (as that connection's account); on the system row `linkedInMonitorScope` omits
+and logs it. When the credential cannot be resolved it returns `resolveLinkedInMonitorCredentials`'
+error unchanged, the one `ReadAccountMonitor` would return, and the orchestrator fails the read
+with it rather than judging the scope by the system rule. Pinned by
 `TestLinkedInMonitorScopeByConnection`.
 
 Create-time selection (step 4 of #581, behind `LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED`):
@@ -3574,7 +3576,11 @@ The create-account read (`get-linkedin-ads-create-account`, #581): `LinkedInDisp
 (`service.LinkedInCreateAccountReader`) runs `creds.resolve`, the create path's own resolution, and
 reports the resolved account, its `org_id`, label, status and whether it came from the system row,
 plus the accounts `selectLinkedInAccount` would accept: the resolved account, then — system row
-and `LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED` on — its grants. No LinkedIn call. Pinned by
+and `LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED` on — its grants. No LinkedIn call. `creds.resolve`
+does not validate the credential document, so a system-row result is also put through
+`resolveLinkedInCredentials`' checks: an unusable LF row (inactive, undecodable, no access token,
+no account id) returns `ErrSystemConnectionNotUsable` (500). A project-owned row is not validated
+and keeps reporting its stored status. Pinned by
 `TestLinkedIn_CreateAccountReportsWhatACreateUses`, which also feeds every listed account back
 through `selectLinkedInAccount`, so the list cannot drift from what a create accepts.
 

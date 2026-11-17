@@ -761,9 +761,14 @@ campaigns. `LinkedInDispatcher` implements `service.AccountMonitorScoper` and
   again for the post-read revalidation. On the project's OWN connection such a campaign is kept, as
   belonging to that connection's account: `requireLinkedInManagedAccount` has proven the account
   is `account_id`, and that is what the monitor assumed before #581, when it read the own account
-  whole. On the LF system row (and whenever the credential cannot be resolved) it is omitted and
-  logged, not a 409: the shared credential cannot prove the id is this project's, and the response
-  has no field to report omitted campaigns in. A recorded mismatch still fails either way.
+  whole. On the LF system row it is omitted and logged, not a 409: the shared credential cannot
+  prove the id is this project's, and the response has no field to report omitted campaigns in. A
+  recorded mismatch still fails either way. A credential that cannot be resolved fails the read
+  with the error `ReadAccountMonitor` would return (no connection 404, connection not usable,
+  account not managed by the connection), at the scope step and again at revalidation; it no
+  longer falls back to the system rule, which omitted every unrecorded campaign and so answered an
+  empty monitor before the read could report the failure. A project with no campaigns still gets
+  its empty monitor before any credential is resolved.
   Omitting `account_id` when no live campaign records one stays a 409
   (`MonitorAccountForScope` has no ctx to resolve a connection); a caller on its own connection
   names its account, as it had to before #581.

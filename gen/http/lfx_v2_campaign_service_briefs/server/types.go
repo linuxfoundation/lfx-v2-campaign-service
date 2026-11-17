@@ -5757,41 +5757,81 @@ type CampaignCreateInputRequestBody struct {
 	// while off, a malformed id, a list over its cap, or a value that is not an
 	// array of strings (null reads as absent) is refused with 400 "invalid
 	// campaign config: twitterConfig.followerLookalikeUserIds: ..." before any job
+	// exists. Not role-gated. X TWEET VARIANTS (#564 gap 10): twitterConfig takes
+	// `variants`, [{"tweetText": string}] (1-5 entries, each trimmed and
+	// non-blank, no two the same ignoring case, tweetText the only key), and never
+	// with tweetId or a top-level tweetText. Each variant is authored as its own
+	// nullcast tweet (the same composition, length and credential-screen rules as
+	// tweetText, its destination tagged utm_content=variant-N) and promoted on the
+	// one line item, in order, each authored then promoted before the next;
+	// imageAssetId, when set, is attached to every variant. Every promoted tweet
+	// is recorded in the campaign result as PromotedTweets ([{Variant, TweetID,
+	// Authored, PromotedTweetID, Warning}]); PromotedTweetID and AuthoredTweetID
+	// repeat the first. A variant that fails (authoring refused or UNCONFIRMED,
+	// promotion refused, UNCONFIRMED or reported duplicate) does not stop the
+	// others and nothing is rolled back, since a published tweet cannot be
+	// unpublished: the row is created_degraded with a step naming the failed
+	// variants. On a line item reused by name, no variant is authored when its
+	// promoted tweets cannot be read or their count is nonzero and differs from
+	// the variants; exactly as many are reused. A reused line item with no
+	// promoted tweet has every variant authored. Pause, resume, budget, bid and
+	// keyword levers act on the campaign and line item, so they govern every
+	// variant at once. OFF unless TWITTER_TWEET_VARIANTS_ENABLED is exactly
+	// "true"; a non-empty list while off, a rule breach or a wrong shape (null
+	// reads as absent) is refused with 400 "invalid campaign config:
+	// twitterConfig.variants: ..." before any job exists. Not role-gated. X
+	// WEBSITE CARD (#564 gap 6): twitterConfig takes `card`, {"headline": string}
+	// (trimmed, 1-70 characters, no control character; headline is the only key).
+	// It needs media (imageAssetId or videoAssetId, never both) and an authored
+	// tweet (tweetText or variants, never tweetId). Once the campaign and line
+	// item exist and a tweet is about to be authored, one website card is created
+	// with POST accounts/:account_id/cards (a MEDIA component carrying the
+	// creative image's or video's media_key and a DETAILS component carrying the
+	// headline and a WEBSITE destination: the registration URL with this service's
+	// UTMs and utm_content=website-card), and its card_uri is sent on every tweet
+	// the create authors (media_keys is then not sent; the image rides in the
+	// card). The result records it as CardURI. A card that cannot be created
+	// publishes nothing: the row is created_degraded with a step to post the tweet
+	// manually (UNCONFIRMED when the card may exist; a card is neither public nor
+	// billable). A create that reuses an earlier attempt's promoted tweet creates
+	// no card. OFF unless TWITTER_WEBSITE_CARD_ENABLED is exactly "true"; a card
+	// while off, a rule breach or a wrong shape (null reads as absent) is refused
+	// with 400 "invalid campaign config: twitterConfig.card: ..." before any job
 	// exists. Not role-gated. X VIDEO (#564 gap 7): twitterConfig takes
 	// `videoAssetId`, the id of an MP4 creative asset uploaded to this brief
 	// (upload-creative-asset, content_type video/mp4, at most 30 MiB), attached to
-	// the authored tweet instead of an image. It requires an authored tweet
-	// (tweetText, never tweetId) and is never combined with imageAssetId. Before
-	// anything billable exists the video is uploaded through X's chunked media
-	// upload (initialize with media_category amplify_video and media_type
-	// video/mp4, one append per 4 MiB segment, finalize, then the STATUS command
-	// while X reports processing, at most 6 checks of at most 5 seconds each) and
-	// added to the ad account's Media Library under a name derived from its
-	// SHA-256, which a later create of the same bytes finds and reuses instead of
-	// uploading again; its media_key is then sent as media_keys on the authored
-	// tweet. A video that cannot be uploaded, is rejected during processing, or
-	// does not finish processing within that bound fails the job with nothing
-	// created. A create with a videoAssetId may name at most 30 targeting criteria
-	// in total (the upload and processing share the dispatch budget). An asset
-	// that does not exist for this brief, is over 30 MiB or is not video/mp4 fails
-	// the job before any X request. OFF unless TWITTER_VIDEO_ENABLED is exactly
-	// "true"; a videoAssetId while off, a malformed id, one beside imageAssetId or
-	// tweetId or without tweetText, more than 30 criteria, or a non-string (null
-	// reads as absent) is refused with 400 "invalid campaign config:
-	// twitterConfig..." before any job exists. Not role-gated. X CUSTOM AUDIENCES
-	// (#564): twitterConfig takes `customAudienceIds` and
-	// `excludedCustomAudienceIds`, arrays of X custom audience ids
-	// (list-twitter-ads-custom-audiences offers them) to target and to exclude,
-	// sent as CUSTOM_AUDIENCE targeting criteria on the new line item with
-	// operator EQ and NE. Each id is 1-32 letters or digits, sent exactly as
-	// given; at most 60 per list; no id twice and none in both lists. geoTargets,
-	// languages, keywords, interestIds, conversationTopics, platforms, devices,
-	// ageBucket, gender, followerLookalikeUserIds, customAudienceIds and
-	// excludedCustomAudienceIds together may name at most 60 criteria per create,
-	// since each is a separate X write paced at one per second inside the
-	// two-minute dispatch budget; more is refused with the same 400. Before
-	// anything is created every id is read with GET
-	// accounts/:account_id/custom_audiences and must be live and targetable; a
+	// the authored tweet(s) instead of an image, or used as the website card's
+	// media. It requires an authored tweet (tweetText or variants, never tweetId)
+	// and is never combined with imageAssetId. Before anything billable exists the
+	// video is uploaded through X's chunked media upload (initialize with
+	// media_category amplify_video and media_type video/mp4, one append per 4 MiB
+	// segment, finalize, then the STATUS command while X reports processing, at
+	// most 6 checks of at most 5 seconds each) and added to the ad account's Media
+	// Library under a name derived from its SHA-256, which a later create of the
+	// same bytes finds and reuses instead of uploading again; its media_key is
+	// then sent as media_keys on every authored tweet. A video that cannot be
+	// uploaded, is rejected during processing, or does not finish processing
+	// within that bound fails the job with nothing created. A create with a
+	// videoAssetId may name at most 30 targeting criteria in total (the upload and
+	// processing share the dispatch budget). An asset that does not exist for this
+	// brief, is over 30 MiB or is not video/mp4 fails the job before any X
+	// request. OFF unless TWITTER_VIDEO_ENABLED is exactly "true"; a videoAssetId
+	// while off, a malformed id, one beside imageAssetId or tweetId or without
+	// tweetText or variants, more than 30 criteria, or a non-string (null reads as
+	// absent) is refused with 400 "invalid campaign config: twitterConfig..."
+	// before any job exists. Not role-gated. X CUSTOM AUDIENCES (#564):
+	// twitterConfig takes `customAudienceIds` and `excludedCustomAudienceIds`,
+	// arrays of X custom audience ids (list-twitter-ads-custom-audiences offers
+	// them) to target and to exclude, sent as CUSTOM_AUDIENCE targeting criteria
+	// on the new line item with operator EQ and NE. Each id is 1-32 letters or
+	// digits, sent exactly as given; at most 60 per list; no id twice and none in
+	// both lists. geoTargets, languages, keywords, interestIds,
+	// conversationTopics, platforms, devices, ageBucket, gender,
+	// followerLookalikeUserIds, customAudienceIds and excludedCustomAudienceIds
+	// together may name at most 60 criteria per create, since each is a separate X
+	// write paced at one per second inside the two-minute dispatch budget; more is
+	// refused with the same 400. Before anything is created every id is read with
+	// GET accounts/:account_id/custom_audiences and must be live and targetable; a
 	// missing, deleted or non-targetable audience fails the job with nothing
 	// created. The exclusions are posted first of all the criteria and the
 	// inclusions last, after the line item and before the promoted tweet; a
