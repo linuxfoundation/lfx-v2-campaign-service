@@ -479,6 +479,43 @@ openssl rand -base64 32
   fails closed, and a create carrying the field is refused with a 400 before
   any job exists. The chart sets both to `"false"`; enable them
   per-environment in the ArgoCD overlay.
+- `META_OPTIMIZATION_GOAL_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `metaConfig.optimizationGoal` (#550):
+  `LANDING_PAGE_VIEWS` instead of `LINK_CLICKS` as the traffic objective's
+  ad set optimization goal. Only the exact value `true` enables it;
+  anything else fails closed, and a create carrying the field is refused
+  with a 400 before any job exists. The chart sets it to `"false"`; enable
+  it per-environment in the ArgoCD overlay.
+- `META_FREQUENCY_CAP_ENABLED` (default unset, i.e. OFF) — opts a deployment
+  IN to `metaConfig.frequencyCap` (#550): `maxImpressions` per person every
+  `intervalDays` (1–90 each) on the awareness objective's ad set, sent as
+  `frequency_control_specs`. Only the exact value `true` enables it;
+  anything else fails closed, and a create carrying the field is refused
+  with a 400 before any job exists. The chart sets it to `"false"`; enable
+  it per-environment in the ArgoCD overlay.
+- `META_AD_PAUSE_ENABLED` (default unset, i.e. OFF) — opts a deployment IN
+  to `toggle-meta-ad-status` (#550), the per-ad pause/resume lever
+  (`POST .../meta-ad-sets/{ad_set_id}/ads/{ad_id}/status`). Off, the
+  endpoint answers 400. A campaign resume honours a per-ad deliberate-pause
+  record whatever this says. The chart sets it to `"false"`; enable it
+  per-environment in the ArgoCD overlay.
+- `META_AD_SCHEDULE_ENABLED` (default unset, i.e. OFF) — opts a deployment
+  IN to `metaConfig.adSchedule` (#550): days and whole hours, in the ad
+  account's time zone, sent as the ad set's `adset_schedule` with
+  `pacing_type: ["day_parting"]`. Lifetime budgets only. Only the exact
+  value `true` enables it; anything else fails closed, and a create
+  carrying the field is refused with a 400 before any job exists. The chart
+  sets it to `"false"`; enable it per-environment in the ArgoCD overlay.
+- `META_LEAD_FORMS_ENABLED` (default unset, i.e. OFF) — opts a deployment
+  IN to `metaConfig.leadFormId` (#550): an existing Instant Form (created in
+  Ads Manager, with the Page's lead terms accepted) that turns the `leads`
+  objective into an `OUTCOME_LEADS` lead ad with the form on every creative.
+  The form is read before anything is created and must be an active form of
+  the connection's Page. Only the exact value `true` enables it; anything
+  else fails closed, and a create carrying the field is refused with a 400
+  before any job exists. It also gates the `GET /projects/{p}/meta-ads/lead-forms`
+  picker read (a `global_marketing_ops` read; 400 while off). The chart sets
+  it to `"false"`; enable it per-environment in the ArgoCD overlay.
 - `META_AUDIENCE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `metaConfig.targeting` (#550): `ageMin`/`ageMax`,
   `genders`, `customAudiences`, `excludedCustomAudiences` and
@@ -491,6 +528,55 @@ openssl rand -base64 32
   without it, 503 when the check cannot be made). The chart sets it to
   `"false"` (`app.environment.META_AUDIENCE_TARGETING_ENABLED.value`);
   enable it per-environment by setting it to `"true"` in the ArgoCD overlay.
+- `META_LOCALE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `metaConfig.targeting.locales` (#550), Meta locale keys
+  sent as the ad set's `targeting.locales`. Only the exact value `true`
+  enables it; anything else fails closed, and a create carrying the list is
+  refused with a 400 before any job exists. A targeting block that sets only
+  `locales` does not need `META_AUDIENCE_TARGETING_ENABLED`. The chart sets
+  it to `"false"`; enable it per-environment in the ArgoCD overlay.
+- `META_DEVICE_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `metaConfig.targeting.devicePlatforms` (#550), `mobile`
+  or `desktop` only, sent as the ad set's `targeting.device_platforms`.
+  Same rules as `META_LOCALE_TARGETING_ENABLED`. The chart sets it to
+  `"false"`; enable it per-environment in the ArgoCD overlay.
+- `META_INTEREST_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `metaConfig.targeting.interests` (#550), detailed
+  targeting interest ids sent as the ad set's `flexible_spec`, each
+  validated with Meta's interest validation read before anything is
+  created. Same rules as `META_LOCALE_TARGETING_ENABLED`. The chart sets it
+  to `"false"`; enable it per-environment in the ArgoCD overlay.
+- `META_REGION_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `metaConfig.targeting.regions` and `targeting.cities`
+  (#550), Meta geo-location keys added to the ad set's country targeting.
+  Every key is looked up before anything is created, and its parent country
+  must pass the sanctioned, regulated, overlap and EU DSA rules. Same rules as
+  `META_LOCALE_TARGETING_ENABLED`. The chart sets it to `"false"`; enable it
+  per-environment in the ArgoCD overlay.
+- `META_BEHAVIOR_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `metaConfig.targeting.behaviors` and
+  `targeting.workPositions` (#550), detailed targeting ids sent in the ad
+  set's `flexible_spec` beside the interests, each validated with Meta's ad
+  account targeting validation read before anything is created. Same rules
+  as `META_LOCALE_TARGETING_ENABLED`. The chart sets it to `"false"`; enable
+  it per-environment in the ArgoCD overlay.
+- `META_OS_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a deployment
+  IN to `metaConfig.targeting.userOs` (#550), Meta `user_os` values (iOS,
+  Android, optionally with a version) checked against Meta's documented
+  formats and combination rule before any request. Same rules as
+  `META_LOCALE_TARGETING_ENABLED`. The chart sets it to `"false"`; enable it
+  per-environment in the ArgoCD overlay.
+- `META_TARGETING_SEARCH_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `GET /projects/{p}/meta-ads/targeting-search` (#550), the
+  campaign_manager picker read over Meta's Targeting Search (interests,
+  behaviors, work positions). While off it answers 400. The chart sets it to
+  `"false"`; enable it per-environment in the ArgoCD overlay.
+- `META_TARGETING_READBACK_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to the Meta settings readback of the ad set's regions,
+  cities and ad schedule (#550): `get-campaign-settings` then reports
+  `regions`, `cities` and `ad_schedule`, compared with the row's config
+  snapshot. While off the readback is unchanged. The chart sets it to
+  `"false"`; enable it per-environment in the ArgoCD overlay.
 - `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` (default unset, i.e. OFF) —
   opts a deployment IN to `googleAdsConfig.performanceMaxAudienceSignal`,
   one existing Google Ads Audience attached to a Performance Max asset

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -36,6 +37,48 @@ type AudienceTargeting struct {
 	// AdvantageAudience sets targeting_automation.advantage_audience. Nil means "not said": it is
 	// then sent only when an inclusion is set (see inclusion), as 0.
 	AdvantageAudience *bool `json:"advantageAudience"`
+	// Locales are Meta locale keys (positive integers such as 6, English (US), or 1001, English
+	// (All); the Targeting Search `adlocale` type lists them), at most MaxLocales distinct (#550,
+	// gap 12). Sent as `locales`. A language is a hard constraint even with Advantage+ audience on
+	// (Advantage+ Audience reference), so it is not an inclusion. Gated by its own deployment flag,
+	// not by the one that gates the six audience fields above.
+	Locales []int `json:"locales"`
+	// DevicePlatforms is a subset of "mobile" and "desktop" (#550, gap 15), sent as the ad set's
+	// `device_platforms`. Both, or none, is Meta's default and sends nothing. A device is a placement
+	// control, not an audience inclusion, so it sends no Advantage+ flag. Gated by its own deployment
+	// flag.
+	DevicePlatforms []string `json:"devicePlatforms"`
+	// Interests are numeric Meta interest ids (detailed targeting; the Targeting Search
+	// `adinterest` type lists them), at most MaxInterests distinct (#550, gap 7). Sent as one
+	// `flexible_spec` entry, `[{"interests": [{"id": …}, …]}]`, so a person matching ANY listed
+	// interest qualifies. Detailed targeting IS an inclusion under Meta's v23.0 rule, so it makes the
+	// Advantage+ flag explicit (see inclusion). Gated by its own deployment flag. Each id is checked
+	// with Meta's interest validation read before anything is created (checkInterests).
+	Interests []string `json:"interests"`
+	// Regions and Cities are Meta geo-location keys (numeric strings; the Targeting Search
+	// `adgeolocation` type lists them), at most MaxGeoKeys distinct each (#550, gap 13). They are
+	// ADDED to the country targeting in the ad set's `geo_locations` (`regions` and `cities`, each a
+	// list of `{"key": …}`); a location is a hard constraint, not an inclusion. Every key is looked
+	// up before anything is created and its parent country must be targetable (checkGeoLocations).
+	// Gated by its own deployment flag.
+	Regions []string `json:"regions"`
+	Cities  []string `json:"cities"`
+	// Behaviors and WorkPositions are numeric Meta detailed-targeting ids (the Targeting Search
+	// `adTargetingCategory` class `behaviors` and the `adworkposition` type list them), at most
+	// MaxBehaviors / MaxWorkPositions distinct (#550, gap 7). They join the interests in the SAME
+	// `flexible_spec` entry (`behaviors` / `work_positions`, each `[{"id": …}]`): Meta ORs the keys
+	// of one entry, so a person matching ANY listed interest, behavior or work position qualifies.
+	// Both are inclusions (see inclusion). Each id is checked in one ad account targeting validation
+	// read before anything is created (checkDetailedTargeting). Gated together by their own
+	// deployment flag.
+	Behaviors     []string `json:"behaviors"`
+	WorkPositions []string `json:"workPositions"`
+	// UserOS are Meta user_os values (#550, gap 15 remainder): iOS, Android, or either with a
+	// minimum version or a version range (user_os.go), at most MaxUserOS distinct, sent as the ad
+	// set's `user_os`. Like DevicePlatforms it is a placement control, not an audience inclusion, so
+	// it sends no Advantage+ flag. Checked against the reference's formats and combination rule
+	// before any request (normalizeUserOS, CheckUserOS). Gated by its own deployment flag.
+	UserOS []string `json:"userOs"`
 }
 
 const (
@@ -50,15 +93,42 @@ const (
 	// MaxCustomAudiences caps each audience list. Meta documents no lower limit than this would
 	// hit; an LF campaign names a handful, and each id costs one ownership read before the create.
 	MaxCustomAudiences = 25
+	// MaxLocales caps the locales list. Meta documents no limit; an event targets a handful of
+	// languages, and a long list is more likely a client bug than a campaign.
+	MaxLocales = 50
+	// MaxInterests caps the interests list, for the same reason as MaxCustomAudiences: an event
+	// names a handful, and the validation read sends every id in one request URL.
+	MaxInterests = 25
+	// MaxBehaviors and MaxWorkPositions cap those lists, for the same reason as MaxInterests (Meta
+	// allows 200 work positions; an event names a handful, and the validation read sends every id
+	// in one request URL).
+	MaxBehaviors     = 25
+	MaxWorkPositions = 25
 )
 
 // metaGenderCodes maps the request's gender names to Meta's targeting codes.
 var metaGenderCodes = map[string]int{"male": 1, "female": 2}
 
+// metaDevicePlatforms are the Ad Set targeting `device_platforms` values (Targeting Specs,
+// placement fields).
+var metaDevicePlatforms = map[string]bool{"mobile": true, "desktop": true}
+
 // IsZero reports whether t asks for nothing, in which case the ad set's targeting is unchanged.
 func (t *AudienceTargeting) IsZero() bool {
 	return t == nil || (t.AgeMin == nil && t.AgeMax == nil && len(t.Genders) == 0 &&
-		len(t.CustomAudiences) == 0 && len(t.ExcludedCustomAudiences) == 0 && t.AdvantageAudience == nil)
+		len(t.CustomAudiences) == 0 && len(t.ExcludedCustomAudiences) == 0 && t.AdvantageAudience == nil &&
+		len(t.Locales) == 0 && len(t.DevicePlatforms) == 0 && len(t.Interests) == 0 &&
+		len(t.Regions) == 0 && len(t.Cities) == 0 && len(t.Behaviors) == 0 && len(t.WorkPositions) == 0 &&
+		len(t.UserOS) == 0)
+}
+
+// HasAudienceFields reports whether t sets any of the six fields META_AUDIENCE_TARGETING_ENABLED
+// gates — age, gender, the two custom audience lists, advantageAudience — as opposed to only the
+// later fields (locales, devicePlatforms, interests, regions, cities, behaviors, workPositions,
+// userOs) that have their own deployment flags.
+func (t *AudienceTargeting) HasAudienceFields() bool {
+	return t != nil && (t.AgeMin != nil || t.AgeMax != nil || len(t.Genders) > 0 ||
+		len(t.CustomAudiences) > 0 || len(t.ExcludedCustomAudiences) > 0 || t.AdvantageAudience != nil)
 }
 
 // NormalizeAudienceTargeting validates t and returns the copy the create sends: gender names
@@ -108,6 +178,38 @@ func NormalizeAudienceTargeting(t *AudienceTargeting) (*AudienceTargeting, error
 			return nil, targetingInvalid("custom audience %s is in both customAudiences and excludedCustomAudiences", domain.CallerValue(id))
 		}
 	}
+	if out.Locales, err = normalizeLocales(t.Locales); err != nil {
+		return nil, err
+	}
+	if out.Interests, err = normalizeNumericIDs("interests", "Meta interest id", t.Interests, MaxInterests); err != nil {
+		return nil, err
+	}
+	if out.Behaviors, err = normalizeNumericIDs("behaviors", "Meta behavior id", t.Behaviors, MaxBehaviors); err != nil {
+		return nil, err
+	}
+	if out.WorkPositions, err = normalizeNumericIDs("workPositions", "Meta work position id", t.WorkPositions, MaxWorkPositions); err != nil {
+		return nil, err
+	}
+	if out.UserOS, err = normalizeUserOS(t.UserOS); err != nil {
+		return nil, err
+	}
+	if out.Regions, err = normalizeNumericIDs("regions", "Meta region key", t.Regions, MaxGeoKeys); err != nil {
+		return nil, err
+	}
+	if out.Cities, err = normalizeNumericIDs("cities", "Meta city key", t.Cities, MaxGeoKeys); err != nil {
+		return nil, err
+	}
+	seenDevice := map[string]bool{}
+	for _, d := range t.DevicePlatforms {
+		key := strings.ToLower(strings.TrimSpace(d))
+		if !metaDevicePlatforms[key] {
+			return nil, targetingInvalid("devicePlatforms entry %s is not one of mobile, desktop", domain.CallerValue(d))
+		}
+		if !seenDevice[key] {
+			seenDevice[key] = true
+			out.DevicePlatforms = append(out.DevicePlatforms, key)
+		}
+	}
 	if out.AdvantageAudience != nil && *out.AdvantageAudience {
 		if out.AgeMin != nil && *out.AgeMin > maxAdvantageAgeMin {
 			return nil, targetingInvalid("with advantageAudience true, Meta accepts an ageMin of at most %d (ageMin is %d); lower it or set advantageAudience false", maxAdvantageAgeMin, *out.AgeMin)
@@ -127,15 +229,25 @@ func targetingInvalid(format string, args ...any) error {
 	return domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig.targeting: %s", domain.ErrCreateConfigInvalid, fmt.Sprintf(format, args...)))
 }
 
-// normalizeAudienceIDs trims and de-duplicates one audience list, refusing a non-numeric id or a
+// normalizeAudienceIDs trims and de-duplicates one audience list, refusing a non-canonical id or a
 // list over MaxCustomAudiences distinct ids.
 func normalizeAudienceIDs(field string, ids []string) ([]string, error) {
+	return normalizeNumericIDs(field, "Meta custom audience id", ids, MaxCustomAudiences)
+}
+
+// normalizeNumericIDs trims and de-duplicates one id list, refusing an id that is not a canonical
+// numeric string (what names the kind of id) or a list over limit distinct ids. Canonical means
+// canonicalCampaignIDRe, no leading zero: Meta never mints one, so such an id could only fail
+// later, as a failed job instead of this 400. checkDetailedTargeting sends behaviors and work
+// positions as json.Number, which json.Marshal refuses for "0…"; interests, geo keys and audience
+// ids are compared as strings against Meta's canonical answers, so "06003" would never match.
+func normalizeNumericIDs(field, what string, ids []string, limit int) ([]string, error) {
 	var out []string
 	seen := map[string]bool{}
 	for _, raw := range ids {
 		id := strings.TrimSpace(raw)
-		if !numericIDRE.MatchString(id) {
-			return nil, targetingInvalid("%s entry %s is not a Meta custom audience id (a numeric string)", field, domain.CallerValue(raw))
+		if !canonicalCampaignIDRe.MatchString(id) {
+			return nil, targetingInvalid("%s entry %s is not a %s (a numeric string without a leading zero)", field, domain.CallerValue(raw), what)
 		}
 		if seen[id] {
 			continue
@@ -143,21 +255,60 @@ func normalizeAudienceIDs(field string, ids []string) ([]string, error) {
 		seen[id] = true
 		out = append(out, id)
 	}
-	if len(out) > MaxCustomAudiences {
-		return nil, targetingInvalid("%s names %d audiences; at most %d are allowed", field, len(out), MaxCustomAudiences)
+	if len(out) > limit {
+		return nil, targetingInvalid("%s names %d ids; at most %d are allowed", field, len(out), limit)
 	}
 	return out, nil
 }
 
-// inclusion reports whether t narrows WHO is reached — a non-default age, a single gender or an
-// included custom audience. These are the fields Meta's v23.0 rule names: setting one without an
+// CheckDevicePlacements refuses a desktop-only device list together with the Audience Network
+// placement, which serves in mobile apps only (Meta's placement guide), so Meta would refuse the ad
+// set after the campaign exists. t must be NormalizeAudienceTargeting's output (lower-cased,
+// de-duplicated); placements are the caller's, merged with the defaults here. Other placement and
+// device pairings are left to Meta until a live probe says which it refuses.
+func CheckDevicePlacements(t *AudienceTargeting, placements Placement) error {
+	if t == nil || len(t.DevicePlatforms) != 1 || t.DevicePlatforms[0] != "desktop" {
+		return nil
+	}
+	if deref(mergePlacements(placements).AudienceNetwork) {
+		return targetingInvalid("devicePlatforms [desktop] cannot serve the audienceNetwork placement, which is mobile only; add mobile or turn audienceNetwork off")
+	}
+	return nil
+}
+
+// normalizeLocales de-duplicates the locale keys in order, refusing a key that is not a positive
+// integer or a list over MaxLocales distinct keys.
+func normalizeLocales(keys []int) ([]int, error) {
+	var out []int
+	seen := map[int]bool{}
+	for _, k := range keys {
+		if k <= 0 {
+			return nil, targetingInvalid("locales entry %d is not a Meta locale key (a positive integer)", k)
+		}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, k)
+	}
+	if len(out) > MaxLocales {
+		return nil, targetingInvalid("locales names %d languages; at most %d are allowed", len(out), MaxLocales)
+	}
+	return out, nil
+}
+
+// inclusion reports whether t narrows WHO is reached — a non-default age, a single gender, an
+// included custom audience or a detailed-targeting interest, behavior or work position. These are the fields Meta's v23.0 rule names: setting one without an
 // explicit targeting_automation.advantage_audience is an error on ad-set create. Exclusions are
 // not inclusions: they are a hard constraint either way.
 func (t *AudienceTargeting) inclusion() bool {
 	return (t.AgeMin != nil && *t.AgeMin != MinTargetAge) ||
 		(t.AgeMax != nil && *t.AgeMax != MaxTargetAge) ||
 		len(t.Genders) == 1 ||
-		len(t.CustomAudiences) > 0
+		len(t.CustomAudiences) > 0 ||
+		len(t.Interests) > 0 ||
+		len(t.Behaviors) > 0 ||
+		len(t.WorkPositions) > 0
 }
 
 // apply adds t to an ad set's targeting spec. t must be NormalizeAudienceTargeting's output. The
@@ -182,6 +333,29 @@ func (t *AudienceTargeting) apply(targeting map[string]any) {
 	}
 	if len(t.ExcludedCustomAudiences) > 0 {
 		targeting["excluded_custom_audiences"] = audienceRefs(t.ExcludedCustomAudiences)
+	}
+	if len(t.Locales) > 0 {
+		targeting["locales"] = t.Locales
+	}
+	// Interests, behaviors and work positions share ONE flexible_spec entry, whose keys Meta ORs.
+	detailed := map[string]any{}
+	if len(t.Interests) > 0 {
+		detailed["interests"] = audienceRefs(t.Interests)
+	}
+	if len(t.Behaviors) > 0 {
+		detailed["behaviors"] = audienceRefs(t.Behaviors)
+	}
+	if len(t.WorkPositions) > 0 {
+		detailed["work_positions"] = audienceRefs(t.WorkPositions)
+	}
+	if len(detailed) > 0 {
+		targeting["flexible_spec"] = []map[string]any{detailed}
+	}
+	if len(t.DevicePlatforms) == 1 {
+		targeting["device_platforms"] = t.DevicePlatforms
+	}
+	if len(t.UserOS) > 0 {
+		targeting["user_os"] = t.UserOS
 	}
 	if t.inclusion() || t.AdvantageAudience != nil {
 		flag := 0
@@ -251,6 +425,56 @@ func (c *Client) checkCustomAudiences(ctx context.Context, accountID string, t *
 			if owner.ID != id || !sameMetaAccount(owner.AccountID, accountID) {
 				return domain.PreflightRefusalf("meta targeting: %s audience %s is not a custom audience of the connected ad account %s; nothing was created", list.field, domain.CallerValue(id), accountID)
 			}
+		}
+	}
+	return nil
+}
+
+// interestValidation is one row of Meta's interest validation read: GET
+// /search?type=adinterestvalid&interest_fbid_list=[…] (Targeting Search reference, "Validation").
+// Meta answers a row per requested id, with valid false for an id it no longer offers (detailed
+// targeting options are retired regularly). Meta renders id as a JSON number there, so it decodes
+// through graphID.
+type interestValidation struct {
+	ID    graphID `json:"id"`
+	Valid *bool   `json:"valid"`
+}
+
+// checkInterests proves, before the first mutating call, that every interest t names is one Meta
+// currently offers. A retired or mistyped id would otherwise be refused at the AD SET create, after
+// the campaign already exists. A read that fails, or an answer without a row for every id, is an
+// error and nothing is created; a row with valid false (or no valid field) is a refusal.
+func (c *Client) checkInterests(ctx context.Context, t *AudienceTargeting) error {
+	if t == nil || len(t.Interests) == 0 {
+		return nil
+	}
+	list, err := json.Marshal(t.Interests)
+	if err != nil {
+		return fmt.Errorf("meta targeting: encode the interest list: %w", err)
+	}
+	path := "/search?type=adinterestvalid&interest_fbid_list=" + url.QueryEscape(string(list))
+	raw, err := c.getChecked(ctx, path)
+	if err != nil {
+		return fmt.Errorf("meta targeting: the interests could not be validated, so nothing was created: %w", err)
+	}
+	var page struct {
+		Data *[]interestValidation `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &page); err != nil || page.Data == nil {
+		return fmt.Errorf("meta targeting: the interest validation read returned no rows, so nothing was created")
+	}
+	valid := make(map[string]bool, len(*page.Data))
+	answered := make(map[string]bool, len(*page.Data))
+	for _, row := range *page.Data {
+		answered[string(row.ID)] = true
+		valid[string(row.ID)] = row.Valid != nil && *row.Valid
+	}
+	for _, id := range t.Interests {
+		if !answered[id] {
+			return fmt.Errorf("meta targeting: the interest validation read did not answer for interest %s, so nothing was created", domain.CallerValue(id))
+		}
+		if !valid[id] {
+			return domain.PreflightRefusalf("meta targeting: interest %s is not a detailed targeting interest Meta currently offers; nothing was created", domain.CallerValue(id))
 		}
 	}
 	return nil

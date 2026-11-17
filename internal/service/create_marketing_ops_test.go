@@ -211,6 +211,7 @@ func TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps(t *tes
 		"redditConfig":    map[string]any{"customAudienceIds": []any{"1"}}}
 	metaAudiences := map[string]any{"metaConfig": map[string]any{"targeting": map[string]any{
 		"ageMin": 25, "customAudiences": []any{"111"}, "excludedCustomAudiences": []any{"222"}}}}
+	metaLeadForm := map[string]any{"metaConfig": map[string]any{"objective": "leads", "leadFormId": "1234567890"}}
 	metaAgeOnly := map[string]any{"metaConfig": map[string]any{"targeting": map[string]any{"ageMin": 25, "genders": []any{"male"}}}}
 	googleAndMeta := map[string]any{
 		"googleAdsConfig": map[string]any{"channel": "search", "conversionActions": []any{"customers/1/conversionActions/2"}},
@@ -260,6 +261,8 @@ func TestBriefService_CreateCampaigns_SharedAccountInputsNeedMarketingOps(t *tes
 		{"meta audiences are checked", []string{"meta-ads"}, metaAudiences, &fakeMarketingOps{}, testActor, "403", 1,
 			"targeting.customAudiences, targeting.excludedCustomAudiences"},
 		{"marketing ops may send meta audiences", []string{"meta-ads"}, metaAudiences, &fakeMarketingOps{allow: true}, testActor, "", 1, ""},
+		{"a meta lead form is checked", []string{"meta-ads"}, metaLeadForm, &fakeMarketingOps{}, testActor, "403", 1, "leadFormId"},
+		{"marketing ops may send a meta lead form", []string{"meta-ads"}, metaLeadForm, &fakeMarketingOps{allow: true}, testActor, "", 1, ""},
 		{"meta age and gender are not checked", []string{"meta-ads"}, metaAgeOnly, &fakeMarketingOps{}, testActor, "", 0, ""},
 		{"a failed check on meta audiences is unavailable", []string{"meta-ads"}, metaAudiences,
 			&fakeMarketingOps{allow: true, err: errors.New("nats: timeout")}, testActor, "503", 1, ""},
@@ -392,4 +395,26 @@ type forbiddenSchema struct {
 			Example string `json:"example"`
 		} `json:"message"`
 	} `json:"properties"`
+}
+
+// TestMetaMarketingOpsInputs_CaseVariantThenNullLeadForm: encoding/json matches keys
+// case-insensitively, so a form id under "LeadFormId" followed by `"leadFormId": null` leaves the
+// dispatcher's string holding the id while a RawMessage ends as null. The gate must still count it.
+func TestMetaMarketingOpsInputs_CaseVariantThenNullLeadForm(t *testing.T) {
+	for _, cfg := range []string{
+		`{"metaConfig":{"objective":"leads","LeadFormId":"5550001","leadFormId":null}}`,
+		`{"metaConfig":{"objective":"leads","leadFormId":"5550001"}}`,
+	} {
+		if got := MetaMarketingOpsInputs(json.RawMessage(cfg)); len(got) != 1 || got[0] != "leadFormId" {
+			t.Errorf("MetaMarketingOpsInputs(%s) = %v, want [leadFormId]", cfg, got)
+		}
+	}
+	for _, cfg := range []string{
+		`{"metaConfig":{"objective":"leads","leadFormId":null}}`,
+		`{"metaConfig":{"objective":"leads","leadFormId":""}}`,
+	} {
+		if got := MetaMarketingOpsInputs(json.RawMessage(cfg)); len(got) != 0 {
+			t.Errorf("MetaMarketingOpsInputs(%s) = %v, want none", cfg, got)
+		}
+	}
 }

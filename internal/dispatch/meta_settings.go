@@ -5,15 +5,20 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"os"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // metaGraphTimeLayout is the shape Graph renders an ad set's start_time / end_time in
@@ -90,7 +95,12 @@ func (d *MetaDispatcher) ReadSettings(ctx context.Context, projectID string, pla
 	}
 	client := d.cachedMetaClient(projectID, platform, res, creds)
 
-	settings, err := client.GetCampaignSettings(ctx, campaign.PlatformCampaignID, metaAdSetID(campaign))
+	withTargeting := metaTargetingReadbackEnabled()
+	read := client.GetCampaignSettings
+	if withTargeting {
+		read = client.GetCampaignSettingsWithTargeting
+	}
+	settings, err := read(ctx, campaign.PlatformCampaignID, metaAdSetID(campaign))
 	if err != nil {
 		if errors.Is(err, meta.ErrAdSetNotInCampaign) {
 			return nil, fmt.Errorf("read meta campaign settings: the ad set recorded for campaign %s belongs to a different campaign upstream, so its configuration is not this campaign's; re-dispatch the campaign to repair the recorded ad set: %w",
@@ -155,6 +165,9 @@ func (d *MetaDispatcher) ReadSettings(ctx context.Context, projectID string, pla
 		model.CompareSettingsField(settingsFieldEndDate, rec.end, upstreamEnd),
 		model.CompareSettingsField(settingsFieldBiddingStrategy, nil, upstreamBid),
 	}
+	if withTargeting {
+		rb.Fields = append(rb.Fields, metaTargetingSettingsFields(campaign, settings.AdSet)...)
+	}
 	rb.SummariseSettings()
 	return rb, nil
 }
@@ -189,4 +202,126 @@ func formatMinorUnits(minor, offset int64) string {
 		s = "-" + s
 	}
 	return s
+}
+
+// Field names of the Meta targeting readback (#550), in this service's vocabulary.
+const (
+	settingsFieldRegions    = "regions"
+	settingsFieldCities     = "cities"
+	settingsFieldAdSchedule = "ad_schedule"
+)
+
+// metaTargetingReadbackEnabled reports whether this deployment opted in to the regions, cities and
+// ad schedule readback (#550). Read per call; only the exact value "true" enables it. While off the
+// readback is exactly what it was: the ad set read asks for no targeting and the fields are absent.
+func metaTargetingReadbackEnabled() bool {
+	return os.Getenv(constants.EnvMetaTargetingReadbackEnabled) == "true"
+}
+
+// metaTargetingSettingsFields compares the regions, cities and ad schedule the row's config snapshot
+// recorded with what the ad set holds. Both sides are rendered by the same functions
+// (renderSettingsKeys, renderAdSchedule), so equal values cannot compare unequal over order or
+// spelling. A side that was not read is absent and the verdict `unknown`: no snapshot (an adopted or
+// pre-snapshot row) leaves the recorded side absent, and no ad set, or an unreadable targeting or
+// schedule, leaves the upstream side absent. An empty list on either side is "none" and renders as
+// "", so a create that asked for no regions matches an ad set that holds none.
+func metaTargetingSettingsFields(campaign *model.Campaign, adSet *meta.AdSetSettings) []model.CampaignSettingsField {
+	rec := metaRecordedTargeting(campaign)
+	var upRegions, upCities, upSchedule *string
+	if adSet != nil && adSet.Targeting != nil {
+		t := adSet.Targeting
+		if !t.GeoUnreadable {
+			upRegions = strPtr(renderSettingsKeys(t.Regions))
+			upCities = strPtr(renderSettingsKeys(t.Cities))
+		}
+		if !t.ScheduleUnreadable {
+			blocks := make([]meta.AdScheduleBlock, len(t.Schedule))
+			copy(blocks, t.Schedule)
+			upSchedule = strPtr(renderAdSchedule(blocks))
+		}
+	}
+	return []model.CampaignSettingsField{
+		model.CompareSettingsField(settingsFieldRegions, rec.regions, upRegions),
+		model.CompareSettingsField(settingsFieldCities, rec.cities, upCities),
+		model.CompareSettingsField(settingsFieldAdSchedule, rec.schedule, upSchedule),
+	}
+}
+
+type metaRecordedTargetingSides struct {
+	regions, cities, schedule *string
+}
+
+// metaRecordedTargeting reads the recorded regions, cities and ad schedule out of the row's config
+// snapshot (metaSnapshotConfig keeps metaConfig.targeting and adSchedule verbatim). No snapshot, or
+// one that does not decode, records nothing (all nil). A snapshot without them recorded "none".
+// The schedule renders as the create path sent it: days de-duplicated and sorted, in the ad
+// account's time zone (meta.AdScheduleTimezone).
+func metaRecordedTargeting(campaign *model.Campaign) metaRecordedTargetingSides {
+	var out metaRecordedTargetingSides
+	var snap struct {
+		Targeting *struct {
+			Regions []string `json:"regions"`
+			Cities  []string `json:"cities"`
+		} `json:"targeting"`
+		AdSchedule *meta.AdSchedule `json:"adSchedule"`
+	}
+	// An empty snapshot fails to decode too, so it records nothing.
+	if err := json.Unmarshal(campaign.ConfigSnapshot, &snap); err != nil {
+		return out
+	}
+	var regions, cities []string
+	if snap.Targeting != nil {
+		regions, cities = snap.Targeting.Regions, snap.Targeting.Cities
+	}
+	out.regions = strPtr(renderSettingsKeys(regions))
+	out.cities = strPtr(renderSettingsKeys(cities))
+	var blocks []meta.AdScheduleBlock
+	if s := snap.AdSchedule; s != nil {
+		blocks = []meta.AdScheduleBlock{{Days: s.Days, StartMinute: s.StartMinute, EndMinute: s.EndMinute, TimezoneType: meta.AdScheduleTimezone}}
+	}
+	out.schedule = strPtr(renderAdSchedule(blocks))
+	return out
+}
+
+// renderSettingsKeys renders a key list as its trimmed, de-duplicated keys in ascending numeric
+// order, comma-separated; none renders as "".
+func renderSettingsKeys(keys []string) string {
+	seen := map[string]bool{}
+	var out []string
+	for _, k := range keys {
+		k = strings.TrimSpace(k)
+		if k == "" || seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, k)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if len(out[i]) != len(out[j]) {
+			return len(out[i]) < len(out[j])
+		}
+		return out[i] < out[j]
+	})
+	return strings.Join(out, ",")
+}
+
+// renderAdSchedule renders schedule blocks as "days=<d,…> <HH:MM>-<HH:MM> <timezone_type>", each
+// block's days de-duplicated and sorted, blocks sorted and joined by "; "; none renders as "".
+func renderAdSchedule(blocks []meta.AdScheduleBlock) string {
+	out := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		days := append([]int(nil), b.Days...)
+		sort.Ints(days)
+		var ds []string
+		for i, d := range days {
+			if i > 0 && d == days[i-1] {
+				continue
+			}
+			ds = append(ds, strconv.Itoa(d))
+		}
+		out = append(out, fmt.Sprintf("days=%s %02d:%02d-%02d:%02d %s", strings.Join(ds, ","),
+			b.StartMinute/60, b.StartMinute%60, b.EndMinute/60, b.EndMinute%60, strings.ToUpper(strings.TrimSpace(b.TimezoneType))))
+	}
+	sort.Strings(out)
+	return strings.Join(out, "; ")
 }

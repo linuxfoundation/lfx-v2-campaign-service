@@ -337,10 +337,15 @@ func marketingOpsForbiddenMessage(fields []string) string {
 }
 
 // MetaMarketingOpsInputs names, in config order, the metaConfig inputs this config sets that name
-// an EXISTING custom audience of the connected Meta ad account (#550): targeting.customAudiences
-// and targeting.excludedCustomAudiences. That ad account is shared by every foundation, as the
-// Google Ads account is, so only global_marketing_ops may send them. Age, gender and
-// advantageAudience name no account resource and are not gated.
+// an EXISTING resource of the shared LF Meta connection (#550): leadFormId (an Instant Form of the
+// connection's Page, which for a project without its own connection is the shared LF Page holding
+// every foundation's forms), targeting.customAudiences and targeting.excludedCustomAudiences. That
+// ad account and Page are shared by every foundation, as the Google Ads account is, so only
+// global_marketing_ops may send them; list-meta-lead-forms, the form picker, is gated the same way.
+// Age, gender and advantageAudience name no account resource and are not gated.
+//
+// leadFormId counts when it holds any value but null or "" (whitespace included, a number
+// included), so a malformed id is still gated rather than passed to the 400 check first.
 //
 // Any non-empty list counts, whatever its entries hold, exactly as GoogleAdsMarketingOpsInputs
 // counts, and the envelope is decoded the way the dispatcher's unmarshalPlatformConfig decodes it.
@@ -359,16 +364,27 @@ func MetaMarketingOpsInputs(config json.RawMessage) []string {
 		return nil
 	}
 	var cfg struct {
-		Targeting *struct {
+		LeadFormID json.RawMessage `json:"leadFormId"`
+		Targeting  *struct {
 			CustomAudiences         []string `json:"customAudiences"`
 			ExcludedCustomAudiences []string `json:"excludedCustomAudiences"`
 		} `json:"targeting"`
 	}
 	_ = json.Unmarshal(raw, &cfg) // a partial decode is still inspected, as for Google
-	if cfg.Targeting == nil {
-		return nil
+	// The dispatcher decodes leadFormId into a string, where a later `null` under a case variant
+	// of the key leaves an earlier value in place while the RawMessage above ends as null. Decode it
+	// the dispatcher's way too, so that pair is still gated.
+	var asDispatched struct {
+		LeadFormID string `json:"leadFormId"`
 	}
+	_ = json.Unmarshal(raw, &asDispatched)
 	var set []string
+	if v := strings.TrimSpace(string(cfg.LeadFormID)); (v != "" && v != "null" && v != `""`) || strings.TrimSpace(asDispatched.LeadFormID) != "" {
+		set = append(set, "leadFormId")
+	}
+	if cfg.Targeting == nil {
+		return set
+	}
 	if len(cfg.Targeting.CustomAudiences) > 0 {
 		set = append(set, "targeting.customAudiences")
 	}

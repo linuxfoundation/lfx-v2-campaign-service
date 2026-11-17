@@ -165,19 +165,33 @@ type Service interface {
 	// than conversions, or either one while its deployment flag
 	// (META_CALL_TO_ACTION_ENABLED, META_CONVERSION_EVENT_ENABLED) is not "true",
 	// is a synchronous 400 "invalid campaign config: metaConfig.callToAction..."
-	// or "invalid campaign config: metaConfig.conversionEvent...". REDDIT
-	// SHARED-ACCOUNT INPUTS (#549): a redditConfig that sets customAudienceIds or
-	// excludedCustomAudienceIds (any non-empty list) on a create that selects
-	// reddit-ads requires global_marketing_ops on this project in the same single
-	// check, with the same 403 and 503; the custom audiences belong to the LF
-	// Reddit ad account every foundation shares. X SHARED-ACCOUNT INPUTS (#564):
-	// likewise a twitterConfig that sets customAudienceIds or
-	// excludedCustomAudienceIds (any non-empty list) on a create that selects
-	// twitter-ads requires global_marketing_ops on this project in the same single
-	// check; those audiences belong to the LF X ad account. MICROSOFT
-	// SHARED-ACCOUNT INPUTS (#563): likewise a microsoftConfig that sets
-	// audienceIds, excludedAudienceIds or sharedNegativeKeywordListIds (any
-	// non-empty list) on a create that selects microsoft-ads requires
+	// or "invalid campaign config: metaConfig.conversionEvent...". Likewise
+	// metaConfig.optimizationGoal outside LINK_CLICKS and LANDING_PAGE_VIEWS, on
+	// an objective other than traffic, LANDING_PAGE_VIEWS with manual bidding, or
+	// the field while META_OPTIMIZATION_GOAL_ENABLED is not "true", is a
+	// synchronous 400. So is a metaConfig.frequencyCap on an objective other than
+	// awareness, with maxImpressions or intervalDays outside 1-90, or while
+	// META_FREQUENCY_CAP_ENABLED is not "true". So is a metaConfig.adSchedule
+	// (days 0-6 and whole-hour startMinute/endMinute in the ad account's time
+	// zone) on a daily budget (Meta schedules only lifetime budgets), with invalid
+	// days or minutes, or while META_AD_SCHEDULE_ENABLED is not "true". So is a
+	// metaConfig.leadFormId (an existing Instant Form, #550) on an objective other
+	// than leads, that is not a numeric id, with manual bidding, with a
+	// callToAction a form cannot carry, or while META_LEAD_FORMS_ENABLED is not
+	// "true"; with leads it makes an OUTCOME_LEADS lead ad, and the form is read
+	// before anything is created (another Page's or an inactive form fails the job
+	// with nothing created). REDDIT SHARED-ACCOUNT INPUTS (#549): a redditConfig
+	// that sets customAudienceIds or excludedCustomAudienceIds (any non-empty
+	// list) on a create that selects reddit-ads requires global_marketing_ops on
+	// this project in the same single check, with the same 403 and 503; the custom
+	// audiences belong to the LF Reddit ad account every foundation shares. X
+	// SHARED-ACCOUNT INPUTS (#564): likewise a twitterConfig that sets
+	// customAudienceIds or excludedCustomAudienceIds (any non-empty list) on a
+	// create that selects twitter-ads requires global_marketing_ops on this
+	// project in the same single check; those audiences belong to the LF X ad
+	// account. MICROSOFT SHARED-ACCOUNT INPUTS (#563): likewise a microsoftConfig
+	// that sets audienceIds, excludedAudienceIds or sharedNegativeKeywordListIds
+	// (any non-empty list) on a create that selects microsoft-ads requires
 	// global_marketing_ops on this project in the same single check; those
 	// remarketing lists and negative keyword lists belong to the LF Microsoft
 	// Advertising account. A remarketing list input that breaks its rules, or is
@@ -212,14 +226,30 @@ type Service interface {
 	// not "true" on this deployment. META SHARED-ACCOUNT INPUTS: likewise a
 	// metaConfig.targeting that sets customAudiences or excludedCustomAudiences
 	// (any non-empty list) names custom audiences of the Meta ad account every
-	// foundation shares and requires global_marketing_ops on this project (403
-	// naming them, 503 when the check cannot be made); age, gender and
-	// advantageAudience are not gated. An invalid metaConfig.targeting, or any
-	// targeting block while META_AUDIENCE_TARGETING_ENABLED is not "true" on the
-	// deployment, is a synchronous 400 "invalid campaign config:
-	// metaConfig.targeting...". An invalid per-platform `bidding` object (see the
-	// config attribute) is also refused synchronously, with 400 "invalid campaign
-	// config: <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
+	// foundation shares, and a metaConfig.leadFormId (any value but null or "")
+	// names an Instant Form of the connection's Page, the shared LF Page for every
+	// project without its own connection; either requires global_marketing_ops on
+	// this project (403 naming them, 503 when the check cannot be made); age,
+	// gender and advantageAudience are not gated. An invalid metaConfig.targeting,
+	// or any targeting block while META_AUDIENCE_TARGETING_ENABLED is not "true"
+	// on the deployment, is a synchronous 400 "invalid campaign config:
+	// metaConfig.targeting..."; a block that sets only targeting.locales,
+	// targeting.devicePlatforms, targeting.interests, targeting.regions,
+	// targeting.cities, targeting.behaviors, targeting.workPositions or
+	// targeting.userOs needs META_LOCALE_TARGETING_ENABLED,
+	// META_DEVICE_TARGETING_ENABLED, META_INTEREST_TARGETING_ENABLED,
+	// META_REGION_TARGETING_ENABLED, META_BEHAVIOR_TARGETING_ENABLED or
+	// META_OS_TARGETING_ENABLED instead, and any of those lists while its flag is
+	// not "true", or devicePlatforms [desktop] with the audienceNetwork placement,
+	// a userOs value outside Meta's documented user_os formats, a version of one
+	// OS family with the other family, userOs with devicePlatforms [desktop], or
+	// an OS version on the awareness objective, is a synchronous 400 too. Every
+	// targeting.regions and targeting.cities key is looked up before anything is
+	// created; one whose country is sanctioned, regulated, already a geoTargets
+	// country, or in the EU without the DSA disclosures fails the job with nothing
+	// created. An invalid per-platform `bidding` object (see the config attribute)
+	// is also refused synchronously, with 400 "invalid campaign config:
+	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
 	// Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc)
 	// and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are
 	// immediately eligible for the bid lever, and eligibility follows the
@@ -328,14 +358,23 @@ type Service interface {
 	// either side is reported ABSENT with an `unknown` verdict, never defaulted to
 	// zero and never counted as a match. Support is per-platform: Google Ads,
 	// Microsoft Advertising, Meta, Reddit, X (Twitter) Ads and LinkedIn are wired,
-	// and a campaign on any other platform returns 400. The field set is
-	// per-platform too — each platform reports only the settings it can answer
-	// honestly, normalised to the units its create path wrote (Microsoft keeps
-	// flight dates on the ad group, which this read does not read, so reports
-	// none) — and on every platform the provenance rules are the same: a campaign
-	// that does not record the account it was created under, or that belongs to a
-	// different account than the connection now resolves to, is refused 409 before
-	// anything is read.
+	// and a campaign on any other platform returns 400. While
+	// META_TARGETING_READBACK_ENABLED is "true", a Meta readback also COMPARES
+	// regions, cities and ad_schedule (#550): the ad set's targeting.geo_locations
+	// region and city keys and its adset_schedule against the
+	// metaConfig.targeting.regions, cities and adSchedule the row's config
+	// snapshot recorded (keys de-duplicated in numeric order, comma-joined; a
+	// schedule as "days=<d,…> HH:MM-HH:MM <timezone_type>"; none on either side is
+	// an empty string, so no regions requested and none held is a match). A row
+	// without a config snapshot has no recorded side, and an ad set whose
+	// targeting or schedule cannot be read has no upstream side; both are unknown
+	// and never fail the rest of the read. The field set is per-platform too —
+	// each platform reports only the settings it can answer honestly, normalised
+	// to the units its create path wrote (Microsoft keeps flight dates on the ad
+	// group, which this read does not read, so reports none) — and on every
+	// platform the provenance rules are the same: a campaign that does not record
+	// the account it was created under, or that belongs to a different account
+	// than the connection now resolves to, is refused 409 before anything is read.
 	GetCampaignSettings(context.Context, *GetCampaignSettingsPayload) (res *CampaignSettingsReadback, err error)
 	// Read live performance metrics for EVERY campaign on a brief in one request,
 	// by calling each campaign's platform directly. A pure read — never persisted.
@@ -391,7 +430,14 @@ type Service interface {
 	// unless Meta reports it PAUSED (or DELETED/ARCHIVED, which cannot serve): an
 	// ad set Meta reports ACTIVE is 409 (pause it, or resume it to clear the
 	// record, through toggle-meta-ad-set-status first), and an unreadable one is
-	// 503 with the campaign not modified.
+	// 503 with the campaign not modified. Likewise every ad deliberately paused
+	// through toggle-meta-ad-status (list-meta-ads `deliberately_paused`) is left
+	// PAUSED while its siblings, the ad set and the campaign are activated; each
+	// held ad is READ first (GET
+	// /{ad_id}?fields=id,adset_id,campaign_id,account_id,status), an ad Meta
+	// reports ACTIVE is 409 (pause it, or resume it to clear the record, through
+	// toggle-meta-ad-status first), and an unreadable one is 503 with the campaign
+	// not modified.
 	ToggleCampaignStatus(context.Context, *ToggleCampaignStatusPayload) (res *Campaign, err error)
 	// Change how much a campaign may spend, on its ad platform, then persist the
 	// new amount. A MUTATION on a live paid campaign, dispatched to the platform
@@ -742,9 +788,10 @@ type Service interface {
 	// Read the ADS under ONE ad set of a Meta campaign live (decision D7, first
 	// step): each ad's name, configured and effective status and creative, with
 	// its impressions, clicks, spend and CTR over the window. STRICTLY READ-ONLY —
-	// the platform is only read and nothing is persisted; there is no per-ad pause
-	// or edit. Before anything is read the campaign must record which ad account
-	// it was created under and that account must be the connection's (409
+	// the platform is only read and nothing is persisted; an ad is paused or
+	// resumed with toggle-meta-ad-status, and `deliberately_paused` reports that
+	// lever's record. Before anything is read the campaign must record which ad
+	// account it was created under and that account must be the connection's (409
 	// otherwise); a campaign with no platform campaign id is 409; any platform but
 	// Meta is 400; `ad_set_id` is validated before any connection work (400).
 	// Upstream: GET /{ad_set_id}?fields=id,campaign_id,account_id,status, which
@@ -814,6 +861,41 @@ type Service interface {
 	// fails after Meta's definite answer, the 503/409 says what Meta now holds and
 	// that the record was not updated. Any platform but Meta is 400.
 	ToggleMetaAdSetStatus(context.Context, *ToggleMetaAdSetStatusPayload) (res *MetaAdSetStatusChange, err error)
+	// Pause or resume ONE ad of one ad set of a Meta campaign (#550). The per-ad
+	// sibling of toggle-meta-ad-set-status, with its guards, outcomes and
+	// failures: If-Match carries the campaign row's ETag (428 when missing, 412
+	// when stale) and the campaign's write lock is held for the call. Refused with
+	// 400 before anything else unless the deployment sets META_AD_PAUSE_ENABLED to
+	// exactly "true" (off by default until the cascade and the record are verified
+	// against a live account). `ad_set_id` and `ad_id` are validated before any
+	// connection work (400). The campaign must record its ad account and that
+	// account must be the connection's (409), and the ad is then READ (GET
+	// /{ad_id}?fields=id,adset_id,campaign_id,account_id,status) and must report
+	// `ad_set_id`, THIS campaign and THAT account (409 otherwise) — all before
+	// anything is written. ACTIVE is allowed ONLY on an ad of the ad set this
+	// service created for the campaign (409 otherwise — the campaign resume never
+	// activates any other ad), and on an ADOPTED campaign it is refused exactly as
+	// the campaign toggle refuses it; PAUSED is allowed on any of the campaign's
+	// ads. An ad Meta reports DELETED or ARCHIVED is 409. When the read shows the
+	// requested status already, NOTHING is sent and the outcome is
+	// ALREADY_IN_STATE. Otherwise ONE POST /{ad_id} {status} is sent, never
+	// retried: 200 APPLIED when Meta confirms it; a failed pre-write read, a write
+	// never sent or one Meta definitely refused is 503 saying nothing was changed;
+	// a write whose outcome is unknown is 503 saying the change is UNCONFIRMED —
+	// read the ads before retrying — and the campaign's write lock is held for a
+	// cooldown. No Meta connection is 404; an unusable connection or one with no
+	// ad account is 409; a problem with the LF system connection,
+	// stored-credential decryption or this service itself is 500. A DELIBERATE
+	// PAUSE OF AN AD OF THE RECORDED AD SET SURVIVES A CAMPAIGN PAUSE/RESUME: it
+	// is recorded on the campaign row (before the pause is sent, withdrawn if Meta
+	// definitely refused it), toggle-campaign-status ACTIVE then leaves that ad
+	// PAUSED, and only a CONFIRMED resume here (APPLIED or ALREADY_IN_STATE)
+	// clears the record — exactly the ad-set lever's record rules, including the
+	// ETag and re-read advice after any error. list-meta-ads reports it as
+	// `deliberately_paused`. Pausing an ad of any other ad set, or anything on an
+	// ADOPTED campaign, records nothing, since the campaign cascade never
+	// re-activates it. Any platform but Meta is 400.
+	ToggleMetaAdStatus(context.Context, *ToggleMetaAdStatusPayload) (res *MetaAdStatusChange, err error)
 	// Delete a campaign (soft delete, requires If-Match). LOCAL ONLY: this removes
 	// the campaign from this service and frees its (brief, platform) slot so the
 	// brief can be re-dispatched to that platform. It does NOT delete, pause, or
@@ -885,7 +967,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [41]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "list-creative-assets", "get-creative-asset", "get-asset-plan", "delete-creative-asset", "create-campaigns", "create-send-workflow", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "list-meta-ad-sets", "list-meta-ads", "toggle-meta-ad-set-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
+var MethodNames = [42]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "list-creative-assets", "get-creative-asset", "get-asset-plan", "delete-creative-asset", "create-campaigns", "create-send-workflow", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "list-meta-ad-sets", "list-meta-ads", "toggle-meta-ad-set-status", "toggle-meta-ad-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
 
 // AddNegativeKeywordsPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service add-negative-keywords method.
@@ -2539,6 +2621,14 @@ type MetaAd struct {
 	CostMicros int64
 	// clicks/impressions, 0 when impressions is 0.
 	Ctr float64
+	// true when this is an ad of the campaign's recorded ad set and the campaign
+	// row holds a DELIBERATE pause of it made through toggle-meta-ad-status
+	// (#550): resuming the campaign (toggle-campaign-status ACTIVE) leaves this ad
+	// PAUSED, and only resuming it through toggle-meta-ad-status clears this. It
+	// is this service's record, not Meta's — `status` is what Meta reports. The
+	// same caveats as list-meta-ad-sets `deliberately_paused` apply after an
+	// UNCONFIRMED 503.
+	DeliberatelyPaused bool
 }
 
 type MetaAdSet struct {
@@ -2640,6 +2730,31 @@ type MetaAdSets struct {
 	AdSets []*MetaAdSet
 	// len(ad_sets).
 	AdSetCount int
+}
+
+// MetaAdStatusChange is the result type of the lfx-v2-campaign-service-briefs
+// service toggle-meta-ad-status method.
+type MetaAdStatusChange struct {
+	// Campaign UUID
+	CampaignID string
+	// The ad set the ad was proven to belong to
+	AdSetID string
+	// The ad whose status was addressed
+	AdID string
+	// The status requested
+	RequestedStatus string
+	// The configured status the pre-write read observed.
+	PreviousStatus *string
+	// APPLIED — Meta confirmed the change. ALREADY_IN_STATE — the pre-write read
+	// showed the ad already at the requested status, so NOTHING WAS SENT. (A write
+	// whose outcome is unknown is never a 200: it is a 503 saying the change is
+	// unconfirmed.)
+	Outcome string
+	// ETag header value: the campaign row's version after this call. It CHANGES
+	// when the call records or clears the deliberate pause of an ad of the
+	// campaign's recorded ad set; otherwise it is UNCHANGED — the ad's status
+	// itself is not stored on the campaign row.
+	Etag *string
 }
 
 // MetaAds is the result type of the lfx-v2-campaign-service-briefs service
@@ -3003,6 +3118,27 @@ type ToggleMetaAdSetStatusPayload struct {
 	// If-Match header carrying the current ETag/version
 	IfMatch *string
 	// Desired ad-set status, in Meta's vocabulary
+	Status string
+}
+
+// ToggleMetaAdStatusPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service toggle-meta-ad-status method.
+type ToggleMetaAdStatusPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+	// The Meta ad set id: digits, no leading zero, at most 32.
+	AdSetID string
+	// The Meta ad id: digits, no leading zero, at most 32.
+	AdID string
+	// If-Match header carrying the current ETag/version
+	IfMatch *string
+	// Desired ad status, in Meta's vocabulary
 	Status string
 }
 

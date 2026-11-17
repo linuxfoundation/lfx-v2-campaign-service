@@ -66,6 +66,8 @@ type Endpoints struct {
 	ListGoogleAdsConversionActions goa.Endpoint
 	ListGoogleAdsAudiences         goa.Endpoint
 	ListMetaCustomAudiences        goa.Endpoint
+	SearchMetaTargetingOptions     goa.Endpoint
+	ListMetaLeadForms              goa.Endpoint
 	ListRedditAdsCustomAudiences   goa.Endpoint
 	ListRedditAdsPixels            goa.Endpoint
 	ListTwitterAdsCustomAudiences  goa.Endpoint
@@ -157,6 +159,8 @@ func NewEndpoints(s Service) *Endpoints {
 		ListGoogleAdsConversionActions: NewListGoogleAdsConversionActionsEndpoint(s, a.JWTAuth),
 		ListGoogleAdsAudiences:         NewListGoogleAdsAudiencesEndpoint(s, a.JWTAuth),
 		ListMetaCustomAudiences:        NewListMetaCustomAudiencesEndpoint(s, a.JWTAuth),
+		SearchMetaTargetingOptions:     NewSearchMetaTargetingOptionsEndpoint(s, a.JWTAuth),
+		ListMetaLeadForms:              NewListMetaLeadFormsEndpoint(s, a.JWTAuth),
 		ListRedditAdsCustomAudiences:   NewListRedditAdsCustomAudiencesEndpoint(s, a.JWTAuth),
 		ListRedditAdsPixels:            NewListRedditAdsPixelsEndpoint(s, a.JWTAuth),
 		ListTwitterAdsCustomAudiences:  NewListTwitterAdsCustomAudiencesEndpoint(s, a.JWTAuth),
@@ -246,6 +250,8 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ListGoogleAdsConversionActions = m(e.ListGoogleAdsConversionActions)
 	e.ListGoogleAdsAudiences = m(e.ListGoogleAdsAudiences)
 	e.ListMetaCustomAudiences = m(e.ListMetaCustomAudiences)
+	e.SearchMetaTargetingOptions = m(e.SearchMetaTargetingOptions)
+	e.ListMetaLeadForms = m(e.ListMetaLeadForms)
 	e.ListRedditAdsCustomAudiences = m(e.ListRedditAdsCustomAudiences)
 	e.ListRedditAdsPixels = m(e.ListRedditAdsPixels)
 	e.ListTwitterAdsCustomAudiences = m(e.ListTwitterAdsCustomAudiences)
@@ -1449,6 +1455,54 @@ func NewListMetaCustomAudiencesEndpoint(s Service, authJWTFn security.AuthJWTFun
 			return nil, err
 		}
 		return s.ListMetaCustomAudiences(ctx, p)
+	}
+}
+
+// NewSearchMetaTargetingOptionsEndpoint returns an endpoint function that
+// calls the method "search-meta-targeting-options" of service
+// "lfx-v2-campaign-service-connections".
+func NewSearchMetaTargetingOptionsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*SearchMetaTargetingOptionsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.SearchMetaTargetingOptions(ctx, p)
+	}
+}
+
+// NewListMetaLeadFormsEndpoint returns an endpoint function that calls the
+// method "list-meta-lead-forms" of service
+// "lfx-v2-campaign-service-connections".
+func NewListMetaLeadFormsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ListMetaLeadFormsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ListMetaLeadForms(ctx, p)
 	}
 }
 
