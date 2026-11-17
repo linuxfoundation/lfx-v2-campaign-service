@@ -159,9 +159,9 @@ var objectiveParams = map[string]ObjectiveParams{
 	// flow does not supply — it would create the campaign then fail at the ad set,
 	// orphaning a paid resource.
 	//
-	// Full LEAD_GENERATION / instant-form (or OUTCOME_LEADS + pixel) parity with the
-	// shared TS contract is INTENTIONALLY OUT OF SCOPE for this PR and tracked as a
-	// follow-up (LFXV2-2665).
+	// A caller that names an existing Instant Form (metaConfig.leadFormId, #550 gap 8)
+	// gets the real lead ad instead: leadFormObjectiveParams (lead_forms.go) replaces
+	// this entry for that create. Without a form this interim mapping still applies.
 	"leads": {
 		CampaignObjective:  "OUTCOME_TRAFFIC",
 		OptimizationGoal:   "LINK_CLICKS",
@@ -1304,23 +1304,29 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 // create can still be paused); ACTIVATE with no ad set id is REJECTED, since a campaign with no
 // ad set cannot serve.
 func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID, adSetID, status string) error {
-	return c.updateCampaignTree(ctx, campaignID, adSetID, status, false)
+	return c.updateCampaignTree(ctx, campaignID, adSetID, status, false, nil)
 }
 
-// ActivateCampaignHoldingAdSet is the ACTIVATE cascade of UpdateCampaignAndChildrenStatus with
-// ONE difference: the ad set itself is NOT posted, so an ad set a user deliberately paused stays
-// PAUSED (LFXV2-2665 product decision, 2026-10-13). Its ads ARE activated and the campaign is
-// flipped last, exactly as in the full cascade: a paused ad set gates its ads, so nothing serves
-// beneath it, and a later resume of that ad set alone is then enough to serve. Every other rule
-// is the full cascade's — ids validated before any request, discovery before any mutation, the
-// zero-ads refusal, and the same definite/Unconfirmed classification.
-func (c *Client) ActivateCampaignHoldingAdSet(ctx context.Context, campaignID, adSetID string) error {
-	return c.updateCampaignTree(ctx, campaignID, adSetID, StatusActive, true)
+// ActivateCampaignHolding is the ACTIVATE cascade with both holds (#550, gap 14). holdAdSet leaves
+// the ad set's own status untouched, so an ad set a user deliberately paused stays PAUSED
+// (LFXV2-2665 product decision, 2026-10-13): its ads are still activated and the campaign flipped
+// last, so a later resume of that ad set alone is enough to serve. And every discovered ad whose
+// id is in heldAdIDs — an ad an operator paused through the per-ad lever, still on record — is NOT
+// posted, so it stays PAUSED while its siblings, the ad set (unless held) and the campaign are
+// activated. An empty heldAdIDs and a false holdAdSet is exactly UpdateCampaignAndChildrenStatus's
+// ACTIVATE. Every other rule is the full cascade's.
+func (c *Client) ActivateCampaignHolding(ctx context.Context, campaignID, adSetID string, holdAdSet bool, heldAdIDs []string) error {
+	held := make(map[string]bool, len(heldAdIDs))
+	for _, id := range heldAdIDs {
+		held[id] = true
+	}
+	return c.updateCampaignTree(ctx, campaignID, adSetID, StatusActive, holdAdSet, held)
 }
 
-// updateCampaignTree is the shared body of the two cascades. holdAdSet leaves the ad set's own
-// status untouched on ACTIVATE; it is never set on PAUSE.
-func (c *Client) updateCampaignTree(ctx context.Context, campaignID, adSetID, status string, holdAdSet bool) error {
+// updateCampaignTree is the shared body of the cascades. holdAdSet leaves the ad set's own status
+// untouched on ACTIVATE, and heldAds names ads it leaves untouched on ACTIVATE; neither is set on
+// PAUSE.
+func (c *Client) updateCampaignTree(ctx context.Context, campaignID, adSetID, status string, holdAdSet bool, heldAds map[string]bool) error {
 	if status == StatusActive && strings.TrimSpace(adSetID) == "" {
 		return fmt.Errorf("meta: cannot activate campaign %s: no ad set id is known, so the tree cannot be made servable", campaignID)
 	}
@@ -1336,7 +1342,7 @@ func (c *Client) updateCampaignTree(ctx context.Context, campaignID, adSetID, st
 	}
 	if status == StatusActive {
 		// Children first (still gated by the paused campaign), campaign last.
-		if err := c.updateAdSetAndAds(ctx, adSetID, status, false, holdAdSet); err != nil {
+		if err := c.updateAdSetAndAds(ctx, adSetID, status, false, holdAdSet, heldAds); err != nil {
 			return err
 		}
 		if err := c.UpdateCampaignStatus(ctx, campaignID, status); err != nil {
@@ -1348,7 +1354,7 @@ func (c *Client) updateCampaignTree(ctx context.Context, campaignID, adSetID, st
 	if err := c.UpdateCampaignStatus(ctx, campaignID, status); err != nil {
 		return err
 	}
-	return c.updateAdSetAndAds(ctx, adSetID, status, true, false)
+	return c.updateAdSetAndAds(ctx, adSetID, status, true, false, nil)
 }
 
 // updateAdSetAndAds POSTs the status to the ad set and each discovered ad. mutatedBefore says
@@ -1356,8 +1362,9 @@ func (c *Client) updateCampaignTree(ctx context.Context, campaignID, adSetID, st
 // when false (the ACTIVATE path, before the campaign flip), a DEFINITE 4xx or a discovery
 // failure is a CLEAN error (nothing serving yet); an ambiguous failure (5xx/transport) is
 // Unconfirmed. When true, any failure is Unconfirmed. An empty adSetID is a no-op. holdAdSet
-// skips the ad set's own POST (its ads are still updated) — see ActivateCampaignHoldingAdSet.
-func (c *Client) updateAdSetAndAds(ctx context.Context, adSetID, status string, mutatedBefore, holdAdSet bool) error {
+// skips the ad set's own POST (its ads are still updated) — see ActivateCampaignHolding.
+// heldAds skips each named ad's POST on ACTIVATE (#550, gap 14) — see ActivateCampaignHolding.
+func (c *Client) updateAdSetAndAds(ctx context.Context, adSetID, status string, mutatedBefore, holdAdSet bool, heldAds map[string]bool) error {
 	if adSetID == "" {
 		return nil
 	}
@@ -1401,6 +1408,11 @@ func (c *Client) updateAdSetAndAds(ctx context.Context, adSetID, status string, 
 	// flip") holds. Once the FIRST ad POST may have committed, subsequent failures are partial
 	// applications (mutatedBefore=true).
 	for _, adID := range adIDs {
+		// An ad an operator deliberately paused stays PAUSED on ACTIVATE (#550, gap 14): only what
+		// this cascade (or the create) paused is switched back on.
+		if status == StatusActive && heldAds[adID] {
+			continue
+		}
 		if err := c.doRequest(ctx, http.MethodPost, "/"+adID, map[string]any{"status": status}, nil); err != nil {
 			return classifyCascadeErr("ad", err, mutatedBefore)
 		}
@@ -2793,8 +2805,8 @@ type CampaignInput struct {
 	// Objective is one of awareness|traffic|engagement|leads|conversions. Empty
 	// defaults to "traffic". "leads" runs an interim website-traffic campaign
 	// (OUTCOME_TRAFFIC optimizing for LINK_CLICKS to the registration URL); it does
-	// not build an on-Facebook instant lead form. Full LEAD_GENERATION / instant-
-	// form parity (and status-toggling + analytics) are deferred to LFXV2-2665.
+	// not build an on-Facebook instant lead form; with LeadFormID it attaches an
+	// existing one instead (OUTCOME_LEADS, #550 gap 8).
 	Objective  string
 	GeoTargets []string
 	// Budget is the budget amount in whole units of the ad ACCOUNT's currency.
@@ -2857,6 +2869,29 @@ type CampaignInput struct {
 	// request, and every custom audience it names is read and must belong to the connected ad
 	// account before the first mutating call (checkCustomAudiences).
 	Targeting *AudienceTargeting
+	// OptimizationGoal is the ad set's optimization_goal for the traffic objective
+	// (metaConfig.optimizationGoal, #550): LINK_CLICKS or LANDING_PAGE_VIEWS
+	// (NormalizeOptimizationGoal), empty meaning the objective's own goal. Refused before any
+	// request on any other objective, outside the list, or with a manual bid cap (a link-click cap
+	// needs the LINK_CLICKS goal).
+	OptimizationGoal string
+	// AdSchedule runs the ad set only on some days and hours, in the ad account's time zone
+	// (metaConfig.adSchedule, #550 gap 16), sent as adset_schedule with pacing_type day_parting. Nil
+	// sends nothing. Refused before any request on a daily budget or with invalid days or minutes
+	// (NormalizeAdSchedule).
+	AdSchedule *AdSchedule
+	// LeadFormID is an existing Instant Form of the connection's Page (metaConfig.leadFormId, #550
+	// gap 8), created in Ads Manager with the Page's lead terms already accepted; this service never
+	// creates a form or accepts terms. Only with the leads objective: the campaign is then
+	// OUTCOME_LEADS, the ad set a LEAD_GENERATION ad set with destination ON_AD, and every creative's
+	// button opens the form. Empty keeps leads' interim website-traffic mapping. The id shape is
+	// checked before any request (NormalizeLeadForm) and the form is read before the first write
+	// (checkLeadForm).
+	LeadFormID string
+	// FrequencyCap is the awareness ad set's impressions-per-person cap (metaConfig.frequencyCap,
+	// #550), sent as frequency_control_specs. Nil sends nothing. Refused before any request on any
+	// other objective or with a value outside 1..90 (NormalizeFrequencyCap).
+	FrequencyCap *FrequencyCap
 	// ReconcileByName opts THIS call in to looking the campaign (and its ad set) up by
 	// name before creating, and reusing a PAUSED match instead of creating a second one.
 	//
@@ -3180,6 +3215,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, domain.WrapPreflightRefusal(err)
 	}
+	// An existing Instant Form (#550, gap 8) turns the leads objective into a real lead ad:
+	// OUTCOME_LEADS, a LEAD_GENERATION ad set on the Page, and the form on every creative. Without
+	// one, leads keeps its interim website-traffic mapping. Checked before any request; the form
+	// itself is read after the account preflight (checkLeadForm).
+	if in.LeadFormID, err = NormalizeLeadForm(objective, in.LeadFormID); err != nil {
+		return nil, err
+	}
+	if in.LeadFormID != "" {
+		objParams = leadFormObjectiveParams
+		promotedObject = map[string]any{"page_id": c.account.PageID}
+		if err := CheckLeadFormCallToAction(in.CallToAction); err != nil {
+			return nil, err
+		}
+	}
 	// The call-to-action button and the conversion event (#550), both checked here with the rest
 	// of the deterministic inputs, before any request.
 	if in.CallToAction, err = NormalizeCallToAction(in.CallToAction); err != nil {
@@ -3195,6 +3244,28 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	audience, err := NormalizeAudienceTargeting(in.Targeting)
 	if err != nil {
 		return nil, err
+	}
+	if err := CheckDevicePlacements(audience, in.Placements); err != nil {
+		return nil, err
+	}
+	if err := CheckUserOS(audience, objective); err != nil {
+		return nil, err
+	}
+	if err := NormalizeFrequencyCap(objective, in.FrequencyCap); err != nil {
+		return nil, err
+	}
+	// The ad schedule (#550, gap 16), lifetime budgets only, checked before any request.
+	schedule, err := NormalizeAdSchedule(in.LifetimeBudget, in.AdSchedule)
+	if err != nil {
+		return nil, err
+	}
+	// The ad set's optimization goal: the objective's own unless metaConfig.optimizationGoal picks
+	// another one the objective accepts (#550, gap 11), checked here before any request.
+	optimizationGoal := objParams.OptimizationGoal
+	if g, gerr := NormalizeOptimizationGoal(objective, in.OptimizationGoal); gerr != nil {
+		return nil, gerr
+	} else if g != "" {
+		optimizationGoal = g
 	}
 
 	accountID := c.account.AccountID
@@ -3225,6 +3296,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if strings.TrimSpace(g) != "" {
 			suppliedGeos++
 		}
+	}
+	// Regions and cities (#550, gap 13) are ADDED to the country targeting. With no country
+	// supplied they are the whole targeting: the US default would overlap a US region (Meta refuses
+	// overlapping locations) and would target a country the caller did not ask for.
+	if suppliedGeos == 0 && audience.subCountryGeo() {
+		allGeo = nil
 	}
 	// Surface geos that were supplied but dropped by validateGeoTargets (bogus/
 	// non-ISO codes, or Meta-ineligible/sanctioned countries like IR/CU/KP/RU) as
@@ -3282,7 +3359,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			geoCountries = append(geoCountries, g)
 		}
 	}
-	if len(geoCountries) == 0 {
+	if len(geoCountries) == 0 && !audience.subCountryGeo() {
 		// skippedGeos holds only codes that passed validateGeoTargets AND are keys of the
 		// fixed regulatedCountries table, so the list is service-vetted, not free caller text.
 		return nil, domain.PreflightRefusalf("meta campaign skipped: all selected geo targets (%s) are regulated and excluded from API targeting; supply at least one eligible (non-regulated) geo target", strings.Join(skippedGeos, ", "))
@@ -3338,6 +3415,28 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err := c.checkCustomAudiences(ctx, accountID, audience); err != nil {
 		return nil, err
 	}
+	// Every interest is validated the same way (#550, gap 7).
+	if err := c.checkInterests(ctx, audience); err != nil {
+		return nil, err
+	}
+	// Every behavior and work position is validated the same way, in one read (#550, gap 7).
+	if err := c.checkDetailedTargeting(ctx, accountID, audience); err != nil {
+		return nil, err
+	}
+	// The Instant Form is read the same way (#550, gap 8): it must be an ACTIVE form of this Page.
+	if err := c.checkLeadForm(ctx, in.LeadFormID); err != nil {
+		return nil, err
+	}
+	// Every region and city is looked up the same way (#550, gap 13), and its parent country must
+	// pass the country rules. A region- or city-only create names its campaign after those countries.
+	geoParents, err := c.checkGeoLocations(ctx, audience, geoCountries, in.DSABeneficiary != "" && in.DSAPayor != "")
+	if err != nil {
+		return nil, err
+	}
+	nameGeo := geoCountries
+	if len(nameGeo) == 0 {
+		nameGeo = geoParents
+	}
 
 	// Resolve the currency offset used to convert the whole-currency-unit budget to
 	// Meta minor units (NOT an FX conversion — the caller's amount is already in the
@@ -3382,8 +3481,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// not a whole number of minor units. Still before any mutating call.
 	var bidCapMinor int64
 	if in.BidCap != 0 {
-		if objParams.OptimizationGoal != OptimizationLinkClicks {
-			return nil, &bidAmountError{msg: fmt.Sprintf("manual bidding needs an objective that optimizes for link clicks (traffic or leads); %q optimizes for %s", objective, objParams.OptimizationGoal)}
+		if optimizationGoal != OptimizationLinkClicks {
+			return nil, &bidAmountError{msg: fmt.Sprintf("manual bidding needs an ad set that optimizes for link clicks (traffic or leads, without optimizationGoal %s); %q optimizes for %s", OptimizationLandingPageViews, objective, optimizationGoal)}
 		}
 		if bidCapMinor, err = CreateBidMinorUnits(in.BidCap, offset); err != nil {
 			return nil, err
@@ -3414,7 +3513,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Geo targets skipped (require regional compliance declaration in Meta Ads Manager): %s", callerValueList(skippedGeos)))
 	}
 
-	campaignName := buildCampaignName(in, geoCountries)
+	campaignName := buildCampaignName(in, nameGeo)
 
 	// Step 2a: reconcile by name BEFORE creating. buildCampaignName is fully
 	// deterministic (same brief → same name), so a retry after a prior
@@ -3608,7 +3707,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
-	targeting := map[string]any{"geo_locations": map[string]any{"countries": geoCountries}}
+	targeting := map[string]any{"geo_locations": adSetGeoLocations(geoCountries, audience)}
 	for k, v := range placementTargeting {
 		targeting[k] = v
 	}
@@ -3619,7 +3718,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		"campaign_id":       campaignID,
 		"status":            "PAUSED",
 		"billing_event":     "IMPRESSIONS",
-		"optimization_goal": objParams.OptimizationGoal,
+		"optimization_goal": optimizationGoal,
 		"bid_strategy":      "LOWEST_COST_WITHOUT_CAP",
 		"targeting":         targeting,
 		"start_time":        adSetStartTime(startDate, c.timeNow()),
@@ -3628,6 +3727,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	if promotedObject != nil {
 		adSetBody["promoted_object"] = promotedObject
+	}
+	// An instant-form lead ad opens the form on the ad itself (#550, gap 8).
+	if in.LeadFormID != "" {
+		adSetBody["destination_type"] = DestinationOnAd
+	}
+	// The awareness frequency cap (#550, gap 18), checked with the deterministic inputs above.
+	if in.FrequencyCap != nil {
+		adSetBody["frequency_control_specs"] = frequencyControlSpecs(in.FrequencyCap)
+	}
+	// The ad schedule in the ad account's time zone, with the day-parting pacing it needs (#550,
+	// gap 16), checked with the deterministic inputs above.
+	if schedule != nil {
+		adSetBody["adset_schedule"] = adSetSchedule(schedule)
+		adSetBody["pacing_type"] = []string{PacingDayParting}
 	}
 
 	// EU DSA advertiser/payer disclosure. Attached only when supplied: Meta rejects an
@@ -3768,7 +3881,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		// Currency-neutral: Meta interprets the budget in the ad account's currency,
 		// which may not be USD, so don't prefix with '$'.
-		steps = append(steps, fmt.Sprintf("Ad set created: %s (%.2f %s budget, geo: %s)", adSetID, in.Budget, budgetLabel, strings.Join(geoCountries, ", ")))
+		steps = append(steps, fmt.Sprintf("Ad set created: %s (%.2f %s budget, geo: %s)", adSetID, in.Budget, budgetLabel, geoSummary(geoCountries, audience)))
 	}
 
 	// Step 4: creative + ad per variant (per-variant failures are non-fatal).
@@ -4474,6 +4587,11 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 	creativeBody := map[string]any{
 		"name":              fmt.Sprintf("%s - Variant %d", in.EventName, i+1),
 		"object_story_spec": objectStorySpec(c.account.PageID, utmURL, variant, imageHash, in.CallToAction),
+	}
+	// An instant-form lead ad's button opens the form (#550, gap 8): Meta's Lead Ads guide puts
+	// lead_gen_form_id in link_data.call_to_action.value in place of the click link.
+	if in.LeadFormID != "" {
+		withLeadForm(creativeBody["object_story_spec"].(map[string]any), in.LeadFormID)
 	}
 	// Bind the Instagram identity so an ad set requesting an Instagram placement (the
 	// default includes Instagram Feed) is publishable. Without it Meta flags "Please add

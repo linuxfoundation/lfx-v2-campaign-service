@@ -513,8 +513,8 @@ this write accepts.
 
 ## Campaign status toggle
 
-`ActivateCampaignHoldingAdSet(ctx, campaignID, adSetID)` is the ACTIVATE cascade below with the
-ad set's own POST skipped (its ads and the campaign are still activated, campaign last; every
+`ActivateCampaignHolding(ctx, campaignID, adSetID, holdAdSet, heldAdIDs)` with `holdAdSet` true is
+the ACTIVATE cascade below with the ad set's own POST skipped (its ads and the campaign are still activated, campaign last; every
 other rule shared through `updateCampaignTree`). The dispatcher uses it when the campaign row
 holds a deliberate pause of that ad set (LFXV2-2665, see
 [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md)).
@@ -985,6 +985,22 @@ Unlike adoption, DELETED/ARCHIVED is returned with its status, not as absent.
 minor-unit offset, `known=false` for a currency outside the supported map (never a guessed 100),
 and an error when the preflight fails.
 
+**Regions, cities and the ad schedule (#550).** `GetCampaignSettingsWithTargeting` is the same read
+with `,targeting,adset_schedule` added to the ad set's fields; `decodeAdSetTargeting` fills
+`AdSetSettings.Targeting` (`AdSetTargetingSettings`). Graph omits empty fields, so once targeting is
+read as an object an absent `geo_locations`, `regions`, `cities` or `adset_schedule` is "none"
+(an empty list); a list of an unexpected shape or a non-numeric key is unknown (`GeoUnreadable`,
+`ScheduleUnreadable`), and a missing or non-object targeting leaves `Targeting` nil. None of these
+fails the rest of the read. The dispatcher (`meta_settings.go`) calls it only while
+`META_TARGETING_READBACK_ENABLED` is `"true"` and then appends three COMPARED fields, `regions`,
+`cities` and `ad_schedule`, whose recorded side comes from the row's config snapshot
+(`metaConfig.targeting.regions` / `.cities`, `adSchedule`; no snapshot → absent). Both sides render
+through `renderSettingsKeys` (trimmed, de-duplicated, numeric order, comma-joined; none is `""`) and
+`renderAdSchedule` (`days=<d,…> HH:MM-HH:MM <TIMEZONE_TYPE>`, days sorted, blocks sorted and joined
+by `; `; the recorded schedule is ADVERTISER, what the create sends). While the flag is off the read
+asks for no targeting and reports its seven fields as before. Not verified live: the answer shape
+of `targeting.geo_locations` and `adset_schedule` on a read.
+
 ## Ad sets (`ad_sets.go`, LFXV2-2665)
 
 `ListCampaignAdSets(ctx, campaignID, accountID, window)` reads a campaign's ad sets
@@ -1066,6 +1082,76 @@ a 400 rather than absent. `CampaignResult.ConversionEvent` records the event on 
 was reused by name, as `BidApplied` is), which is what a conversions read must filter on. Not live-verified: whether every listed button is accepted with every
 objective.
 
+## Delivery options (`delivery_options.go`, #550)
+
+`CampaignInput.OptimizationGoal` (`metaConfig.optimizationGoal`, gap 11) replaces the traffic
+objective's fixed `optimization_goal` LINK_CLICKS (`NormalizeOptimizationGoal`: LINK_CLICKS or
+LANDING_PAGE_VIEWS, case-insensitive; empty keeps the objective's own goal). It is refused on any
+other objective — leads included, which runs as traffic only until instant forms exist — so a later
+real leads objective does not inherit a goal it cannot use. A manual bid is a link-click bid cap, so
+`CreateCampaign`'s bid check now reads the EFFECTIVE goal: a bid with LANDING_PAGE_VIEWS is refused
+after the account read and before any write, and the dispatcher's `metaBidPlan` refuses the pair
+synchronously. The bid lever already reads the live ad set's goal (`AdSetBid.CPCBidCap`), so a
+landing-page-views ad set is simply not bid-editable. Refusals wrap `domain.ErrCreateConfigInvalid`
+and are `domain.PreflightRefusal`s; the dispatcher gates the field behind
+`META_OPTIMIZATION_GOAL_ENABLED` (default off) in `PreflightCreate` and `Dispatch`, and type-checks
+it with the other `metaStringConfigKeys`. Not live-verified: the OUTCOME_TRAFFIC +
+LANDING_PAGE_VIEWS + billing_event IMPRESSIONS ad set.
+
+`CampaignInput.FrequencyCap` (`metaConfig.frequencyCap`, gap 18: `maxImpressions` per person every
+`intervalDays`) is sent as the ad set's `frequency_control_specs`
+(`[{"event":"IMPRESSIONS","interval_days":…,"max_frequency":…}]`). Meta takes it only on a REACH (or
+THRUPLAY) ad set, so `NormalizeFrequencyCap` refuses it on every objective but awareness, and each
+field outside 1–90 (Meta's documented range; a missing field reads as 0 and is refused). The
+dispatcher gates it behind `META_FREQUENCY_CAP_ENABLED` (default off). `PreflightCreate` decodes the
+object on its own (`decodeMetaFrequencyCap`, sharing `decodeMetaConfigObject` with
+`decodeMetaTargeting`) so a wrong-typed cap is a 400, and checks that decode rather than the
+best-effort one, which can leave a partly filled cap behind a type error. Not live-verified: the
+payload and the 1–90 bounds.
+
+`CampaignInput.AdSchedule` (`metaConfig.adSchedule`, gap 16: `days` 0–6 plus `startMinute` /
+`endMinute`) is sent as the ad set's `adset_schedule`
+(`[{"start_minute","end_minute","days","timezone_type":"ADVERTISER"}]`) with `pacing_type:
+["day_parting"]`, so the hours are the ad account's time zone, as Ads Manager shows them.
+`NormalizeAdSchedule` refuses it on a daily budget (Meta schedules only lifetime budgets), without
+days, with a day outside 0–6, and unless the minutes are whole hours with 0 ≤ start < end ≤ 1440;
+it de-duplicates and sorts the days. The dispatcher gates it behind `META_AD_SCHEDULE_ENABLED`
+(default off) and decodes it on its own in `PreflightCreate` (`decodeMetaAdSchedule`). The budget
+lever writes only the budget kind an ad set already reports, so it cannot move a scheduled ad set to
+a daily budget. Not verified live: the payload and the whole-hour rule. The settings readback
+reports the schedule as `ad_schedule` while `META_TARGETING_READBACK_ENABLED` is on (see the
+settings readback section).
+
+`CampaignInput.LeadFormID` (`metaConfig.leadFormId`, gap 8, `lead_forms.go`) names an existing
+Instant Form of the connection's Page; the owner decided (2026-11-14) that LFX never creates a form
+or accepts the Page's lead terms. `NormalizeLeadForm` refuses it on any objective but leads and when
+it is not a numeric string of at most 20 digits; with it `CreateCampaign` swaps in
+`leadFormObjectiveParams` (OUTCOME_LEADS, LEAD_GENERATION, a `page_id` promoted object), adds
+`destination_type: ON_AD` to the ad set, and `withLeadForm` replaces every creative's
+`call_to_action.value` with `{"lead_gen_form_id": …}` (the link stays the UTM registration URL).
+`CheckLeadFormCallToAction` limits the button to LEARN_MORE, SIGN_UP, APPLY_NOW, SUBSCRIBE and
+DOWNLOAD. The effective goal is LEAD_GENERATION, so the existing bid check refuses a manual
+link-click cap after the account read, and `metaBidPlan` refuses it synchronously. After the
+account preflight, before any write, `checkLeadForm` reads `GET /{form}?fields=id,page,status`: a
+form of another Page or not ACTIVE is a refusal; a failed read or an answer that does not name the
+form and its Page is an error. Without a form, leads keeps the interim traffic mapping and reads
+nothing. The dispatcher gates it behind `META_LEAD_FORMS_ENABLED` (default off) in
+`PreflightCreate` and `Dispatch` and type-checks it with the `metaStringConfigKeys`;
+`service.MetaMarketingOpsInputs` puts any value but null or `""` behind `global_marketing_ops`,
+because for a project without its own connection the Page is the shared LF Page that holds every
+foundation's forms (the same reason the form list is gated). Not verified
+live: whether the connection's token may read the form node (it may need `pages_manage_ads` or
+`leads_retrieval`), the lead-ad CTA subset, the ON_AD ad set payload, and lead ads on the Audience
+Network placement.
+
+**Per-ad status (gap 14, `ad_status.go`).** `GetAdState` reads
+`GET /{ad}?fields=id,adset_id,campaign_id,account_id,status` (id echoed, every field present and
+canonical) and `UpdateAdStatusOnce` sends one unretried `POST /{ad} {status}`, sharing
+`updateStatusOnce` (the raw-byte success check) with `UpdateAdSetStatusOnce`. `ValidateAdID` is the
+campaign-id rule. `ActivateCampaignHolding(campaign, adSet, holdAdSet, heldAdIDs)` is the ACTIVATE
+cascade that skips each held ad's POST (and the ad set's when held); `updateCampaignTree` /
+`updateAdSetAndAds` carry the held set, which PAUSE never uses.
+
 ## Audience targeting (`targeting.go`, #550)
 
 `CampaignInput.Targeting` (`metaConfig.targeting`) adds an age range, a gender, custom audiences to
@@ -1109,6 +1195,125 @@ two audience lists name custom audiences of the Meta ad account every foundation
 **Not verified live.** The exact payloads, Meta's answer to `advantage_audience: 0` together with
 custom audiences, and the `account_id` field of the audience read are from the docs only; the flag
 stays off until a probe confirms them.
+
+**Languages (gap 12).** `AudienceTargeting.Locales` (`metaConfig.targeting.locales`) is a list of
+Meta locale keys — positive integers such as 6 (English US) or 1001 (English, all), as the
+Targeting Search `adlocale` type lists them — de-duplicated in order, at most `MaxLocales` (50)
+distinct, sent as `targeting.locales`. A language is a hard constraint with Advantage+ on, so it is
+not an inclusion and sends no flag. It has its own flag, `META_LOCALE_TARGETING_ENABLED`
+(default off): `checkMetaTargeting` refuses the list while that flag is off, and a block that sets
+only locales does not need `META_AUDIENCE_TARGETING_ENABLED`, which still gates the six audience
+fields (`HasAudienceFields`) and an empty block. Locales name no account resource, so they are not
+behind `global_marketing_ops`. Not verified live: the `locales` payload.
+
+**Devices (gap 15).** `AudienceTargeting.DevicePlatforms` (`metaConfig.targeting.devicePlatforms`)
+is a subset of `mobile` and `desktop`, lower-cased and de-duplicated; one device is sent as
+`targeting.device_platforms`, both or none is Meta's default and sends nothing. A device is a
+placement control, not an inclusion, so it sends no Advantage+ flag. `CheckDevicePlacements`
+refuses desktop-only with the Audience Network placement (mobile apps only), in the client after
+normalizing and in `checkMetaTargeting`; other device/placement pairs are left to Meta until a probe.
+Its own flag, `META_DEVICE_TARGETING_ENABLED` (default off), gates it exactly as
+`META_LOCALE_TARGETING_ENABLED` gates locales. Not verified live: the payload, and whether Meta
+refuses desktop-only with the Instagram, Stories or Reels placements.
+
+**Mobile operating systems (gap 15, remainder, `user_os.go`).** `AudienceTargeting.UserOS`
+(`metaConfig.targeting.userOs`) is sent as the ad set's `user_os`. `normalizeUserOS` accepts the
+Advanced Targeting reference's format table only (`iOS`, `Android`, `<OS>_ver_<x.x>_and_above`,
+`<OS>_ver_<x.x>_to_<y.y>` with x.x below y.y and both in the family's listed versions, `userOSVersions`),
+case-insensitively, rewrites each to Meta's spelling, de-duplicates, caps at `MaxUserOS` (10) and
+applies the reference's one combination rule: a versioned value of one family refuses any value of
+the other. `CheckUserOS` (client and `checkMetaTargeting`, which now takes the objective) refuses
+userOs with devicePlatforms `[desktop]` (a service rule: an OS list matches mobile devices only)
+and a versioned value on the awareness objective (the reference's brand-awareness note). Not an
+inclusion, so no Advantage+ flag. Its own flag, `META_OS_TARGETING_ENABLED` (default off). Not
+verified live: the payload, and the reference's own inconsistency (a lowercase `android` example,
+and SKAdNetwork's iOS 14+ ranges absent from the version list).
+
+**Interests (gap 7, core).** `AudienceTargeting.Interests` (`metaConfig.targeting.interests`) is a
+list of numeric detailed-targeting interest ids, de-duplicated, at most `MaxInterests` (25), sent
+as ONE `flexible_spec` entry (`[{"interests": [{"id": …}]}]`, so matching any listed interest
+qualifies). Detailed targeting is an inclusion under Meta's v23.0 rule, so `inclusion` counts it
+and the Advantage+ flag is sent explicitly (0 unless the caller said `true`). After the account
+preflight and before the campaign create, `checkInterests` sends every id in one
+`GET /search?type=adinterestvalid&interest_fbid_list=[…]`: a row with `valid` false (or absent) is
+a refusal, and a failed read or an answer missing an id is an error, so a retired interest cannot
+orphan a campaign at the ad set. A row's `id` decodes through `graphID`, so Meta's JSON-number ids
+match the caller's decimal strings. Its own flag, `META_INTEREST_TARGETING_ENABLED` (default off),
+gates it like the locale flag; interests are Meta's taxonomy, not an account resource, so they are
+not behind `global_marketing_ops`. Not verified live: the validation read's answer shape and the
+`flexible_spec` payload.
+
+**Behaviors and work positions (gap 7, remainder, `detailed_targeting.go`).**
+`AudienceTargeting.Behaviors` and `.WorkPositions` (`metaConfig.targeting.behaviors` /
+`.workPositions`) are numeric detailed-targeting ids, de-duplicated, at most `MaxBehaviors` /
+`MaxWorkPositions` (25) each. `apply` puts them in the SAME `flexible_spec` entry as the interests
+(`behaviors` / `work_positions`, `[{"id": …}]`): Meta ANDs top-level entries and ORs the keys inside
+one, so any listed interest, behavior or work position qualifies. Both are inclusions. After the
+account preflight and before any write, `checkDetailedTargeting` sends every id in ONE
+`GET /act_<id>/targetingvalidation?targeting_list=[{"type":"behaviors"|"work_positions","id":…}]`
+(ids as JSON numbers, the reference's int64): a row with `valid` false is a refusal; a failed read,
+no `data`, an unanswered id or a row without `valid` is an error. Rows' ids decode from a string or
+a number (`graphID`). Rows are matched to the request on type AND id, so an id listed as both a
+behavior and a work position gets its own answer for each; a row without a `type` answers only an id
+listed under one type, and two rows for one (type, id) that disagree on `valid` are an error. Its own flag, `META_BEHAVIOR_TARGETING_ENABLED` (default off), gates both like
+the locale flag; not behind `global_marketing_ops`. Not verified live: the reference documents the
+request's `targeting_list` but not the row fields (`id`, `valid` are inferred from the search page's
+validation example), and the `flexible_spec` keys.
+
+**Regions and cities (gap 13, `geo_targeting.go`).** `AudienceTargeting.Regions` and `.Cities`
+(`metaConfig.targeting.regions` / `.cities`) are numeric Meta geo-location keys, de-duplicated, at
+most `MaxGeoKeys` (25) each, ADDED to the ad set's `geo_locations` beside the countries
+(`adSetGeoLocations`: `regions` / `cities` as `[{"key": …}]`). A location is a hard constraint, not
+an inclusion. With no geoTargets supplied the US default is dropped (`allGeo = nil`), so a region-only
+create sends no `countries` and names its campaign after the parents' region; the "all regulated"
+refusal is skipped when a region or city remains. After the account preflight, before any write,
+`checkGeoLocations` sends one `GET /search?type=adgeolocationmeta&regions=[…]&cities=[…]` and reads
+`data.regions` / `data.cities` keyed by key: an unanswered key, a missing or non-ISO `country_code`,
+missing `data` or a failed read is an error; a key of the other `type`, or a parent country that is
+in `metaIneligibleCountries` (the sanctioned-country check), in `regulatedCountries`, already a
+country target (Meta refuses overlapping locations) or a DSA territory without both disclosures is a
+refusal, and so is a city whose `region_id` (decoded through `graphID`) is one of the request's
+regions, the same overlap one level down. A city whose country also holds a listed region but whose
+`region_id` is missing or null is an error: the overlap cannot be checked, so nothing is created. Its own flag, `META_REGION_TARGETING_ENABLED` (default off), gates it like the locale flag;
+not behind `global_marketing_ops`. Not built: a city radius (Meta's default radius applies) and zip
+codes. Not verified live: the lookup's answer shape, whether Meta refuses (rather than merges) an
+overlap. The settings readback reports the regions and cities as `regions` / `cities` while
+`META_TARGETING_READBACK_ENABLED` is on (see the settings readback section).
+
+## Instant Form list (`lead_forms.go`, #550 gap 8 picker read)
+
+`ListLeadForms(ctx, pageID)` lists every Instant Form of the connection's Page, all or nothing, for
+the `metaConfig.leadFormId` picker: `GET /{page}/leadgen_forms?fields=id,name,status&limit=100`,
+following the opaque `after` cursor (never Meta's token-bearing `paging.next`) for at most
+`leadFormListMaxPages` (10) pages. Every page passes `identityjson`; every row needs a numeric id
+(`graphID`) and a status token (`statusTokenRE`) and must appear once; a page id that is not numeric
+is refused before any request; more than 1000 forms is `ErrLeadFormListTooLarge`. The dispatcher
+(`internal/dispatch/meta_lead_forms_list.go`) resolves like a create and reads the same `page_id`
+Dispatch does (missing → `ErrConnectionNotUsable` + `ErrProviderConfigInvalid`), so an ACTIVE id it
+lists passes `checkLeadForm`. The service (`list-meta-lead-forms`) is behind
+`META_LEAD_FORMS_ENABLED` and the gateway's `marketing-ops-api` rule. Not verified live: the Page
+reference documents only POST on `leadgen_forms`; the read is the Lead Ads retrieval guide's and
+may need a Page access token (`pages_manage_ads`, `leads_retrieval`) rather than the connection's.
+
+## Targeting search (`targeting_search.go`, #550 gap 7 picker read)
+
+`SearchTargeting(ctx, kind, query)` runs one Targeting Search for the metaConfig.targeting pickers:
+`interest` → `GET /search?type=adinterest&q=&limit=50`, `work_position` →
+`GET /search?type=adworkposition&q=&limit=50`, `behavior` →
+`GET /search?type=adTargetingCategory&class=behaviors` (Meta ignores `q` there: a browse of the class,
+filtered by name with `FilterTargetingOptions`; `SearchTargetingAll` returns it unfiltered for a
+caching caller). `NormalizeTargetingQuery` (2–100 characters after trimming, valid UTF-8, no control
+characters) is shared with the service layer. Rows keep a numeric id (`graphID`: string or number)
+and a non-blank name, drop a behavior row of another `type`, de-duplicate by id, read a negative size
+as absent and a work position's `subtext` as its description. The request is sent ONCE
+(`c.do(..., false)`), so a throttle is not retried. Every failure is a `targetingSearchError` whose
+message names only the kind and a fixed class (HTTP status and Graph code, throttle, unreadable
+answer, timeout), with the chain kept for classification and the query cut off every
+`APIError.Path`, `transportError.Path` and `url.Error.URL` in it (`scrubTargetingSearchError`). The
+dispatcher (`internal/dispatch/meta_targeting_search.go`) resolves like a create without needing an
+ad account and caches answers for an hour by kind and folded query (behaviors by kind alone) after
+resolution. Not verified live: every answer shape (the reference shows ids as integers, which
+`graphID` accepts).
 
 ## Ads under an ad set (`ads.go`, decision D7 first step)
 

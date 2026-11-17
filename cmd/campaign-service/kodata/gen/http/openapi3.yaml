@@ -3641,7 +3641,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: create-campaigns lfx-v2-campaign-service-briefs
-            description: 'Create campaigns across the selected platforms (async -> job). Besides the request-shape 400s (an unknown or duplicate platform, new_version on a platform that does not support it, and the like), two dispatch-time rules are refused synchronously, before any job exists. (1) An email campaign that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email set to send based on recipients'' time zones, which HubSpot does not allow together: 409 with reason=ab_test_unsupported_send_type; the remedy is to pick a different source email or turn the A/B test off. (2) A Reddit config that names a stored creative asset it cannot use, decided from the config alone: redditConfig.imageAssetId together with imageUrl or postUrl, an imageAssetId that is not a UUID, or imageAssetId while signed creative-asset URLs are not configured (''stored creative assets are not enabled for Reddit; supply imageUrl''): 400 with that message. A redditConfig.excludedSubreddits or excludedGeoTargets that breaks its rules, or is sent while REDDIT_TARGETING_EXCLUSIONS_ENABLED is off, is also a synchronous 400 (see the config attribute). So is a redditConfig.placements, platforms or expandTargeting that breaks its rules, or is sent while REDDIT_PLACEMENT_TARGETING_ENABLED is off (#549). So is a redditConfig.budgetType that is not lifetime or daily, or is sent while REDDIT_DAILY_BUDGET_ENABLED is off (#549). So is a redditConfig.gender, languages or schedule that breaks its rules or is sent while REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED is off (#549). So is, while REDDIT_AD_PER_VARIANT_ENABLED is on, an authored-post Reddit create with more than 5 variants or a blank or over-long variant headline (#549). So, while REDDIT_TARGETING_RESOLUTION_ENABLED is "true" (#549), is a redditConfig.subreddits entry Reddit''s GET /targeting/communities does not list, or an interests entry that is neither a GET /targeting/interests id nor exactly one interest name: that check reads Reddit, fails open when the read cannot run, and is repeated at dispatch fail-closed, before anything is created; resolved creates send Reddit''s community spelling and interest ids. So is a twitterConfig.geoTargets, languages, keywords or interestIds that breaks its rules, or is sent while TWITTER_CREATE_TARGETING_ENABLED is off (#564). So is a microsoftConfig.sitelinks or callouts list that breaks its rules, or is sent while MICROSOFT_AD_EXTENSIONS_ENABLED is off (#563). So is a microsoftConfig.negativeKeywords list that breaks its rules or is sent while MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is off (see the config attribute). So is a microsoftConfig.headlines, descriptions, path1 or path2 that breaks its rules or is sent while MICROSOFT_AD_COPY_ENABLED is off. GOOGLE ADS SHARED-ACCOUNT INPUTS: a googleAdsConfig that sets any input naming an existing audience, user list, custom segment, shared negative keyword list or conversion action on the Google Ads account (demandGenAudience or an audience on any demandGenAdGroups entry; audienceSegments, customAudiences, customAffinities or excludedAudienceSegments, on the campaign or on any displayAdGroups entry; audienceSegments on any adGroups entry; campaignAudienceSegments (Search campaign-level observed user lists); performanceMaxAudienceSignal; sharedNegativeKeywordLists; conversionActions, demandGenDemographics.audienceSegments, demandGenDemographics.customAudiences, and the same two lists in any demandGenAdGroups entry''s demographics; any non-empty value, whitespace included, on any channel, Search audienceSegments included; demandGenDemographics without audienceSegments or customAudiences is not gated, as its Audience is new and names no existing account resource) requires the caller to hold global_marketing_ops on this project, checked once per request before any job exists: 403 naming the gated fields when they do not, 503 when the check cannot be made (project lookup or authorization service unavailable). The gateway admits every campaign_manager, which includes foundation executive directors, and those resources belong to the Google Ads account every foundation shares. The same check, made once with the Google one, covers linkedInConfig.conversions (#552): conversion rules on the LinkedIn ad account, and the LF system account is the fallback connection of every project without its own. META CREATIVE OPTIONS: metaConfig.callToAction outside its allow-list, metaConfig.conversionEvent outside its allow-list or on an objective other than conversions, or either one while its deployment flag (META_CALL_TO_ACTION_ENABLED, META_CONVERSION_EVENT_ENABLED) is not "true", is a synchronous 400 "invalid campaign config: metaConfig.callToAction..." or "invalid campaign config: metaConfig.conversionEvent...". REDDIT SHARED-ACCOUNT INPUTS (#549): a redditConfig that sets customAudienceIds or excludedCustomAudienceIds (any non-empty list) on a create that selects reddit-ads requires global_marketing_ops on this project in the same single check, with the same 403 and 503; the custom audiences belong to the LF Reddit ad account every foundation shares. X SHARED-ACCOUNT INPUTS (#564): likewise a twitterConfig that sets customAudienceIds or excludedCustomAudienceIds (any non-empty list) on a create that selects twitter-ads requires global_marketing_ops on this project in the same single check; those audiences belong to the LF X ad account. MICROSOFT SHARED-ACCOUNT INPUTS (#563): likewise a microsoftConfig that sets audienceIds or excludedAudienceIds (any non-empty list) on a create that selects microsoft-ads requires global_marketing_ops on this project in the same single check; those remarketing lists belong to the LF Microsoft Advertising account. A remarketing list input that breaks its rules, or is sent while MICROSOFT_AUDIENCES_ENABLED is not "true", is a synchronous 400 too (see the config attribute). So is a microsoftConfig.excludedGeoTargets, proximityTargets or languages that breaks its rules or is sent while MICROSOFT_CREATE_TARGETING_ENABLED is not "true". An X custom audience list is also refused synchronously with 400 "invalid campaign config: twitterConfig.<field>: ..." when it is not an array of strings, when an id is not 1-32 letters or digits, repeats, or is in both lists, when a list holds more than 60 ids or the X targeting lists together name more than 60 criteria, and when TWITTER_CUSTOM_AUDIENCES_ENABLED is not "true" on this deployment. When both platforms'' inputs are refused, the 403 names each platform''s fields in its own sentence. A Reddit custom audience list is also refused synchronously with 400 "invalid campaign config: redditConfig.<field>: ..." when it is not an array of strings, when an id is not 1-64 letters, digits or underscores, repeats, or is in both lists, when a list holds more than 100 ids, and when REDDIT_CUSTOM_AUDIENCES_ENABLED is not "true" on this deployment. META SHARED-ACCOUNT INPUTS: likewise a metaConfig.targeting that sets customAudiences or excludedCustomAudiences (any non-empty list) names custom audiences of the Meta ad account every foundation shares and requires global_marketing_ops on this project (403 naming them, 503 when the check cannot be made); age, gender and advantageAudience are not gated. An invalid metaConfig.targeting, or any targeting block while META_AUDIENCE_TARGETING_ENABLED is not "true" on the deployment, is a synchronous 400 "invalid campaign config: metaConfig.targeting...". An invalid per-platform `bidding` object (see the config attribute) is also refused synchronously, with 400 "invalid campaign config: <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc) and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are immediately eligible for the bid lever, and eligibility follows the platform''s current strategy. Every other dispatch failure, including an imageAssetId that does not exist for this brief, still arrives later, as the job''s own result. That includes a Search googleAdsConfig.sharedNegativeKeywordLists entry that is not an ENABLED NEGATIVE_KEYWORDS shared set of the connected Google Ads account (#548). One read-only GAQL query reads every named list''s shared_set.type and status before anything is created. A NEGATIVE_PLACEMENTS, BRANDS or other set, a REMOVED set or a set not in the account is refused in the job''s Google Ads error, which names the set id and, for a set of another known type, that type. A read that fails stops the create too, with nothing created.'
+            description: 'Create campaigns across the selected platforms (async -> job). Besides the request-shape 400s (an unknown or duplicate platform, new_version on a platform that does not support it, and the like), two dispatch-time rules are refused synchronously, before any job exists. (1) An email campaign that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email set to send based on recipients'' time zones, which HubSpot does not allow together: 409 with reason=ab_test_unsupported_send_type; the remedy is to pick a different source email or turn the A/B test off. (2) A Reddit config that names a stored creative asset it cannot use, decided from the config alone: redditConfig.imageAssetId together with imageUrl or postUrl, an imageAssetId that is not a UUID, or imageAssetId while signed creative-asset URLs are not configured (''stored creative assets are not enabled for Reddit; supply imageUrl''): 400 with that message. A redditConfig.excludedSubreddits or excludedGeoTargets that breaks its rules, or is sent while REDDIT_TARGETING_EXCLUSIONS_ENABLED is off, is also a synchronous 400 (see the config attribute). So is a redditConfig.placements, platforms or expandTargeting that breaks its rules, or is sent while REDDIT_PLACEMENT_TARGETING_ENABLED is off (#549). So is a redditConfig.budgetType that is not lifetime or daily, or is sent while REDDIT_DAILY_BUDGET_ENABLED is off (#549). So is a redditConfig.gender, languages or schedule that breaks its rules or is sent while REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED is off (#549). So is, while REDDIT_AD_PER_VARIANT_ENABLED is on, an authored-post Reddit create with more than 5 variants or a blank or over-long variant headline (#549). So, while REDDIT_TARGETING_RESOLUTION_ENABLED is "true" (#549), is a redditConfig.subreddits entry Reddit''s GET /targeting/communities does not list, or an interests entry that is neither a GET /targeting/interests id nor exactly one interest name: that check reads Reddit, fails open when the read cannot run, and is repeated at dispatch fail-closed, before anything is created; resolved creates send Reddit''s community spelling and interest ids. So is a twitterConfig.geoTargets, languages, keywords or interestIds that breaks its rules, or is sent while TWITTER_CREATE_TARGETING_ENABLED is off (#564). So is a microsoftConfig.sitelinks or callouts list that breaks its rules, or is sent while MICROSOFT_AD_EXTENSIONS_ENABLED is off (#563). So is a microsoftConfig.negativeKeywords list that breaks its rules or is sent while MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is off (see the config attribute). So is a microsoftConfig.headlines, descriptions, path1 or path2 that breaks its rules or is sent while MICROSOFT_AD_COPY_ENABLED is off. GOOGLE ADS SHARED-ACCOUNT INPUTS: a googleAdsConfig that sets any input naming an existing audience, user list, custom segment, shared negative keyword list or conversion action on the Google Ads account (demandGenAudience or an audience on any demandGenAdGroups entry; audienceSegments, customAudiences, customAffinities or excludedAudienceSegments, on the campaign or on any displayAdGroups entry; audienceSegments on any adGroups entry; campaignAudienceSegments (Search campaign-level observed user lists); performanceMaxAudienceSignal; sharedNegativeKeywordLists; conversionActions, demandGenDemographics.audienceSegments, demandGenDemographics.customAudiences, and the same two lists in any demandGenAdGroups entry''s demographics; any non-empty value, whitespace included, on any channel, Search audienceSegments included; demandGenDemographics without audienceSegments or customAudiences is not gated, as its Audience is new and names no existing account resource) requires the caller to hold global_marketing_ops on this project, checked once per request before any job exists: 403 naming the gated fields when they do not, 503 when the check cannot be made (project lookup or authorization service unavailable). The gateway admits every campaign_manager, which includes foundation executive directors, and those resources belong to the Google Ads account every foundation shares. The same check, made once with the Google one, covers linkedInConfig.conversions (#552): conversion rules on the LinkedIn ad account, and the LF system account is the fallback connection of every project without its own. META CREATIVE OPTIONS: metaConfig.callToAction outside its allow-list, metaConfig.conversionEvent outside its allow-list or on an objective other than conversions, or either one while its deployment flag (META_CALL_TO_ACTION_ENABLED, META_CONVERSION_EVENT_ENABLED) is not "true", is a synchronous 400 "invalid campaign config: metaConfig.callToAction..." or "invalid campaign config: metaConfig.conversionEvent...". Likewise metaConfig.optimizationGoal outside LINK_CLICKS and LANDING_PAGE_VIEWS, on an objective other than traffic, LANDING_PAGE_VIEWS with manual bidding, or the field while META_OPTIMIZATION_GOAL_ENABLED is not "true", is a synchronous 400. So is a metaConfig.frequencyCap on an objective other than awareness, with maxImpressions or intervalDays outside 1-90, or while META_FREQUENCY_CAP_ENABLED is not "true". So is a metaConfig.adSchedule (days 0-6 and whole-hour startMinute/endMinute in the ad account''s time zone) on a daily budget (Meta schedules only lifetime budgets), with invalid days or minutes, or while META_AD_SCHEDULE_ENABLED is not "true". So is a metaConfig.leadFormId (an existing Instant Form, #550) on an objective other than leads, that is not a numeric id, with manual bidding, with a callToAction a form cannot carry, or while META_LEAD_FORMS_ENABLED is not "true"; with leads it makes an OUTCOME_LEADS lead ad, and the form is read before anything is created (another Page''s or an inactive form fails the job with nothing created). REDDIT SHARED-ACCOUNT INPUTS (#549): a redditConfig that sets customAudienceIds or excludedCustomAudienceIds (any non-empty list) on a create that selects reddit-ads requires global_marketing_ops on this project in the same single check, with the same 403 and 503; the custom audiences belong to the LF Reddit ad account every foundation shares. X SHARED-ACCOUNT INPUTS (#564): likewise a twitterConfig that sets customAudienceIds or excludedCustomAudienceIds (any non-empty list) on a create that selects twitter-ads requires global_marketing_ops on this project in the same single check; those audiences belong to the LF X ad account. MICROSOFT SHARED-ACCOUNT INPUTS (#563): likewise a microsoftConfig that sets audienceIds or excludedAudienceIds (any non-empty list) on a create that selects microsoft-ads requires global_marketing_ops on this project in the same single check; those remarketing lists belong to the LF Microsoft Advertising account. A remarketing list input that breaks its rules, or is sent while MICROSOFT_AUDIENCES_ENABLED is not "true", is a synchronous 400 too (see the config attribute). So is a microsoftConfig.excludedGeoTargets, proximityTargets or languages that breaks its rules or is sent while MICROSOFT_CREATE_TARGETING_ENABLED is not "true". An X custom audience list is also refused synchronously with 400 "invalid campaign config: twitterConfig.<field>: ..." when it is not an array of strings, when an id is not 1-32 letters or digits, repeats, or is in both lists, when a list holds more than 60 ids or the X targeting lists together name more than 60 criteria, and when TWITTER_CUSTOM_AUDIENCES_ENABLED is not "true" on this deployment. When both platforms'' inputs are refused, the 403 names each platform''s fields in its own sentence. A Reddit custom audience list is also refused synchronously with 400 "invalid campaign config: redditConfig.<field>: ..." when it is not an array of strings, when an id is not 1-64 letters, digits or underscores, repeats, or is in both lists, when a list holds more than 100 ids, and when REDDIT_CUSTOM_AUDIENCES_ENABLED is not "true" on this deployment. META SHARED-ACCOUNT INPUTS: likewise a metaConfig.targeting that sets customAudiences or excludedCustomAudiences (any non-empty list) names custom audiences of the Meta ad account every foundation shares, and a metaConfig.leadFormId (any value but null or "") names an Instant Form of the connection''s Page, the shared LF Page for every project without its own connection; either requires global_marketing_ops on this project (403 naming them, 503 when the check cannot be made); age, gender and advantageAudience are not gated. An invalid metaConfig.targeting, or any targeting block while META_AUDIENCE_TARGETING_ENABLED is not "true" on the deployment, is a synchronous 400 "invalid campaign config: metaConfig.targeting..."; a block that sets only targeting.locales, targeting.devicePlatforms, targeting.interests, targeting.regions, targeting.cities, targeting.behaviors, targeting.workPositions or targeting.userOs needs META_LOCALE_TARGETING_ENABLED, META_DEVICE_TARGETING_ENABLED, META_INTEREST_TARGETING_ENABLED, META_REGION_TARGETING_ENABLED, META_BEHAVIOR_TARGETING_ENABLED or META_OS_TARGETING_ENABLED instead, and any of those lists while its flag is not "true", or devicePlatforms [desktop] with the audienceNetwork placement, a userOs value outside Meta''s documented user_os formats, a version of one OS family with the other family, userOs with devicePlatforms [desktop], or an OS version on the awareness objective, is a synchronous 400 too. Every targeting.regions and targeting.cities key is looked up before anything is created; one whose country is sanctioned, regulated, already a geoTargets country, or in the EU without the DSA disclosures fails the job with nothing created. An invalid per-platform `bidding` object (see the config attribute) is also refused synchronously, with 400 "invalid campaign config: <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc) and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are immediately eligible for the bid lever, and eligibility follows the platform''s current strategy. Every other dispatch failure, including an imageAssetId that does not exist for this brief, still arrives later, as the job''s own result. That includes a Search googleAdsConfig.sharedNegativeKeywordLists entry that is not an ENABLED NEGATIVE_KEYWORDS shared set of the connected Google Ads account (#548). One read-only GAQL query reads every named list''s shared_set.type and status before anything is created. A NEGATIVE_PLACEMENTS, BRANDS or other set, a REMOVED set or a set not in the account is refused in the job''s Google Ads error, which names the set id and, for a set of another known type, that type. A read that fails stops the create too, with nothing created.'
             operationId: lfx-v2-campaign-service-briefs#create-campaigns
             parameters:
                 - name: project_id
@@ -5191,7 +5191,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: list-meta-ads lfx-v2-campaign-service-briefs
-            description: 'Read the ADS under ONE ad set of a Meta campaign live (decision D7, first step): each ad''s name, configured and effective status and creative, with its impressions, clicks, spend and CTR over the window. STRICTLY READ-ONLY — the platform is only read and nothing is persisted; there is no per-ad pause or edit. Before anything is read the campaign must record which ad account it was created under and that account must be the connection''s (409 otherwise); a campaign with no platform campaign id is 409; any platform but Meta is 400; `ad_set_id` is validated before any connection work (400). Upstream: GET /{ad_set_id}?fields=id,campaign_id,account_id,status, which must report THIS campaign under THAT account (409 otherwise — the ad set does not belong to this campaign), then GET /{ad_set_id}/ads (bounded cursor paging; past the cap `truncated` is true), GET /act_{id}?fields=currency, and ONE level=ad Insights read on the ad account filtered to this ad set (bounded cursor paging, all or nothing). Every page is checked as raw bytes before it is decoded (a duplicated key, malformed UTF-8 or an unpaired surrogate escape refuses the read), every ad must report THIS ad set, THIS campaign and the connection''s ad account, every Insights row must name this ad set and campaign and the account''s currency, and an explicit null counter is refused while an absent one is 0. **404 when the campaign row does not exist or the project has no Meta connection** — never because of anything Meta answers: Meta''s 100/33 is a 503 like every other unverifiable upstream answer.'
+            description: 'Read the ADS under ONE ad set of a Meta campaign live (decision D7, first step): each ad''s name, configured and effective status and creative, with its impressions, clicks, spend and CTR over the window. STRICTLY READ-ONLY — the platform is only read and nothing is persisted; an ad is paused or resumed with toggle-meta-ad-status, and `deliberately_paused` reports that lever''s record. Before anything is read the campaign must record which ad account it was created under and that account must be the connection''s (409 otherwise); a campaign with no platform campaign id is 409; any platform but Meta is 400; `ad_set_id` is validated before any connection work (400). Upstream: GET /{ad_set_id}?fields=id,campaign_id,account_id,status, which must report THIS campaign under THAT account (409 otherwise — the ad set does not belong to this campaign), then GET /{ad_set_id}/ads (bounded cursor paging; past the cap `truncated` is true), GET /act_{id}?fields=currency, and ONE level=ad Insights read on the ad account filtered to this ad set (bounded cursor paging, all or nothing). Every page is checked as raw bytes before it is decoded (a duplicated key, malformed UTF-8 or an unpaired surrogate escape refuses the read), every ad must report THIS ad set, THIS campaign and the connection''s ad account, every Insights row must name this ad set and campaign and the account''s currency, and an explicit null counter is refused while an absent one is 0. **404 when the campaign row does not exist or the project has no Meta connection** — never because of anything Meta answers: Meta''s 100/33 is a 503 like every other unverifiable upstream answer.'
             operationId: lfx-v2-campaign-service-briefs#list-meta-ads
             parameters:
                 - name: window
@@ -5267,6 +5267,7 @@ paths:
                                       creative_id: "120210000000000777"
                                       creative_name: KubeCon NA — Image A
                                       ctr: 0.0228
+                                      deliberately_paused: false
                                       effective_status: ACTIVE
                                       id: "120210000000000999"
                                       impressions: 920
@@ -5333,6 +5334,196 @@ paths:
                             example:
                                 code: "413"
                                 message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets/{ad_set_id}/ads/{ad_id}/status:
+        post:
+            tags:
+                - lfx-v2-campaign-service-briefs
+            summary: toggle-meta-ad-status lfx-v2-campaign-service-briefs
+            description: 'Pause or resume ONE ad of one ad set of a Meta campaign (#550). The per-ad sibling of toggle-meta-ad-set-status, with its guards, outcomes and failures: If-Match carries the campaign row''s ETag (428 when missing, 412 when stale) and the campaign''s write lock is held for the call. Refused with 400 before anything else unless the deployment sets META_AD_PAUSE_ENABLED to exactly "true" (off by default until the cascade and the record are verified against a live account). `ad_set_id` and `ad_id` are validated before any connection work (400). The campaign must record its ad account and that account must be the connection''s (409), and the ad is then READ (GET /{ad_id}?fields=id,adset_id,campaign_id,account_id,status) and must report `ad_set_id`, THIS campaign and THAT account (409 otherwise) — all before anything is written. ACTIVE is allowed ONLY on an ad of the ad set this service created for the campaign (409 otherwise — the campaign resume never activates any other ad), and on an ADOPTED campaign it is refused exactly as the campaign toggle refuses it; PAUSED is allowed on any of the campaign''s ads. An ad Meta reports DELETED or ARCHIVED is 409. When the read shows the requested status already, NOTHING is sent and the outcome is ALREADY_IN_STATE. Otherwise ONE POST /{ad_id} {status} is sent, never retried: 200 APPLIED when Meta confirms it; a failed pre-write read, a write never sent or one Meta definitely refused is 503 saying nothing was changed; a write whose outcome is unknown is 503 saying the change is UNCONFIRMED — read the ads before retrying — and the campaign''s write lock is held for a cooldown. No Meta connection is 404; an unusable connection or one with no ad account is 409; a problem with the LF system connection, stored-credential decryption or this service itself is 500. A DELIBERATE PAUSE OF AN AD OF THE RECORDED AD SET SURVIVES A CAMPAIGN PAUSE/RESUME: it is recorded on the campaign row (before the pause is sent, withdrawn if Meta definitely refused it), toggle-campaign-status ACTIVE then leaves that ad PAUSED, and only a CONFIRMED resume here (APPLIED or ALREADY_IN_STATE) clears the record — exactly the ad-set lever''s record rules, including the ETag and re-read advice after any error. list-meta-ads reports it as `deliberately_paused`. Pausing an ad of any other ad set, or anything on an ADOPTED campaign, records nothing, since the campaign cascade never re-activates it. Any platform but Meta is 400.'
+            operationId: lfx-v2-campaign-service-briefs#toggle-meta-ad-status
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+                - name: brief_id
+                  in: path
+                  description: Brief UUID
+                  required: true
+                  schema:
+                    type: string
+                    description: Brief UUID
+                    example: 73c8e20e-530a-457d-ad83-899801815457
+                    format: uuid
+                  example: 73c8e20e-530a-457d-ad83-899801815457
+                - name: campaign_id
+                  in: path
+                  description: Campaign UUID
+                  required: true
+                  schema:
+                    type: string
+                    description: Campaign UUID
+                    example: 5e2b7572-9d2a-4de5-8383-14527272c334
+                    format: uuid
+                  example: 5e2b7572-9d2a-4de5-8383-14527272c334
+                - name: ad_set_id
+                  in: path
+                  description: 'The Meta ad set id: digits, no leading zero, at most 32.'
+                  required: true
+                  schema:
+                    type: string
+                    description: 'The Meta ad set id: digits, no leading zero, at most 32.'
+                    example: "120210000000000888"
+                    pattern: ^[1-9][0-9]*$
+                    maxLength: 32
+                  example: "120210000000000888"
+                - name: ad_id
+                  in: path
+                  description: 'The Meta ad id: digits, no leading zero, at most 32.'
+                  required: true
+                  schema:
+                    type: string
+                    description: 'The Meta ad id: digits, no leading zero, at most 32.'
+                    example: "120210000000000999"
+                    pattern: ^[1-9][0-9]*$
+                    maxLength: 32
+                  example: "120210000000000999"
+                - name: If-Match
+                  in: header
+                  description: If-Match header carrying the current ETag/version
+                  schema:
+                    type: string
+                    description: If-Match header carrying the current ETag/version
+                    example: "3"
+                  example: "3"
+            requestBody:
+                description: Request body for toggle-meta-ad-status.
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ToggleMetaAdSetStatusRequestBody'
+                        example:
+                            status: PAUSED
+            responses:
+                "200":
+                    description: OK response.
+                    headers:
+                        ETag:
+                            description: 'ETag header value: the campaign row''s version after this call. It CHANGES when the call records or clears the deliberate pause of an ad of the campaign''s recorded ad set; otherwise it is UNCHANGED — the ad''s status itself is not stored on the campaign row.'
+                            schema:
+                                type: string
+                                description: 'ETag header value: the campaign row''s version after this call. It CHANGES when the call records or clears the deliberate pause of an ad of the campaign''s recorded ad set; otherwise it is UNCHANGED — the ad''s status itself is not stored on the campaign row.'
+                                example: Sunt magnam aspernatur aut consectetur atque.
+                            example: Sunt magnam aspernatur aut consectetur atque.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/MetaAdStatusChange'
+                            example:
+                                ad_id: "120210000000000999"
+                                ad_set_id: "120210000000000888"
+                                campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                                outcome: APPLIED
+                                previous_status: ACTIVE
+                                requested_status: PAUSED
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "412":
+                    description: 'PreconditionFailed: ETag mismatch'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PreconditionFailedError'
+                            example:
+                                code: "412"
+                                message: The supplied ETag does not match the current version.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "428":
+                    description: 'PreconditionRequired: If-Match header required'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PreconditionRequiredError'
+                            example:
+                                code: "428"
+                                message: An If-Match header is required.
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -5828,7 +6019,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: get-campaign-settings lfx-v2-campaign-service-briefs
-            description: 'Read the campaign''s CURRENT configuration from the platform that runs it and report, per setting, where it diverges from what the campaign row recorded. A pure read: the platform is only read, never written, and the observation is never persisted back onto the campaign row — the row means "what this dispatch asked for", and the two can legitimately disagree: nothing pushes the recorded config upstream, and more than one path lets them drift apart. This is the read metrics cannot be: impressions, clicks, cost and CTR do not describe a campaign''s configuration. A setting that could not be read on either side is reported ABSENT with an `unknown` verdict, never defaulted to zero and never counted as a match. Support is per-platform: Google Ads, Microsoft Advertising, Meta, Reddit, X (Twitter) Ads and LinkedIn are wired, and a campaign on any other platform returns 400. The field set is per-platform too — each platform reports only the settings it can answer honestly, normalised to the units its create path wrote (Microsoft keeps flight dates on the ad group, which this read does not read, so reports none) — and on every platform the provenance rules are the same: a campaign that does not record the account it was created under, or that belongs to a different account than the connection now resolves to, is refused 409 before anything is read.'
+            description: 'Read the campaign''s CURRENT configuration from the platform that runs it and report, per setting, where it diverges from what the campaign row recorded. A pure read: the platform is only read, never written, and the observation is never persisted back onto the campaign row — the row means "what this dispatch asked for", and the two can legitimately disagree: nothing pushes the recorded config upstream, and more than one path lets them drift apart. This is the read metrics cannot be: impressions, clicks, cost and CTR do not describe a campaign''s configuration. A setting that could not be read on either side is reported ABSENT with an `unknown` verdict, never defaulted to zero and never counted as a match. Support is per-platform: Google Ads, Microsoft Advertising, Meta, Reddit, X (Twitter) Ads and LinkedIn are wired, and a campaign on any other platform returns 400. While META_TARGETING_READBACK_ENABLED is "true", a Meta readback also COMPARES regions, cities and ad_schedule (#550): the ad set''s targeting.geo_locations region and city keys and its adset_schedule against the metaConfig.targeting.regions, cities and adSchedule the row''s config snapshot recorded (keys de-duplicated in numeric order, comma-joined; a schedule as "days=<d,…> HH:MM-HH:MM <timezone_type>"; none on either side is an empty string, so no regions requested and none held is a match). A row without a config snapshot has no recorded side, and an ad set whose targeting or schedule cannot be read has no upstream side; both are unknown and never fail the rest of the read. The field set is per-platform too — each platform reports only the settings it can answer honestly, normalised to the units its create path wrote (Microsoft keeps flight dates on the ad group, which this read does not read, so reports none) — and on every platform the provenance rules are the same: a campaign that does not record the account it was created under, or that belongs to a different account than the connection now resolves to, is refused 409 before anything is read.'
             operationId: lfx-v2-campaign-service-briefs#get-campaign-settings
             parameters:
                 - name: project_id
@@ -5988,7 +6179,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: toggle-campaign-status lfx-v2-campaign-service-briefs
-            description: 'Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist the new status. Unlike update-campaign (which only writes the DB row), this dispatches the status change to the platform and updates the row only after the platform confirms. Support is per-platform: a campaign whose platform has no status-toggle dispatcher wired returns 400. Reddit, LinkedIn, Meta, X, Google Ads and Microsoft Ads are wired; HubSpot is not, because an email send has no run state to pause. ONE EXCEPTION to the persist: pausing a campaign in ''created_degraded'' pauses it upstream and returns 200 with the status and ETag UNCHANGED. ''created_degraded'' records that the campaign''s wiring was never verified, and this schema has one status column, so writing ''paused'' would spend the reconciliation marker to record a run state the platform already holds authoritatively. Resuming such a campaign is refused outright (409). ADOPTED campaigns (campaign `adopted: true`) can be paused but not resumed here: a resume is refused 409 with reason=campaign_adopted, distinct from the reason-less 409 for a campaign that is not fully provisioned, and the campaign is resumed in the ad platform''s own UI. Read the pause''s effect from the ad platform, not from this row. META: ACTIVE cascades to the campaign''s recorded ad set and its ads, EXCEPT that a recorded ad set deliberately paused through toggle-meta-ad-set-status (list-meta-ad-sets `deliberately_paused`) is left PAUSED — its ads and the campaign are still activated. That record is this service''s, not Meta''s, so the held ad set is READ first (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and nothing is written unless Meta reports it PAUSED (or DELETED/ARCHIVED, which cannot serve): an ad set Meta reports ACTIVE is 409 (pause it, or resume it to clear the record, through toggle-meta-ad-set-status first), and an unreadable one is 503 with the campaign not modified.'
+            description: 'Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist the new status. Unlike update-campaign (which only writes the DB row), this dispatches the status change to the platform and updates the row only after the platform confirms. Support is per-platform: a campaign whose platform has no status-toggle dispatcher wired returns 400. Reddit, LinkedIn, Meta, X, Google Ads and Microsoft Ads are wired; HubSpot is not, because an email send has no run state to pause. ONE EXCEPTION to the persist: pausing a campaign in ''created_degraded'' pauses it upstream and returns 200 with the status and ETag UNCHANGED. ''created_degraded'' records that the campaign''s wiring was never verified, and this schema has one status column, so writing ''paused'' would spend the reconciliation marker to record a run state the platform already holds authoritatively. Resuming such a campaign is refused outright (409). ADOPTED campaigns (campaign `adopted: true`) can be paused but not resumed here: a resume is refused 409 with reason=campaign_adopted, distinct from the reason-less 409 for a campaign that is not fully provisioned, and the campaign is resumed in the ad platform''s own UI. Read the pause''s effect from the ad platform, not from this row. META: ACTIVE cascades to the campaign''s recorded ad set and its ads, EXCEPT that a recorded ad set deliberately paused through toggle-meta-ad-set-status (list-meta-ad-sets `deliberately_paused`) is left PAUSED — its ads and the campaign are still activated. That record is this service''s, not Meta''s, so the held ad set is READ first (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and nothing is written unless Meta reports it PAUSED (or DELETED/ARCHIVED, which cannot serve): an ad set Meta reports ACTIVE is 409 (pause it, or resume it to clear the record, through toggle-meta-ad-set-status first), and an unreadable one is 503 with the campaign not modified. Likewise every ad deliberately paused through toggle-meta-ad-status (list-meta-ads `deliberately_paused`) is left PAUSED while its siblings, the ad set and the campaign are activated; each held ad is READ first (GET /{ad_id}?fields=id,adset_id,campaign_id,account_id,status), an ad Meta reports ACTIVE is 409 (pause it, or resume it to clear the record, through toggle-meta-ad-status first), and an unreadable one is 503 with the campaign not modified.'
             operationId: lfx-v2-campaign-service-briefs#toggle-campaign-status
             parameters:
                 - name: project_id
@@ -17175,6 +17366,267 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/meta-ads/lead-forms:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-meta-lead-forms lfx-v2-campaign-service-connections
+            description: 'List the Instant Forms (lead forms) of the Facebook Page on the Meta connection a Meta create for this project uses, live from the Page''s leadgen_forms edge, for picking metaConfig.leadFormId (#550). Credentials and the Page resolve as for a create, so every id is one the create can read. Every status is listed (only ACTIVE passes a create), sorted by name ignoring case, then id. The read walks at most 1000 forms; more fails it with 503 rather than truncating, and that 503 does not clear on retry. The forms belong to the Page of the shared LF connection for every project without its own, so the response can list other foundations'' forms; like list-meta-custom-audiences it is gated on global_marketing_ops of {project_id}, not campaign_manager. Off (400) unless the deployment sets META_LEAD_FORMS_ENABLED to "true", the flag that gates metaConfig.leadFormId. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#list-meta-lead-forms
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/MetaLeadForms'
+                            example:
+                                form_count: 1
+                                forms:
+                                    - id: "1234567890123456"
+                                      name: KubeCon NA interest
+                                      status: ACTIVE
+                                    - id: "1234567890123456"
+                                      name: KubeCon NA interest
+                                      status: ACTIVE
+                                page_id: "104000000000001"
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/meta-ads/targeting-search:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: search-meta-targeting-options lfx-v2-campaign-service-connections
+            description: 'Search Meta''s detailed-targeting taxonomy by name, live from Meta''s Targeting Search (GET /search: type=adinterest for interest, type=adTargetingCategory&class=behaviors for behavior, type=adworkposition for work_position), for picking metaConfig.targeting.interests, behaviors and workPositions by name instead of by id (#550). Meta serves behaviors as one browse of the whole class, so a behavior search keeps the options whose name contains the query, ignoring case. The answer is Meta''s own taxonomy, the same for every token, and names nothing any ad account holds, so it is gated on campaign_manager of {project_id} like every other project read, and a project with no Meta connection of its own reads through the shared LF system credential, as a create would. No ad account need be selected. Answers are cached for up to an hour by type and query (behaviors by type), which serves a repeated identical search, not a new prefix. A throttle from Meta is not retried and answers 503. Off (400) unless the deployment sets META_TARGETING_SEARCH_ENABLED to "true". A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#search-meta-targeting-options
+            parameters:
+                - name: type
+                  in: query
+                  description: 'What to search: interest (metaConfig.targeting.interests), behavior (behaviors) or work_position (workPositions).'
+                  allowEmptyValue: true
+                  required: true
+                  schema:
+                    type: string
+                    description: 'What to search: interest (metaConfig.targeting.interests), behavior (behaviors) or work_position (workPositions).'
+                    example: interest
+                    enum:
+                        - interest
+                        - behavior
+                        - work_position
+                  example: interest
+                - name: query
+                  in: query
+                  description: 'Text to match against option names: 2 to 100 characters, no control characters. The limits apply to the value as sent, and surrounding space is then trimmed, so the trimmed text must still be at least 2 characters. Every distinct interest or work_position query is a Meta call on a shared rate limit (only a repeated identical search is served from cache), so callers should debounce keystrokes rather than search on each one.'
+                  allowEmptyValue: true
+                  required: true
+                  schema:
+                    type: string
+                    description: 'Text to match against option names: 2 to 100 characters, no control characters. The limits apply to the value as sent, and surrounding space is then trimmed, so the trimmed text must still be at least 2 characters. Every distinct interest or work_position query is a Meta call on a shared rate limit (only a repeated identical search is served from cache), so callers should debounce keystrokes rather than search on each one.'
+                    example: kubernetes
+                    pattern: ^\P{Cc}*[^\s\p{Cc}]\P{Cc}*$
+                    minLength: 2
+                    maxLength: 100
+                  example: kubernetes
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/MetaTargetingOptions'
+                            example:
+                                option_count: 1
+                                options:
+                                    - audience_size_lower_bound: 1200000
+                                      audience_size_upper_bound: 1400000
+                                      coverage: 56000
+                                      description: Aut et ipsum a dolores commodi.
+                                      id: "6003107902433"
+                                      name: Kubernetes
+                                      path:
+                                        - Delectus maxime totam.
+                                        - Quo cumque praesentium sit soluta sed.
+                                        - Dolorem sit.
+                                        - Minus et porro est.
+                                    - audience_size_lower_bound: 1200000
+                                      audience_size_upper_bound: 1400000
+                                      coverage: 56000
+                                      description: Aut et ipsum a dolores commodi.
+                                      id: "6003107902433"
+                                      name: Kubernetes
+                                      path:
+                                        - Delectus maxime totam.
+                                        - Quo cumque praesentium sit soluta sed.
+                                        - Dolorem sit.
+                                        - Minus et porro est.
+                                    - audience_size_lower_bound: 1200000
+                                      audience_size_upper_bound: 1400000
+                                      coverage: 56000
+                                      description: Aut et ipsum a dolores commodi.
+                                      id: "6003107902433"
+                                      name: Kubernetes
+                                      path:
+                                        - Delectus maxime totam.
+                                        - Quo cumque praesentium sit soluta sed.
+                                        - Dolorem sit.
+                                        - Minus et porro est.
+                                    - audience_size_lower_bound: 1200000
+                                      audience_size_upper_bound: 1400000
+                                      coverage: 56000
+                                      description: Aut et ipsum a dolores commodi.
+                                      id: "6003107902433"
+                                      name: Kubernetes
+                                      path:
+                                        - Delectus maxime totam.
+                                        - Quo cumque praesentium sit soluta sed.
+                                        - Dolorem sit.
+                                        - Minus et porro est.
+                                type: interest
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/microsoft-ads/audience:
         get:
             tags:
@@ -26451,6 +26903,10 @@ components:
                     description: clicks/impressions, 0 when impressions is 0.
                     example: 0.0228
                     format: double
+                deliberately_paused:
+                    type: boolean
+                    description: 'true when this is an ad of the campaign''s recorded ad set and the campaign row holds a DELIBERATE pause of it made through toggle-meta-ad-status (#550): resuming the campaign (toggle-campaign-status ACTIVE) leaves this ad PAUSED, and only resuming it through toggle-meta-ad-status clears this. It is this service''s record, not Meta''s — `status` is what Meta reports. The same caveats as list-meta-ad-sets `deliberately_paused` apply after an UNCONFIRMED 503.'
+                    example: false
                 effective_status:
                     type: string
                     description: The ad's EFFECTIVE status as Meta reports it (e.g. ADSET_PAUSED, PENDING_REVIEW, DISAPPROVED). Reported verbatim; Meta grows this set without notice. Absent when not reported.
@@ -26482,6 +26938,7 @@ components:
                 creative_id: "120210000000000777"
                 creative_name: KubeCon NA — Image A
                 ctr: 0.0228
+                deliberately_paused: false
                 effective_status: ACTIVE
                 id: "120210000000000999"
                 impressions: 920
@@ -26495,6 +26952,7 @@ components:
                 - clicks
                 - cost_micros
                 - ctr
+                - deliberately_paused
         MetaAdSet:
             type: object
             properties:
@@ -26754,6 +27212,52 @@ components:
                 - read_at
                 - ad_sets
                 - ad_set_count
+        MetaAdStatusChange:
+            type: object
+            properties:
+                ad_id:
+                    type: string
+                    description: The ad whose status was addressed
+                    example: "120210000000000999"
+                ad_set_id:
+                    type: string
+                    description: The ad set the ad was proven to belong to
+                    example: "120210000000000888"
+                campaign_id:
+                    type: string
+                    description: Campaign UUID
+                    example: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                outcome:
+                    type: string
+                    description: 'APPLIED — Meta confirmed the change. ALREADY_IN_STATE — the pre-write read showed the ad already at the requested status, so NOTHING WAS SENT. (A write whose outcome is unknown is never a 200: it is a 503 saying the change is unconfirmed.)'
+                    example: APPLIED
+                    enum:
+                        - APPLIED
+                        - ALREADY_IN_STATE
+                previous_status:
+                    type: string
+                    description: The configured status the pre-write read observed.
+                    example: ACTIVE
+                requested_status:
+                    type: string
+                    description: The status requested
+                    example: PAUSED
+                    enum:
+                        - ACTIVE
+                        - PAUSED
+            example:
+                ad_id: "120210000000000999"
+                ad_set_id: "120210000000000888"
+                campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                outcome: APPLIED
+                previous_status: ACTIVE
+                requested_status: PAUSED
+            required:
+                - campaign_id
+                - ad_set_id
+                - ad_id
+                - requested_status
+                - outcome
         MetaAds:
             type: object
             properties:
@@ -26777,6 +27281,7 @@ components:
                           creative_id: "120210000000000777"
                           creative_name: KubeCon NA — Image A
                           ctr: 0.0228
+                          deliberately_paused: false
                           effective_status: ACTIVE
                           id: "120210000000000999"
                           impressions: 920
@@ -26788,6 +27293,7 @@ components:
                           creative_id: "120210000000000777"
                           creative_name: KubeCon NA — Image A
                           ctr: 0.0228
+                          deliberately_paused: false
                           effective_status: ACTIVE
                           id: "120210000000000999"
                           impressions: 920
@@ -26799,6 +27305,7 @@ components:
                           creative_id: "120210000000000777"
                           creative_name: KubeCon NA — Image A
                           ctr: 0.0228
+                          deliberately_paused: false
                           effective_status: ACTIVE
                           id: "120210000000000999"
                           impressions: 920
@@ -26847,6 +27354,7 @@ components:
                       creative_id: "120210000000000777"
                       creative_name: KubeCon NA — Image A
                       ctr: 0.0228
+                      deliberately_paused: false
                       effective_status: ACTIVE
                       id: "120210000000000999"
                       impressions: 920
@@ -27280,6 +27788,241 @@ components:
                 - audiences
                 - audience_count
                 - truncated
+        MetaLeadForm:
+            type: object
+            properties:
+                id:
+                    type: string
+                    description: The form id, exactly what metaConfig.leadFormId takes
+                    example: "1234567890123456"
+                name:
+                    type: string
+                    description: The form's name in Ads Manager. Not an identifier; empty when Meta sent none.
+                    example: KubeCon NA interest
+                status:
+                    type: string
+                    description: Meta's form status, verbatim (ACTIVE, ARCHIVED, DELETED, DRAFT, …). Only an ACTIVE form is accepted by a create.
+                    example: ACTIVE
+            example:
+                id: "1234567890123456"
+                name: KubeCon NA interest
+                status: ACTIVE
+            required:
+                - id
+                - name
+                - status
+        MetaLeadForms:
+            type: object
+            properties:
+                form_count:
+                    type: integer
+                    description: How many forms are in `forms`
+                    example: 1
+                    format: int64
+                forms:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/MetaLeadForm'
+                    description: Every form of the Page, sorted by name (ignoring case), then id
+                    example:
+                        - id: "1234567890123456"
+                          name: KubeCon NA interest
+                          status: ACTIVE
+                        - id: "1234567890123456"
+                          name: KubeCon NA interest
+                          status: ACTIVE
+                page_id:
+                    type: string
+                    description: 'The Facebook Page the forms were read from: the Page of the connection a Meta create for this project uses'
+                    example: "104000000000001"
+            example:
+                form_count: 1
+                forms:
+                    - id: "1234567890123456"
+                      name: KubeCon NA interest
+                      status: ACTIVE
+                    - id: "1234567890123456"
+                      name: KubeCon NA interest
+                      status: ACTIVE
+                page_id: "104000000000001"
+            required:
+                - page_id
+                - forms
+                - form_count
+        MetaTargetingOption:
+            type: object
+            properties:
+                audience_size_lower_bound:
+                    type: integer
+                    description: Meta's estimated audience size, lower bound (interests and behaviors). Absent when Meta reported none.
+                    example: 1200000
+                    format: int64
+                audience_size_upper_bound:
+                    type: integer
+                    description: Meta's estimated audience size, upper bound (interests and behaviors). Absent when Meta reported none.
+                    example: 1400000
+                    format: int64
+                coverage:
+                    type: integer
+                    description: Meta's estimated audience size (work positions). Absent when Meta reported none.
+                    example: 56000
+                    format: int64
+                description:
+                    type: string
+                    description: Meta's description of the option (a work position's subtext). Absent when Meta sent none.
+                    example: Aut et ipsum a dolores commodi.
+                id:
+                    type: string
+                    description: The option id, exactly what metaConfig.targeting.interests, behaviors or workPositions (per the type searched) takes
+                    example: "6003107902433"
+                name:
+                    type: string
+                    description: Meta's display name for the option. Not an identifier.
+                    example: Kubernetes
+                path:
+                    type: array
+                    items:
+                        type: string
+                        example: Delectus maxime totam.
+                    description: Meta's category path for the option, outermost first. Absent when Meta sent none.
+                    example:
+                        - Delectus maxime totam.
+                        - Quo cumque praesentium sit soluta sed.
+                        - Dolorem sit.
+                        - Minus et porro est.
+            example:
+                audience_size_lower_bound: 1200000
+                audience_size_upper_bound: 1400000
+                coverage: 56000
+                description: Aut et ipsum a dolores commodi.
+                id: "6003107902433"
+                name: Kubernetes
+                path:
+                    - Delectus maxime totam.
+                    - Quo cumque praesentium sit soluta sed.
+                    - Dolorem sit.
+                    - Minus et porro est.
+            required:
+                - id
+                - name
+        MetaTargetingOptions:
+            type: object
+            properties:
+                option_count:
+                    type: integer
+                    description: How many options are in `options`
+                    example: 1
+                    format: int64
+                options:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/MetaTargetingOption'
+                    description: 'The matches, de-duplicated by id: Meta''s relevance order for interest and work_position, Meta''s listing order for behavior. At most 50. Empty when nothing matches.'
+                    example:
+                        - audience_size_lower_bound: 1200000
+                          audience_size_upper_bound: 1400000
+                          coverage: 56000
+                          description: Aut et ipsum a dolores commodi.
+                          id: "6003107902433"
+                          name: Kubernetes
+                          path:
+                            - Delectus maxime totam.
+                            - Quo cumque praesentium sit soluta sed.
+                            - Dolorem sit.
+                            - Minus et porro est.
+                        - audience_size_lower_bound: 1200000
+                          audience_size_upper_bound: 1400000
+                          coverage: 56000
+                          description: Aut et ipsum a dolores commodi.
+                          id: "6003107902433"
+                          name: Kubernetes
+                          path:
+                            - Delectus maxime totam.
+                            - Quo cumque praesentium sit soluta sed.
+                            - Dolorem sit.
+                            - Minus et porro est.
+                        - audience_size_lower_bound: 1200000
+                          audience_size_upper_bound: 1400000
+                          coverage: 56000
+                          description: Aut et ipsum a dolores commodi.
+                          id: "6003107902433"
+                          name: Kubernetes
+                          path:
+                            - Delectus maxime totam.
+                            - Quo cumque praesentium sit soluta sed.
+                            - Dolorem sit.
+                            - Minus et porro est.
+                        - audience_size_lower_bound: 1200000
+                          audience_size_upper_bound: 1400000
+                          coverage: 56000
+                          description: Aut et ipsum a dolores commodi.
+                          id: "6003107902433"
+                          name: Kubernetes
+                          path:
+                            - Delectus maxime totam.
+                            - Quo cumque praesentium sit soluta sed.
+                            - Dolorem sit.
+                            - Minus et porro est.
+                type:
+                    type: string
+                    description: The type searched, as requested
+                    example: interest
+                    enum:
+                        - interest
+                        - behavior
+                        - work_position
+            example:
+                option_count: 1
+                options:
+                    - audience_size_lower_bound: 1200000
+                      audience_size_upper_bound: 1400000
+                      coverage: 56000
+                      description: Aut et ipsum a dolores commodi.
+                      id: "6003107902433"
+                      name: Kubernetes
+                      path:
+                        - Delectus maxime totam.
+                        - Quo cumque praesentium sit soluta sed.
+                        - Dolorem sit.
+                        - Minus et porro est.
+                    - audience_size_lower_bound: 1200000
+                      audience_size_upper_bound: 1400000
+                      coverage: 56000
+                      description: Aut et ipsum a dolores commodi.
+                      id: "6003107902433"
+                      name: Kubernetes
+                      path:
+                        - Delectus maxime totam.
+                        - Quo cumque praesentium sit soluta sed.
+                        - Dolorem sit.
+                        - Minus et porro est.
+                    - audience_size_lower_bound: 1200000
+                      audience_size_upper_bound: 1400000
+                      coverage: 56000
+                      description: Aut et ipsum a dolores commodi.
+                      id: "6003107902433"
+                      name: Kubernetes
+                      path:
+                        - Delectus maxime totam.
+                        - Quo cumque praesentium sit soluta sed.
+                        - Dolorem sit.
+                        - Minus et porro est.
+                    - audience_size_lower_bound: 1200000
+                      audience_size_upper_bound: 1400000
+                      coverage: 56000
+                      description: Aut et ipsum a dolores commodi.
+                      id: "6003107902433"
+                      name: Kubernetes
+                      path:
+                        - Delectus maxime totam.
+                        - Quo cumque praesentium sit soluta sed.
+                        - Dolorem sit.
+                        - Minus et porro est.
+                type: interest
+            required:
+                - type
+                - options
+                - option_count
         MicrosoftAdsAccountMonitor:
             type: object
             properties:

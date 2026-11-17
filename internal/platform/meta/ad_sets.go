@@ -606,27 +606,5 @@ func (c *Client) UpdateAdSetStatusOnce(ctx context.Context, adSetID, status stri
 	if err := ValidateAdSetID(adSetID); err != nil {
 		return err
 	}
-	if status != StatusActive && status != StatusPaused {
-		return fmt.Errorf("meta: status must be %q or %q", StatusActive, StatusPaused)
-	}
-	path := "/" + adSetID
-	var raw json.RawMessage
-	if err := c.do(ctx, http.MethodPost, path, map[string]any{"status": status}, &raw, false); err != nil {
-		return fmt.Errorf("meta: update ad set %s status to %s: %w", adSetID, status, err)
-	}
-	// The confirmation is checked as RAW BYTES first: {"success":false,"Success":true} decodes to
-	// true under encoding/json's last-wins, case-insensitive matching. A body that cannot be
-	// trusted confirms nothing, so it is unconfirmed, never applied.
-	if err := identityjson.Check(raw); err != nil {
-		return &transportError{Method: http.MethodPost, Path: path, Err: err}
-	}
-	var resp struct {
-		Success *bool `json:"success"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil || resp.Success == nil || !*resp.Success {
-		// Meta answered 2xx without confirming. It received the request, so the outcome is
-		// unknown — never reported as success, never as "nothing changed".
-		return &transportError{Method: http.MethodPost, Path: path, Err: errors.New("2xx response did not confirm success")}
-	}
-	return nil
+	return c.updateStatusOnce(ctx, "ad set", adSetID, status)
 }

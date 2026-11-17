@@ -111,8 +111,8 @@ MUST have a matching rule in [ruleset.md](ruleset.md) — a routed request with 
 matching Heimdall rule is rejected. The RuleSet's `project-api` rule covers every
 routed project-nested family except `google-ads/conversion-actions`,
 `google-ads/audiences`, `google-ads/user-lists`, `reddit-ads/custom-audiences`,
-`reddit-ads/pixels`, `twitter-ads/custom-audiences`, `linkedin-ads/audiences`, `linkedin-ads/conversions` and
-`meta-ads/custom-audiences`, which its
+`reddit-ads/pixels`, `twitter-ads/custom-audiences`, `linkedin-ads/audiences`, `linkedin-ads/conversions`,
+`meta-ads/custom-audiences` and `meta-ads/lead-forms`, which its
 `marketing-ops-api` rule covers; its
 `campaigns-placeholder` rule covers the reserved prefixes, so chart↔route parity holds.
 
@@ -140,7 +140,10 @@ by `marketing-ops-api` alone, on `global_marketing_ops`, and that no rule gates 
 project; `TestGoogleAudiencesIsAMarketingOpsRead` and `TestUserListsIsAMarketingOpsRead` pin
 `google-ads/audiences` and `google-ads/user-lists` the same way,
 `TestLinkedInPickersAreMarketingOpsReads` the two LinkedIn pickers (#552), and
-`TestMetaCustomAudiencesIsAMarketingOpsRead` pins `meta-ads/custom-audiences` (#550), and
+`TestMetaCustomAudiencesIsAMarketingOpsRead` pins `meta-ads/custom-audiences` (#550)
+(`TestMetaTargetingSearchIsACampaignManagerRead` pins its sibling `meta-ads/targeting-search` to
+`project-api`; the route regex carries them as `meta-ads/(custom-audiences|targeting-search|lead-forms)`),
+`TestMetaLeadFormsIsAMarketingOpsRead` pins `meta-ads/lead-forms` (#550), and
 `TestTwitterCustomAudiencesIsAMarketingOpsRead` pins `twitter-ads/custom-audiences` (#564). A
 separate `TestProjectAPIRuleEnforcesCampaignManager` asserts
 the `project-api` rule has two `openfga_check` authorizers on relation `campaign_manager`, each
@@ -153,4 +156,4 @@ object correctly paired to its guard": a path moved into an `allow_all` / `deny_
 differently-scoped rule, a downgrade of the rule's relation, or a swapped guard/object
 pairing, must FAIL the security regression test rather than silently satisfy path parity.
 
-The Meta ad-set read and pause/resume (`campaigns/{id}/meta-ad-sets`, `campaigns/{id}/meta-ad-sets/{adSetId}/status`, LFXV2-2665) and the read-only ad listing under one ad set (`campaigns/{id}/meta-ad-sets/{adSetId}/ads`) are routed and ruled by the `briefs` family with no entry of their own; `parity_test.go` pins all three paths.
+The Meta ad-set read and pause/resume (`campaigns/{id}/meta-ad-sets`, `campaigns/{id}/meta-ad-sets/{adSetId}/status`, LFXV2-2665) the read-only ad listing under one ad set (`campaigns/{id}/meta-ad-sets/{adSetId}/ads`) and the per-ad pause/resume (`campaigns/{id}/meta-ad-sets/{adSetId}/ads/{adId}/status`, #550) are routed and ruled by the `briefs` family with no entry of their own; `parity_test.go` pins all four paths.

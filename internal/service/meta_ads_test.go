@@ -61,8 +61,8 @@ func TestListMetaAds_RendersTheWireBody(t *testing.T) {
 	}
 	body, _ := json.Marshal(briefsserver.NewListMetaAdsResponseBody(res))
 	want := `{"campaign_id":"c1","platform_campaign_id":"555","ad_set_id":"888","window":"last_7_days","currency":"USD","read_at":"2026-10-15T09:30:00Z","truncated":true,"ads":[` +
-		`{"id":"901","listed":true,"name":"Image A","creative_id":"701","creative_name":"Creative A","impressions":1000,"clicks":20,"cost_micros":7250000,"ctr":0.02},` +
-		`{"id":"903","listed":false,"impressions":10,"clicks":1,"cost_micros":500000,"ctr":0.1}],"ad_count":2}`
+		`{"id":"901","listed":true,"name":"Image A","creative_id":"701","creative_name":"Creative A","impressions":1000,"clicks":20,"cost_micros":7250000,"ctr":0.02,"deliberately_paused":false},` +
+		`{"id":"903","listed":false,"impressions":10,"clicks":1,"cost_micros":500000,"ctr":0.1,"deliberately_paused":false}],"ad_count":2}`
 	if string(body) != want {
 		t.Errorf("wire body = %s\nwant        %s", body, want)
 	}

@@ -1,0 +1,3 @@
+# 2026-11-16 — #550 Meta gaps: PR review fixes
+
+**Fix** — Three fixes from the #612 review, each found by more than one reviewer. First, `checkDetailedTargeting` matches validation rows on type and id, so a valid work-position row can no longer hide an invalid behavior row for the same id; disagreeing rows for one (type, id) are an error. Second, `checkGeoLocations` refuses to proceed when a city in a listed region's country comes back without a `region_id`, because its overlap cannot be checked before create. Third, `MetaMarketingOpsInputs` also decodes `leadFormId` the way the dispatcher does, so `"LeadFormId": "…"` followed by `"leadFormId": null` is still gated on `global_marketing_ops`. The deployment concept now says naming a form requires that role.

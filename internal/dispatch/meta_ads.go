@@ -79,11 +79,15 @@ func (d *MetaDispatcher) ReadMetaAds(ctx context.Context, projectID string, plat
 		Truncated:          ads.Truncated,
 		Ads:                make([]model.MetaAd, 0, len(ads.Ads)),
 	}
+	// The per-ad deliberate-pause record (#550, gap 14) is kept only for ads of the recorded ad
+	// set, the only ones the campaign cascade activates, so only they are marked.
+	recordedAdSet := adSetID == metaAdSetID(campaign)
 	for _, a := range ads.Ads {
 		out.Ads = append(out.Ads, model.MetaAd{
 			ID: a.ID, Listed: a.Listed, Name: a.Name, Status: a.Status, EffectiveStatus: a.EffectiveStatus,
 			CreativeID: a.CreativeID, CreativeName: a.CreativeName,
 			Impressions: a.Impressions, Clicks: a.Clicks, CostMicros: a.CostMicros, Ctr: a.Ctr,
+			DeliberatelyPaused: recordedAdSet && model.MetaAdHeldPaused(campaign.Result, a.ID),
 		})
 	}
 	return out, nil

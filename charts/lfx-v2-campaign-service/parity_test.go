@@ -109,10 +109,41 @@ const googleAudiencesPath = "/projects/:projectId/google-ads/audiences"
 // TestUserListsIsAMarketingOpsRead pins that.
 const userListsPath = "/projects/:projectId/google-ads/user-lists"
 
+// TestMetaTargetingSearchIsACampaignManagerRead pins the Meta targeting search (#550) to
+// project-api (campaign_manager): it answers Meta's own taxonomy, identical for every token, so
+// marketing-ops-api must not take it over from the foundation campaign managers who build Meta
+// campaigns.
+func TestMetaTargetingSearchIsACampaignManagerRead(t *testing.T) {
+	ruleset := helmTemplate(t, "templates/ruleset.yaml")
+	const path = "/projects/p1/meta-ads/targeting-search"
+	matched := false
+	for _, p := range rulePatterns(t, ruleset, projectAPIRuleID) {
+		if ruleMatcher(t, p).MatchString(path) {
+			matched = true
+		}
+	}
+	if !matched {
+		t.Errorf("%s rule must match %s", projectAPIRuleID, path)
+	}
+	for _, p := range rulePatterns(t, ruleset, marketingOpsRuleID) {
+		if ruleMatcher(t, p).MatchString(path) {
+			t.Errorf("%s rule pattern %s matches %s; the targeting search is a campaign_manager read", marketingOpsRuleID, p, path)
+		}
+	}
+	if !extractRouteRegex(t, helmTemplate(t, "templates/httproute.yaml")).MatchString(path) {
+		t.Errorf("the route regex does not forward %s", path)
+	}
+}
+
 // metaCustomAudiencesPath is the Meta custom-audience read (#550). It lists every foundation's
 // audiences on the shared Meta ad account, so it is ruled by marketing-ops-api only, and
 // TestMetaCustomAudiencesIsAMarketingOpsRead pins that.
 const metaCustomAudiencesPath = "/projects/:projectId/meta-ads/custom-audiences"
+
+// metaLeadFormsPath is the Meta Instant Form list (#550). It lists the forms of the Page on the
+// connection a create uses, the shared LF connection for every project without its own, so it is
+// ruled by marketing-ops-api only, and TestMetaLeadFormsIsAMarketingOpsRead pins that.
+const metaLeadFormsPath = "/projects/:projectId/meta-ads/lead-forms"
 
 // redditCustomAudiencesPath is the Reddit custom-audience list (#549). It lists every
 // foundation's audiences on the shared LF Reddit ad account, so it is ruled by marketing-ops-api
@@ -138,7 +169,7 @@ const (
 )
 
 // marketingOpsPaths is every path the marketing-ops-api rule must hold, in order, and nothing else.
-var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, redditCustomAudiencesPath, redditPixelsPath, twitterCustomAudiencesPath, linkedInAudiencesPath, linkedInConversionsPath, metaCustomAudiencesPath}
+var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, redditCustomAudiencesPath, redditPixelsPath, twitterCustomAudiencesPath, linkedInAudiencesPath, linkedInConversionsPath, metaCustomAudiencesPath, metaLeadFormsPath}
 
 // ruleBlock isolates one rendered Heimdall rule (from its `- id: "<id>"` line up to
 // the next `- id:` or EOF) so path/authorizer extraction is scoped to a SINGLE rule.
@@ -226,6 +257,13 @@ func TestMetaCustomAudiencesIsAMarketingOpsRead(t *testing.T) {
 	if !matched {
 		t.Errorf("%s rule no longer matches %s, the campaign_manager Meta audience insights read", projectAPIRuleID, insights)
 	}
+}
+
+// TestMetaLeadFormsIsAMarketingOpsRead pins the same for the Meta Instant Form list (#550): the
+// forms belong to the Page of the shared LF connection for every project without its own, so a
+// campaign_manager (executive_director included) must not reach it.
+func TestMetaLeadFormsIsAMarketingOpsRead(t *testing.T) {
+	assertMarketingOpsRead(t, metaLeadFormsPath, "/projects/p1/meta-ads/lead-forms")
 }
 
 // TestGoogleAudiencesIsAMarketingOpsRead pins the same for the Google audience list (#496): it
@@ -700,6 +738,10 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// segments below the campaign. Like the ad-set read it inherits the briefs match and the
 		// campaign_manager rule; this row fails if a narrowing drops it.
 		{"/projects/p1/briefs/b-42/campaigns/c-9/meta-ad-sets/120210000000000888/ads", true},
+		// The per-ad pause/resume (toggle-meta-ad-status, #550), five segments below the campaign and
+		// the deepest spend-affecting mutation in this set. Like the ad-set toggle it inherits the
+		// briefs match and the campaign_manager rule; this row fails if a narrowing drops it.
+		{"/projects/p1/briefs/b-42/campaigns/c-9/meta-ad-sets/120210000000000888/ads/120210000000000999/status", true},
 		// campaign_audiences (LFXV2-2783) is subordinate to a brief, so it inherits both
 		// the HTTPRoute `briefs(/.*)?` match and the Heimdall `/briefs/**` campaign_manager
 		// rule — no separate route/rule entry. These rows pin that coverage so a future
@@ -724,6 +766,14 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/google-ads/audiences/x", false},
 		{"/projects/p1/meta-ads/custom-audiences", true},
 		{"/projects/p1/meta-ads/custom-audiences/x", false},
+		// The Meta targeting search (#550): a campaign_manager read at the base path only.
+		{"/projects/p1/meta-ads/targeting-search", true},
+		{"/projects/p1/meta-ads/targeting-search/x", false},
+		{"/projects/p1/linkedin-ads/targeting-search", false},
+		// The Meta Instant Form list (#550): a marketing-ops read at the base path only.
+		{"/projects/p1/meta-ads/lead-forms", true},
+		{"/projects/p1/meta-ads/lead-forms/x", false},
+		{"/projects/p1/reddit-ads/lead-forms", false},
 		{"/projects/p1/twitter-ads/custom-audiences", true},
 		{"/projects/p1/twitter-ads/custom-audiences/x", false},
 		{"/projects/p1/reddit-ads/pixels", true},

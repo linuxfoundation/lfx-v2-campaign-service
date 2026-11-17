@@ -553,6 +553,60 @@ app:
     META_CONVERSION_EVENT_ENABLED:
       value: "false"
 
+    # Opt this deployment IN to metaConfig.optimizationGoal (#550):
+    # LANDING_PAGE_VIEWS instead of LINK_CLICKS as the traffic objective's ad set
+    # optimization goal. Off by default until the ad set payload is verified
+    # against a live ad account; set exactly "true" in lfx-v2-argocd. While off,
+    # a create carrying the field is refused with a 400 before any job exists. It
+    # names no account resource, so it needs no global_marketing_ops. Any value
+    # other than "true" is treated as off.
+    META_OPTIMIZATION_GOAL_ENABLED:
+      value: "false"
+
+    # Opt this deployment IN to metaConfig.frequencyCap (#550): an
+    # impressions-per-person cap on the awareness objective's ad set
+    # (frequency_control_specs). Off by default until the payload is verified
+    # against a live ad account; set exactly "true" in lfx-v2-argocd. While off,
+    # a create carrying the field is refused with a 400 before any job exists. It
+    # names no account resource. Any value other than "true" is treated as off.
+    META_FREQUENCY_CAP_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to metaConfig.adSchedule (#550): days and whole
+    # hours, in the ad account's time zone, sent as the ad set's adset_schedule
+    # with pacing_type day_parting. Meta schedules only lifetime-budget ad sets,
+    # so a daily budget is refused with a 400. Off by default until the payload
+    # is verified against a live ad account; set exactly "true" in
+    # lfx-v2-argocd. It names no account resource. Any value other than "true"
+    # is treated as off.
+    META_AD_SCHEDULE_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to toggle-meta-ad-status (#550): the per-ad
+    # pause/resume lever under meta-ad-sets/{adSetId}/ads/{adId}/status. Off, the
+    # endpoint answers 400. A campaign resume honours a per-ad deliberate-pause
+    # record whatever this says, so turning it off never re-activates an ad an
+    # operator paused. Set exactly "true" in lfx-v2-argocd once the cascade and
+    # the record are verified against a live ad account. Any value other than
+    # "true" is treated as off.
+    META_AD_PAUSE_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to metaConfig.leadFormId (#550): an existing
+    # Instant Form that turns the leads objective into an OUTCOME_LEADS lead ad
+    # (LEAD_GENERATION ad set, the form on every creative). The form is read
+    # before anything is created and must be an active form of the connection's
+    # Page; this service never creates a form or accepts lead terms. Sending it
+    # needs global_marketing_ops (the shared LF Page holds every foundation's
+    # forms). Off by
+    # default until the payload is verified against a live ad account; set
+    # exactly "true" in lfx-v2-argocd. Any value other than "true" is treated as
+    # off.
+    # It also gates GET /projects/{p}/meta-ads/lead-forms, the form picker read
+    # (global_marketing_ops; 400 while off).
+    META_LEAD_FORMS_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to metaConfig.targeting (#550): age, gender,
     # custom audiences to include and exclude, and the Advantage+ audience
     # flag on the Meta ad set. A per-deployment opt-in, off by default, because
@@ -565,6 +619,82 @@ app:
     # carrying a targeting block is refused with a 400 before any job exists.
     # Any value other than "true" is treated as off, so a typo fails closed.
     META_AUDIENCE_TARGETING_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to metaConfig.targeting.locales (#550): Meta locale
+    # keys sent as the ad set's targeting.locales. Off by default until the
+    # payload is verified against a live ad account; set exactly "true" in
+    # lfx-v2-argocd. While off, a create carrying the list is refused with a 400
+    # before any job exists. Independent of META_AUDIENCE_TARGETING_ENABLED: a
+    # targeting block that sets only locales needs only this flag. A locale names
+    # no account resource, so it needs no global_marketing_ops. Any value other
+    # than "true" is treated as off.
+    META_LOCALE_TARGETING_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to metaConfig.targeting.devicePlatforms (#550):
+    # mobile or desktop only, sent as the ad set's targeting.device_platforms.
+    # Same rules as META_LOCALE_TARGETING_ENABLED: off by default until the
+    # payload is live-verified, a create carrying the list while off is a 400,
+    # and a block that sets only devicePlatforms needs only this flag. Any value
+    # other than "true" is treated as off.
+    META_DEVICE_TARGETING_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to metaConfig.targeting.interests (#550):
+    # detailed targeting interest ids sent as the ad set's flexible_spec, each
+    # validated with Meta's interest validation read before anything is
+    # created. Same rules as META_LOCALE_TARGETING_ENABLED. An interest is
+    # Meta's own taxonomy, not an account resource, so it needs no
+    # global_marketing_ops. Any value other than "true" is treated as off.
+    META_INTEREST_TARGETING_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to metaConfig.targeting.regions and
+    # metaConfig.targeting.cities (#550): Meta geo-location keys added to the ad
+    # set's country targeting. Every key is looked up before anything is
+    # created; a key whose country is sanctioned, regulated, already targeted
+    # as a whole, or in the EU without the DSA disclosures fails the job with
+    # nothing created. Same rules as META_LOCALE_TARGETING_ENABLED. A location
+    # is Meta's own taxonomy, so it needs no global_marketing_ops. Any value
+    # other than "true" is treated as off.
+    META_REGION_TARGETING_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to metaConfig.targeting.behaviors and
+    # metaConfig.targeting.workPositions (#550): detailed targeting ids sent in
+    # the ad set's flexible_spec beside the interests, each validated with
+    # Meta's ad account targeting validation read before anything is created.
+    # Same rules as META_LOCALE_TARGETING_ENABLED. Both are Meta's own taxonomy,
+    # so they need no global_marketing_ops. Any value other than "true" is
+    # treated as off.
+    META_BEHAVIOR_TARGETING_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to metaConfig.targeting.userOs (#550): Meta
+    # user_os values (iOS, Android, optionally with a minimum version or a
+    # range) sent as the ad set's user_os, checked against Meta's documented
+    # formats and combination rule before any request. Same rules as
+    # META_LOCALE_TARGETING_ENABLED. It names no account resource. Any value
+    # other than "true" is treated as off.
+    META_OS_TARGETING_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to search-meta-targeting-options (#550): GET
+    # /projects/{p}/meta-ads/targeting-search, the picker read over Meta's
+    # Targeting Search (interests, behaviors, work positions). A campaign_manager
+    # read of Meta's own taxonomy, through the LF system credential for a project
+    # without its own connection. While off the endpoint answers 400. Any value
+    # other than "true" is treated as off.
+    META_TARGETING_SEARCH_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to the Meta settings readback of the ad set's
+    # regions, cities and ad schedule (#550): get-campaign-settings then asks
+    # the ad set for targeting and adset_schedule and reports regions, cities
+    # and ad_schedule, compared with the row's config snapshot. While off the
+    # readback is unchanged. Any value other than "true" is treated as off.
+    META_TARGETING_READBACK_ENABLED:
       value: "false"
 
     # Opts this deployment IN to googleAdsConfig.performanceMaxAudienceSignal
