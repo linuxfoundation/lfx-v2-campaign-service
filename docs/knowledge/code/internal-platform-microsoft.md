@@ -1637,6 +1637,42 @@ Not verified live: no Microsoft call was made. The dispatcher keeps all three fi
 `MICROSOFT_AUDIENCES_ENABLED` (default off). The lists belong to the shared LF account, so they
 also need `global_marketing_ops` (`service.MicrosoftMarketingOpsInputs`).
 
+## Remarketing-list picker read (`remarketing_lists.go`, #563 gap 4 follow-up)
+
+`ListRemarketingLists` is the read behind `GET /projects/{project_id}/microsoft-ads/remarketing-lists`
+(`list-microsoft-ads-remarketing-lists`), for picking `audienceIds` / `excludedAudienceIds`. It is
+the call `CheckRemarketingLists` makes, `POST Audiences/QueryByIds` with `Type: "RemarketingList"`,
+but with `AudienceIds: null`, which v13 documents as "every audience of the type". There is no
+paging, so the answer is complete. It is a read, retried on 429. Each row carries `Id`, `Name`,
+`Description`, `Scope`, and `MembershipDuration` and `SearchSize` when sent (nil otherwise, never
+0). Both are decoded raw and read by `wholeNumberField` (SearchSize, int64) and `wholeInt32Field`
+(MembershipDuration, parsed at 32 bits so the conversion to int never narrows), which accept a JSON
+number or a quoted one (Microsoft's REST JSON quotes a long: `"SearchSize":"12000"`); a fraction, a
+negative, text or an overflow (MembershipDuration above int32) makes the answer unbelievable (#613 review). An answer this client cannot believe is `ErrRemarketingListsMalformed` with no rows, and the
+service answers 503 with nothing partial: no `Audiences` array, a null entry, an id that is not the
+canonical spelling of a positive int64 or repeats, an entry of another type (the filter was not
+applied), more than 5,000 entries, or any partial error with a present code. A zero or null
+placeholder code is not an error (`audienceErrorCode`). The body is decoded token by token
+(`decodeCappedList`, client.go), so the 5,000-row cap refuses the answer at the first row past it
+and no further rows are decoded or allocated. The cap stops row decoding only: `doRequest` has
+already buffered the whole body (up to 8 MiB) before decoding starts. The decoder, shared with the conversion-goal picker, also
+refuses a `PartialErrors` entry that is a non-null object naming no outcome (`{}`,
+`{"Code":null}`), since it does not establish a complete read; a JSON `null` slot and an explicit
+zero-code placeholder still pass. After the capped scan it applies `decodeTrusted`'s identity check
+(`identityjson.Check`) to the whole body, so a key declared twice under the decoder's case fold
+(`PartialErrors` then `partialerrors`, or a row's `Id` twice) is refused rather than resolved to
+its last value (#613 review).
+
+The dispatcher (`internal/dispatch/microsoft_remarketing_lists.go`,
+`ListMicrosoftRemarketingLists`) answers `ErrTargetingLookupUnsupported` (400 "not supported")
+before resolving anything unless `MICROSOFT_REMARKETING_LISTS_ENABLED` is exactly `"true"`, then
+resolves credentials as a create does (`creds.resolve`, LF system fallback included) and validates
+them with `validateMicrosoftConnection`, so every listed id is one a create for the project can
+send. The service (`internal/service/microsoft_ads_lookups.go`) sorts by name ignoring case, then
+id, and records the upstream call only when Microsoft was contacted. The shared LF account holds
+every foundation's lists, so the route is in the gateway's `marketing-ops-api` rule
+(`global_marketing_ops`), like the Reddit and X custom-audience pickers. Not verified live.
+
 ## Shared negative keyword lists at create (`shared_negative_lists.go`, #563 gap 9)
 
 `microsoftConfig.sharedNegativeKeywordListIds` associates EXISTING account-level negative keyword
@@ -1661,7 +1697,7 @@ ambiguous call or an unreadable 2xx; `APPLIED` otherwise. A `PartialErrors` entr
 are both defaults (absent, null, 0, "" or the quoted "0" — `isDefaultCode` — the
 `audienceErrorCode` rule `indexedErrorItem.isError` now shares) is a placeholder, not an error (the keyword lever's `keywordMutation` treats an
 answer of only explicit zero-code placeholders, `isZeroCodePlaceholder`, as APPLIED, while `[{}]`
-or `[null]` stays UNCONFIRMED). A placeholder
+or `[null]` stays UNCONFIRMED), here and in the conversion-goal picker read. A placeholder
 clears only the slot it names: one with no index or an index outside the request (or any entry
 naming an out-of-range index) makes `attribute` unattributable, so every list without its own
 error is UNCONFIRMED, and `keywordMutation` treats such a placeholder-only answer as UNCONFIRMED
@@ -1802,3 +1838,52 @@ object of numbers, checking each raw segment value for null first (encoding/json
 null as 0, a real adjustment), and any of the three while `MICROSOFT_BID_ADJUSTMENTS_ENABLED` is off. Not
 verified live. In particular it is unconfirmed whether Microsoft accepts an ADD of a device
 criterion on a new campaign; a refusal would stop the create, fail-closed. Not role-gated.
+
+## Conversion goals and conversion bidding at create (`conversion_goals.go`, #563 gap 7)
+
+`microsoftConfig.conversionGoalIds` names EXISTING conversion goals on the shared account; this
+service creates no UET tag and no goal (marketing ops owns both). `ValidateConversionGoalIDs`
+holds the pure rules: at most 20, each the canonical spelling of a positive int64, no repeat.
+
+`CheckConversionGoals` runs BEFORE anything is created, after the shared-list check: ONE
+`POST ConversionGoals/QueryByIds` (`GetConversionGoalsByIds`) with every id and
+`ConversionGoalTypes` set to every type, space-delimited (the monitor's precedent for a flags
+enum): all eight v13 members, `Url Duration PagesViewedPerVisit Event AppInstall OfflineConversion
+InStoreTransaction AppDownload` (the picker sends the same set, so no goal type is hidden). `ConversionGoals` must be index-aligned with the request; a null entry (Microsoft's "not
+retrieved") or a goal whose status is not `Active` (an allow-list: `Paused`, `InActive`, `Deleted` or any
+later status) is a `PreflightRefusal` naming the id. An
+answer that cannot be believed (no array, a different length, an entry naming another goal) is a
+plain error, as is a body the identity check refuses (a key declared twice, case variants included,
+such as `{"Status":"Paused","status":"Active"}`), which last-key-wins decoding would otherwise read
+as an Active goal. The answer is decoded with `decodeCappedList` capped at the number of ids (at
+most 20), so an answer longer than the request stops decoding at the first extra entry rather than
+allocating every one, and a `PartialErrors` entry naming no outcome is refused as for the pickers. Partial errors are not attributed: Microsoft documents that they do not follow the
+request order, and the null entry already refuses the id. Either way nothing is created.
+
+The ids are then sent as the new campaign's `GoalIds` (`msCampaign.GoalIds`). A campaign found by
+name keeps its goals (a warning step); only goals THIS RUN set are recorded as
+`CampaignResult.ConversionGoalIDs`.
+
+`microsoftConfig.bidding` gains `strategy` `"maxConversions"` and `"targetCpa"` (with
+`bidding.targetCpa`), resolved by the dispatcher's `microsoftConversionPlan` before the generic
+`resolveBidding` (which still refuses both strategies, and the `targetCpa` key, on every other
+platform; `checkBiddingShape` refuses the key outside `microsoftConfig`). Both are sent as
+`BidSchemeMaxConversions` (`{"Type":"MaxConversions","TargetCpa":…}`, no `MaxCpc`): Microsoft
+retired `TargetCpaBiddingScheme` for new campaigns and converts it to MaxConversions with the
+target. `validateBiddingScheme` refuses MaxConversions with a `CpcBid` or with no goal, and a
+target CPA under any other scheme. They are recorded as `automatic` bidding, so the bid lever
+answers 409, as for MaxClicks.
+
+`ListConversionGoals` is the picker read (`GET /projects/{project_id}/microsoft-ads/conversion-goals`,
+the same call with no ids): every goal on the account, or `ErrConversionGoalsMalformed` (503) for
+a null entry, an unusable or repeated id, more than 5,000 rows (decoded with `decodeCappedList`,
+which stops decoding at the first row past the cap), any partial error, a `PartialErrors` entry naming no
+outcome, or a key declared twice (the decoder's rules, described under the remarketing-list picker).
+
+Not verified live, in particular `Campaign.GoalIds` (the reference describes it only as "A list of
+goal IDs") and the JSON spelling of the `ConversionGoalTypes` flags. Everything is behind
+`MICROSOFT_CONVERSION_GOALS_ENABLED` (default off; a 400 while off, re-checked in Dispatch; the
+picker answers 400). `conversionGoalIds` also needs `global_marketing_ops`
+(`service.MicrosoftMarketingOpsInputs`, pinned to the dispatcher by
+`TestMicrosoftSharedAccountInputDetectionAgreesWithTheCreateGate`), and the picker route is on the
+gateway's `marketing-ops-api` rule.

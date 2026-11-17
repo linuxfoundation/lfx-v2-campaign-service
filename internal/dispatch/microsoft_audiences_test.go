@@ -31,6 +31,8 @@ var microsoftGatedFields = map[string]bool{
 	"excludedAudienceIds": true,
 	// #563 gap 9: shared negative keyword lists are existing resources of the shared account.
 	"sharedNegativeKeywordListIds": true,
+	// #563 gap 7: conversion goals are existing resources of the shared account.
+	"conversionGoalIds": true,
 }
 
 // microsoftUngatedFields are every other microsoftConfig key, each deliberately outside the check:
@@ -86,6 +88,9 @@ func TestMicrosoftSharedAccountInputDetectionAgreesWithTheCreateGate(t *testing.
 		`{"microsoftConfig":{"sharedNegativeKeywordListIds":["4001"]}}`,
 		`{"microsoftConfig":{"SHAREDNEGATIVEKEYWORDLISTIDS":["4001"],"audienceIds":["1"]}}`,
 		`{"microsoftConfig":{"sharedNegativeKeywordListIds":[]}}`,
+		`{"microsoftConfig":{"conversionGoalIds":["5001"]}}`,
+		`{"microsoftConfig":{"CONVERSIONGOALIDS":["5001"],"audienceIds":["1"]}}`,
+		`{"microsoftConfig":{"conversionGoalIds":[]}}`,
 	} {
 		var cfg microsoftConfig
 		_ = unmarshalPlatformConfig([]byte(raw), "microsoftConfig", &cfg)
@@ -98,6 +103,9 @@ func TestMicrosoftSharedAccountInputDetectionAgreesWithTheCreateGate(t *testing.
 		}
 		if len(cfg.SharedNegativeKeywordListIDs) > 0 {
 			sent = append(sent, "sharedNegativeKeywordListIds")
+		}
+		if len(cfg.ConversionGoalIDs) > 0 {
+			sent = append(sent, "conversionGoalIds")
 		}
 		gate := service.MicrosoftMarketingOpsInputs(json.RawMessage(raw))
 		if !slices.Equal(gate, sent) {
