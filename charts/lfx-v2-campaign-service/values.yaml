@@ -601,6 +601,31 @@ app:
     MICROSOFT_LOGO_EXTENSION_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to the Microsoft remarketing-list picker read (#563,
+    # GET /projects/{project_id}/microsoft-ads/remarketing-lists): every
+    # remarketing list on the account a Microsoft create uses, live from
+    # GetAudiencesByIds. Built from the v13 Campaign Management reference and not
+    # yet exercised live. It lists every foundation's lists on the shared
+    # account, so the gateway admits only global_marketing_ops to it. While off,
+    # the read answers 400 "not supported" before Microsoft is contacted. Any
+    # value other than "true" is treated as off.
+    MICROSOFT_REMARKETING_LISTS_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to microsoftConfig.conversionGoalIds and the
+    # conversion bidding strategies (bidding.strategy "maxConversions" and
+    # "targetCpa") (#563 gap 7), and to the conversion-goal picker read
+    # (GET /projects/{project_id}/microsoft-ads/conversion-goals). The goals are
+    # EXISTING ones on the shared account (marketing ops owns the UET tag and the
+    # goals; LFX creates neither), verified with one GetConversionGoalsByIds read
+    # before anything is created and set as the new campaign's GoalIds. Built from
+    # the v13 Campaign Management reference and not yet sent by a live create.
+    # conversionGoalIds also needs global_marketing_ops. While off, a create
+    # naming any of it is refused with a 400 before any job exists and the picker
+    # answers 400 "not supported". Any value other than "true" is treated as off.
+    MICROSOFT_CONVERSION_GOALS_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to googleAdsConfig.demandGenAudience (#459): one
     # existing Google Ads Audience on a Demand Gen ad group. The same flag
     # gates each googleAdsConfig.demandGenAdGroups[].audience (#460), the same

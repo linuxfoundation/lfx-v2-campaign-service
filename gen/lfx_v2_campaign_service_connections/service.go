@@ -327,6 +327,49 @@ type Service interface {
 	// cursor, a repeated cursor) is 503 with nothing partial. A pure read: nothing
 	// is persisted.
 	ListTwitterAdsCustomAudiences(context.Context, *ListTwitterAdsCustomAudiencesPayload) (res *TwitterAdsCustomAudiences, err error)
+	// List the remarketing lists on the Microsoft Advertising account a Microsoft
+	// create for this project uses, live from Campaign Management v13
+	// GetAudiencesByIds (POST Audiences/QueryByIds with no ids and Type
+	// RemarketingList, which returns every list of the type), for picking
+	// microsoftConfig.audienceIds and excludedAudienceIds (#563). The same call,
+	// with ids, is the check a create makes before anything is created, so every
+	// id listed is one it accepts. System lists (All Visitors, All Converters,
+	// Smart lists) are not returned by that call and are not listed. Sorted by
+	// name, ignoring case, then id. Credentials resolve as for a create: the
+	// project's own Microsoft connection, or the LF system account when the
+	// deployment forces it. The Microsoft Advertising account is shared by every
+	// foundation, so the response lists EVERY foundation's lists; like
+	// list-twitter-ads-custom-audiences it is therefore gated on
+	// global_marketing_ops of {project_id} (the LF marketing team), not
+	// campaign_manager, which also admits a foundation's executive director.
+	// Disabled (400 not supported) unless MICROSOFT_REMARKETING_LISTS_ENABLED is
+	// "true": the read is built from the v13 reference and has not been exercised
+	// against a live account. An answer this service cannot believe (no Audiences
+	// array, a null entry, an unusable or repeated id, an entry that is not a
+	// remarketing list, any partial error) is 503 with nothing partial. A pure
+	// read: nothing is persisted.
+	ListMicrosoftAdsRemarketingLists(context.Context, *ListMicrosoftAdsRemarketingListsPayload) (res *MicrosoftAdsRemarketingLists, err error)
+	// List the conversion goals on the Microsoft Advertising account a Microsoft
+	// create for this project uses, live from Campaign Management v13
+	// GetConversionGoalsByIds (POST ConversionGoals/QueryByIds with no ids and
+	// every ConversionGoalType, which returns every goal of those types), for
+	// picking microsoftConfig.conversionGoalIds (#563). The same call, with ids,
+	// is the check a create makes before anything is created, so every Active goal
+	// listed is one it accepts (any other status is listed but refused by a
+	// create). This service never creates a goal or a UET tag: marketing ops owns
+	// both. Sorted by name, ignoring case, then id. Credentials resolve as for a
+	// create: the project's own Microsoft connection, or the LF system account
+	// when the deployment forces it. The Microsoft Advertising account is shared
+	// by every foundation, so the response lists EVERY foundation's goals; like
+	// list-microsoft-ads-remarketing-lists it is therefore gated on
+	// global_marketing_ops of {project_id}, not campaign_manager, which also
+	// admits a foundation's executive director. Disabled (400 not supported)
+	// unless MICROSOFT_CONVERSION_GOALS_ENABLED is "true": the read is built from
+	// the v13 reference and has not been exercised against a live account. An
+	// answer this service cannot believe (no ConversionGoals array, a null entry,
+	// an unusable or repeated id, any partial error) is 503 with nothing partial.
+	// A pure read: nothing is persisted.
+	ListMicrosoftAdsConversionGoals(context.Context, *ListMicrosoftAdsConversionGoalsPayload) (res *MicrosoftAdsConversionGoals, err error)
 	// Read Meta audience insights — age and gender (one combined breakdown) and
 	// placement (publisher_platform and platform_position) — for this project's
 	// own campaigns, live from the Meta Marketing API Insights edge of the
@@ -900,7 +943,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [85]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "list-google-ads-audiences", "list-meta-custom-audiences", "search-meta-targeting-options", "list-meta-lead-forms", "list-reddit-ads-custom-audiences", "list-reddit-ads-pixels", "list-twitter-ads-custom-audiences", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "list-linkedin-ads-audiences", "list-linkedin-ads-conversions", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
+var MethodNames = [87]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "suggest-google-ads-geo-targets", "list-google-ads-user-lists", "list-google-ads-conversion-actions", "list-google-ads-audiences", "list-meta-custom-audiences", "search-meta-targeting-options", "list-meta-lead-forms", "list-reddit-ads-custom-audiences", "list-reddit-ads-pixels", "list-twitter-ads-custom-audiences", "list-microsoft-ads-remarketing-lists", "list-microsoft-ads-conversion-goals", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "list-linkedin-ads-audiences", "list-linkedin-ads-conversions", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -2351,6 +2394,26 @@ type ListMicrosoftAdsAccountsResult struct {
 	Accounts []*AccessibleAccount
 }
 
+// ListMicrosoftAdsConversionGoalsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service
+// list-microsoft-ads-conversion-goals method.
+type ListMicrosoftAdsConversionGoalsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// ListMicrosoftAdsRemarketingListsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service
+// list-microsoft-ads-remarketing-lists method.
+type ListMicrosoftAdsRemarketingListsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
 // ListRedditAdsAccountsPayload is the payload type of the
 // lfx-v2-campaign-service-connections service list-reddit-ads-accounts method.
 type ListRedditAdsAccountsPayload struct {
@@ -2698,6 +2761,34 @@ type MicrosoftAdsConnectionConfig struct {
 	CustomerID *string
 }
 
+type MicrosoftAdsConversionGoal struct {
+	// The conversion goal id, in exactly the form
+	// microsoftConfig.conversionGoalIds accepts. Send it as-is.
+	ID string
+	// The goal's display name. Not an identifier; may be empty.
+	Name string
+	// Microsoft's Status, verbatim (for example Active or Paused). A create
+	// refuses any goal that is not Active.
+	Status string
+	// Microsoft's goal Type, verbatim (for example Url or Event); may be empty.
+	Type string
+	// Microsoft's Scope, verbatim (Account or Customer); may be empty.
+	Scope string
+}
+
+// MicrosoftAdsConversionGoals is the result type of the
+// lfx-v2-campaign-service-connections service
+// list-microsoft-ads-conversion-goals method.
+type MicrosoftAdsConversionGoals struct {
+	// The Microsoft Advertising account the goals were read from: the account a
+	// Microsoft create for this project uses
+	AccountID string
+	// The account's conversion goals, sorted by name (ignoring case), then id
+	Goals []*MicrosoftAdsConversionGoal
+	// How many goals are in `goals`
+	GoalCount int
+}
+
 // Microsoft Advertising OAuth credential set. Write-only; never returned.
 type MicrosoftAdsCredentials struct {
 	// OAuth client id
@@ -2749,6 +2840,36 @@ type MicrosoftAdsKeywords struct {
 	// today, may still be aggregating): its counters may still rise. False when no
 	// report is served.
 	DataIncomplete bool
+}
+
+type MicrosoftAdsRemarketingList struct {
+	// The remarketing list id, in exactly the form microsoftConfig.audienceIds and
+	// excludedAudienceIds accept. Send it as-is.
+	ID string
+	// The list's display name. Not an identifier; may be empty.
+	Name string
+	// The list's description, verbatim; may be empty.
+	Description string
+	// Microsoft's Scope, verbatim (Account or Customer); may be empty.
+	Scope string
+	// Microsoft's MembershipDuration, in days. Absent when Microsoft sent none.
+	MembershipDuration *int
+	// Microsoft's SearchSize: the list members reachable on Search. Absent when
+	// Microsoft sent none, which is not a size of 0.
+	SearchSize *int64
+}
+
+// MicrosoftAdsRemarketingLists is the result type of the
+// lfx-v2-campaign-service-connections service
+// list-microsoft-ads-remarketing-lists method.
+type MicrosoftAdsRemarketingLists struct {
+	// The Microsoft Advertising account the lists were read from: the account a
+	// Microsoft create for this project uses
+	AccountID string
+	// The account's remarketing lists, sorted by name (ignoring case), then id
+	Lists []*MicrosoftAdsRemarketingList
+	// How many lists are in `lists`
+	ListCount int
 }
 
 // MonitorGoogleAdsAccountPayload is the payload type of the
