@@ -1090,10 +1090,11 @@ func (c *Client) postCampaignCriterions(ctx context.Context, campaignID, what, n
 	}
 
 	var resp createCampaignCriterionsResponse
-	if uErr := json.Unmarshal(body, &resp); uErr != nil {
+	if uErr := decodeTrusted(body, &resp); uErr != nil {
 		// A 2xx whose body will not parse is UNCONFIRMED: the criteria may have been attached
 		// and a blind retry would duplicate them. errNoID is the sentinel the call site maps to
-		// UNCONFIRMED.
+		// UNCONFIRMED. decodeTrusted also refuses a key declared twice (case variants included),
+		// which last-key-wins decoding would let erase a rejection code.
 		return nil, fmt.Errorf("decode CampaignCriterionIds response (%v): %w", uErr, errNoID)
 	}
 

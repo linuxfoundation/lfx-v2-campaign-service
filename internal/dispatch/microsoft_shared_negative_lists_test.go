@@ -190,6 +190,28 @@ func TestMicrosoftSharedNegativeLists_LookupRefusalCreatesNothing(t *testing.T) 
 	}
 }
 
+// A lookup answer with a key declared twice (or under a case variant) is an ambiguous list
+// identity: the job fails with nothing created, never accepts the list.
+func TestMicrosoftSharedNegativeLists_DuplicateKeyLookupCreatesNothing(t *testing.T) {
+	t.Setenv(constants.EnvMicrosoftSharedNegativeListsEnabled, "true")
+	for _, tc := range []struct{ name, body string }{
+		{"duplicate Id", `{"SharedEntities":[{"Id":4001,"Type":"NegativeKeywordList"},{"Id":9,"Id":4002,"Type":"NegativeKeywordList"}]}`},
+		{"duplicate Id case variant", `{"SharedEntities":[{"Id":4001,"Type":"NegativeKeywordList"},{"Id":9,"id":4002,"Type":"NegativeKeywordList"}]}`},
+		{"duplicate Type", `{"SharedEntities":[{"Id":4001,"Type":"NegativeKeywordList"},{"Id":4002,"Type":"PlacementExclusionList","Type":"NegativeKeywordList"}]}`},
+		{"duplicate Type case variant", `{"SharedEntities":[{"Id":4001,"Type":"NegativeKeywordList"},{"Id":4002,"Type":"PlacementExclusionList","type":"NegativeKeywordList"}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := &msSharedAPI{lookupBody: tc.body}
+			d := newMSSharedDispatcher(t, api)
+			_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMicrosoftAds, msNegConfig(msSharedExtra))
+			requirePreCreate(t, err)
+			if calls, _ := api.snapshot(); slices.Contains(calls, "Campaigns") {
+				t.Errorf("a campaign was created after an ambiguous lookup: %v", calls)
+			}
+		})
+	}
+}
+
 // A refused or ambiguous association degrades the campaign and never fails the job.
 func TestMicrosoftSharedNegativeLists_AssociationShortfallDegrades(t *testing.T) {
 	t.Setenv(constants.EnvMicrosoftSharedNegativeListsEnabled, "true")
@@ -207,6 +229,10 @@ func TestMicrosoftSharedNegativeLists_AssociationShortfallDegrades(t *testing.T)
 		// A code-less-only array, or an indexed all-null entry, names no outcome.
 		{"null-only PartialErrors", http.StatusOK, `{"PartialErrors":[null]}`, "0 associated, 0 failed, 2 unconfirmed"},
 		{"indexed all-null entry", http.StatusOK, `{"PartialErrors":[{"Index":1,"Code":null,"ErrorCode":null}]}`, "1 associated, 0 failed, 1 unconfirmed"},
+		// A key declared twice (or under a case variant) leaves every list UNCONFIRMED, so the
+		// campaign is degraded rather than `created` with a refused list reported associated.
+		{"duplicate Code", http.StatusOK, `{"PartialErrors":[{"Index":0,"Code":1234,"Code":0}]}`, "0 associated, 0 failed, 2 unconfirmed"},
+		{"duplicate Code case variant", http.StatusOK, `{"PartialErrors":[{"Index":0,"Code":1234,"code":0}]}`, "0 associated, 0 failed, 2 unconfirmed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := &msSharedAPI{setStatus: tc.status, setBody: tc.body}

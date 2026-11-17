@@ -111,9 +111,12 @@ func (c *Client) CheckSharedNegativeKeywordLists(ctx context.Context, ids []stri
 	if err != nil {
 		return fmt.Errorf("microsoft-ads negative keyword list lookup failed: %w", err)
 	}
+	// decodeTrusted first: a key declared twice (case variants included) — `{"Id":9,"Id":4001}`,
+	// `{"Type":"PlacementExclusionList","type":"NegativeKeywordList"}` — would otherwise decode
+	// last-key-wins into an identity the bytes do not unambiguously state, and accept the list.
 	var probe map[string]json.RawMessage
 	var resp getSharedEntitiesResponse
-	if json.Unmarshal(raw, &probe) != nil || json.Unmarshal(raw, &resp) != nil {
+	if decodeTrusted(raw, &resp) != nil || json.Unmarshal(raw, &probe) != nil {
 		return fmt.Errorf("%w: the response is not the documented shape", errSharedListLookupMalformed)
 	}
 	if ents, ok := probe["SharedEntities"]; !ok || isJSONNullRaw(ents) {
@@ -225,10 +228,12 @@ func (c *Client) AttachCampaignSharedNegativeKeywordLists(ctx context.Context, c
 	}
 	// The body must be a JSON object carrying PartialErrors: null or [] is "no error", but a 200
 	// that omits the field (`{}`) answered nothing about the associations, so every list is
-	// UNCONFIRMED rather than APPLIED.
+	// UNCONFIRMED rather than APPLIED. decodeTrusted refuses a key declared twice (case variants
+	// included): `{"Index":0,"Code":1234,"Code":0}` would otherwise decode as the zero-code
+	// placeholder and report a refused list APPLIED.
 	var probe map[string]json.RawMessage
 	var resp setSharedEntityAssociationsResponse
-	if json.Unmarshal(raw, &probe) != nil || probe == nil || json.Unmarshal(raw, &resp) != nil {
+	if decodeTrusted(raw, &resp) != nil || json.Unmarshal(raw, &probe) != nil || probe == nil {
 		all(OutcomeUnconfirmed, "")
 		return out, errors.New("microsoft-ads negative keyword lists UNCONFIRMED: the response could not be read")
 	}

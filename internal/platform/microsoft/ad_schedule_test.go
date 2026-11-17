@@ -241,6 +241,10 @@ func TestCreateCampaign_CriterionErrorEntriesUseTheDefaultCodeRule(t *testing.T)
 			{"nested Code null only", `[{"BatchErrors":[{"Code":null,"Index":0}]}]`, true, true},
 			// Neither key, or a null slot, is index-aligned padding here.
 			{"key-less padding", `[{"Index":0},null,{"BatchErrors":[{},null]}]`, false, false},
+			// A key declared twice (or under a case variant) is refused by decodeTrusted: last-key-wins
+			// would read the rejection below as zero-code padding, i.e. success.
+			{"duplicate Code", `[{"Code":1032,"Code":0,"ErrorCode":null,"Index":0}]`, true, true},
+			{"duplicate Code case variant", `[{"Code":1032,"code":0,"ErrorCode":null,"Index":0}]`, true, true},
 		} {
 			t.Run(step.name+"/"+tc.name, func(t *testing.T) {
 				a := &targetingAPI{failCriterion: 2, criterionStatus: http.StatusOK,

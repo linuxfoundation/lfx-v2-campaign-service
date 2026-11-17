@@ -83,6 +83,12 @@ func TestCheckSharedNegativeKeywordLists_Refusals(t *testing.T) {
 		{"null array", `{"SharedEntities":null}`, false, "carries no SharedEntities array"},
 		{"null entry", `{"SharedEntities":[null]}`, false, "position 1 is empty"},
 		{"bad id", `{"SharedEntities":[{"Id":0,"Type":"NegativeKeywordList"}]}`, false, "position 1 has no usable id"},
+		// A key declared twice (or under a case variant) is not a believable identity: last-key-wins
+		// decoding would accept list 4001 below. decodeTrusted refuses it as a plain error.
+		{"duplicate Id", `{"SharedEntities":[{"Id":9,"Id":4001,"Type":"NegativeKeywordList"}]}`, false, "not the documented shape"},
+		{"duplicate Id case variant", `{"SharedEntities":[{"Id":9,"id":4001,"Type":"NegativeKeywordList"}]}`, false, "not the documented shape"},
+		{"duplicate Type", `{"SharedEntities":[{"Id":4001,"Type":"PlacementExclusionList","Type":"NegativeKeywordList"}]}`, false, "not the documented shape"},
+		{"duplicate Type case variant", `{"SharedEntities":[{"Id":4001,"Type":"PlacementExclusionList","type":"NegativeKeywordList"}]}`, false, "not the documented shape"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, tc.body })
@@ -151,6 +157,10 @@ func TestAttachCampaignSharedNegativeKeywordLists_Outcomes(t *testing.T) {
 		{"unattributable", http.StatusOK, `{"PartialErrors":[{"Code":1234,"ErrorCode":"X"}]}`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", false},
 		{"out of range index", http.StatusOK, `{"PartialErrors":[{"Index":7,"ErrorCode":"X"}]}`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", false},
 		{"unreadable 2xx", http.StatusOK, `not json`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", true},
+		// A key declared twice (or under a case variant) is refused by decodeTrusted: last-key-wins
+		// would read the refusal as the zero-code placeholder and report list 4001 APPLIED.
+		{"duplicate Code", http.StatusOK, `{"PartialErrors":[{"Index":0,"Code":1234,"Code":0}]}`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", true},
+		{"duplicate Code case variant", http.StatusOK, `{"PartialErrors":[{"Index":0,"Code":1234,"code":0}]}`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", true},
 		{"definite refusal", http.StatusBadRequest, `{"Code":1001,"ErrorCode":"InvalidRequest"}`, "4001=FAILED:,4002=FAILED:", true},
 		{"ambiguous 500", http.StatusInternalServerError, `{}`, "4001=UNCONFIRMED:,4002=UNCONFIRMED:", true},
 		// A 200 that omits PartialErrors answered nothing about the associations; null and [] are
