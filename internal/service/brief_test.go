@@ -5728,6 +5728,19 @@ func TestBriefService_CreateCampaigns_RefusesAnUnsatisfiableABTestBeforeAnyJobEx
 	}
 }
 
+// The pre-check sees the brief the create is for, so a check that depends on it (X's tweet text
+// composed with the brief's destination URL, #564) can refuse synchronously too.
+func TestBriefService_CreateCampaigns_PreCheckSeesTheBrief(t *testing.T) {
+	stub := &preflightStub{err: ErrABTestUnsupportedSendType}
+	s, _ := abPreflightHarness(t, stub)
+
+	_, _ = createHubSpotCampaign(s)
+
+	if stub.gotBrief == nil || stub.gotBrief.ID != "b1" || stub.gotBrief.ProjectID != "cncf" {
+		t.Fatalf("pre-check brief = %+v, want brief b1 of cncf", stub.gotBrief)
+	}
+}
+
 // The other half of the contract: a pre-check that merely could not run must not stop the
 // create, and it must have inspected the SAME config the dispatch then receives -- a pre-check
 // reading different input than Dispatch would approve or refuse requests that were never made.

@@ -298,9 +298,26 @@ const (
 	// refuses fails at its criterion POST and leaves a PAUSED partial for reconciliation.
 	EnvTwitterFollowerLookalikesEnabled = "TWITTER_FOLLOWER_LOOKALIKES_ENABLED"
 
+	// EnvTwitterTweetVariantsEnabled opts a deployment IN to twitterConfig.variants (#564 gap 10):
+	// one authored, promoted tweet per variant (at most 5) on the line item an X create makes. Only
+	// the exact value "true" enables it; unset or any other value fails closed, and a create setting
+	// it is refused with a 400 before any job exists (and again at dispatch). It names no account
+	// resource; it keeps several tweet publishes per create off the shared ad account until a live
+	// create confirms them.
+	EnvTwitterTweetVariantsEnabled = "TWITTER_TWEET_VARIANTS_ENABLED"
+
+	// EnvTwitterWebsiteCardEnabled opts a deployment IN to twitterConfig.card (#564 gap 6): a
+	// website card (POST accounts/:account_id/cards: the creative's media, a headline, the UTM'd
+	// registration URL) attached by card_uri to the tweet(s) an X create authors. Only the exact
+	// value "true" enables it; unset or any other value fails closed, and a create setting it is
+	// refused with a 400 before any job exists (and again at dispatch). It names no account
+	// resource; it keeps an UNVERIFIED request body (from X's published reference) off the shared
+	// ad account until a live create confirms it.
+	EnvTwitterWebsiteCardEnabled = "TWITTER_WEBSITE_CARD_ENABLED"
+
 	// EnvTwitterVideoEnabled opts a deployment IN to twitterConfig.videoAssetId (#564 gap 7): a
 	// stored MP4 uploaded as amplify_video (chunked initialize/append/finalize, then STATUS polled
-	// for at most 30 s) and attached to the tweet an X create authors. Only the exact value
+	// for at most 30 s) and attached to the tweet(s) an X create authors. Only the exact value
 	// "true" enables it; unset or any other value fails closed, and a create setting it is refused
 	// with a 400 before any job exists (and again at dispatch). Blocker before enabling: measure
 	// X's amplify_video processing time for a 20-30 MiB MP4 against the 30 s bound, which runs
