@@ -17,6 +17,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/textfold"
 )
 
 // ---------------------------------------------------------------------------
@@ -204,6 +205,49 @@ func NormalizeKeywordInterestTargeting(keywords, interestIDs []string) (kws, int
 		return nil, nil, err
 	}
 	return kws, interests, nil
+}
+
+// MaxKeywordAdditions bounds one positive keyword add on an existing line item (#564 gap 12). Each
+// keyword is its own POST paced at one write per second per ad account, and the add runs inside
+// the orchestrator's 45-second mutation timeout with the line item read and the criteria list
+// around it. Twenty fit, as for the negative add; the create-time per-list cap (60) would not, and
+// the tail would be cut off as NOT_SENT every time. The line item as a whole stays capped at
+// MaxCreateTargetingCriteria, counting the criteria it already holds.
+const MaxKeywordAdditions = 20
+
+// NormalizeKeywordAdditions applies the create-time keyword rules (NormalizeKeywordInterestTargeting:
+// trimmed, 1-80 characters, no control character, case-folded duplicates dropped with the first
+// spelling kept) to a positive keyword add, drops a keyword that repeats an earlier one once its
+// whitespace runs are collapsed too ("cloud native" and "cloud  native" are one keyword, the key
+// the dispatcher's already-present lookup compares with), then requires 1..MaxKeywordAdditions
+// distinct keywords. Pure: the service calls it to answer a 400 naming the problem before anything is
+// contacted and passes the normalized list on, and the dispatcher applies it again, which changes
+// nothing on a normalized list. A refusal wraps domain.ErrKeywordTargetingInvalid.
+func NormalizeKeywordAdditions(keywords []string) ([]string, error) {
+	if len(keywords) == 0 {
+		return nil, fmt.Errorf("%w: send 1 to %d keywords, got 0", domain.ErrKeywordTargetingInvalid, MaxKeywordAdditions)
+	}
+	kws, _, err := NormalizeKeywordInterestTargeting(keywords, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", domain.ErrKeywordTargetingInvalid, err)
+	}
+	// One list for every layer: the service sizes its answer from this list and the dispatcher
+	// sends from it, so the whitespace-collapsed duplicate is dropped here, not later.
+	seen := make(map[string]bool, len(kws))
+	distinct := kws[:0:0]
+	for _, k := range kws {
+		key := textfold.Key(strings.Join(strings.Fields(k), " "))
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		distinct = append(distinct, k)
+	}
+	kws = distinct
+	if len(kws) > MaxKeywordAdditions {
+		return nil, fmt.Errorf("%w: send 1 to %d distinct keywords, got %d", domain.ErrKeywordTargetingInvalid, MaxKeywordAdditions, len(kws))
+	}
+	return kws, nil
 }
 
 // NormalizeConversationTopics applies the gap 8 rules (#564): each conversation topic is the
