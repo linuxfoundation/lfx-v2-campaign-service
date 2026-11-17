@@ -252,8 +252,13 @@ func grantCreateServer(t *testing.T) (*httptest.Server, func() []string) {
 }
 
 func grantCreateConfig(adAccountID string) json.RawMessage {
+	return grantCreateConfigRaw(`"` + adAccountID + `"`)
+}
+
+// grantCreateConfigRaw is grantCreateConfig with adAccountId set to the raw JSON value given.
+func grantCreateConfigRaw(adAccountID string) json.RawMessage {
 	return json.RawMessage(`{"linkedInConfig":{
-		"adAccountId":"` + adAccountID + `",
+		"adAccountId":` + adAccountID + `,
 		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
 		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
 		"targetingProfile":"cloud-native",
@@ -331,6 +336,36 @@ func TestLinkedIn_AdAccountIDRefusals(t *testing.T) {
 			}
 		})
 	}
+	// A wrong-typed adAccountId is refused synchronously, before any job: the best-effort pre-flight
+	// decode would otherwise leave it "" and skip the account check, answering 202 for a create
+	// Dispatch then fails in the strict decode. Dispatch refuses it with the same sentence.
+	for name, raw := range map[string]string{"number": `500928401`, "object": `{"id":"500928401"}`, "array": `["500928401"]`} {
+		t.Run("wrong-typed adAccountId: "+name, func(t *testing.T) {
+			t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, "true")
+			srv, seen := grantCreateServer(t)
+			d := grantCreateDispatcher(srv.URL, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}})
+			cfg := grantCreateConfigRaw(raw)
+			err := d.PreflightCreate(context.Background(), "cncf", model.ProviderLinkedInAds, cfg)
+			if !errors.Is(err, domain.ErrCreateConfigInvalid) || !strings.Contains(err.Error(), "invalid campaign config: linkedInConfig.adAccountId: ") {
+				t.Fatalf("preflight = %v, want an ErrCreateConfigInvalid naming linkedInConfig.adAccountId", err)
+			}
+			_, derr := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+			if !errors.Is(derr, domain.ErrCreateConfigInvalid) || !isNoUpstreamCreate(derr) || !strings.Contains(derr.Error(), "linkedInConfig.adAccountId: ") {
+				t.Fatalf("Dispatch err = %v, want the pre-create adAccountId refusal", derr)
+			}
+			if r := seen(); len(r) != 0 {
+				t.Fatalf("a refused create sent %d request(s): %v", len(r), r)
+			}
+		})
+	}
+	t.Run("a null adAccountId reads as omitted", func(t *testing.T) {
+		t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, "true")
+		srv, _ := grantCreateServer(t)
+		d := grantCreateDispatcher(srv.URL, &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}})
+		if err := d.PreflightCreate(context.Background(), "cncf", model.ProviderLinkedInAds, grantCreateConfigRaw(`null`)); !errors.Is(err, domain.ErrPreflightNotApplicable) {
+			t.Fatalf("preflight with adAccountId null = %v, want ErrPreflightNotApplicable", err)
+		}
+	})
 	t.Run("the connection's own account needs no flag", func(t *testing.T) {
 		t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, "")
 		srv, _ := grantCreateServer(t)

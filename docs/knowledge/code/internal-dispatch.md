@@ -3565,7 +3565,10 @@ Create-time selection (step 4 of #581, behind `LINKEDIN_ADS_ACCOUNT_SELECTION_EN
 grant — returns the grant-scoped copy, so `Dispatch` builds its `RuntimeConfig` (default account,
 org, single-entry allowlist) from the grant and records that account. Every other value is a
 pre-flight 400 (`ErrCreateConfigInvalid`); `PreflightCreate` runs the same check after a
-database-only `creds.resolve`, leaving a resolution failure to `Dispatch`. The pickers
+database-only `creds.resolve`, leaving a resolution failure to `Dispatch`. Before either,
+`checkAdAccountIDShape` refuses an `adAccountId` that is present but not a JSON string with the
+same pre-flight 400 (null reads as omitted), since the best-effort pre-flight decode would leave
+it empty and skip the account check. The pickers
 (`createLookupClient`) read `model.PickerAccount(ctx)` and accept the resolved account, or a grant
 while the flag is on (else `ErrAccountNotManagedByConnection`). With the flag on, `ListAccounts` on the system row returns
 `linkedInGrantAccounts` (default + grants, no LinkedIn call). Pinned by
