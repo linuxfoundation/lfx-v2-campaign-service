@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -232,6 +233,54 @@ func TestCreateCampaign_InvalidTargetingRefusedBeforeAnyRequest(t *testing.T) {
 	_, err := c.CreateCampaign(context.Background(), in)
 	if _, pre := domain.AsPreflightRefusal(err); !errors.Is(err, ErrTargetingInvalid) || !pre {
 		t.Fatalf("want a pre-flight ErrTargetingInvalid, got %v", err)
+	}
+	if n := calls.Load(); n != 0 {
+		t.Errorf("%d LinkedIn requests before the refusal", n)
+	}
+}
+
+// TestValidateTargeting_UnknownExcludeKeyListsOnlyExcludableFacets pins that the refusal for an
+// unknown exclude key lists only the facets exclude accepts (#557 review 2): groups and
+// interfaceLocales are include-only, so naming them would send the caller to a second refusal.
+func TestValidateTargeting_UnknownExcludeKeyListsOnlyExcludableFacets(t *testing.T) {
+	in := &Targeting{Include: eventTargeting().Include, Exclude: map[string][]string{"group": {"urn:li:group:1"}}}
+	_, err := ValidateTargeting(in, nil)
+	if err == nil || !errors.Is(err, ErrTargetingInvalid) || !strings.Contains(err.Error(), "unknown facet") {
+		t.Fatalf("want an unknown-facet refusal, got %v", err)
+	}
+	msg := err.Error()
+	for _, k := range []string{"groups", "interfaceLocales"} {
+		if strings.Contains(msg, k) {
+			t.Errorf("refusal lists include-only facet %q: %s", k, msg)
+		}
+	}
+	if !strings.Contains(msg, "seniorities") {
+		t.Errorf("refusal does not list excludable facet seniorities: %s", msg)
+	}
+}
+
+// TestCreateCampaign_TargetingRefusesMalformedOrgBeforeAnyRequest pins the orgURN check on the
+// caller-targeting path (#557 review 2): with linkedInConfig.targeting set CreateCampaign skips
+// validatePrerequisites, so a malformed account orgId must still be a pre-flight refusal raised
+// before LinkedIn is called.
+func TestCreateCampaign_TargetingRefusesMalformedOrgBeforeAnyRequest(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { calls.Add(1) }))
+	defer srv.Close()
+	cfg := testConfig()
+	cfg.Accounts[0].OrgID = "org-abc"
+	c := NewClient(Credentials{AccessToken: "t"}, cfg, WithBaseURL(srv.URL), WithClock(fixedClock()))
+	in := CampaignInput{
+		EventName: "KubeCon", RegistrationURL: "https://events.example.org/kubecon",
+		BudgetUSD: 100, StartDate: "2099-01-01", EndDate: "2099-02-01",
+		GeoTargets: []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+		Variants:   []CreativeVariant{{IntroText: "Join us — it's great", Headline: "KubeCon 2099"}},
+		Project:    "CNCF",
+		Targeting:  eventTargeting(),
+	}
+	_, err := c.CreateCampaign(context.Background(), in)
+	if _, pre := domain.AsPreflightRefusal(err); !pre || !strings.Contains(fmt.Sprint(err), "malformed orgId") {
+		t.Fatalf("want a pre-flight malformed-orgId refusal, got %v", err)
 	}
 	if n := calls.Load(); n != 0 {
 		t.Errorf("%d LinkedIn requests before the refusal", n)
