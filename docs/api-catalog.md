@@ -68,7 +68,7 @@ A campaign is subordinate to a brief. This is a **collection** under the brief (
 
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
-| POST | `/projects/{projectId}/briefs/{briefId}/campaigns` | `campaign_manager` | JSON | Create campaigns across the platforms selected in the body (async → `JobCreateResponse` with `jobId`). Persists one execution record per platform. Repeating the create is an idempotent **retry** — a platform whose latest campaign is complete returns that campaign. Set `new_version: true` to create **another** campaign alongside it instead — on **`microsoft-ads`, `google-ads`, `reddit-ads`, `meta-ads`, `linkedin-ads` and `twitter-ads`**; a request naming any other platform (`hubspot`) with `new_version` is refused with `400` before a job exists. On `google-ads` the slot is the dispatched channel, so another Search campaign is a Search slot version and Demand Gen, Performance Max, Video and Display keep their own slots (a platform with none gets its first; one whose latest campaign is still in flight or needs reconciliation gets the retry answer). The version is internal — returned as `slot_version` on the campaign — and is never a platform label or tag; it appears only in the name of a second or later campaign (a `-<n>` suffix on Microsoft and Google, a `#<n>` token in the targeting segment on Reddit, Meta, LinkedIn and X). Two concurrent `new_version` requests that find the same complete campaign create one new campaign between them, not two. **`new_version` requires `expected_slot_versions`** — for every selected platform, the `slot_version` of the latest live campaign the caller saw **in the slot this request dispatches to** (from list-brief-campaigns or a previous job result), `0` for none — on `google-ads` that is the campaigns of the same `googleAdsConfig.channel` (Search = `variant` `default`, Demand Gen = `demand-gen`, …), not the platform's highest version, which would read as stale and return `reused: true` with nothing created — and a request without it is refused with `400`, as is `expected_slot_versions` without `new_version` or naming an unselected platform (this tightens the contract for `new_version` callers; self-serve did not send `new_version` when it landed). It is a compare-and-set: a platform gets another campaign only while its latest live campaign is still the one the caller saw; otherwise its latest campaign is returned with `reused: true` and nothing is created, so a double click, a reload, a second tab or a late replay creates exactly one campaign (one residual: if the campaign the first request created is deleted before a replay arrives, the replay's expectation matches again and it creates another). Optional **`funnel_stage`** (`top` / `mid` / `lower`) and **`tactic`** (`prospecting` / `retargeting` / `lookalike` / `keyword` / `competitor` / `content-promotion`; free text is refused) label every campaign the request CREATES — on **`microsoft-ads`, `google-ads`, `reddit-ads`, `meta-ads`, `linkedin-ads` and `twitter-ads`** (a request labelling any other platform, `hubspot`, is refused with `400`, because a label must be part of that platform's campaign name before it is stored there); they are written once, when the campaign is claimed, and an existing campaign returned by a retry or a stale `new_version` keeps the labels it was created with. On Microsoft Advertising a labelled campaign's upstream name carries the stage as its own segment (`LFX | Search Campaign | <project> | <event> | ToFU | <brief id>[-<slot>]`). On Google Ads the budget and campaign names (and, on Search, the ad group name) carry the stage and the tactic, each its own segment (`LFX | Search Campaign | <project> | <event> | MoFU | retargeting | <brief id>[-<slot>]`; `content-promotion` is written `content-promo`, which keeps the data pipeline's ad-format parser from reading it as Motion), and a second campaign's `-<slot>` suffix is on those same names — Demand Gen, Display and Video ad groups keep their `<event> - <channel>` names, unique within their own campaign — so Google's duplicate-name refusals, its budget reuse and `adoptExisting` never bind it to the first; `utm_campaign` stays event-level on every slot. On Reddit and Meta the name keeps the data pipeline's exact 8 ` | ` segments: a labelled campaign carries its stage in the funnel segment (replacing the legacy `ToFU` on Reddit and `MoFU` on Meta) and its tactic in the targeting segment (`Events | <event> | <region> | <objective> | Intent retargeting | Social | <project> | MoFU`; `content-promotion` is written `content-promo` here too), and a second or later campaign appends `#<slot>` to that same targeting segment (`Intent retargeting #2`, or `Intent #2` unlabelled), so its name never equals the first's and never gains a segment (neither platform binds a campaign by name on create: Reddit never looks one up and Meta's lookup is off); a labelled or additional Meta campaign whose composed name exceeds 255 characters is refused before any Meta request (Reddit's 200-character limit already applies to every name). On LinkedIn and X the same rule holds for their 8-segment names — the stage replaces the legacy `MoFU` in the funnel segment, and the targeting segment is `Retargeting` for the retargeting tactic and `Prospecting <tactic>` for any other, with `#<slot>` appended (`Events | <event> | <region> | <objective> | Retargeting #2 | Static | <project> | MoFU`; `Events | <event> | Global | Awareness | Retargeting #2 | Promoted Post | <project> | MoFU`). Since #587 the LinkedIn region segment is the first geo target's region (NA, EMEA, APAC, India, or Global), as on Meta and Reddit, rather than the literal `LinkedIn`; and both platforms name a retargeting campaign `Retargeting` rather than `Prospecting retargeting`. lf-dbt reads an 8-segment name by position and stores each segment as-is, so each must already be the vocabulary word. The LinkedIn region comes from the request's geo targets, so a retry that changes the first country's region composes a different name and is not reused by it, as a change of bidding objective already is. A campaign created under the earlier names is still found on a retry: LinkedIn looks the earlier name up in an existing campaign group, X when the new name finds nothing, and either reuses that campaign under its earlier name. Campaigns are never renamed, so reports mix both shapes until the earlier campaigns end — and because both REUSE a campaign by that composed name on create (LinkedIn's lookup within the event's campaign group, X's on every create), a second campaign's distinct name is also what keeps it from being bound to the first, or, on LinkedIn, from having its creatives pushed onto the first; LinkedIn's and X's existing 255-character name limits apply to labelled and additional names too, before any request. An unlabelled first campaign keeps its exact legacy name on every platform except LinkedIn, whose Region segment changed for every new campaign in #587 (a LinkedIn campaign created before #587 is reused under its earlier name). Each job platform result names its campaign row: `campaign_row_id`, `slot_version`, `variant`, `funnel_stage`, `tactic` and `reused`, and every campaign resource (and its index document) carries `variant`, `funnel_stage`, `tactic` and `created_at`. `409` with `reason=ab_test_unsupported_send_type` — **synchronous, before any job exists** — when a HubSpot email asks for an A/B test (`hubspotConfig.abTestEnabled`) but its source email (`hubspotConfig.sourceEmailId`) is set to send based on recipients' time zones, which HubSpot does not allow together. Nothing is created; choose a different source email or turn the A/B test off. The check reads the source email once and **fails open**: if HubSpot cannot be reached or does not report a type, the create proceeds as it did before the check existed. `400` — also **synchronous, before any job exists** — for a Reddit config that names a stored creative asset it cannot use, decided from the config alone (LFXV2-2665): `redditConfig.imageAssetId` together with `imageUrl` or `postUrl`, an `imageAssetId` that is not a UUID, or `imageAssetId` while signed creative-asset URLs are not configured ("stored creative assets are not enabled for Reddit; supply imageUrl"). A `twitterConfig.geoTargets`, `languages`, `keywords` or `interestIds` that breaks its rules, or is sent while `TWITTER_CREATE_TARGETING_ENABLED` is off, is also a synchronous `400` (#564; see TwitterConfig). `400` — synchronous — when `redditConfig.customAudienceIds` / `excludedCustomAudienceIds` is not an array of strings, holds a malformed, repeated or overlapping id or more than 100, or is set while `REDDIT_CUSTOM_AUDIENCES_ENABLED` is not `"true"` (#549). `400` — synchronous — also for a `redditConfig.subreddits` entry Reddit does not list as a community, or an `interests` entry that is not a Reddit interest id or exactly one interest name, while `REDDIT_TARGETING_RESOLUTION_ENABLED` is `"true"` (#549; the check reads Reddit, fails open when the read cannot run, and dispatch repeats it fail-closed). Likewise `400` — synchronous — when `twitterConfig.customAudienceIds` / `excludedCustomAudienceIds` is not an array of strings, holds an id that is not 1-32 letters or digits, a repeated or overlapping id, or more than 60 ids, when `geoTargets`, `languages`, `keywords`, `interestIds` and both lists together name more than 60 targeting criteria per create, or when either list is set while `TWITTER_CUSTOM_AUDIENCES_ENABLED` is not `"true"` (#564; see TwitterConfig). Likewise `400` — synchronous — for `microsoftConfig.audienceIds` / `excludedAudienceIds` / `audienceBidAdjustment` that break their rules (see MicrosoftConfig) or are set while `MICROSOFT_AUDIENCES_ENABLED` is not `"true"` (#563). Likewise for `microsoftConfig.excludedGeoTargets` / `proximityTargets` / `languages` that break their rules (see MicrosoftConfig) or are set while `MICROSOFT_CREATE_TARGETING_ENABLED` is not `"true"` (#563). Likewise for a `microsoftConfig.searchPartners` that is not a boolean or is set while `MICROSOFT_SEARCH_NETWORK_ENABLED` is not `"true"` (#563). Likewise for a `microsoftConfig.adSchedules` that breaks its rules (see MicrosoftConfig) or is set while `MICROSOFT_AD_SCHEDULE_ENABLED` is not `"true"` (#563). Likewise for `microsoftConfig.deviceBidAdjustments` / `ageBidAdjustments` / `genderBidAdjustments` that break their rules (see MicrosoftConfig) or are set while `MICROSOFT_BID_ADJUSTMENTS_ENABLED` is not `"true"` (#563). Likewise for a `microsoftConfig.sharedNegativeKeywordListIds` that breaks its rules (see MicrosoftConfig) or is set while `MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED` is not `"true"` (#563). Likewise for a `microsoftConfig.structuredSnippets` that breaks its rules (see MicrosoftConfig) or is set while `MICROSOFT_STRUCTURED_SNIPPETS_ENABLED` is not `"true"` (#563). Likewise for a `microsoftConfig.logoAssetId` / `logoBusinessName` that breaks its rules (see MicrosoftConfig) or is set while `MICROSOFT_LOGO_EXTENSION_ENABLED` is not `"true"` (#563). `403` — **synchronous, before any job exists** — also when a reddit-ads create's `redditConfig`, a twitter-ads create's `twitterConfig` or a microsoft-ads create's `microsoftConfig` sets either custom audience (or remarketing) list or `sharedNegativeKeywordListIds` without `global_marketing_ops` (the same single check as Google's below; each platform's fields named in its own sentence), and when `googleAdsConfig` sets any input that names an existing audience, user list, custom segment, shared negative keyword list or conversion action on the Google Ads account (any non-empty value or list, on any channel: `demandGenAudience`, any `demandGenAdGroups[].audience`, `audienceSegments` — Search's observation-only use included —, `customAudiences`, `customAffinities`, `excludedAudienceSegments`, the same four lists on any `displayAdGroups` entry, `audienceSegments` on any `adGroups` entry, `campaignAudienceSegments`, `performanceMaxAudienceSignal`, `sharedNegativeKeywordLists`, `conversionActions`, `demandGenDemographics.audienceSegments`, `demandGenDemographics.customAudiences`, the same two lists in any `demandGenAdGroups[].demographics` (#518); `demandGenDemographics` without either is not gated, since its Audience is new and names no existing account resource) and the caller does not hold `global_marketing_ops` on the project; the message names every gated field the request set, and one check covers them all. The same `403` (and `503`) applies to a `metaConfig.targeting` that sets `customAudiences` or `excludedCustomAudiences` (#550): custom audiences of the Meta ad account every foundation shares; age, gender and `advantageAudience` are not gated, and when both platforms set gated inputs one check covers them and the message names both. The route admits every `campaign_manager`, which includes foundation executive directors, and those resources belong to the Google Ads account, or the Meta ad account, that every foundation shares. `503` when that check cannot be made (project-service or fga-sync unreachable, or `NATS_URL` empty). A `microsoftConfig.negativeKeywords` list that breaks its rules, or is sent while `MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED` is off, is a synchronous `400` `invalid campaign config: microsoftConfig.negativeKeywords: …` (#563; see MicrosoftConfig below). The same check covers `linkedInConfig.conversions` (#552; see LinkedInConfig conversions), and a request setting both Google and LinkedIn gated inputs is checked once and names both. These, and the `bidding` refusals below, are the only synchronous refusals of a dispatch-time rule; every other dispatch failure, including an `imageAssetId` that does not exist for this brief, arrives later as the job's own result. **Bidding** (LFXV2-2665): each of `microsoftConfig`, `metaConfig`, `redditConfig`, `twitterConfig` and `linkedInConfig` takes an optional `bidding` object (`strategy` `automatic` — the default — or `manual` with `bidAmount`); an invalid one is a synchronous `400` `invalid campaign config: <configKey>.bidding: …` before any job exists; on LinkedIn the objective follows the strategy (automatic `WEBSITE_VISIT`/`MAX_CLICK`, manual `WEBSITE_CONVERSION`); and `googleAdsConfig.bidding` is `400`. **DEFAULT CHANGES (omitting `bidding`)**: a Microsoft campaign created with no `bidding` and no `cpcBid` now gets `MaxClicks` instead of Microsoft's `EnhancedCpc` default, so `PATCH .../bid` answers `409` for it; a LinkedIn campaign created with no `bidding` is now `WEBSITE_VISIT` / `MAX_CLICK` / `costType` `CPM` named with the `Traffic` segment (it was `WEBSITE_CONVERSION`, `CPC`, no target — a campaign that did not deliver). **Manual-created campaigns are immediately eligible for the bid lever; eligibility follows the platform's CURRENT strategy** (an automatic campaign an operator switches to a manual per-click bid becomes eligible; the reverse becomes ineligible). See "Bidding" under Data Structures. |
+| POST | `/projects/{projectId}/briefs/{briefId}/campaigns` | `campaign_manager` | JSON | Create campaigns across the platforms selected in the body (async → `JobCreateResponse` with `jobId`). Persists one execution record per platform. Repeating the create is an idempotent **retry** — a platform whose latest campaign is complete returns that campaign. Set `new_version: true` to create **another** campaign alongside it instead — on **`microsoft-ads`, `google-ads`, `reddit-ads`, `meta-ads`, `linkedin-ads` and `twitter-ads`**; a request naming any other platform (`hubspot`) with `new_version` is refused with `400` before a job exists. On `google-ads` the slot is the dispatched channel, so another Search campaign is a Search slot version and Demand Gen, Performance Max, Video and Display keep their own slots (a platform with none gets its first; one whose latest campaign is still in flight or needs reconciliation gets the retry answer). The version is internal — returned as `slot_version` on the campaign — and is never a platform label or tag; it appears only in the name of a second or later campaign (a `-<n>` suffix on Microsoft and Google, a `#<n>` token in the targeting segment on Reddit, Meta, LinkedIn and X). Two concurrent `new_version` requests that find the same complete campaign create one new campaign between them, not two. **`new_version` requires `expected_slot_versions`** — for every selected platform, the `slot_version` of the latest live campaign the caller saw **in the slot this request dispatches to** (from list-brief-campaigns or a previous job result), `0` for none — on `google-ads` that is the campaigns of the same `googleAdsConfig.channel` (Search = `variant` `default`, Demand Gen = `demand-gen`, …), not the platform's highest version, which would read as stale and return `reused: true` with nothing created — and a request without it is refused with `400`, as is `expected_slot_versions` without `new_version` or naming an unselected platform (this tightens the contract for `new_version` callers; self-serve did not send `new_version` when it landed). It is a compare-and-set: a platform gets another campaign only while its latest live campaign is still the one the caller saw; otherwise its latest campaign is returned with `reused: true` and nothing is created, so a double click, a reload, a second tab or a late replay creates exactly one campaign (one residual: if the campaign the first request created is deleted before a replay arrives, the replay's expectation matches again and it creates another). Optional **`funnel_stage`** (`top` / `mid` / `lower`) and **`tactic`** (`prospecting` / `retargeting` / `lookalike` / `keyword` / `competitor` / `content-promotion`; free text is refused) label every campaign the request CREATES — on **`microsoft-ads`, `google-ads`, `reddit-ads`, `meta-ads`, `linkedin-ads` and `twitter-ads`** (a request labelling any other platform, `hubspot`, is refused with `400`, because a label must be part of that platform's campaign name before it is stored there); they are written once, when the campaign is claimed, and an existing campaign returned by a retry or a stale `new_version` keeps the labels it was created with. On Microsoft Advertising a labelled campaign's upstream name carries the stage as its own segment (`LFX | Search Campaign | <project> | <event> | ToFU | <brief id>[-<slot>]`). On Google Ads the budget and campaign names (and, on Search, the ad group name) carry the stage and the tactic, each its own segment (`LFX | Search Campaign | <project> | <event> | MoFU | retargeting | <brief id>[-<slot>]`; `content-promotion` is written `content-promo`, which keeps the data pipeline's ad-format parser from reading it as Motion), and a second campaign's `-<slot>` suffix is on those same names — Demand Gen, Display and Video ad groups keep their `<event> - <channel>` names, unique within their own campaign — so Google's duplicate-name refusals, its budget reuse and `adoptExisting` never bind it to the first; `utm_campaign` stays event-level on every slot. On Reddit and Meta the name keeps the data pipeline's exact 8 ` | ` segments: a labelled campaign carries its stage in the funnel segment (replacing the legacy `ToFU` on Reddit and `MoFU` on Meta) and its tactic in the targeting segment (`Events | <event> | <region> | <objective> | Intent retargeting | Social | <project> | MoFU`; `content-promotion` is written `content-promo` here too), and a second or later campaign appends `#<slot>` to that same targeting segment (`Intent retargeting #2`, or `Intent #2` unlabelled), so its name never equals the first's and never gains a segment (neither platform binds a campaign by name on create: Reddit never looks one up and Meta's lookup is off); a labelled or additional Meta campaign whose composed name exceeds 255 characters is refused before any Meta request (Reddit's 200-character limit already applies to every name). On LinkedIn and X the same rule holds for their 8-segment names — the stage replaces the legacy `MoFU` in the funnel segment, and the targeting segment is `Retargeting` for the retargeting tactic and `Prospecting <tactic>` for any other, with `#<slot>` appended (`Events | <event> | <region> | <objective> | Retargeting #2 | Static | <project> | MoFU`; `Events | <event> | Global | Awareness | Retargeting #2 | Promoted Post | <project> | MoFU`). Since #587 the LinkedIn region segment is the first geo target's region (NA, EMEA, APAC, India, or Global), as on Meta and Reddit, rather than the literal `LinkedIn`; and both platforms name a retargeting campaign `Retargeting` rather than `Prospecting retargeting`. lf-dbt reads an 8-segment name by position and stores each segment as-is, so each must already be the vocabulary word. The LinkedIn region comes from the request's geo targets, so a retry that changes the first country's region composes a different name and is not reused by it, as a change of bidding objective already is. A campaign created under the earlier names is still found on a retry: LinkedIn looks the earlier name up in an existing campaign group, X when the new name finds nothing, and either reuses that campaign under its earlier name. Campaigns are never renamed, so reports mix both shapes until the earlier campaigns end — and because both REUSE a campaign by that composed name on create (LinkedIn's lookup within the event's campaign group, X's on every create), a second campaign's distinct name is also what keeps it from being bound to the first, or, on LinkedIn, from having its creatives pushed onto the first; LinkedIn's and X's existing 255-character name limits apply to labelled and additional names too, before any request. An unlabelled first campaign keeps its exact legacy name on every platform except LinkedIn, whose Region segment changed for every new campaign in #587 (a LinkedIn campaign created before #587 is reused under its earlier name). Each job platform result names its campaign row: `campaign_row_id`, `slot_version`, `variant`, `funnel_stage`, `tactic` and `reused`, and every campaign resource (and its index document) carries `variant`, `funnel_stage`, `tactic` and `created_at`. `409` with `reason=ab_test_unsupported_send_type` — **synchronous, before any job exists** — when a HubSpot email asks for an A/B test (`hubspotConfig.abTestEnabled`) but its source email (`hubspotConfig.sourceEmailId`) is set to send based on recipients' time zones, which HubSpot does not allow together. Nothing is created; choose a different source email or turn the A/B test off. The check reads the source email once and **fails open**: if HubSpot cannot be reached or does not report a type, the create proceeds as it did before the check existed. `400` — also **synchronous, before any job exists** — for a Reddit config that names a stored creative asset it cannot use, decided from the config alone (LFXV2-2665): `redditConfig.imageAssetId` together with `imageUrl` or `postUrl`, an `imageAssetId` that is not a UUID, or `imageAssetId` while signed creative-asset URLs are not configured ("stored creative assets are not enabled for Reddit; supply imageUrl"). A `twitterConfig.geoTargets`, `languages`, `keywords` or `interestIds` that breaks its rules, or is sent while `TWITTER_CREATE_TARGETING_ENABLED` is off, is also a synchronous `400` (#564; see TwitterConfig). `400` — synchronous — when `redditConfig.customAudienceIds` / `excludedCustomAudienceIds` is not an array of strings, holds a malformed, repeated or overlapping id or more than 100, or is set while `REDDIT_CUSTOM_AUDIENCES_ENABLED` is not `"true"` (#549). `400` — synchronous — also for a `redditConfig.subreddits` entry Reddit does not list as a community, or an `interests` entry that is not a Reddit interest id or exactly one interest name, while `REDDIT_TARGETING_RESOLUTION_ENABLED` is `"true"` (#549; the check reads Reddit, fails open when the read cannot run, and dispatch repeats it fail-closed). Likewise `400` — synchronous — when `twitterConfig.customAudienceIds` / `excludedCustomAudienceIds` is not an array of strings, holds an id that is not 1-32 letters or digits, a repeated or overlapping id, or more than 60 ids, when `geoTargets`, `languages`, `keywords`, `interestIds` and both lists together name more than 60 targeting criteria per create, or when either list is set while `TWITTER_CUSTOM_AUDIENCES_ENABLED` is not `"true"` (#564; see TwitterConfig). Likewise `400` — synchronous — for `microsoftConfig.audienceIds` / `excludedAudienceIds` / `audienceBidAdjustment` that break their rules (see MicrosoftConfig) or are set while `MICROSOFT_AUDIENCES_ENABLED` is not `"true"` (#563). Likewise for `microsoftConfig.excludedGeoTargets` / `proximityTargets` / `languages` that break their rules (see MicrosoftConfig) or are set while `MICROSOFT_CREATE_TARGETING_ENABLED` is not `"true"` (#563). `403` — **synchronous, before any job exists** — also when a reddit-ads create's `redditConfig`, a twitter-ads create's `twitterConfig` or a microsoft-ads create's `microsoftConfig` sets either custom audience (or remarketing) list without `global_marketing_ops` (the same single check as Google's below; each platform's fields named in its own sentence), and when `googleAdsConfig` sets any input that names an existing audience, user list, custom segment, shared negative keyword list or conversion action on the Google Ads account (any non-empty value or list, on any channel: `demandGenAudience`, any `demandGenAdGroups[].audience`, `audienceSegments` — Search's observation-only use included —, `customAudiences`, `customAffinities`, `excludedAudienceSegments`, the same four lists on any `displayAdGroups` entry, `audienceSegments` on any `adGroups` entry, `campaignAudienceSegments`, `performanceMaxAudienceSignal`, `sharedNegativeKeywordLists`, `conversionActions`, `demandGenDemographics.audienceSegments`, `demandGenDemographics.customAudiences`, the same two lists in any `demandGenAdGroups[].demographics` (#518); `demandGenDemographics` without either is not gated, since its Audience is new and names no existing account resource) and the caller does not hold `global_marketing_ops` on the project; the message names every gated field the request set, and one check covers them all. The same `403` (and `503`) applies to a `metaConfig.targeting` that sets `customAudiences` or `excludedCustomAudiences` (#550): custom audiences of the Meta ad account every foundation shares; age, gender and `advantageAudience` are not gated, and when both platforms set gated inputs one check covers them and the message names both. The route admits every `campaign_manager`, which includes foundation executive directors, and those resources belong to the Google Ads account, or the Meta ad account, that every foundation shares. `503` when that check cannot be made (project-service or fga-sync unreachable, or `NATS_URL` empty). A `microsoftConfig.negativeKeywords` list that breaks its rules, or is sent while `MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED` is off, is a synchronous `400` `invalid campaign config: microsoftConfig.negativeKeywords: …` (#563; see MicrosoftConfig below). The same check covers `linkedInConfig.conversions` (#552; see LinkedInConfig conversions) and `linkedInConfig.targeting`'s `audienceMatchingSegments` and `dynamicSegments` (#552, included or excluded; see LinkedInConfig targeting), and a request setting both Google and LinkedIn gated inputs is checked once and names both. These, and the `bidding` refusals below, are the only synchronous refusals of a dispatch-time rule; every other dispatch failure, including an `imageAssetId` that does not exist for this brief, arrives later as the job's own result. **Bidding** (LFXV2-2665): each of `microsoftConfig`, `metaConfig`, `redditConfig`, `twitterConfig` and `linkedInConfig` takes an optional `bidding` object (`strategy` `automatic` — the default — or `manual` with `bidAmount`); an invalid one is a synchronous `400` `invalid campaign config: <configKey>.bidding: …` before any job exists; on LinkedIn the objective follows the strategy (automatic `WEBSITE_VISIT`/`MAX_CLICK`, manual `WEBSITE_CONVERSION`); and `googleAdsConfig.bidding` is `400`. **DEFAULT CHANGES (omitting `bidding`)**: a Microsoft campaign created with no `bidding` and no `cpcBid` now gets `MaxClicks` instead of Microsoft's `EnhancedCpc` default, so `PATCH .../bid` answers `409` for it; a LinkedIn campaign created with no `bidding` is now `WEBSITE_VISIT` / `MAX_CLICK` / `costType` `CPM` named with the `Traffic` segment (it was `WEBSITE_CONVERSION`, `CPC`, no target — a campaign that did not deliver). **Manual-created campaigns are immediately eligible for the bid lever; eligibility follows the platform's CURRENT strategy** (an automatic campaign an operator switches to a manual per-click bid becomes eligible; the reverse becomes ineligible). See "Bidding" under Data Structures. |
 | POST | `/projects/{projectId}/send-workflows` | `campaign_manager` | JSON | Create ONE HubSpot workflow that sends an already-staged SERIES, and return it **disabled** (`201`, `SendWorkflowResult`). Takes an optional `source_workflow_url` (the editor URL or bare id of the workflow to copy; it is only ever READ; omitted, the deployment's `SURVEY_SEQUENCE_WORKFLOW_ID` or its in-code default is used), a `name`, `brief_ids` in SEND ORDER (2-10, each already staged, none on the paid surface) and `send_dates` (`YYYY-MM-DD`, one per wait-until-date step, each after today (UTC) and after the one before; required whenever the source has dated steps, because its own dates belong to another campaign). The source's steps are walked from its start action (it must be one straight sequence, enrol by list membership and not refer to its own emails outside its send steps), and each send step is pointed at that brief's FULLY staged draft, in order; the drafts must have been staged in the audience's portal. The workflow ENROLLS the series' audience in place of the source's enrollment (every list the audience sends to) and adds the audience's suppression lists to the source's own; the result reports both (`enrollment_list_ids`, `suppression_list_ids`). The briefs must share ONE built HubSpot audience — same send lists, suppressions and portal — so a series is normally built by attaching the same lists to every brief. Before anything is created the audience's portal is checked against the credential and the project's standing standard suppression list is checked against the send lists, as staging does. 400 for a URL naming no workflow, a brief with no staged draft, a paid brief, a repeated brief, fewer than two briefs, or a malformed, past or out-of-order date; 409 when the source workflow's send-step or dated-step count does not match, when it branches or is otherwise unsupported, when a draft is not fully staged, is not recorded as carrying its own subject and body (`contentStaged`), or was staged in another portal, when the default workflow is missing from the project's portal, when a project on the shared LF HubSpot connection names a source other than the deployment's survey workflow, when the project has no usable HubSpot connection (a partial mapping would leave a send pointing at the SOURCE campaign's email), when the credential lacks the automation scope, when a brief has no built audience, when the briefs' audiences differ, when the audience was built in another portal, when a list is both sent to and suppressed (by the audience or by the source workflow), or when the standing list now covers a send list; 404 for an unknown brief; 500 when the create's answer could not be read (a workflow may exist); 503 when the audience store or HubSpot is unavailable. Enabling the workflow is left to the human who reviews the drafts. |
 | POST | `/projects/{projectId}/briefs/{briefId}/campaigns/adopt` | `campaign_manager` | JSON | **Bind an ad campaign that already exists upstream** to this brief, without creating anything on the ad platform. Synchronous (no job): the platform is read for the campaign once — plus, on Reddit and X only, one read of the connection's own ad account after a campaign `404` (see below) — and on success the campaign row is written in the same request. `platform_campaign_id` is verified against the project's own connection before anything is persisted — a `404` means the platform PROVED there is no such campaign (an answer that could equally be an access, auth or account problem is never a `404`); a `503` means the campaign could not be **verified** and its existence is **unknown** — the platform may have been unreachable, or it may have answered with something untrustworthy (an unhonoured id filter, an undecodable row, an unrecognised status), which is why the message names verification rather than connectivity. `400` for a platform with no adoption support, an unapproved brief, an unknown platform, or a blank or malformed `platform_campaign_id` (**malformed IDs are validated before the connection state is checked, so a permanent input fault always returns `400` regardless of connection availability**); `409` when the brief already has a live campaign on that platform, when the campaign is of a type the platform's slot cannot hold (a non-Search Microsoft campaign), when the platform reports the campaign under a **different ad account** than the project's connection (Meta, whose node read is by id alone, and Reddit/X when their answer names its account — Google and Microsoft scope the read to the account, so a foreign campaign is simply absent there), when that upstream campaign is already bound to a **different** brief — **in any project**, because Google Ads is one shared upstream account across every foundation, so a project-scoped check would let two projects bind and then fight over one live campaign (enforced per provider by its own unique index over live rows: GLOBAL for Google Ads (000020), LinkedIn (000042) and Meta (000043), whose campaign ids are globally unique; keyed on the AD ACCOUNT too for Microsoft (000044), Reddit (000045) and X (000046), whose ids are account-scoped or not documented as global — so the same id under two different accounts binds twice, as two campaigns. A legacy row recording no account cannot block a binding, but adoption refuses an id such a row already holds); the message names the campaign but not the other project, which the caller may not be entitled to see — when the brief lost its approval during the platform read, when the project's connection is unusable, or when the project has **no connection of its own** — adoption is the one path that cannot fall back to the shared LF system account, because many projects share that one ad account and the caller names an arbitrary campaign inside it. There is deliberately **no `500` for an unusable LF system connection** on this endpoint, unlike the metrics and toggle endpoints: adoption resolves the project's own scope only and never loads the LF row, so the answer for a project without its own connection is the same actionable `409` whatever state that row is in. An adopted campaign records **provenance only** — no ad group, ad or asset group ids — so the status-toggle endpoint **refuses to ACTIVATE it on every platform channel** with `409` `reason=campaign_adopted`; the adopted campaign is returned, read back and indexed with `adopted: true`; un-pause an adopted campaign in the ad platform's own UI. PAUSE is unaffected, because pausing the campaign resource alone is always safe. |
 | GET | `/projects/{projectId}/briefs/{briefId}/campaigns/{campaign_id}` | `campaign_manager` | JSON | Get one campaign execution; returns ETag. The campaign carries an optional, read-only **`adopted`** boolean: `true` when the campaign was bound by `POST .../campaigns/adopt` rather than created here, **absent** otherwise (never `false`). Every endpoint that returns a campaign carries it, and the indexed campaign document carries it as `adopted` (omitted when not adopted). It is read from the `adopted` marker in the row's result blob — stamped on every platform by adopt-campaign since this field was added, and by LinkedIn's adopter before that — so a campaign adopted earlier on any other platform reads absent: absent means *not recorded as adopted*, not a promise that a resume will succeed. Use it to disable Resume; `adopted: true` campaigns are paused here and resumed in the ad platform's own UI (see the status row below). |
@@ -486,7 +486,7 @@ project?: string                — Canonical LFX project slug (e.g. 'cncf', 'tl
 driveFolderUrl?: string
 platforms?: CampaignPlatform[]
 googleAdsConfig?: object        — Google Ads-specific params (see GoogleAdsConfig below)
-linkedInConfig?: object         — LinkedIn-specific params (see LinkedInConfig variant images and LinkedInConfig conversions below)
+linkedInConfig?: object         — LinkedIn-specific params (see LinkedInConfig variant images, LinkedInConfig targeting and LinkedInConfig conversions below)
 redditConfig?: object           — Reddit-specific params (see RedditConfig below)
 metaConfig?: object             — Meta-specific params (see MetaConfig below)
 twitterConfig?: object          — X/Twitter-specific params (see TwitterConfig below)
@@ -519,7 +519,6 @@ bidding?: {
                                         amount the platform cannot take exactly is refused.
 }
 ```
-
 
 What each platform is sent — `manual` is exactly the shape `PATCH .../bid` accepts, so the bid can
 be changed later; `automatic` is refused there (409) until an operator switches the strategy:
@@ -804,147 +803,6 @@ campaign can never serve, even once a human enables it (which is why `ToggleStat
 activate a campaign whose keywords were never provisioned). **Budget is in whole units of the ad
 ACCOUNT's currency**, not USD — the client does no FX conversion (mirroring `metaConfig`).
 
-searchPartners?: boolean        — The new ad group's search network (#563 gap 11), sent as
-                                  AdGroup.Network: true = OwnedAndOperatedAndSyndicatedSearch
-                                  (Microsoft's sites and syndicated search partners), false =
-                                  OwnedAndOperatedOnly. Omitted: no Network is sent, Microsoft's
-                                  default (partners included) applies, as before. Set only on an
-                                  ad group this run creates; a reused ad group keeps its network
-                                  and a warning step says so. OFF unless
-                                  MICROSOFT_SEARCH_NETWORK_ENABLED is exactly "true". A non-boolean
-                                  (null reads as absent), or the field while the flag is off (false
-                                  included), is a synchronous 400 "invalid campaign config:
-                                  microsoftConfig.searchPartners: ..." before any job exists. Not
-                                  role-gated.
-adSchedules?: object[]          — Dayparting (#563 gap 10), at most 7 windows per day (49 total):
-                                  {day (Monday..Sunday, any casing), startHour (whole hour 0-23,
-                                  required), endHour (whole hour 1-24, after startHour, required),
-                                  bidAdjustment? (whole percent -90..900, default 0)}. Windows on
-                                  the same day may touch (9-12, 12-17) but not overlap. Sent as
-                                  BiddableCampaignCriterion / DayTimeCriterion (minutes Zero) with
-                                  a BidMultiplier, in one call right after the radius targets and
-                                  before the ad group. The hours are read in the Microsoft
-                                  Advertising ACCOUNT's time zone, NOT the campaign's timeZone
-                                  (the create omits AdScheduleUseSearcherTimeZone); they are sent
-                                  as given, never translated, so convert campaign-local hours to
-                                  the account's zone first. Once any
-                                  window exists the ads serve only inside the windows. Fail-closed
-                                  like geoTargets: a failed, partial or unconfirmed attach stops
-                                  the create before the ad group (PAUSED campaign reported and
-                                  retained); a create that finds its campaign by name stops before
-                                  the ad group. The ids are recorded as adScheduleCriterionIds in
-                                  the result. OFF unless MICROSOFT_AD_SCHEDULE_ENABLED is exactly
-                                  "true". A wrong JSON type (null reads as absent), a missing or
-                                  fractional hour, an explicit null bidAdjustment (omit it for 0),
-                                  more than 7 windows on one day, a rule breach, or the list while
-                                  the flag is off is a synchronous 400 "invalid campaign config:
-                                  microsoftConfig.adSchedules: ..." before any job exists. Not
-                                  role-gated.
-deviceBidAdjustments?: object   — Bid adjustments (#563 gap 8), each an object of segment name
-ageBidAdjustments?: object        (any casing, each segment once) to a whole percent.
-genderBidAdjustments?: object     Device keys Computers, Smartphones, Tablets, -100..900 (-100
-                                  stops serving on that device). Age keys EighteenToTwentyFour,
-                                  TwentyFiveToThirtyFour, ThirtyFiveToFortyNine, FiftyToSixtyFour,
-                                  SixtyFiveAndAbove (ThirtyFiveToFortyNine is sent in Microsoft's
-                                  AgeRange spelling, ThirtyFiveToFourtyNine); gender keys Male,
-                                  Female; both -90..900. Set
-                                  on the CAMPAIGN as BiddableCampaignCriterion with a
-                                  DeviceCriterion / AgeCriterion / GenderCriterion and a
-                                  BidMultiplier, in one call right after the ad schedule and before
-                                  the ad group; the ids are recorded as bidAdjustmentCriterionIds.
-                                  Microsoft requires all three devices in one add, so any device
-                                  adjustment sends Computers, Smartphones and Tablets, an
-                                  unrequested one at 0 (no change); every result is checked and
-                                  all three ids are recorded, and the step names the requested
-                                  ones and the devices sent at +0%.
-                                  Fail-closed like the other campaign criteria (a failed, partial
-                                  or unconfirmed attach stops the create before the ad group); a
-                                  create that finds its campaign by name stops before the ad
-                                  group. OFF unless MICROSOFT_BID_ADJUSTMENTS_ENABLED is exactly
-                                  "true". A value that is not an object of numbers (a null field
-                                  reads as absent; a null segment value is refused), an unknown or
-                                  repeated segment, an out-of-range or
-                                  fractional percent, or any of them while the flag is off is a
-                                  synchronous 400 "invalid campaign config:
-                                  microsoftConfig.<field>: ..." before any job exists. Not
-                                  role-gated.
-sharedNegativeKeywordListIds?:  — EXISTING account-level negative keyword lists to associate with
-  string[]                        the campaign (#563 gap 9). At most 20 (Microsoft's per-campaign
-                                  limit), each the canonical decimal spelling of a positive int64,
-                                  no repeat. Checked before anything is created: one
-                                  GetSharedEntities read (POST SharedEntities/Query,
-                                  NegativeKeywordList, Account scope) must hold every id as a
-                                  negative keyword list, or the job fails with nothing created
-                                  (an unknown id, or another shared entity type, is named in the
-                                  refusal). After the campaign is confirmed (created, or reused by
-                                  name: a negative list only narrows serving) they are associated
-                                  in one SetSharedEntityAssociations call (POST
-                                  SharedEntityAssociations/Set, EntityType Campaign). Each list's
-                                  outcome (APPLIED, FAILED with Microsoft's code, UNCONFIRMED) is
-                                  recorded positionally as sharedNegativeKeywordLists
-                                  [{listId, outcome, errorCode?}] in the result; anything but
-                                  APPLIED leaves the campaign created_degraded with a step, and the
-                                  job never fails at this stage. OFF unless
-                                  MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED is exactly "true". A
-                                  wrong JSON type (null reads as absent), a bad, repeated or
-                                  over-cap id, or the list while the flag is off is a synchronous
-                                  400 "invalid campaign config:
-                                  microsoftConfig.sharedNegativeKeywordListIds: ..." before any
-                                  job exists. The lists belong to the shared LF account, so the
-                                  field needs global_marketing_ops on the path project (403, or
-                                  503 when the check cannot be made).
-structuredSnippets?:            — Structured snippet extensions (#563 gap 13), at most 10. `header`
-  {header, values[]}[]            is one of Microsoft's English headers, matched ignoring case and
-                                  sent in Microsoft's spelling: Amenities, Brands, Courses, Degree
-                                  programs, Destinations, Featured hotels, Insurance coverage,
-                                  Models, Neighborhoods, Service catalog, Shows, Styles, Types; a
-                                  header may appear once. `values` holds 3-10 entries, each
-                                  trimmed, 1-25 characters (12 with a double-width character), no
-                                  control character, no case-insensitive repeat. Created as
-                                  StructuredSnippetAdExtension entries (POST AdExtensions, one per
-                                  snippet) and associated with the CONFIRMED campaign
-                                  (AdExtensionsAssociations/Set, Campaign), the sitelink/callout
-                                  transport: a campaign that already has a structured snippet (a
-                                  retry) gets none added, with a step; a requested snippet whose
-                                  header and values are not among the existing ones is then a
-                                  failed (or, when their contents were not reported, UNCONFIRMED)
-                                  snippet, so the campaign is created_degraded, not created. Ids are recorded as
-                                  structuredSnippetAdExtensionIds; a failed or UNCONFIRMED snippet
-                                  leaves the campaign created_degraded with a step and never fails
-                                  the job. OFF unless MICROSOFT_STRUCTURED_SNIPPETS_ENABLED is
-                                  exactly "true". A wrong JSON type (null reads as absent), a rule
-                                  breach, or the list while the flag is off is a synchronous 400
-                                  "invalid campaign config: microsoftConfig.structuredSnippets:
-                                  ..." before any job exists. Not role-gated.
-logoAssetId?: string,           — Campaign logo extension (#563 gap 13), the two set together.
-logoBusinessName?: string         logoAssetId is a stored creative asset of THIS brief
-                                  (upload-creative-asset), a UUID; logoBusinessName is the
-                                  BusinessName shown beside the logo, trimmed, 1-25 characters, no
-                                  control character. Before anything is created the asset is loaded
-                                  and must be PNG or JPEG (any other type, video/mp4 included, is
-                                  refused), square (1:1), 128-2048 pixels a side and at most 76,800
-                                  bytes (Image.Data takes at most 102,400 base64 characters); a
-                                  missing asset or a breach fails the job with nothing created.
-                                  After the campaign is confirmed: AdExtensionsAssociations/Query
-                                  for a LogoAdExtension on it (Microsoft allows one per campaign;
-                                  a campaign that has one, such as a retry, gets nothing uploaded
-                                  or added, with a step; the read shows that logo's business name
-                                  and media id but not its image, so one with another business
-                                  name is NOT attached and one that may be the requested logo is
-                                  UNCONFIRMED, both created_degraded), then AddMedia (POST Media, one Image,
-                                  MediaType Image1x1), AddAdExtensions (one LogoAdExtension
-                                  {BusinessLogo: the media id, BusinessName}) and
-                                  AdExtensionsAssociations/Set (Campaign). The ids are recorded as
-                                  logoMediaId / logoAdExtensionId; a logo that is not, or may not
-                                  be, attached leaves the campaign created_degraded with a "NOT
-                                  attached" or "UNCONFIRMED" step and never fails the job. OFF
-                                  unless MICROSOFT_LOGO_EXTENSION_ENABLED is exactly "true". A
-                                  value that is not a string (null reads as absent), an id that is
-                                  not a UUID, one field without the other, a bad business name, or
-                                  either field while the flag is off is a synchronous 400 "invalid
-                                  campaign config: microsoftConfig.<field>: ..." before any job
-                                  exists, re-checked at dispatch. Not role-gated: the image is
-                                  uploaded new for the campaign and names no shared resource.
 ```
 budget: number                  — Whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…),
                                   applied as the campaign's DAILY budget. Must be a finite, POSITIVE
@@ -1245,8 +1103,10 @@ synchronous `400` naming the flag).
 "conversions": ["104012", "107620"]
 ```
 
-After the campaign is created (or reused by name) and before the first dark post, each distinct id
-gets one Campaign Conversions record:
+After the campaign is created (or reused by name, when `linkedInConfig.targeting` is not set) and
+before the first dark post, each distinct id gets one Campaign Conversions record. With `targeting`
+set, a campaign reused by name stops before the conversions (see LinkedInConfig targeting), so
+none is associated:
 
 ```
 PUT /rest/campaignConversions/(campaign:urn%3Ali%3AsponsoredCampaign%3A<c>,conversion:urn%3Alla%3AllaPartnerConversion%3A<id>)
@@ -1258,7 +1118,7 @@ client's bounded backoff. A failed association does not stop the create: the row
 `created_degraded`, the result lists `conversionsAssociated` and `conversionsFailed`, and a step
 names each failed id with the HTTP status only, never LinkedIn's text. A campaign this run created
 is PAUSED, so the step says to associate it in Campaign Manager before activating; a campaign
-reused by name keeps its own status, which may be ACTIVE, so the step says it may already be
+reused by name (only without `targeting`) keeps its own status, which may be ACTIVE, so the step says it may already be
 serving without the conversion.
 
 Refused with a synchronous `400 invalid campaign config: linkedInConfig.conversions: …`: a
@@ -1267,6 +1127,103 @@ instead of the numeric id, an id that is not a positive integer without a leadin
 list (omit the field), more than 20 ids. Conversion rules belong to the ad account, so
 create-campaigns also requires `global_marketing_ops` on the project for `conversions` (`403`;
 `503` when the check cannot be made), as for `googleAdsConfig.conversionActions`.
+
+#### LinkedInConfig targeting (`linkedInConfig.targeting`, #552)
+
+The caller's own LinkedIn `targetingCriteria`, behind `LINKEDIN_ADS_TARGETING_ENABLED` (off by
+default; while off, any `targeting` is a synchronous `400` naming the flag). Omitted, the campaign
+is targeted exactly as before (profile skills/groups, fixed job functions and seniority exclusions).
+
+```jsonc
+"targeting": {
+  "include": [                                  // 1-10 clauses, ANDed after the geoTargets clause
+    { "titles": ["urn:li:title:1234"], "skills": ["urn:li:skill:17"] },  // facets in a clause are ORed
+    { "industries": ["urn:li:industry:4"] },
+    { "dynamicSegments": ["urn:li:adSegment:16182906"] }
+  ],
+  "exclude": {                                  // ORed
+    "audienceMatchingSegments": ["urn:li:adSegment:11462646"],
+    "seniorities": ["urn:li:seniority:1"]
+  }
+}
+```
+
+| facet key | value | include | exclude |
+|---|---|---|---|
+| `skills` | `urn:li:skill:<id>` | yes | yes |
+| `groups` | `urn:li:group:<id>` | yes | no |
+| `industries` | `urn:li:industry:<id>` | yes | yes |
+| `titles` | `urn:li:title:<id>` | yes | yes |
+| `seniorities` | `urn:li:seniority:<id>` | yes | yes |
+| `jobFunctions` | `urn:li:function:<id>` | yes | yes |
+| `employers` | `urn:li:organization:<id>` / `urn:li:company:<id>` | yes | yes |
+| `staffCountRanges` | one of LinkedIn's nine, e.g. `urn:li:staffCountRange:(201,500)` | yes | yes |
+| `interfaceLocales` | `urn:li:locale:<ll>_<CC>` | yes | no |
+| `interests` | `urn:li:interest:<id>` (member interests, #585) | yes | yes |
+| `audienceMatchingSegments` | `urn:li:adSegment:<id>` (contact/company lists) | yes | yes |
+| `dynamicSegments` | `urn:li:adSegment:<id>` (website/engagement retargeting) | yes | yes |
+
+Each key becomes `urn:li:adTargetingFacet:<key>`. Set, `targeting` REPLACES `targetingProfile`
+(which is then not read) and the fixed job functions and seniority exclusions; the config's
+`employerExclusions` are still merged into `exclude.employers`. Duplicates in a list are dropped;
+in `employers` a `urn:li:company:<n>` and a `urn:li:organization:<n>` of one id are one employer,
+so the first URN of each id is kept and the 200 cap counts employers, not spellings.
+
+A campaign found by name in the event's campaign group (an earlier attempt's, or a hand-made one)
+is NOT given `targeting`: it is written only into a campaign the create makes, and the found
+campaign's existing criteria are not read back. With `targeting` set, such a create stops before
+any conversion, image, dark post or creative and fails with the campaign recorded for
+reconciliation (`linkedin targeting NOT applied to reused campaign <id>`); check its targeting in
+Campaign Manager and finish it there. The campaign row is left `pending` with the campaign id (and
+`targetingNotApplied: true` in its result), so repeating the request does not report success: it
+answers `a prior dispatch left an incomplete campaign upstream; reconciliation required` without
+contacting LinkedIn. A create without `targeting` reuses the campaign as before.
+
+Refused with a synchronous `400 invalid campaign config: linkedInConfig.targeting…` or
+`400 invalid campaign config: linkedInConfig.employerExclusions…` before any job exists: a
+`targeting` whose JSON shape is wrong (an unknown key such as a misspelled `exclude`, explicit `null`, `include` not an array of objects of string arrays, `exclude` not an object of string arrays); an unknown facet; a malformed or wrong-namespace value (ids are numeric, no leading
+zero); a blank or padded value; an empty clause, empty facet, no clause or more than 10; more than
+100 values in a facet (200 for `employers`, LinkedIn's caps); `groups` or `interfaceLocales` under
+`exclude`; a value both included and excluded (`audienceMatchingSegments` and `dynamicSegments`
+count as one facet here, so one `urn:li:adSegment:<id>` included under either and excluded under
+the other is refused); an `employerExclusions` that is not an array of strings or holds a `null`
+(only when `targeting` is set); an included employer that is in `employerExclusions`, a malformed `employerExclusions` value (held to the `employers` rule, so
+numeric ids with no leading zero, like `exclude.employers`), or more than 200 employers in
+`exclude.employers` once `employerExclusions` is merged (employers compare by id, so
+`urn:li:company:<n>` and `urn:li:organization:<n>` are one employer); `staffCountRanges` both included and excluded;
+`titles` included with included `seniorities` or `jobFunctions`, and `employers` included with
+included `industries` or `staffCountRanges` (LinkedIn forbids ANDing them; refused even inside
+one clause until a live probe shows that is accepted).
+
+##### Probe before enabling
+
+No LinkedIn call was made to build `targeting`, so keep `LINKEDIN_ADS_TARGETING_ENABLED` off until
+this probe passes. Create a PAUSED campaign on a test campaign group in the LF Events ad account (or
+set `status: DRAFT`), then archive it:
+
+```
+POST https://api.linkedin.com/rest/adAccounts/<acct>/adCampaigns
+LinkedIn-Version: <current> ; X-Restli-Protocol-Version: 2.0.0
+{"account":"urn:li:sponsoredAccount:<acct>","campaignGroup":"urn:li:sponsoredCampaignGroup:<test group>",
+ "name":"probe 552 targeting","status":"PAUSED","type":"SPONSORED_UPDATES","objectiveType":"WEBSITE_VISIT",
+ "costType":"CPM","optimizationTargetType":"MAX_CLICK","locale":{"country":"US","language":"en"},
+ "offsiteDeliveryEnabled":false,"politicalIntent":"NOT_POLITICAL",
+ "dailyBudget":{"amount":"10.00","currencyCode":"USD"},"runSchedule":{"start":<now+1d ms>,"end":<now+8d ms>},
+ "targetingCriteria":{"include":{"and":[
+   {"or":{"urn:li:adTargetingFacet:locations":["urn:li:geo:103644278"]}},
+   {"or":{"urn:li:adTargetingFacet:titles":["urn:li:title:<id>"],"urn:li:adTargetingFacet:skills":["urn:li:skill:<id>"]}},
+   {"or":{"urn:li:adTargetingFacet:dynamicSegments":["urn:li:adSegment:<a READY retargeting segment>"]}}]},
+  "exclude":{"or":{"urn:li:adTargetingFacet:audienceMatchingSegments":["urn:li:adSegment:<a READY list>"],
+   "urn:li:adTargetingFacet:employers":["urn:li:company:33275771","urn:li:company:12893459"]}}}}
+```
+
+Expect `201` and an `x-restli-id`. A second probe with `titles` and `seniorities` in the same ORed
+clause would tell whether that stricter refusal can be relaxed.
+
+`audienceMatchingSegments` and `dynamicSegments`, anywhere in `targeting`, name ad segments on the
+ad account, so create-campaigns also requires `global_marketing_ops` on the project for them
+(`403` naming each, `503` when the check cannot be made). The other facets are LinkedIn
+taxonomies and are not role-gated.
 
 #### GoogleAdsConfig (the `googleAdsConfig` object)
 
@@ -3746,7 +3703,7 @@ pacingLabel: string             — underspending | normal | constrained | overs
 - Campaign groups must be ACTIVE status
 - Budget as decimal string, not micros
 - Timestamps in milliseconds
-- Skills + Groups in one `or` block (separate AND blocks = too narrow)
+- Skills + Groups in one `or` block (separate AND blocks = too narrow); with `linkedInConfig.targeting` (#552) the caller chooses the clauses
 - `callToAction` field not accepted; "Learn More" is automatic for article ads
 - Idempotency: search by name across all statuses before creating
 - Exclude employers: LF (`urn:li:company:33275771`) + CNCF (`urn:li:company:12893459`)
