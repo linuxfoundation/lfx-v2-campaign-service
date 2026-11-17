@@ -25,4 +25,5 @@ Moved to a later PR, still on `feat/563-microsoft-gaps-v2`:
   Until then the API catalog documents the six inputs. The create-campaigns method description
   already lists their synchronous 400s.
 
-The knowledge log entries from #613 for the moved features stay as written.
+The knowledge log entries for the moved features land with the PRs that add their code; this PR
+keeps only the entries for the six inputs above.

@@ -197,7 +197,7 @@ type Service interface {
 	// microsoftConfig.structuredSnippets that breaks its rules or is sent while
 	// MICROSOFT_STRUCTURED_SNIPPETS_ENABLED is not "true". So is a
 	// microsoftConfig.logoAssetId or logoBusinessName that breaks its rules or is
-	// sent while MICROSOFT_LOGO_EXTENSION_ENABLED is not "true".. An X custom
+	// sent while MICROSOFT_LOGO_EXTENSION_ENABLED is not "true". An X custom
 	// audience list is also refused synchronously with 400 "invalid campaign
 	// config: twitterConfig.<field>: ..." when it is not an array of strings, when
 	// an id is not 1-32 letters or digits, repeats, or is in both lists, when a

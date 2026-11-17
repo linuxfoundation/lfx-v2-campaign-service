@@ -12,8 +12,6 @@
   `structuredSnippetAdExtensionIds`; any shortfall leaves the campaign `created_degraded`.
 - A wrong type, a rule breach, or the list while `MICROSOFT_STRUCTURED_SNIPPETS_ENABLED` is off is a
   synchronous 400, re-checked in Dispatch. The chart sets the flag to `"false"`. Not role-gated.
-- Deferred: the logo extension (`logoAssetId`). It needs Microsoft's logo image limits and its own
-  media upload, separate from the campaign image extension.
 
 Not verified live: no Microsoft call was made. The shape and header list are from the Campaign
 Management v13 `StructuredSnippetAdExtension` reference.
