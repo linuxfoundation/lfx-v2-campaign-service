@@ -1760,6 +1760,51 @@ item gets only the missing look-alikes, as for every criterion. The owner accept
 synchronous 400 for the flag, a malformed id, the cap or a non-array, re-checked in `Dispatch`.
 Not role-gated. Not verified live.
 
+## One promoted tweet per variant (`CampaignInput.TweetVariants`, #564 gap 10)
+
+`twitterConfig.variants` (`[{tweetText}]`, 1-5; `tweet_variants.go`): `NormalizeTweetVariants`
+refuses blanks, case-folded repeats, and any combination with `tweetId` or a top-level
+`tweetText`. Each text is composed and screened up front exactly as `tweetText` is, with its
+destination's `utm_content=variant-N` (`buildTwitterVariantUTMURL`). Step 4 then runs
+`promoteTweetVariants`: one promotable-user resolve, then per variant a paced nullcast tweet POST
+and a paced `promoted_tweets` POST, before the next variant. Each variant's outcome is a
+`PromotedTweetResult` in `CampaignResult.PromotedTweets` (stored in the result blob — no
+migration, following Meta's `Ads []AdResult`); `PromotedTweetID`/`AuthoredTweetID` repeat the
+first. **No rollback** (owner decision 2026-11-14): a variant that fails — authoring refused or
+UNCONFIRMED, promotion refused, UNCONFIRMED, duplicate or id-less — is recorded on its entry and
+named in `PromotedTweetWarning` and a summary step, the loop continues, and the dispatcher's
+existing rule (a non-empty warning) persists the row `created_degraded`. An abort between writes
+(context ended) returns the partial with every published tweet named (`authoredTweetsStatus`). On a
+reused line item: zero live associations → author all; exactly `len(variants)` → reuse them all;
+otherwise, or an unreadable list → author nothing. Pause/resume (`UpdateCampaignAndChildrenStatus`),
+budget, bid and keyword levers address the campaign and the ONE line item every variant hangs off,
+so they act on all variants with no per-tweet call. `TestCreateTargetingCriteriaFitTheDispatchBudget`
+now counts the four extra variants' eight writes. The dispatcher gates it on
+`TWITTER_TWEET_VARIANTS_ENABLED` (`internal/dispatch/twitter_tweet_variants.go`), applies the
+connection's `as_user_id` authorization to variants, and stores their copy through
+`sanitizeSnapshotText`. Not verified live.
+
+## Website card on the authored tweet (`CampaignInput.WebsiteCard`, #564 gap 6)
+
+`twitterConfig.card` (`{headline}`; `website_card.go`). Up front: `NormalizeWebsiteCardHeadline`
+(1-70 characters, no control character), an authored tweet (single `tweetText` or variants), an
+`Image` (the card's media), and the card destination (`buildTwitterCardUTMURL`,
+`utm_content=website-card`) screened by `rejectCredentialQueryParams`. The card is made by the
+`ensureCard` closure, called at most once and only when a tweet is about to be authored — after
+the reused-line-item checks, so a create reusing an earlier promoted tweet makes none — by the
+single-tweet path right before its authoring write, or by `promoteTweetVariants` before its loop.
+`createWebsiteCard` POSTs `accounts/:account_id/cards` with a JSON body through `doBodyRequest`
+(paced, sent once): a `MEDIA` component (`media_key`) and a `DETAILS` component (`title`,
+`destination {type WEBSITE, url}`); a 2xx without a `card://` `card_uri` is an ambiguous
+`transportError`. `createNullcastTweet` sends `card_uri` and, with it, no `media_keys`. A card
+failure authors nothing and degrades like an authoring failure (`websiteCardFailure`,
+`PromotedTweetWarning`, so `created_degraded`); `CampaignResult.CardURI` records the card. The
+dispatcher gates it on `TWITTER_WEBSITE_CARD_ENABLED` (`internal/dispatch/twitter_website_card.go`)
+with synchronous 400s for the flag, the shape (`headline` the only key), the headline, missing media
+(neither `imageAssetId` nor `videoAssetId`; with a video, the card's `MEDIA` component carries the
+video's media_key) and a non-authoring create, re-checked in `Dispatch`. Not verified live: the cards
+body and `card_uri` echo follow the published v12 reference only.
+
 ## Video creative (`CampaignInput.Video`, #564 gap 7)
 
 `twitterConfig.videoAssetId` (`video.go`). `media.go` is now kind-parameterised (`mediaKind`:
@@ -1771,9 +1816,9 @@ for an image — library lookup by SHA-256 name, else chunked upload (initialize
 finished within the bound, is `(nil, err)` with nothing created. Retry safety: the library lookup
 precedes any byte, so a video already added is never uploaded twice; an upload stopped before the
 library add leaves only an expiring session; tweets are authored once per create after the line
-item, as for an image. The video's `media_key` then rides as `media_keys`. Up front:
-`validateVideoInput` (bytes present, at most `MaxVideoBytes` 30 MiB — the store's ceiling,
-`video/mp4`, an `ftyp` box), never with `Image`, an authored tweet required, and
+item, as for an image. The video's `media_key` then rides as `media_keys` (or as the website card's
+`MEDIA`). Up front: `validateVideoInput` (bytes present, at most `MaxVideoBytes` 30 MiB — the
+store's ceiling, `video/mp4`, an `ftyp` box), never with `Image`, an authored tweet required, and
 `CheckCreateCriteriaCountWithVideo` (at most 30 criteria: the budget test now adds the video's
 writes and 30 s wait). The dispatcher (`internal/dispatch/twitter_video.go`) gates it on
 `TWITTER_VIDEO_ENABLED`, refuses the config-only rules synchronously (re-checked in `Dispatch`),

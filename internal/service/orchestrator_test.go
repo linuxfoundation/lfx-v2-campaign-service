@@ -3676,6 +3676,7 @@ type preflightStub struct {
 	gotProjectID string
 	gotPlatform  model.Provider
 	gotConfig    json.RawMessage
+	gotBrief     *model.CampaignBrief
 	hadDeadline  bool
 	gotDeadline  time.Time
 
@@ -3698,6 +3699,7 @@ func (s *preflightStub) PreflightCreate(ctx context.Context, projectID string, p
 	s.gotProjectID = projectID
 	s.gotPlatform = platform
 	s.gotConfig = append(json.RawMessage(nil), config...)
+	s.gotBrief = model.CreatePreflightBrief(ctx)
 	s.gotDeadline, s.hadDeadline = ctx.Deadline()
 	return s.err
 }

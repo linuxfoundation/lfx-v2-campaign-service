@@ -425,16 +425,55 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		"is refused with 400 \"invalid campaign config: twitterConfig.followerLookalikeUserIds: ...\" before "+
 		"any job exists. "+
 		"Not role-gated. "+
+		"X TWEET VARIANTS (#564 gap 10): twitterConfig takes `variants`, [{\"tweetText\": string}] (1-5 "+
+		"entries, each trimmed and non-blank, no two the same ignoring case, tweetText the only key), and "+
+		"never with tweetId or a top-level tweetText. "+
+		"Each variant is authored as its own nullcast tweet (the same composition, length and "+
+		"credential-screen rules as tweetText, its destination tagged utm_content=variant-N) and promoted on "+
+		"the one line item, in order, each authored then promoted before the next; imageAssetId, when set, is "+
+		"attached to every variant. "+
+		"Every promoted tweet is recorded in the campaign result as PromotedTweets ([{Variant, TweetID, "+
+		"Authored, PromotedTweetID, Warning}]); "+
+		"PromotedTweetID and AuthoredTweetID repeat the first. "+
+		"A variant that fails (authoring refused or UNCONFIRMED, promotion refused, UNCONFIRMED or reported "+
+		"duplicate) does not stop the others and nothing is rolled back, since a published tweet cannot be "+
+		"unpublished: the row is created_degraded with a step naming the failed variants. "+
+		"On a line item reused by name, no variant is authored when its promoted tweets cannot be read or "+
+		"their count differs from the variants; exactly as many are reused. "+
+		"Pause, resume, budget, bid and keyword levers act on the campaign and line item, so they govern "+
+		"every variant at once. "+
+		"OFF unless TWITTER_TWEET_VARIANTS_ENABLED is exactly \"true\"; a non-empty list while off, a rule "+
+		"breach or a wrong shape (null reads as absent) is refused with 400 \"invalid campaign config: "+
+		"twitterConfig.variants: ...\" before any job exists. "+
+		"Not role-gated. "+
+		"X WEBSITE CARD (#564 gap 6): twitterConfig takes `card`, {\"headline\": string} (trimmed, 1-70 "+
+		"characters, no control character; headline is the only key). "+
+		"It needs media (imageAssetId or videoAssetId, never both) and an authored tweet (tweetText or "+
+		"variants, never tweetId). "+
+		"Once the campaign and line item exist and a tweet is about to be authored, one website card is "+
+		"created with POST accounts/:account_id/cards (a MEDIA component carrying the creative image's or "+
+		"video's media_key and a DETAILS component carrying the headline and a WEBSITE destination: the "+
+		"registration URL with this service's UTMs and utm_content=website-card), and its card_uri is sent on "+
+		"every tweet the create authors (media_keys is then not sent; the image rides in the card). "+
+		"The result records it as CardURI. "+
+		"A card that cannot be created publishes nothing: the row is created_degraded with a step to post the "+
+		"tweet manually (UNCONFIRMED when the card may exist; a card is neither public nor billable). "+
+		"A create that reuses an earlier attempt's promoted tweet creates no card. "+
+		"OFF unless TWITTER_WEBSITE_CARD_ENABLED is exactly \"true\"; a card while off, a rule breach or a "+
+		"wrong shape (null reads as absent) is refused with 400 \"invalid campaign config: "+
+		"twitterConfig.card: ...\" before any job exists. "+
+		"Not role-gated. "+
 		"X VIDEO (#564 gap 7): twitterConfig takes `videoAssetId`, the id of an MP4 creative asset uploaded "+
 		"to this brief (upload-creative-asset, content_type video/mp4, at most 30 MiB), attached to the "+
-		"authored tweet instead of an image. "+
-		"It requires an authored tweet (tweetText, never tweetId) and is never combined with imageAssetId. "+
+		"authored tweet(s) instead of an image, or used as the website card's media. "+
+		"It requires an authored tweet (tweetText or variants, never tweetId) and is never combined with "+
+		"imageAssetId. "+
 		"Before anything billable exists the video is uploaded through X's chunked media upload (initialize "+
 		"with media_category amplify_video and media_type video/mp4, one append per 4 MiB segment, finalize, "+
 		"then the STATUS command while X reports processing, at most 6 checks of at most 5 seconds each) and "+
 		"added to the ad account's Media Library under a name derived from its SHA-256, which a later create "+
 		"of the same bytes finds and reuses instead of uploading again; its media_key is then sent as "+
-		"media_keys on the authored tweet. "+
+		"media_keys on every authored tweet. "+
 		"A video that cannot be uploaded, is rejected during processing, or does not finish processing within "+
 		"that bound fails the job with nothing created. "+
 		"A create with a videoAssetId may name at most 30 targeting criteria in total (the upload and "+
@@ -442,9 +481,9 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		"An asset that does not exist for this brief, is over 30 MiB or is not video/mp4 fails the job before "+
 		"any X request. "+
 		"OFF unless TWITTER_VIDEO_ENABLED is exactly \"true\"; a videoAssetId while off, a malformed id, one "+
-		"beside imageAssetId or tweetId or without tweetText, more than 30 criteria, or a non-string (null "+
-		"reads as absent) is refused with 400 \"invalid campaign config: twitterConfig...\" before any job "+
-		"exists. "+
+		"beside imageAssetId or tweetId or without tweetText or variants, more than 30 criteria, or a "+
+		"non-string (null reads as absent) is refused with 400 \"invalid campaign config: twitterConfig...\" "+
+		"before any job exists. "+
 		"Not role-gated. "+
 		"X CUSTOM AUDIENCES (#564): twitterConfig takes `customAudienceIds` and `excludedCustomAudienceIds`, "+
 		"arrays of X custom audience ids (list-twitter-ads-custom-audiences offers them) to target and to "+
@@ -2340,7 +2379,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("upload-creative-asset", func() {
-		Description("Upload an image or MP4 video asset for a brief so an ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. An MP4 (content_type video/mp4, #586) is checked structurally rather than decoded: it must open with an ftyp box of an MP4 brand, its top-level boxes must tile the file exactly, and it must carry moov and mdat boxes; it is stored with no width or height, and only an X campaign (twitterConfig.videoAssetId, #564: the authored tweet's video) consumes it — every image slot refuses a video asset at dispatch. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account's media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig variant names one by imageAssetId, and at dispatch it is uploaded once through LinkedIn's Images API (an organization-owned image URN) and used as that dark post's article thumbnail; LinkedIn accepts at most 5,000,000 bytes and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or 360x640 to 2430x4320 (vertical) pixels. A brief's library is bounded by a per-brief quota on both count and total stored bytes; an upload that would exceed either is refused with 409 and reason creative_asset_quota_exceeded, and list-creative-assets publishes the ceilings and the current totals so a client can see the headroom before it uploads. A re-upload of identical bytes is idempotent and is NOT judged against the quota, since it stores nothing. An archived brief returns 404, matching every other access to a brief's children.")
+		Description("Upload an image or MP4 video asset for a brief so an ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. An MP4 (content_type video/mp4, #586) is checked structurally rather than decoded: it must open with an ftyp box of an MP4 brand, its top-level boxes must tile the file exactly, and it must carry moov and mdat boxes; it is stored with no width or height, and only an X campaign (twitterConfig.videoAssetId, #564: the authored tweet's video or the website card's media) consumes it — every image slot refuses a video asset at dispatch. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account's media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig variant names one by imageAssetId, and at dispatch it is uploaded once through LinkedIn's Images API (an organization-owned image URN) and used as that dark post's article thumbnail; LinkedIn accepts at most 5,000,000 bytes and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or 360x640 to 2430x4320 (vertical) pixels. A brief's library is bounded by a per-brief quota on both count and total stored bytes; an upload that would exceed either is refused with 409 and reason creative_asset_quota_exceeded, and list-creative-assets publishes the ceilings and the current totals so a client can see the headroom before it uploads. A re-upload of identical bytes is idempotent and is NOT judged against the quota, since it stores nothing. An archived brief returns 404, matching every other access to a brief's children.")
 		Payload(func() {
 			bearerToken()
 			// Permissive project identifier (UUID or slug), matching the other brief
@@ -2561,7 +2600,165 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("create-campaigns", func() {
-		Description("Create campaigns across the selected platforms (async -> job). Besides the request-shape 400s (an unknown or duplicate platform, new_version on a platform that does not support it, and the like), two dispatch-time rules are refused synchronously, before any job exists. (1) An email campaign that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email set to send based on recipients' time zones, which HubSpot does not allow together: 409 with reason=ab_test_unsupported_send_type; the remedy is to pick a different source email or turn the A/B test off. (2) A Reddit config that names a stored creative asset it cannot use, decided from the config alone: redditConfig.imageAssetId together with imageUrl or postUrl, an imageAssetId that is not a UUID, or imageAssetId while signed creative-asset URLs are not configured ('stored creative assets are not enabled for Reddit; supply imageUrl'): 400 with that message. A redditConfig.excludedSubreddits or excludedGeoTargets that breaks its rules, or is sent while REDDIT_TARGETING_EXCLUSIONS_ENABLED is off, is also a synchronous 400 (see the config attribute). So is a redditConfig.placements, platforms or expandTargeting that breaks its rules, or is sent while REDDIT_PLACEMENT_TARGETING_ENABLED is off (#549). So is a redditConfig.budgetType that is not lifetime or daily, or is sent while REDDIT_DAILY_BUDGET_ENABLED is off (#549). So is a redditConfig.gender, languages or schedule that breaks its rules or is sent while REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED is off (#549). So is, while REDDIT_AD_PER_VARIANT_ENABLED is on, an authored-post Reddit create with more than 5 variants or a blank or over-long variant headline (#549). So, while REDDIT_TARGETING_RESOLUTION_ENABLED is \"true\" (#549), is a redditConfig.subreddits entry Reddit's GET /targeting/communities does not list, or an interests entry that is neither a GET /targeting/interests id nor exactly one interest name: that check reads Reddit, fails open when the read cannot run, and is repeated at dispatch fail-closed, before anything is created; resolved creates send Reddit's community spelling and interest ids. So is a twitterConfig.geoTargets, languages, keywords or interestIds that breaks its rules, or is sent while TWITTER_CREATE_TARGETING_ENABLED is off (#564). So is a twitterConfig.videoAssetId that breaks its rules, or is sent while TWITTER_VIDEO_ENABLED is off (#564 gap 7). So is a microsoftConfig.sitelinks or callouts list that breaks its rules, or is sent while MICROSOFT_AD_EXTENSIONS_ENABLED is off (#563). So is a microsoftConfig.negativeKeywords list that breaks its rules or is sent while MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is off (see the config attribute). So is a microsoftConfig.headlines, descriptions, path1 or path2 that breaks its rules or is sent while MICROSOFT_AD_COPY_ENABLED is off. GOOGLE ADS SHARED-ACCOUNT INPUTS: a googleAdsConfig that sets any input naming an existing audience, user list, custom segment, shared negative keyword list or conversion action on the Google Ads account (demandGenAudience or an audience on any demandGenAdGroups entry; audienceSegments, customAudiences, customAffinities or excludedAudienceSegments, on the campaign or on any displayAdGroups entry; audienceSegments on any adGroups entry; campaignAudienceSegments (Search campaign-level observed user lists); performanceMaxAudienceSignal; sharedNegativeKeywordLists; conversionActions, demandGenDemographics.audienceSegments, demandGenDemographics.customAudiences, and the same two lists in any demandGenAdGroups entry's demographics; any non-empty value, whitespace included, on any channel, Search audienceSegments included; demandGenDemographics without audienceSegments or customAudiences is not gated, as its Audience is new and names no existing account resource) requires the caller to hold global_marketing_ops on this project, checked once per request before any job exists: 403 naming the gated fields when they do not, 503 when the check cannot be made (project lookup or authorization service unavailable). The gateway admits every campaign_manager, which includes foundation executive directors, and those resources belong to the Google Ads account every foundation shares. The same check, made once with the Google one, covers linkedInConfig.targeting audienceMatchingSegments and dynamicSegments, included or excluded, and linkedInConfig.conversions (#552): they name ad segments and conversion rules on the LinkedIn ad account, and the LF system account is the fallback connection of every project without its own. META CREATIVE OPTIONS: metaConfig.callToAction outside its allow-list, metaConfig.conversionEvent outside its allow-list or on an objective other than conversions, or either one while its deployment flag (META_CALL_TO_ACTION_ENABLED, META_CONVERSION_EVENT_ENABLED) is not \"true\", is a synchronous 400 \"invalid campaign config: metaConfig.callToAction...\" or \"invalid campaign config: metaConfig.conversionEvent...\". Likewise metaConfig.optimizationGoal outside LINK_CLICKS and LANDING_PAGE_VIEWS, on an objective other than traffic, LANDING_PAGE_VIEWS with manual bidding, or the field while META_OPTIMIZATION_GOAL_ENABLED is not \"true\", is a synchronous 400. So is a metaConfig.frequencyCap on an objective other than awareness, with maxImpressions or intervalDays outside 1-90, or while META_FREQUENCY_CAP_ENABLED is not \"true\". So is a metaConfig.adSchedule (days 0-6 and whole-hour startMinute/endMinute in the ad account's time zone) on a daily budget (Meta schedules only lifetime budgets), with invalid days or minutes, or while META_AD_SCHEDULE_ENABLED is not \"true\". So is a metaConfig.leadFormId (an existing Instant Form, #550) on an objective other than leads, that is not a numeric id, with manual bidding, with a callToAction a form cannot carry, or while META_LEAD_FORMS_ENABLED is not \"true\"; with leads it makes an OUTCOME_LEADS lead ad, and the form is read before anything is created (another Page's or an inactive form fails the job with nothing created). REDDIT SHARED-ACCOUNT INPUTS (#549): a redditConfig that sets customAudienceIds or excludedCustomAudienceIds (any non-empty list) on a create that selects reddit-ads requires global_marketing_ops on this project in the same single check, with the same 403 and 503; the custom audiences belong to the LF Reddit ad account every foundation shares. X SHARED-ACCOUNT INPUTS (#564): likewise a twitterConfig that sets customAudienceIds or excludedCustomAudienceIds (any non-empty list) on a create that selects twitter-ads requires global_marketing_ops on this project in the same single check; those audiences belong to the LF X ad account. MICROSOFT SHARED-ACCOUNT INPUTS (#563): likewise a microsoftConfig that sets audienceIds, excludedAudienceIds or sharedNegativeKeywordListIds (any non-empty list) on a create that selects microsoft-ads requires global_marketing_ops on this project in the same single check; those remarketing lists and negative keyword lists belong to the LF Microsoft Advertising account. A remarketing list input that breaks its rules, or is sent while MICROSOFT_AUDIENCES_ENABLED is not \"true\", is a synchronous 400 too (see the config attribute). So is a microsoftConfig.excludedGeoTargets, proximityTargets or languages that breaks its rules or is sent while MICROSOFT_CREATE_TARGETING_ENABLED is not \"true\". So is a microsoftConfig.searchPartners that is not a boolean or is sent while MICROSOFT_SEARCH_NETWORK_ENABLED is not \"true\". So is a microsoftConfig.adSchedules that breaks its rules or is sent while MICROSOFT_AD_SCHEDULE_ENABLED is not \"true\". So is a microsoftConfig.deviceBidAdjustments, ageBidAdjustments or genderBidAdjustments that breaks its rules or is sent while MICROSOFT_BID_ADJUSTMENTS_ENABLED is not \"true\". So is a microsoftConfig.sharedNegativeKeywordListIds that breaks its rules or is sent while MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED is not \"true\". So is a microsoftConfig.structuredSnippets that breaks its rules or is sent while MICROSOFT_STRUCTURED_SNIPPETS_ENABLED is not \"true\". So is a microsoftConfig.logoAssetId or logoBusinessName that breaks its rules or is sent while MICROSOFT_LOGO_EXTENSION_ENABLED is not \"true\". An X custom audience list is also refused synchronously with 400 \"invalid campaign config: twitterConfig.<field>: ...\" when it is not an array of strings, when an id is not 1-32 letters or digits, repeats, or is in both lists, when a list holds more than 60 ids or the X targeting lists together name more than 60 criteria, and when TWITTER_CUSTOM_AUDIENCES_ENABLED is not \"true\" on this deployment. When both platforms' inputs are refused, the 403 names each platform's fields in its own sentence. A Reddit custom audience list is also refused synchronously with 400 \"invalid campaign config: redditConfig.<field>: ...\" when it is not an array of strings, when an id is not 1-64 letters, digits or underscores, repeats, or is in both lists, when a list holds more than 100 ids, and when REDDIT_CUSTOM_AUDIENCES_ENABLED is not \"true\" on this deployment. META SHARED-ACCOUNT INPUTS: likewise a metaConfig.targeting that sets customAudiences or excludedCustomAudiences (any non-empty list) names custom audiences of the Meta ad account every foundation shares, and a metaConfig.leadFormId (any value but null or \"\") names an Instant Form of the connection's Page, the shared LF Page for every project without its own connection; either requires global_marketing_ops on this project (403 naming them, 503 when the check cannot be made); age, gender and advantageAudience are not gated. An invalid metaConfig.targeting, or any targeting block while META_AUDIENCE_TARGETING_ENABLED is not \"true\" on the deployment, is a synchronous 400 \"invalid campaign config: metaConfig.targeting...\"; a block that sets only targeting.locales, targeting.devicePlatforms, targeting.interests, targeting.regions, targeting.cities, targeting.behaviors, targeting.workPositions or targeting.userOs needs META_LOCALE_TARGETING_ENABLED, META_DEVICE_TARGETING_ENABLED, META_INTEREST_TARGETING_ENABLED, META_REGION_TARGETING_ENABLED, META_BEHAVIOR_TARGETING_ENABLED or META_OS_TARGETING_ENABLED instead, and any of those lists while its flag is not \"true\", or devicePlatforms [desktop] with the audienceNetwork placement, a userOs value outside Meta's documented user_os formats, a version of one OS family with the other family, userOs with devicePlatforms [desktop], or an OS version on the awareness objective, is a synchronous 400 too. Every targeting.regions and targeting.cities key is looked up before anything is created; one whose country is sanctioned, regulated, already a geoTargets country, or in the EU without the DSA disclosures fails the job with nothing created. An invalid per-platform `bidding` object (see the config attribute) is also refused synchronously, with 400 \"invalid campaign config: <configKey>.bidding: ...\". Bidding defaults changed in LFXV2-2665: a Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc) and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are immediately eligible for the bid lever, and eligibility follows the platform's current strategy. Every other dispatch failure, including an imageAssetId that does not exist for this brief, still arrives later, as the job's own result. That includes a Search googleAdsConfig.sharedNegativeKeywordLists entry that is not an ENABLED NEGATIVE_KEYWORDS shared set of the connected Google Ads account (#548). One read-only GAQL query reads every named list's shared_set.type and status before anything is created. A NEGATIVE_PLACEMENTS, BRANDS or other set, a REMOVED set or a set not in the account is refused in the job's Google Ads error, which names the set id and, for a set of another known type, that type. A read that fails stops the create too, with nothing created.")
+		Description("Create campaigns across the selected platforms (async -> job). " +
+			"Besides the request-shape 400s (an unknown or duplicate platform, new_version on a platform that " +
+			"does not support it, and the like), two dispatch-time rules are refused synchronously, before any " +
+			"job exists. " +
+			"(1) " +
+			"An email campaign that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email set to " +
+			"send based on recipients' time zones, which HubSpot does not allow together: " +
+			"409 with reason=ab_test_unsupported_send_type; the remedy is to pick a different source email or " +
+			"turn the A/B test off. " +
+			"(2) " +
+			"A Reddit config that names a stored creative asset it cannot use, decided from the config alone: " +
+			"redditConfig.imageAssetId together with imageUrl or postUrl, an imageAssetId that is not a UUID, or " +
+			"imageAssetId while signed creative-asset URLs are not configured ('stored creative assets are not " +
+			"enabled for Reddit; supply imageUrl'): " +
+			"400 with that message. " +
+			"A redditConfig.excludedSubreddits or excludedGeoTargets that breaks its rules, or is sent while " +
+			"REDDIT_TARGETING_EXCLUSIONS_ENABLED is off, is also a synchronous 400 (see the config attribute). " +
+			"So is a redditConfig.placements, platforms or expandTargeting that breaks its rules, or is sent " +
+			"while REDDIT_PLACEMENT_TARGETING_ENABLED is off (#549). " +
+			"So is a redditConfig.budgetType that is not lifetime or daily, or is sent while " +
+			"REDDIT_DAILY_BUDGET_ENABLED is off (#549). " +
+			"So is a redditConfig.gender, languages or schedule that breaks its rules or is sent while " +
+			"REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED is off (#549). " +
+			"So is, while REDDIT_AD_PER_VARIANT_ENABLED is on, an authored-post Reddit create with more than 5 " +
+			"variants or a blank or over-long variant headline (#549). " +
+			"So, while REDDIT_TARGETING_RESOLUTION_ENABLED is \"true\" (#549), is a redditConfig.subreddits entry " +
+			"Reddit's GET /targeting/communities does not list, or an interests entry that is neither a GET " +
+			"/targeting/interests id nor exactly one interest name: that check reads Reddit, fails open when the " +
+			"read cannot run, and is repeated at dispatch fail-closed, before anything is created; resolved " +
+			"creates send Reddit's community spelling and interest ids. " +
+			"So is a twitterConfig.geoTargets, languages, keywords, interestIds, conversationTopics, platforms, " +
+			"devices, ageBucket or gender that breaks its rules, or is sent while " +
+			"TWITTER_CREATE_TARGETING_ENABLED is off (#564). " +
+			"So is a twitterConfig.audienceExpansion outside BROAD, DEFINED and EXPANDED, or sent while " +
+			"TWITTER_AUDIENCE_EXPANSION_ENABLED is off (#564 gap 11). " +
+			"So is a twitterConfig.followerLookalikeUserIds that breaks its rules, or is sent while " +
+			"TWITTER_FOLLOWER_LOOKALIKES_ENABLED is off (#564 gap 4c). " +
+			"So is a twitterConfig.variants list that breaks its rules, or is sent while " +
+			"TWITTER_TWEET_VARIANTS_ENABLED is off (#564 gap 10). " +
+			"So is a twitterConfig.card that breaks its rules, or is sent while TWITTER_WEBSITE_CARD_ENABLED is " +
+			"off (#564 gap 6). " +
+			"So is a twitterConfig.videoAssetId that breaks its rules, or is sent while TWITTER_VIDEO_ENABLED is " +
+			"off (#564 gap 7). " +
+			"So is a microsoftConfig.sitelinks or callouts list that breaks its rules, or is sent while " +
+			"MICROSOFT_AD_EXTENSIONS_ENABLED is off (#563). " +
+			"So is a microsoftConfig.negativeKeywords list that breaks its rules or is sent while " +
+			"MICROSOFT_CREATE_NEGATIVE_KEYWORDS_ENABLED is off (see the config attribute). " +
+			"So is a microsoftConfig.headlines, descriptions, path1 or path2 that breaks its rules or is sent " +
+			"while MICROSOFT_AD_COPY_ENABLED is off. " +
+			"GOOGLE ADS SHARED-ACCOUNT INPUTS: a googleAdsConfig that sets any input naming an existing audience, " +
+			"user list, custom segment, shared negative keyword list or conversion action on the Google Ads " +
+			"account (demandGenAudience or an audience on any demandGenAdGroups entry; audienceSegments, " +
+			"customAudiences, customAffinities or excludedAudienceSegments, on the campaign or on any " +
+			"displayAdGroups entry; audienceSegments on any adGroups entry; campaignAudienceSegments (Search " +
+			"campaign-level observed user lists); performanceMaxAudienceSignal; sharedNegativeKeywordLists; " +
+			"conversionActions, demandGenDemographics.audienceSegments, demandGenDemographics.customAudiences, " +
+			"and the same two lists in any demandGenAdGroups entry's demographics; any non-empty value, " +
+			"whitespace included, on any channel, Search audienceSegments included; demandGenDemographics without " +
+			"audienceSegments or customAudiences is not gated, as its Audience is new and names no existing " +
+			"account resource) requires the caller to hold global_marketing_ops on this project, checked once per " +
+			"request before any job exists: " +
+			"403 naming the gated fields when they do not, 503 when the check cannot be made (project lookup or " +
+			"authorization service unavailable). " +
+			"The gateway admits every campaign_manager, which includes foundation executive directors, and those " +
+			"resources belong to the Google Ads account every foundation shares. " +
+			"The same check, made once with the Google one, covers linkedInConfig.targeting " +
+			"audienceMatchingSegments and dynamicSegments, included or excluded, and linkedInConfig.conversions " +
+			"(#552): they name ad segments and conversion rules on the LinkedIn ad account, and the LF system " +
+			"account is the fallback connection of every project without its own. " +
+			"META CREATIVE OPTIONS: metaConfig.callToAction outside its allow-list, metaConfig.conversionEvent " +
+			"outside its allow-list or on an objective other than conversions, or either one while its deployment " +
+			"flag (META_CALL_TO_ACTION_ENABLED, META_CONVERSION_EVENT_ENABLED) is not \"true\", is a synchronous " +
+			"400 \"invalid campaign config: metaConfig.callToAction...\" or \"invalid campaign config: " +
+			"metaConfig.conversionEvent...\". " +
+			"Likewise metaConfig.optimizationGoal outside LINK_CLICKS and LANDING_PAGE_VIEWS, on an objective " +
+			"other than traffic, LANDING_PAGE_VIEWS with manual bidding, or the field while " +
+			"META_OPTIMIZATION_GOAL_ENABLED is not \"true\", is a synchronous 400. " +
+			"So is a metaConfig.frequencyCap on an objective other than awareness, with maxImpressions or " +
+			"intervalDays outside 1-90, or while META_FREQUENCY_CAP_ENABLED is not \"true\". " +
+			"So is a metaConfig.adSchedule (days 0-6 and whole-hour startMinute/endMinute in the ad account's " +
+			"time zone) on a daily budget (Meta schedules only lifetime budgets), with invalid days or minutes, " +
+			"or while META_AD_SCHEDULE_ENABLED is not \"true\". " +
+			"So is a metaConfig.leadFormId (an existing Instant Form, #550) on an objective other than leads, " +
+			"that is not a numeric id, with manual bidding, with a callToAction a form cannot carry, or while " +
+			"META_LEAD_FORMS_ENABLED is not \"true\"; with leads it makes an OUTCOME_LEADS lead ad, and the form " +
+			"is read before anything is created (another Page's or an inactive form fails the job with nothing " +
+			"created). " +
+			"REDDIT SHARED-ACCOUNT INPUTS (#549): a redditConfig that sets customAudienceIds or " +
+			"excludedCustomAudienceIds (any non-empty list) on a create that selects reddit-ads requires " +
+			"global_marketing_ops on this project in the same single check, with the same 403 and 503; the custom " +
+			"audiences belong to the LF Reddit ad account every foundation shares. " +
+			"X SHARED-ACCOUNT INPUTS (#564): likewise a twitterConfig that sets customAudienceIds or " +
+			"excludedCustomAudienceIds (any non-empty list) on a create that selects twitter-ads requires " +
+			"global_marketing_ops on this project in the same single check; those audiences belong to the LF X ad " +
+			"account. " +
+			"MICROSOFT SHARED-ACCOUNT INPUTS (#563): likewise a microsoftConfig that sets audienceIds, " +
+			"excludedAudienceIds or sharedNegativeKeywordListIds (any non-empty list) on a create that selects " +
+			"microsoft-ads requires global_marketing_ops on this project in the same single check; those " +
+			"remarketing lists and negative keyword lists belong to the LF Microsoft Advertising account. " +
+			"A remarketing list input that breaks its rules, or is sent while MICROSOFT_AUDIENCES_ENABLED is not " +
+			"\"true\", is a synchronous 400 too (see the config attribute). " +
+			"So is a microsoftConfig.excludedGeoTargets, proximityTargets or languages that breaks its rules or " +
+			"is sent while MICROSOFT_CREATE_TARGETING_ENABLED is not \"true\". " +
+			"So is a microsoftConfig.searchPartners that is not a boolean or is sent while " +
+			"MICROSOFT_SEARCH_NETWORK_ENABLED is not \"true\". " +
+			"So is a microsoftConfig.adSchedules that breaks its rules or is sent while " +
+			"MICROSOFT_AD_SCHEDULE_ENABLED is not \"true\". " +
+			"So is a microsoftConfig.deviceBidAdjustments, ageBidAdjustments or genderBidAdjustments that breaks " +
+			"its rules or is sent while MICROSOFT_BID_ADJUSTMENTS_ENABLED is not \"true\". " +
+			"So is a microsoftConfig.sharedNegativeKeywordListIds that breaks its rules or is sent while " +
+			"MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED is not \"true\". " +
+			"So is a microsoftConfig.structuredSnippets that breaks its rules or is sent while " +
+			"MICROSOFT_STRUCTURED_SNIPPETS_ENABLED is not \"true\". " +
+			"So is a microsoftConfig.logoAssetId or logoBusinessName that breaks its rules or is sent while " +
+			"MICROSOFT_LOGO_EXTENSION_ENABLED is not \"true\". " +
+			"An X custom audience list is also refused synchronously with 400 \"invalid campaign config: " +
+			"twitterConfig.<field>: ...\" when it is not an array of strings, when an id is not 1-32 letters or " +
+			"digits, repeats, or is in both lists, when a list holds more than 60 ids or the X targeting lists " +
+			"together name more than 60 criteria, and when TWITTER_CUSTOM_AUDIENCES_ENABLED is not \"true\" on " +
+			"this deployment. " +
+			"When both platforms' inputs are refused, the 403 names each platform's fields in its own sentence. " +
+			"A Reddit custom audience list is also refused synchronously with 400 \"invalid campaign config: " +
+			"redditConfig.<field>: ...\" when it is not an array of strings, when an id is not 1-64 letters, " +
+			"digits or underscores, repeats, or is in both lists, when a list holds more than 100 ids, and when " +
+			"REDDIT_CUSTOM_AUDIENCES_ENABLED is not \"true\" on this deployment. " +
+			"META SHARED-ACCOUNT INPUTS: likewise a metaConfig.targeting that sets customAudiences or " +
+			"excludedCustomAudiences (any non-empty list) names custom audiences of the Meta ad account every " +
+			"foundation shares, and a metaConfig.leadFormId (any value but null or \"\") names an Instant Form of " +
+			"the connection's Page, the shared LF Page for every project without its own connection; either " +
+			"requires global_marketing_ops on this project (403 naming them, 503 when the check cannot be made); " +
+			"age, gender and advantageAudience are not gated. " +
+			"An invalid metaConfig.targeting, or any targeting block while META_AUDIENCE_TARGETING_ENABLED is not " +
+			"\"true\" on the deployment, is a synchronous 400 \"invalid campaign config: " +
+			"metaConfig.targeting...\"; a block that sets only targeting.locales, targeting.devicePlatforms, " +
+			"targeting.interests, targeting.regions, targeting.cities, targeting.behaviors, " +
+			"targeting.workPositions or targeting.userOs needs META_LOCALE_TARGETING_ENABLED, " +
+			"META_DEVICE_TARGETING_ENABLED, META_INTEREST_TARGETING_ENABLED, META_REGION_TARGETING_ENABLED, " +
+			"META_BEHAVIOR_TARGETING_ENABLED or META_OS_TARGETING_ENABLED instead, and any of those lists while " +
+			"its flag is not \"true\", or devicePlatforms [desktop] with the audienceNetwork placement, a userOs " +
+			"value outside Meta's documented user_os formats, a version of one OS family with the other family, " +
+			"userOs with devicePlatforms [desktop], or an OS version on the awareness objective, is a synchronous " +
+			"400 too. " +
+			"Every targeting.regions and targeting.cities key is looked up before anything is created; one whose " +
+			"country is sanctioned, regulated, already a geoTargets country, or in the EU without the DSA " +
+			"disclosures fails the job with nothing created. " +
+			"An invalid per-platform `bidding` object (see the config attribute) is also refused synchronously, " +
+			"with 400 \"invalid campaign config: <configKey>.bidding: ...\". " +
+			"Bidding defaults changed in LFXV2-2665: a Microsoft campaign created without bidding is MaxClicks " +
+			"(it was EnhancedCpc) and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are " +
+			"immediately eligible for the bid lever, and eligibility follows the platform's current strategy. " +
+			"Every other dispatch failure, including an imageAssetId that does not exist for this brief, still " +
+			"arrives later, as the job's own result. " +
+			"That includes a Search googleAdsConfig.sharedNegativeKeywordLists entry that is not an ENABLED " +
+			"NEGATIVE_KEYWORDS shared set of the connected Google Ads account (#548). " +
+			"One read-only GAQL query reads every named list's shared_set.type and status before anything is " +
+			"created. " +
+			"A NEGATIVE_PLACEMENTS, BRANDS or other set, a REMOVED set or a set not in the account is refused in " +
+			"the job's Google Ads error, which names the set id and, for a set of another known type, that type. " +
+			"A read that fails stops the create too, with nothing created.")
 		Payload(func() {
 			bearerToken()
 			// Slug-only on CREATE: project_id is stamped into the campaign name and is the
