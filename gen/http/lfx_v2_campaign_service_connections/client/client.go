@@ -218,6 +218,14 @@ type Client struct {
 	// list-meta-custom-audiences endpoint.
 	ListMetaCustomAudiencesDoer goahttp.Doer
 
+	// SearchMetaTargetingOptions Doer is the HTTP client used to make requests to
+	// the search-meta-targeting-options endpoint.
+	SearchMetaTargetingOptionsDoer goahttp.Doer
+
+	// ListMetaLeadForms Doer is the HTTP client used to make requests to the
+	// list-meta-lead-forms endpoint.
+	ListMetaLeadFormsDoer goahttp.Doer
+
 	// ListRedditAdsCustomAudiences Doer is the HTTP client used to make requests
 	// to the list-reddit-ads-custom-audiences endpoint.
 	ListRedditAdsCustomAudiencesDoer goahttp.Doer
@@ -421,6 +429,8 @@ func NewClient(
 		ListGoogleAdsConversionActionsDoer: doer,
 		ListGoogleAdsAudiencesDoer:         doer,
 		ListMetaCustomAudiencesDoer:        doer,
+		SearchMetaTargetingOptionsDoer:     doer,
+		ListMetaLeadFormsDoer:              doer,
 		ListRedditAdsCustomAudiencesDoer:   doer,
 		ListRedditAdsPixelsDoer:            doer,
 		ListTwitterAdsCustomAudiencesDoer:  doer,
@@ -1664,6 +1674,55 @@ func (c *Client) ListMetaCustomAudiences() goa.Endpoint {
 		resp, err := c.ListMetaCustomAudiencesDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-meta-custom-audiences", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// SearchMetaTargetingOptions returns an endpoint that makes HTTP requests to
+// the lfx-v2-campaign-service-connections service
+// search-meta-targeting-options server.
+func (c *Client) SearchMetaTargetingOptions() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeSearchMetaTargetingOptionsRequest(c.encoder)
+		decodeResponse = DecodeSearchMetaTargetingOptionsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildSearchMetaTargetingOptionsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.SearchMetaTargetingOptionsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "search-meta-targeting-options", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ListMetaLeadForms returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service list-meta-lead-forms server.
+func (c *Client) ListMetaLeadForms() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeListMetaLeadFormsRequest(c.encoder)
+		decodeResponse = DecodeListMetaLeadFormsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildListMetaLeadFormsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ListMetaLeadFormsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-meta-lead-forms", err)
 		}
 		return decodeResponse(resp)
 	}

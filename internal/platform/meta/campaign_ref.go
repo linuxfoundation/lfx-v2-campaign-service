@@ -17,7 +17,8 @@ const maxCampaignIDLen = 32
 // canonicalCampaignIDRe is numericIDRE without the leading zero numericIDRE admits. A Meta id is
 // minted by Meta and never carries one, and a caller comparing it as a STRING against a stored
 // platform id would read "0123" as a different row from "123" — so a non-canonical spelling can
-// only come back as a confident "not yours", never as a match.
+// only come back as a confident "not yours", never as a match. normalizeNumericIDs applies the
+// same rule to the targeting id lists.
 var canonicalCampaignIDRe = regexp.MustCompile(`^[1-9][0-9]*$`)
 
 // ErrInvalidCampaignID marks a campaign id that is not a canonical Meta object id, so a caller

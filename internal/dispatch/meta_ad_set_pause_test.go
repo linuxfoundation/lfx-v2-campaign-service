@@ -249,11 +249,11 @@ func TestMeta_ToggleMetaAdSetStatus_BeforeWriteFailureSendsNothing(t *testing.T)
 	}
 }
 
-func TestMetaClient_ActivateCampaignHoldingAdSet(t *testing.T) {
+func TestMetaClient_ActivateCampaignHolding_HoldsTheAdSet(t *testing.T) {
 	srv, seen := cascadeServer(t)
 	c := meta.NewClient(meta.Credentials{AccessToken: "tok"}, meta.AccountConfig{AccountID: "act_777"}, meta.WithBaseURL(srv.URL))
-	if err := c.ActivateCampaignHoldingAdSet(context.Background(), "23847290", "999"); err != nil {
-		t.Fatalf("ActivateCampaignHoldingAdSet: %v", err)
+	if err := c.ActivateCampaignHolding(context.Background(), "23847290", "999", true, nil); err != nil {
+		t.Fatalf("ActivateCampaignHolding: %v", err)
 	}
 	reqs := seen()
 	posts := postsByPath(reqs)

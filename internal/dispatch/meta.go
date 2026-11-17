@@ -13,6 +13,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -80,9 +81,31 @@ type metaConfig struct {
 	ConversionEvent string `json:"conversionEvent"`
 	// Targeting is the optional audience targeting (#550): age, gender, custom audiences to include
 	// and exclude, and the Advantage+ audience flag. Refused while META_AUDIENCE_TARGETING_ENABLED is
-	// not "true" (metaTargetingEnabled); validated by meta.NormalizeAudienceTargeting. Null or absent
-	// targets as before.
+	// not "true" (metaTargetingEnabled); the later fields (locales, devicePlatforms, interests, regions,
+	// cities, behaviors, workPositions, userOs) have their own flags
+	// (checkMetaTargeting). Validated by meta.NormalizeAudienceTargeting. Null or absent targets as
+	// before.
 	Targeting *meta.AudienceTargeting `json:"targeting,omitempty"`
+	// OptimizationGoal is the traffic objective's ad set optimization goal (#550, gap 11),
+	// meta.NormalizeOptimizationGoal's allow-list (LINK_CLICKS, LANDING_PAGE_VIEWS); empty keeps the
+	// objective's own goal. Refused on any other objective, with manual bidding (metaBidPlan), and
+	// while META_OPTIMIZATION_GOAL_ENABLED is not "true".
+	OptimizationGoal string `json:"optimizationGoal"`
+	// FrequencyCap is the awareness ad set's impressions-per-person cap (#550, gap 18),
+	// meta.NormalizeFrequencyCap's rules. Refused on any other objective and while
+	// META_FREQUENCY_CAP_ENABLED is not "true". Null or absent sends nothing.
+	FrequencyCap *meta.FrequencyCap `json:"frequencyCap,omitempty"`
+	// LeadFormID is an existing Instant Form of the connection's Page (#550, gap 8). With the leads
+	// objective it makes the campaign a real lead ad (OUTCOME_LEADS, the form on every creative);
+	// empty keeps leads' interim traffic mapping. Refused on any other objective, with manual
+	// bidding (metaBidPlan), with a button a form cannot carry, and while META_LEAD_FORMS_ENABLED is
+	// not "true". meta.NormalizeLeadForm checks the id shape; the client reads the form before the
+	// first write.
+	LeadFormID string `json:"leadFormId"`
+	// AdSchedule runs the ad set only on some days and hours in the ad account's time zone (#550,
+	// gap 16), meta.NormalizeAdSchedule's rules: a lifetime budget only. Refused while
+	// META_AD_SCHEDULE_ENABLED is not "true". Null or absent sends nothing.
+	AdSchedule *meta.AdSchedule `json:"adSchedule,omitempty"`
 }
 
 // metaCreativeOptionDisabled refuses a creative option this deployment has not opted in to. It
@@ -93,7 +116,8 @@ func metaCreativeOptionDisabled(field, env string) error {
 		domain.ErrCreateConfigInvalid, field, env, field, env))
 }
 
-// checkMetaCreativeOptions refuses a callToAction or conversionEvent the create cannot send (#550):
+// checkMetaCreativeOptions refuses a callToAction, conversionEvent, optimizationGoal or leadFormId the create
+// cannot send (#550):
 // either one while its deployment flag is off — read per call, and only the exact value "true"
 // enables it — and otherwise a value the client's allow-lists refuse. A blank value is absent.
 func checkMetaCreativeOptions(cfg metaConfig) error {
@@ -113,7 +137,54 @@ func checkMetaCreativeOptions(cfg metaConfig) error {
 			return err
 		}
 	}
+	if strings.TrimSpace(cfg.OptimizationGoal) != "" {
+		if os.Getenv(constants.EnvMetaOptimizationGoalEnabled) != "true" {
+			return metaCreativeOptionDisabled("optimizationGoal", constants.EnvMetaOptimizationGoalEnabled)
+		}
+		if _, err := meta.NormalizeOptimizationGoal(cfg.Objective, cfg.OptimizationGoal); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(cfg.LeadFormID) != "" {
+		if os.Getenv(constants.EnvMetaLeadFormsEnabled) != "true" {
+			return metaCreativeOptionDisabled("leadFormId", constants.EnvMetaLeadFormsEnabled)
+		}
+		if _, err := meta.NormalizeLeadForm(cfg.Objective, cfg.LeadFormID); err != nil {
+			return err
+		}
+		if err := meta.CheckLeadFormCallToAction(cfg.CallToAction); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// checkMetaFrequencyCap refuses a metaConfig.frequencyCap while META_FREQUENCY_CAP_ENABLED is not
+// exactly "true", and otherwise one meta.NormalizeFrequencyCap refuses. Nil is no cap. It is not
+// part of checkMetaCreativeOptions: PreflightCreate's best-effort decode can leave a partly filled
+// cap behind a type error, so PreflightCreate passes the cap decodeMetaFrequencyCap read instead.
+func checkMetaFrequencyCap(objective string, f *meta.FrequencyCap) error {
+	if f == nil {
+		return nil
+	}
+	if os.Getenv(constants.EnvMetaFrequencyCapEnabled) != "true" {
+		return metaCreativeOptionDisabled("frequencyCap", constants.EnvMetaFrequencyCapEnabled)
+	}
+	return meta.NormalizeFrequencyCap(objective, f)
+}
+
+// checkMetaAdSchedule refuses a metaConfig.adSchedule while META_AD_SCHEDULE_ENABLED is not exactly
+// "true", and otherwise one meta.NormalizeAdSchedule refuses (a daily budget included). Nil is no
+// schedule. Like checkMetaFrequencyCap, PreflightCreate passes the schedule decodeMetaAdSchedule read.
+func checkMetaAdSchedule(lifetimeBudget bool, s *meta.AdSchedule) error {
+	if s == nil {
+		return nil
+	}
+	if os.Getenv(constants.EnvMetaAdScheduleEnabled) != "true" {
+		return metaCreativeOptionDisabled("adSchedule", constants.EnvMetaAdScheduleEnabled)
+	}
+	_, err := meta.NormalizeAdSchedule(lifetimeBudget, s)
+	return err
 }
 
 // metaTargetingEnabled reports whether this deployment opted in to metaConfig.targeting (#550).
@@ -122,20 +193,79 @@ func metaTargetingEnabled() bool {
 	return os.Getenv(constants.EnvMetaAudienceTargetingEnabled) == "true"
 }
 
-// checkMetaTargeting refuses a metaConfig.targeting the create cannot send: any targeting block
-// while the deployment flag is off, and otherwise one that meta.NormalizeAudienceTargeting refuses.
+// checkMetaTargeting refuses a metaConfig.targeting the create cannot send: a field whose
+// deployment flag is off, and otherwise a block meta.NormalizeAudienceTargeting refuses. Each later
+// field (locales, devicePlatforms, interests, regions and cities, behaviors and workPositions, userOs) has its own flag; META_AUDIENCE_TARGETING_ENABLED gates the six audience fields
+// and any block that sets none of the later ones, an empty block included, as it did before. A
+// desktop-only device list is also checked against the placements (meta.CheckDevicePlacements), and
+// a userOs list against the devices and the objective (meta.CheckUserOS).
 // Every refusal is a domain.PreflightRefusal, so PreflightCreate answers it with a 400 before any
 // job exists and Dispatch fails the job before any Meta request.
-func checkMetaTargeting(t *meta.AudienceTargeting) error {
+func checkMetaTargeting(t *meta.AudienceTargeting, placements meta.Placement, objective string) error {
 	if t == nil {
 		return nil
 	}
-	if !metaTargetingEnabled() {
+	ownFlag := false
+	if len(t.Locales) > 0 {
+		if os.Getenv(constants.EnvMetaLocaleTargetingEnabled) != "true" {
+			return metaCreativeOptionDisabled("targeting.locales", constants.EnvMetaLocaleTargetingEnabled)
+		}
+		ownFlag = true
+	}
+	if len(t.DevicePlatforms) > 0 {
+		if os.Getenv(constants.EnvMetaDeviceTargetingEnabled) != "true" {
+			return metaCreativeOptionDisabled("targeting.devicePlatforms", constants.EnvMetaDeviceTargetingEnabled)
+		}
+		ownFlag = true
+	}
+	if len(t.Interests) > 0 {
+		if os.Getenv(constants.EnvMetaInterestTargetingEnabled) != "true" {
+			return metaCreativeOptionDisabled("targeting.interests", constants.EnvMetaInterestTargetingEnabled)
+		}
+		ownFlag = true
+	}
+	if len(t.UserOS) > 0 {
+		if os.Getenv(constants.EnvMetaOSTargetingEnabled) != "true" {
+			return metaCreativeOptionDisabled("targeting.userOs", constants.EnvMetaOSTargetingEnabled)
+		}
+		ownFlag = true
+	}
+	for _, detailed := range []struct {
+		field string
+		n     int
+	}{{"targeting.behaviors", len(t.Behaviors)}, {"targeting.workPositions", len(t.WorkPositions)}} {
+		if detailed.n == 0 {
+			continue
+		}
+		if os.Getenv(constants.EnvMetaBehaviorTargetingEnabled) != "true" {
+			return metaCreativeOptionDisabled(detailed.field, constants.EnvMetaBehaviorTargetingEnabled)
+		}
+		ownFlag = true
+	}
+	for _, geo := range []struct {
+		field string
+		n     int
+	}{{"targeting.regions", len(t.Regions)}, {"targeting.cities", len(t.Cities)}} {
+		if geo.n == 0 {
+			continue
+		}
+		if os.Getenv(constants.EnvMetaRegionTargetingEnabled) != "true" {
+			return metaCreativeOptionDisabled(geo.field, constants.EnvMetaRegionTargetingEnabled)
+		}
+		ownFlag = true
+	}
+	if (!ownFlag || t.HasAudienceFields()) && !metaTargetingEnabled() {
 		return domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig.targeting is disabled on this deployment (%s is not \"true\"); omit targeting, or ask an operator to set %s to \"true\"",
 			domain.ErrCreateConfigInvalid, constants.EnvMetaAudienceTargetingEnabled, constants.EnvMetaAudienceTargetingEnabled))
 	}
-	_, err := meta.NormalizeAudienceTargeting(t)
-	return err
+	normalized, err := meta.NormalizeAudienceTargeting(t)
+	if err != nil {
+		return err
+	}
+	if err := meta.CheckDevicePlacements(normalized, placements); err != nil {
+		return err
+	}
+	return meta.CheckUserOS(normalized, objective)
 }
 
 // creativeAssetReader is the ONE creative-asset operation this dispatcher needs: read a
@@ -177,7 +307,11 @@ type MetaDispatcher struct {
 	// stores per-call state on the receiver. It is therefore immutable once built, which is a
 	// STRONGER property than the mutex-guarded safety Reddit and Microsoft rely on.
 	clients *clientCache
-	opts    []meta.Option
+	// targetingSearch caches Targeting Search answers (#550, meta_targeting_search.go), built on
+	// first use by searchCache.
+	targetingSearch     *metaTargetingCache
+	targetingSearchOnce sync.Once
+	opts                []meta.Option
 	// settingsNow is the settings readback's ReadAt clock; nil means the wall clock. A field only so
 	// tests can pin it.
 	settingsNow func() time.Time
@@ -754,7 +888,15 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	}
 	// The audience targeting gate and its shape (#550), before any Meta request. The client
 	// normalizes it again and reads each custom audience before the first write.
-	if err := checkMetaTargeting(cfg.Targeting); err != nil {
+	if err := checkMetaTargeting(cfg.Targeting, cfg.Placements, cfg.Objective); err != nil {
+		return nil, notCreated(err)
+	}
+	// The awareness frequency cap gate and its rules (#550), before any Meta request.
+	if err := checkMetaFrequencyCap(cfg.Objective, cfg.FrequencyCap); err != nil {
+		return nil, notCreated(err)
+	}
+	// The ad schedule gate and its rules (#550), before any Meta request.
+	if err := checkMetaAdSchedule(cfg.LifetimeBudget, cfg.AdSchedule); err != nil {
 		return nil, notCreated(err)
 	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
@@ -844,6 +986,14 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		// (#550). Gated above.
 		CallToAction:    cfg.CallToAction,
 		ConversionEvent: cfg.ConversionEvent,
+		// The traffic optimization goal as the caller sent it; the client normalizes it (#550). Gated above.
+		OptimizationGoal: cfg.OptimizationGoal,
+		// The awareness frequency cap; the client checks it again (#550). Gated above.
+		FrequencyCap: cfg.FrequencyCap,
+		// The Instant Form as the caller sent it; the client checks it again and reads it (#550). Gated above.
+		LeadFormID: cfg.LeadFormID,
+		// The ad schedule; the client checks it again (#550). Gated above.
+		AdSchedule: cfg.AdSchedule,
 		// The audience targeting as the caller sent it; the client normalizes it (#550).
 		Targeting: cfg.Targeting,
 
@@ -942,13 +1092,20 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	// on record in the row (LFXV2-2665, product decision 2026-10-13), survives a campaign
 	// pause/resume: ACTIVATE then flips the ads and the campaign but leaves the ad set PAUSED.
 	// Only resuming the ad set through that lever clears the record. A PAUSE cascades as always.
+	// Deliberate per-ad pauses made through toggle-meta-ad-status (#550, gap 14) survive a campaign
+	// resume the same way: ACTIVATE leaves each held ad PAUSED, after reading Meta to prove it is.
 	var uerr error
-	if metaStatus == meta.StatusActive && model.MetaAdSetHeldPaused(campaign.Result, adSetID) {
+	holdAdSet := metaStatus == meta.StatusActive && model.MetaAdSetHeldPaused(campaign.Result, adSetID)
+	var heldAds []string
+	if metaStatus == meta.StatusActive {
+		heldAds = model.MetaUserPausedAdIDs(campaign.Result)
+	}
+	if holdAdSet || len(heldAds) > 0 {
 		// The record is the row's, not Meta's: an UNCONFIRMED pause that never applied, or an ad
-		// set re-activated in Ads Manager, leaves it over an ACTIVE ad set, and holding activation
-		// would then switch on the ads and the campaign over a serving ad set. So Meta is READ
-		// first, before anything is written (fail closed).
-		// The account the held ad set must be reported under: the connection's selection, or —
+		// set or ad re-activated in Ads Manager, leaves it over an ACTIVE object, and holding
+		// activation would then switch on the rest over a serving one. So Meta is READ first,
+		// before anything is written (fail closed).
+		// The account the held objects must be reported under: the connection's selection, or —
 		// when that selection was cleared after the pause — the account the campaign was CREATED
 		// under, exactly as the toggle itself supports a cleared selection (verifyMetaAccountMatch
 		// above already proved the two agree whenever both are present).
@@ -956,12 +1113,21 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 		if heldAccount == "" {
 			heldAccount = metaCreationAccountID(campaign)
 		}
-		if herr := verifyMetaHeldAdSetPaused(ctx, client, campaign, adSetID, heldAccount); herr != nil {
+		if holdAdSet {
+			if herr := verifyMetaHeldAdSetPaused(ctx, client, campaign, adSetID, heldAccount); herr != nil {
+				return herr
+			}
+			slog.InfoContext(ctx, "meta campaign activate leaves its deliberately paused ad set paused",
+				"platform_campaign_id", campaign.PlatformCampaignID, "ad_set_id", adSetID)
+		}
+		if herr := verifyMetaHeldAdsPaused(ctx, client, campaign, adSetID, heldAccount, heldAds); herr != nil {
 			return herr
 		}
-		slog.InfoContext(ctx, "meta campaign activate leaves its deliberately paused ad set paused",
-			"platform_campaign_id", campaign.PlatformCampaignID, "ad_set_id", adSetID)
-		uerr = client.ActivateCampaignHoldingAdSet(ctx, campaign.PlatformCampaignID, adSetID)
+		if len(heldAds) > 0 {
+			slog.InfoContext(ctx, "meta campaign activate leaves its deliberately paused ads paused",
+				"platform_campaign_id", campaign.PlatformCampaignID, "ad_set_id", adSetID, "held_ads", len(heldAds))
+		}
+		uerr = client.ActivateCampaignHolding(ctx, campaign.PlatformCampaignID, adSetID, holdAdSet, heldAds)
 	} else {
 		uerr = client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adSetID, metaStatus)
 	}
@@ -1331,7 +1497,7 @@ func metaRunStatus(status string) (string, error) {
 // code passes through unchanged.
 //
 // Kept verbatim: Objective (refused by the client unless it names a known objective),
-// CallToAction and ConversionEvent (#550: refused unless allow-listed, so only their casing can
+// CallToAction, ConversionEvent and OptimizationGoal (#550: refused unless allow-listed, so only their casing can
 // differ from what was sent),
 // InstagramUserID (refused unless numeric), Variants[].ImageAssetID (a stored asset key),
 // numbers, flags and dates. ImageBytes and
@@ -1721,22 +1887,60 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 	if err != nil {
 		return err
 	}
-	if err := checkMetaTargeting(t); err != nil {
+	if err := checkMetaTargeting(t, cfg.Placements, cfg.Objective); err != nil {
+		return err
+	}
+	// The frequency cap (#550): decoded on its own for the same reason, then checked against the
+	// best-effort objective.
+	fc, err := decodeMetaFrequencyCap(config)
+	if err != nil {
+		return err
+	}
+	if err := checkMetaFrequencyCap(cfg.Objective, fc); err != nil {
+		return err
+	}
+	// The ad schedule (#550): decoded on its own for the same reason, then checked against the
+	// best-effort lifetimeBudget.
+	sched, err := decodeMetaAdSchedule(config)
+	if err != nil {
+		return err
+	}
+	if err := checkMetaAdSchedule(cfg.LifetimeBudget, sched); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
 }
 
 // metaStringConfigKeys are the string fields checkMetaStringFieldShape type-checks: the publish identity,
-// and since #550 the call-to-action and conversion event, which would otherwise read as absent.
-var metaStringConfigKeys = []string{"instagramUserId", "dsaBeneficiary", "dsaPayor", "callToAction", "conversionEvent"}
+// and since #550 the call-to-action, conversion event, optimization goal and lead form, which would otherwise
+// read as absent.
+var metaStringConfigKeys = []string{"instagramUserId", "callToAction", "conversionEvent", "dsaBeneficiary", "dsaPayor", "optimizationGoal", "leadFormId"}
 
 // decodeMetaTargeting decodes metaConfig.targeting on its own, so a wrong-typed block (or a
 // wrong-typed field in it) is a synchronous refusal rather than an absent block — PreflightCreate's
-// best-effort decode skips a field it cannot decode. A config that is not an object envelope, or
-// has no metaConfig object, is left to Dispatch. The key is matched case-insensitively, as
-// encoding/json matches it; null is absent.
+// best-effort decode skips a field it cannot decode. See decodeMetaConfigObject.
 func decodeMetaTargeting(config json.RawMessage) (*meta.AudienceTargeting, error) {
+	return decodeMetaConfigObject[meta.AudienceTargeting](config, "targeting",
+		"ageMin, ageMax (integers), genders, customAudiences, excludedCustomAudiences (string lists), advantageAudience (boolean), locales (an integer list), devicePlatforms, interests, regions, cities, behaviors, workPositions and userOs (string lists)")
+}
+
+// decodeMetaFrequencyCap decodes metaConfig.frequencyCap on its own, for the same reason as
+// decodeMetaTargeting.
+func decodeMetaFrequencyCap(config json.RawMessage) (*meta.FrequencyCap, error) {
+	return decodeMetaConfigObject[meta.FrequencyCap](config, "frequencyCap", "maxImpressions and intervalDays (integers)")
+}
+
+// decodeMetaAdSchedule decodes metaConfig.adSchedule on its own, for the same reason as
+// decodeMetaTargeting.
+func decodeMetaAdSchedule(config json.RawMessage) (*meta.AdSchedule, error) {
+	return decodeMetaConfigObject[meta.AdSchedule](config, "adSchedule", "days (an integer list), startMinute and endMinute (integers)")
+}
+
+// decodeMetaConfigObject decodes the object at metaConfig.<key> on its own, so a wrong-typed object
+// (or a wrong-typed field in it) is a synchronous refusal naming shape rather than an absent object.
+// A config that is not an object envelope, or has no metaConfig object, is left to Dispatch. The key
+// is matched case-insensitively, as encoding/json matches it; null is absent.
+func decodeMetaConfigObject[T any](config json.RawMessage, key, shape string) (*T, error) {
 	if len(config) == 0 {
 		return nil, nil
 	}
@@ -1753,27 +1957,27 @@ func decodeMetaTargeting(config json.RawMessage) (*meta.AudienceTargeting, error
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	var t *meta.AudienceTargeting
+	var out *T
 	var seen []string
 	for _, k := range keys {
-		if !strings.EqualFold(k, "targeting") {
+		if !strings.EqualFold(k, key) {
 			continue
 		}
 		// Two case-variant keys would be read by Dispatch's encoding/json in DOCUMENT order, which
-		// this map cannot see, so the pre-check could judge a different block than the job sends.
+		// this map cannot see, so the pre-check could judge a different object than the job sends.
 		if seen = append(seen, quoteKey(k)); len(seen) > 1 {
-			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig: more than one targeting key (%s); send exactly one", domain.ErrCreateConfigInvalid, strings.Join(seen, ", ")))
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig: more than one %s key (%s); send exactly one", domain.ErrCreateConfigInvalid, key, strings.Join(seen, ", ")))
 		}
 		if isJSONNull(platformCfg[k]) {
 			continue
 		}
-		var got meta.AudienceTargeting
+		var got T
 		if err := json.Unmarshal(platformCfg[k], &got); err != nil {
-			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig: %s must be an object of ageMin, ageMax (integers), genders, customAudiences, excludedCustomAudiences (string lists) and advantageAudience (boolean)", domain.ErrCreateConfigInvalid, quoteKey(k)))
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig: %s must be an object of %s", domain.ErrCreateConfigInvalid, quoteKey(k), shape))
 		}
-		t = &got
+		out = &got
 	}
-	return t, nil
+	return out, nil
 }
 
 // checkMetaStringFieldShape refuses a metaConfig whose instagramUserId, dsaBeneficiary, dsaPayor,
@@ -1842,6 +2046,14 @@ func metaBidPlan(cfg metaConfig) (bidPlan, error) {
 	}
 	if !meta.ManualBidSupported(cfg.Objective) {
 		return bidPlan{}, biddingInvalid(key, "manual bidding is a cost-per-link-click bid cap, which needs the traffic or leads objective; use automatic bidding for this objective")
+	}
+	// An instant-form lead ad set optimizes for LEAD_GENERATION, not link clicks (#550, gap 8).
+	if strings.TrimSpace(cfg.LeadFormID) != "" {
+		return bidPlan{}, biddingInvalid(key, "manual bidding is a cost-per-link-click bid cap, which an Instant Form lead ad (leadFormId) cannot carry; use automatic bidding")
+	}
+	// The cap is per LINK CLICK, so the ad set must optimize for link clicks too (#550, gap 11).
+	if strings.EqualFold(strings.TrimSpace(cfg.OptimizationGoal), meta.OptimizationLandingPageViews) {
+		return bidPlan{}, biddingInvalid(key, "manual bidding is a cost-per-link-click bid cap, which needs the LINK_CLICKS optimization goal; use automatic bidding with optimizationGoal %s", meta.OptimizationLandingPageViews)
 	}
 	if _, ok := exactScaled(plan.amount, 100); !ok {
 		return bidPlan{}, biddingInvalid(key, "bidAmount %s has more than two decimal places, which is not a whole minor unit of any ad account currency; it is refused rather than rounded", formatBid(plan.amount))

@@ -388,6 +388,21 @@ const (
 	// LEAD, …) instead of the fixed PURCHASE. Same rules as EnvMetaCallToActionEnabled.
 	EnvMetaConversionEventEnabled = "META_CONVERSION_EVENT_ENABLED"
 
+	// EnvMetaOptimizationGoalEnabled opts a deployment IN to metaConfig.optimizationGoal (#550,
+	// gap 11): LANDING_PAGE_VIEWS instead of LINK_CLICKS as the traffic objective's ad set
+	// optimization goal. Same rules as EnvMetaCallToActionEnabled: only the exact value "true"
+	// enables it, a create carrying the field while it is off is a 400 before any job exists, and
+	// it is off by default until the ad set payload is verified against a live ad account. It names
+	// no account resource, so it needs no global_marketing_ops.
+	EnvMetaOptimizationGoalEnabled = "META_OPTIMIZATION_GOAL_ENABLED"
+
+	// EnvMetaFrequencyCapEnabled opts a deployment IN to metaConfig.frequencyCap (#550, gap 18):
+	// an impressions-per-person cap on the awareness objective's ad set (frequency_control_specs).
+	// Same rules as EnvMetaCallToActionEnabled: only the exact value "true" enables it, a create
+	// carrying the field while it is off is a 400 before any job exists, and it is off by default
+	// until the payload is verified against a live ad account. It names no account resource.
+	EnvMetaFrequencyCapEnabled = "META_FREQUENCY_CAP_ENABLED"
+
 	// EnvMetaAudienceTargetingEnabled opts a deployment IN to metaConfig.targeting (#550): age,
 	// gender, custom audiences to include and exclude, and the Advantage+ audience flag on the ad
 	// set. Only the exact value "true" enables it; unset or any other value fails closed, and a
@@ -401,6 +416,85 @@ const (
 	// audience lists (service.MetaMarketingOpsInputs); age, gender and advantageAudience are not
 	// gated.
 	EnvMetaAudienceTargetingEnabled = "META_AUDIENCE_TARGETING_ENABLED"
+
+	// EnvMetaLocaleTargetingEnabled opts a deployment IN to metaConfig.targeting.locales (#550,
+	// gap 12): Meta locale keys sent as the ad set's targeting `locales`. Only the exact value
+	// "true" enables it; unset or any other value fails closed, and a create carrying the list is
+	// refused with a 400 before any job exists (and again in the job, before any Meta request). It
+	// is independent of EnvMetaAudienceTargetingEnabled: a targeting block that sets only locales
+	// needs only this flag. Off by default until the payload is verified against a live ad account.
+	// A locale names no account resource, so it needs no global_marketing_ops.
+	EnvMetaLocaleTargetingEnabled = "META_LOCALE_TARGETING_ENABLED"
+
+	// EnvMetaDeviceTargetingEnabled opts a deployment IN to metaConfig.targeting.devicePlatforms
+	// (#550, gap 15): mobile or desktop only, sent as the ad set's targeting `device_platforms`.
+	// Same rules as EnvMetaLocaleTargetingEnabled: only the exact value "true" enables it, a create
+	// carrying the list while it is off is a 400 before any job exists, a block that sets only
+	// device platforms (or locales) needs no EnvMetaAudienceTargetingEnabled, and it names no
+	// account resource.
+	EnvMetaDeviceTargetingEnabled = "META_DEVICE_TARGETING_ENABLED"
+
+	// EnvMetaInterestTargetingEnabled opts a deployment IN to metaConfig.targeting.interests (#550,
+	// gap 7): detailed targeting interest ids sent as the ad set's flexible_spec. Same rules as
+	// EnvMetaLocaleTargetingEnabled. Each id is validated with Meta's interest validation read
+	// before anything is created. An interest is Meta's own taxonomy, not an account resource, so it
+	// needs no global_marketing_ops.
+	EnvMetaInterestTargetingEnabled = "META_INTEREST_TARGETING_ENABLED"
+
+	// EnvMetaBehaviorTargetingEnabled opts a deployment IN to metaConfig.targeting.behaviors and
+	// metaConfig.targeting.workPositions (#550, gap 7): detailed targeting ids sent in the ad set's
+	// flexible_spec beside the interests. Same rules as EnvMetaLocaleTargetingEnabled. Each id is
+	// validated with Meta's ad account targeting validation read before anything is created. Both
+	// are Meta's own taxonomy, not account resources, so they need no global_marketing_ops.
+	EnvMetaBehaviorTargetingEnabled = "META_BEHAVIOR_TARGETING_ENABLED"
+
+	// EnvMetaOSTargetingEnabled opts a deployment IN to metaConfig.targeting.userOs (#550, gap 15
+	// remainder): Meta user_os values (iOS, Android, optionally with a version) sent as the ad set's
+	// user_os, checked against Meta's documented formats and combination rule before any request.
+	// Same rules as EnvMetaLocaleTargetingEnabled. It names no account resource.
+	EnvMetaOSTargetingEnabled = "META_OS_TARGETING_ENABLED"
+
+	// EnvMetaTargetingSearchEnabled opts a deployment IN to search-meta-targeting-options (#550):
+	// the picker read over Meta's Targeting Search (interests, behaviors, work positions). Only the
+	// exact value "true" enables it; anything else answers the endpoint 400 before any credential
+	// is resolved. Off by default until the answer shapes are checked against a live token.
+	EnvMetaTargetingSearchEnabled = "META_TARGETING_SEARCH_ENABLED"
+
+	// EnvMetaTargetingReadbackEnabled opts a deployment IN to the Meta settings readback of the ad
+	// set's regions, cities and ad schedule (#550): get-campaign-settings then asks the ad set for
+	// targeting and adset_schedule and reports regions, cities and ad_schedule, compared with the
+	// row's config snapshot. Only the exact value "true" enables it; while off the readback is
+	// unchanged. Off by default until the answer shape is checked against a live ad set.
+	EnvMetaTargetingReadbackEnabled = "META_TARGETING_READBACK_ENABLED"
+
+	// EnvMetaLeadFormsEnabled opts a deployment IN to metaConfig.leadFormId (#550, gap 8): an
+	// existing Instant Form that turns the leads objective into an OUTCOME_LEADS lead ad. Only the
+	// exact value "true" enables it; anything else refuses the field with a 400 before any job
+	// exists. Default off until a live probe confirms the payload. The form belongs to the
+	// connection's Page, which for a project without its own connection is the shared LF Page holding
+	// every foundation's forms, so the field needs global_marketing_ops (service.MetaMarketingOpsInputs),
+	// as does list-meta-lead-forms, the form picker read this flag also gates.
+	EnvMetaLeadFormsEnabled = "META_LEAD_FORMS_ENABLED"
+
+	// EnvMetaRegionTargetingEnabled opts a deployment IN to metaConfig.targeting.regions and
+	// metaConfig.targeting.cities (#550, gap 13): Meta geo-location keys added to the ad set's
+	// country targeting, each looked up (and its parent country checked) before anything is
+	// created. Same rules as EnvMetaLocaleTargetingEnabled. A location is Meta's own taxonomy, not
+	// an account resource, so it needs no global_marketing_ops.
+	EnvMetaRegionTargetingEnabled = "META_REGION_TARGETING_ENABLED"
+
+	// EnvMetaAdScheduleEnabled opts a deployment IN to metaConfig.adSchedule (#550, gap 16): days
+	// and hours, in the ad account's time zone, sent as the ad set's adset_schedule with pacing_type
+	// day_parting; lifetime budgets only. Only the exact value "true" enables it; anything else
+	// refuses the field with a 400 before any job exists. It names no account resource.
+	EnvMetaAdScheduleEnabled = "META_AD_SCHEDULE_ENABLED"
+
+	// EnvMetaAdPauseEnabled opts a deployment IN to toggle-meta-ad-status (#550, gap 14): the
+	// per-ad pause/resume lever. Only the exact value "true" enables it; anything else answers the
+	// endpoint 400 before the campaign is even read. The campaign resume honours a per-ad
+	// deliberate-pause record whatever this flag says, so turning it off never re-activates an ad
+	// an operator paused.
+	EnvMetaAdPauseEnabled = "META_AD_PAUSE_ENABLED"
 
 	// EnvGoogleAdsPMaxAudienceSignalEnabled opts a deployment IN to
 	// googleAdsConfig.performanceMaxAudienceSignal (#461): one existing Google Ads Audience

@@ -84,12 +84,75 @@ ad's button) and `metaConfig.conversionEvent` (the conversions objective's `cust
 Only exactly `"true"` enables each; off, a create carrying the field is refused with a 400 before
 any job exists. Neither names an account resource, so neither is behind `global_marketing_ops`.
 
+`META_OPTIMIZATION_GOAL_ENABLED` is the same kind of gate, defaulting to `"false"` (#550): it opts
+a cluster in to `metaConfig.optimizationGoal` (`LANDING_PAGE_VIEWS` instead of `LINK_CLICKS` on a
+traffic ad set). Only exactly `"true"` enables it; off, a create carrying the field is refused with
+a 400 before any job exists. It names no account resource, so it is not behind
+`global_marketing_ops`.
+
+`META_FREQUENCY_CAP_ENABLED` is the same kind of gate, defaulting to `"false"` (#550), for
+`metaConfig.frequencyCap` (an impressions-per-person cap on the awareness ad set). Only exactly
+`"true"` enables it; off, a create carrying the field is refused with a 400 before any job exists.
+
+`META_AD_PAUSE_ENABLED` defaults to `"false"` (#550) and opts a cluster in to
+`toggle-meta-ad-status`, the per-ad pause/resume lever; off, that endpoint is a 400. A campaign
+resume honours a per-ad deliberate-pause record whatever the flag says.
+
+`META_AD_SCHEDULE_ENABLED` is the same kind of gate, defaulting to `"false"` (#550), for
+`metaConfig.adSchedule` (days and whole hours in the ad account's time zone, lifetime budgets
+only). Only exactly `"true"` enables it; off, a create carrying the field is refused with a 400
+before any job exists.
+
+`META_LEAD_FORMS_ENABLED` is the same kind of gate, defaulting to `"false"` (#550), for
+`metaConfig.leadFormId` (an existing Instant Form that makes the `leads` objective an
+`OUTCOME_LEADS` lead ad). The form is read and must be an active form of the connection's Page
+before anything is created. Naming a form requires `global_marketing_ops` (403 without it, 503
+when the check cannot be made), because the shared LF Page holds every foundation's forms. The
+same flag gates `GET /projects/{p}/meta-ads/lead-forms`, the form picker read, which is also a
+`global_marketing_ops` read.
+
 `META_AUDIENCE_TARGETING_ENABLED` is the same kind of gate for Meta, defaulting to `"false"`
 (#550): it opts a cluster in to `metaConfig.targeting` (age, gender, custom audiences to include
 and exclude, and the Advantage+ audience flag on the ad set). Each custom audience is read and must
 belong to the connected Meta ad account before anything is created, and create-campaigns requires
 `global_marketing_ops` on the project for the audience lists. Only exactly `"true"` enables it;
 off, a create carrying a targeting block is refused with a 400 before any job exists.
+
+`META_LOCALE_TARGETING_ENABLED` is the same kind of gate, defaulting to `"false"` (#550): it opts a
+cluster in to `metaConfig.targeting.locales` (Meta locale keys on the ad set). Only exactly `"true"`
+enables it; off, a create carrying the list is refused with a 400 before any job exists. A
+targeting block that sets only `locales` does not need `META_AUDIENCE_TARGETING_ENABLED`. It names
+no account resource, so it is not behind `global_marketing_ops`.
+
+`META_DEVICE_TARGETING_ENABLED` is the same kind of gate, defaulting to `"false"` (#550), for
+`metaConfig.targeting.devicePlatforms` (mobile or desktop only), with the same rules as
+`META_LOCALE_TARGETING_ENABLED`.
+
+`META_INTEREST_TARGETING_ENABLED` is the same kind of gate, defaulting to `"false"` (#550), for
+`metaConfig.targeting.interests` (detailed targeting interest ids, validated with Meta before
+anything is created), with the same rules as `META_LOCALE_TARGETING_ENABLED`.
+
+`META_REGION_TARGETING_ENABLED` is the same kind of gate, defaulting to `"false"` (#550), for
+`metaConfig.targeting.regions` and `targeting.cities` (Meta geo-location keys added to the country
+targeting, each looked up and its parent country checked before anything is created), with the same
+rules as `META_LOCALE_TARGETING_ENABLED`.
+
+`META_BEHAVIOR_TARGETING_ENABLED` is the same kind of gate, defaulting to `"false"` (#550), for
+`metaConfig.targeting.behaviors` and `targeting.workPositions` (detailed targeting ids, validated
+with Meta's ad account targeting validation read before anything is created), with the same rules
+as `META_LOCALE_TARGETING_ENABLED`.
+
+`META_OS_TARGETING_ENABLED` is the same kind of gate, defaulting to `"false"` (#550), for
+`metaConfig.targeting.userOs` (Meta `user_os` values checked against the documented formats before
+any request), with the same rules as `META_LOCALE_TARGETING_ENABLED`.
+
+`META_TARGETING_SEARCH_ENABLED` defaults to `"false"` (#550) and opts a cluster in to
+`GET /projects/{p}/meta-ads/targeting-search`, the campaign_manager picker read over Meta's
+Targeting Search; while off the endpoint answers 400.
+
+`META_TARGETING_READBACK_ENABLED` defaults to `"false"` (#550) and opts a cluster in to the Meta
+settings readback of the ad set's regions, cities and ad schedule (`regions`, `cities`,
+`ad_schedule`, compared with the row's config snapshot); while off the readback is unchanged.
 
 `GOOGLE_ADS_PMAX_AUDIENCE_SIGNAL_ENABLED` is the same kind of gate, defaulting to `"false"`
 (#461): it opts a cluster in to `googleAdsConfig.performanceMaxAudienceSignal`, one existing

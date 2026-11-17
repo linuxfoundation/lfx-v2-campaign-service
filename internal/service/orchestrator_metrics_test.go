@@ -430,6 +430,20 @@ func (d upstreamCapableDispatcher) ListMetaCustomAudiences(context.Context, stri
 	return &model.MetaCustomAudiences{Audiences: []model.MetaCustomAudience{}}, true, nil
 }
 
+func (d upstreamCapableDispatcher) SearchMetaTargeting(context.Context, string, model.Provider, model.MetaTargetingQuery) ([]model.MetaTargetingOption, bool, error) {
+	if d.err != nil {
+		return nil, true, d.err
+	}
+	return []model.MetaTargetingOption{}, true, nil
+}
+
+func (d upstreamCapableDispatcher) ListMetaLeadForms(context.Context, string, model.Provider) (*model.MetaLeadForms, bool, error) {
+	if d.err != nil {
+		return nil, true, d.err
+	}
+	return &model.MetaLeadForms{Forms: []model.MetaLeadForm{}}, true, nil
+}
+
 func (d upstreamCapableDispatcher) ListRedditCustomAudiences(context.Context, string, model.Provider) (*model.RedditCustomAudiences, bool, error) {
 	if d.err != nil {
 		return nil, true, d.err
@@ -604,6 +618,14 @@ func (d upstreamCapableDispatcher) ToggleMetaAdSetStatus(context.Context, string
 	return &model.MetaAdSetStatusResult{Outcome: model.MetaAdSetApplied}, nil
 }
 
+// ToggleMetaAdStatus implements the per-ad lever (#550) for the ad-set toggle's reason.
+func (d upstreamCapableDispatcher) ToggleMetaAdStatus(context.Context, string, model.Provider, *model.Campaign, string, string, string, MetaAdSetBeforeWrite) (*model.MetaAdStatusResult, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.MetaAdStatusResult{Outcome: model.MetaAdSetApplied}, nil
+}
+
 func (d upstreamCapableDispatcher) VerifyAccountOrg(context.Context, string, model.Provider) error {
 	return d.err
 }
@@ -719,6 +741,22 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			},
 		},
 		{
+			name: "search meta targeting",
+			op:   opSearchMetaTargeting,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadMetaTargeting(ctx, "p1", platform, model.MetaTargetingQuery{Kind: "interest", Query: "go"})
+				return err
+			},
+		},
+		{
+			name: "list meta lead forms",
+			op:   opListMetaLeadForms,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadMetaLeadForms(ctx, "p1", platform)
+				return err
+			},
+		},
+		{
 			name: "list reddit custom audiences",
 			op:   opListRedditCustomAudiences,
 			call: func(ctx context.Context, o *Orchestrator) error {
@@ -821,6 +859,15 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opToggleMetaAdSetStatus,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ToggleMetaAdSetStatus(ctx, "p1", platform, campaign, "888", model.MetaAdSetStatusPaused, nil)
+				return err
+			},
+		},
+		{
+			// The per-ad sibling (#550): a mutation of a live ad's delivery.
+			name: "toggle meta ad status",
+			op:   opToggleMetaAdStatus,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ToggleMetaAdStatus(ctx, "p1", platform, campaign, "888", "999", model.MetaAdSetStatusPaused, nil)
 				return err
 			},
 		},

@@ -7155,6 +7155,273 @@ func DecodeToggleMetaAdSetStatusResponse(decoder func(*http.Response) goahttp.De
 	}
 }
 
+// BuildToggleMetaAdStatusRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-briefs" service
+// "toggle-meta-ad-status" endpoint
+func (c *Client) BuildToggleMetaAdStatusRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID  string
+		briefID    string
+		campaignID string
+		adSetID    string
+		adID       string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.ToggleMetaAdStatusPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", "*lfxv2campaignservicebriefs.ToggleMetaAdStatusPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+		campaignID = p.CampaignID
+		adSetID = p.AdSetID
+		adID = p.AdID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ToggleMetaAdStatusLfxV2CampaignServiceBriefsPath(projectID, briefID, campaignID, adSetID, adID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeToggleMetaAdStatusRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs toggle-meta-ad-status server.
+func EncodeToggleMetaAdStatusRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.ToggleMetaAdStatusPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", "*lfxv2campaignservicebriefs.ToggleMetaAdStatusPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		if p.IfMatch != nil {
+			head := *p.IfMatch
+			req.Header.Set("If-Match", head)
+		}
+		body := NewToggleMetaAdStatusRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+		}
+		return nil
+	}
+}
+
+// DecodeToggleMetaAdStatusResponse returns a decoder for responses returned by
+// the lfx-v2-campaign-service-briefs toggle-meta-ad-status endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeToggleMetaAdStatusResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "PreconditionFailed" (type *lfxv2campaignservicebriefs.PreconditionFailedError): http.StatusPreconditionFailed
+//   - "PreconditionRequired" (type *lfxv2campaignservicebriefs.PreconditionRequiredError): http.StatusPreconditionRequired
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeToggleMetaAdStatusResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ToggleMetaAdStatusResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			err = ValidateToggleMetaAdStatusResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			var (
+				etag *string
+			)
+			etagRaw := resp.Header.Get("Etag")
+			if etagRaw != "" {
+				etag = &etagRaw
+			}
+			res := NewToggleMetaAdStatusMetaAdStatusChangeOK(&body, etag)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ToggleMetaAdStatusBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			err = ValidateToggleMetaAdStatusBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			return nil, NewToggleMetaAdStatusBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body ToggleMetaAdStatusConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			err = ValidateToggleMetaAdStatusConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			return nil, NewToggleMetaAdStatusConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ToggleMetaAdStatusServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			err = ValidateToggleMetaAdStatusServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			return nil, NewToggleMetaAdStatusServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ToggleMetaAdStatusInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			err = ValidateToggleMetaAdStatusInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			return nil, NewToggleMetaAdStatusInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ToggleMetaAdStatusNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			err = ValidateToggleMetaAdStatusNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			return nil, NewToggleMetaAdStatusNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ToggleMetaAdStatusPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			err = ValidateToggleMetaAdStatusPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			return nil, NewToggleMetaAdStatusPayloadTooLarge(&body)
+		case http.StatusPreconditionFailed:
+			var (
+				body ToggleMetaAdStatusPreconditionFailedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			err = ValidateToggleMetaAdStatusPreconditionFailedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			return nil, NewToggleMetaAdStatusPreconditionFailed(&body)
+		case http.StatusPreconditionRequired:
+			var (
+				body ToggleMetaAdStatusPreconditionRequiredResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			err = ValidateToggleMetaAdStatusPreconditionRequiredResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			return nil, NewToggleMetaAdStatusPreconditionRequired(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ToggleMetaAdStatusUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			err = ValidateToggleMetaAdStatusUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			return nil, NewToggleMetaAdStatusUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "toggle-meta-ad-status", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildDeleteCampaignRequest instantiates a HTTP request object with method
 // and path set to call the "lfx-v2-campaign-service-briefs" service
 // "delete-campaign" endpoint
@@ -9897,17 +10164,18 @@ func unmarshalMetaAdSetResponseBodyToLfxv2campaignservicebriefsMetaAdSet(v *Meta
 // *MetaAdResponseBody.
 func unmarshalMetaAdResponseBodyToLfxv2campaignservicebriefsMetaAd(v *MetaAdResponseBody) *lfxv2campaignservicebriefs.MetaAd {
 	res := &lfxv2campaignservicebriefs.MetaAd{
-		ID:              *v.ID,
-		Listed:          *v.Listed,
-		Name:            v.Name,
-		Status:          v.Status,
-		EffectiveStatus: v.EffectiveStatus,
-		CreativeID:      v.CreativeID,
-		CreativeName:    v.CreativeName,
-		Impressions:     *v.Impressions,
-		Clicks:          *v.Clicks,
-		CostMicros:      *v.CostMicros,
-		Ctr:             *v.Ctr,
+		ID:                 *v.ID,
+		Listed:             *v.Listed,
+		Name:               v.Name,
+		Status:             v.Status,
+		EffectiveStatus:    v.EffectiveStatus,
+		CreativeID:         v.CreativeID,
+		CreativeName:       v.CreativeName,
+		Impressions:        *v.Impressions,
+		Clicks:             *v.Clicks,
+		CostMicros:         *v.CostMicros,
+		Ctr:                *v.Ctr,
+		DeliberatelyPaused: *v.DeliberatelyPaused,
 	}
 
 	return res
