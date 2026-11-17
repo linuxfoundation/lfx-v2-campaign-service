@@ -3373,6 +3373,35 @@ type CampaignInput struct {
 	// that type, as before.
 	Keywords    []string
 	InterestIDs []string
+	// ConversationTopics (#564 gap 8) add CONVERSATION criteria (EQ) to the line item, after the
+	// interests and before the included custom audiences. They are checked by
+	// NormalizeConversationTopics; each must be listed by GET targeting_criteria/conversations
+	// before anything is created. Empty means no criterion of that type, as before.
+	ConversationTopics []string
+	// Platforms (#564 gap 9) add PLATFORM criteria (EQ) after the conversation topics. They are
+	// checked by NormalizePlatforms; each must be listed by GET targeting_criteria/platforms before
+	// anything is created. Empty means no platform criterion: every platform, as before.
+	Platforms []string
+	// Devices (#564 gap 9) add DEVICE criteria (EQ) after the platforms. They are checked by
+	// NormalizeDevices; each must be listed by GET targeting_criteria/devices before anything is
+	// created. Empty means no device criterion, as before.
+	Devices []string
+	// AgeBucket and Gender (#564 gap 9) add one AGE and one GENDER criterion (EQ) after the
+	// devices, checked by NormalizeAgeBucket and NormalizeGender (closed sets, no lookup). Empty
+	// means no criterion of that type: every age, every gender, as before.
+	AgeBucket string
+	Gender    string
+	// AudienceExpansion (#564 gap 11) is sent as the line item's audience_expansion (BROAD,
+	// DEFINED or EXPANDED, checked by NormalizeAudienceExpansion before any request). Empty sends
+	// nothing: X applies no expansion, as before. Only a line item THIS call creates carries it; a
+	// reused one keeps its own, and a step says so.
+	AudienceExpansion string
+	// FollowerLookalikeUserIDs (#564 gap 4c) add SIMILAR_TO_FOLLOWERS_OF_USER criteria (EQ) after
+	// the platforms and before the included custom audiences. Checked by
+	// NormalizeFollowerLookalikes for shape only: X has no user lookup, so an id X refuses fails at
+	// its criterion POST, stopping the create before any tweet with the PAUSED partial retained.
+	// Empty means no look-alike criterion, as before.
+	FollowerLookalikeUserIDs []string
 	// Video, when non-nil, is attached to the AUTHORED tweet instead of an image (#564 gap 7;
 	// video.go): uploaded as amplify_video and added to the Media Library before anything billable
 	// exists, then sent as media_keys. It requires an authored tweet (TweetText, no TweetID),
@@ -3690,8 +3719,41 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if kerr != nil {
 		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", kerr.Error())
 	}
+	// Conversation topics (#564 gap 8), the same way.
+	topics, oerr := NormalizeConversationTopics(in.ConversationTopics)
+	if oerr != nil {
+		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", oerr.Error())
+	}
+	// Audience expansion (#564 gap 11): a closed set, checked before any request.
+	audienceExpansion, xerr := NormalizeAudienceExpansion(in.AudienceExpansion)
+	if xerr != nil {
+		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", xerr.Error())
+	}
+	// Platforms (#564 gap 9), the same way.
+	platforms, perr := NormalizePlatforms(in.Platforms)
+	if perr != nil {
+		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", perr.Error())
+	}
+	// Devices, age and gender (#564 gap 9), the same way.
+	devices, derr := NormalizeDevices(in.Devices)
+	if derr != nil {
+		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", derr.Error())
+	}
+	ageBucket, aerr := NormalizeAgeBucket(in.AgeBucket)
+	if aerr != nil {
+		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", aerr.Error())
+	}
+	gender, gerr := NormalizeGender(in.Gender)
+	if gerr != nil {
+		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", gerr.Error())
+	}
+	// Follower look-alikes (#564 gap 4c): shape only; X has no user lookup.
+	lookalikes, lerr := NormalizeFollowerLookalikes(in.FollowerLookalikeUserIDs)
+	if lerr != nil {
+		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", lerr.Error())
+	}
 	// And all the criteria together must fit the paced-write budget (MaxCreateTargetingCriteria).
-	nCriteria := len(geoTargets) + len(languages) + len(keywords) + len(interestIDs) + len(in.CustomAudienceIDs) + len(in.ExcludedCustomAudienceIDs)
+	nCriteria := len(geoTargets) + len(languages) + len(keywords) + len(interestIDs) + len(topics) + len(platforms) + len(devices) + countSet(ageBucket) + countSet(gender) + len(lookalikes) + len(in.CustomAudienceIDs) + len(in.ExcludedCustomAudienceIDs)
 	if cerr := CheckCreateCriteriaCount(nCriteria); cerr != nil {
 		// Fixed text and counts only: operator-safe.
 		return nil, domain.PreflightRefusalf("invalid twitterConfig: %s", cerr.Error())
@@ -3756,10 +3818,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	// Step 1a: resolve the create-time targeting against X's lookups (reads). A value X does not
 	// offer, or a lookup that could not be read, stops the create HERE, with nothing created.
-	criteria, err := c.resolveCreateTargeting(ctx, geoTargets, languages, keywords, interestIDs)
+	criteria, err := c.resolveCreateTargeting(ctx, geoTargets, languages, keywords, interestIDs, topics, platforms, devices, ageBucket, gender)
 	if err != nil {
 		return nil, err
 	}
+	// The follower look-alikes (#564 gap 4c) follow the platforms, devices, age and gender. Nothing is looked up: an id X
+	// refuses fails at its criterion POST in Step 3b, which stops before any tweet.
+	criteria = append(criteria, followerLookalikeCriteria(lookalikes)...)
 	// Step 1a': the custom audiences (#564 gap 3) must each be live and targetable on this ad
 	// account, also before anything is created. Exclusions go first among all the criteria, so a
 	// create that stops part-way has applied the suppression before any inclusion.
@@ -3959,6 +4024,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Reusing existing line item: %s", lineItemID))
 		steps = append(steps, fmt.Sprintf("Warning: reused existing line item %s by name; its entity_status/flight dates were NOT reset to the requested PAUSED/%s–%s — it may already be ENABLED and serving; verify in X Ads Manager", lineItemID, in.StartDate, in.EndDate))
 		steps = append(steps, fmt.Sprintf("Warning: bid NOT applied to reused line item %s; its existing bidding is unchanged — verify its bid strategy in X Ads Manager", lineItemID))
+		if audienceExpansion != "" {
+			steps = append(steps, fmt.Sprintf("Warning: audience expansion %s NOT applied to reused line item %s; its existing audience expansion is unchanged — verify it in X Ads Manager", audienceExpansion, lineItemID))
+		}
 	} else {
 		// X Ads v12 line_items: params go on the query string; start_time and
 		// end_time are REQUIRED; bid_strategy=AUTO selects automatic bidding
@@ -3985,6 +4053,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			lineItemParams["bid_strategy"] = BidStrategyMax
 			lineItemParams["pay_by"] = PayByLinkClick
 			lineItemParams["bid_amount_local_micro"] = strconv.FormatInt(maxBidMicros, 10)
+		}
+		// Audience expansion (#564 gap 11), a documented optional line-item parameter; omitted,
+		// X applies none.
+		if audienceExpansion != "" {
+			lineItemParams["audience_expansion"] = audienceExpansion
 		}
 		if err := c.pace(ctx); err != nil {
 			return partialResult(), fmt.Errorf("x line item creation aborted (%s): %w", campaignStatus(), err)
@@ -4013,6 +4086,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			steps = append(steps, fmt.Sprintf("Line item created: %s (PAUSED, ALL_ON_TWITTER, MAX bid %s per link click)", lineItemID, strconv.FormatFloat(in.MaxBid, 'f', -1, 64)))
 		} else {
 			steps = append(steps, fmt.Sprintf("Line item created: %s (PAUSED, ALL_ON_TWITTER, AUTO bid)", lineItemID))
+		}
+		if audienceExpansion != "" {
+			steps = append(steps, fmt.Sprintf("Line item %s sent with audience expansion %s", lineItemID, audienceExpansion))
 		}
 	}
 
@@ -4051,6 +4127,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				steps = append(steps, fmt.Sprintf("Targeting NOT confirmed on reused line item %s: its existing targeting criteria could not be read, so nothing was authored or promoted; verify its targeting in X Ads Manager before retrying", lineItemID))
 				return partialResult(), fmt.Errorf("x targeting not confirmed (%s, %s; its existing targeting criteria could not be read, so nothing was authored or promoted): verify the line item's targeting in X Ads Manager before retrying: %w: %w",
 					campaignStatus(), lineItemStatus(), ErrCreateTargetingIncomplete, lerr)
+			}
+			// A different AGE bucket or GENDER already on the line item is refused here, before
+			// any criterion is written: X holds one of each per line item, so adding the
+			// requested one would fail part-way (or widen/change the audience) after the
+			// criteria ahead of it had already changed the targeting. An identical one is kept.
+			if cr, conflict := conflictingSingleValue(criteria, live); conflict {
+				steps = append(steps, fmt.Sprintf("Targeting NOT applied to reused line item %s: it already holds a different %s criterion than the requested %s, and X allows only one per line item, so its targeting was not changed and nothing was authored or promoted; reconcile its targeting in X Ads Manager", lineItemID, cr.targetingType, cr.label))
+				return partialResult(), fmt.Errorf("x targeting not applied (%s, %s; it already holds a different %s criterion than the requested %s, so its targeting was not changed and nothing was authored or promoted): reconcile the line item's targeting in X Ads Manager: %w",
+					campaignStatus(), lineItemStatus(), cr.targetingType, cr.label, ErrCreateTargetingIncomplete)
 			}
 			pending = missingCriteria(criteria, live)
 			if have := len(criteria) - len(pending); have > 0 {

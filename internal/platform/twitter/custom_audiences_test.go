@@ -398,7 +398,7 @@ func TestCreateTargetingCriteriaFitTheDispatchBudget(t *testing.T) {
 	if MaxCreateTargetingCriteriaWithVideo > MaxCreateTargetingCriteria {
 		t.Fatal("the video criteria cap exceeds the per-create criteria cap")
 	}
-	if MaxGeoTargets > MaxCreateTargetingCriteria || MaxLanguages > MaxCreateTargetingCriteria || MaxCustomAudienceIDs > MaxCreateTargetingCriteria {
+	if MaxGeoTargets > MaxCreateTargetingCriteria || MaxLanguages > MaxCreateTargetingCriteria || MaxCustomAudienceIDs > MaxCreateTargetingCriteria || MaxCreateFollowerLookalikes > MaxCreateTargetingCriteria {
 		t.Fatal("a per-list cap exceeds the per-create criteria cap")
 	}
 }
