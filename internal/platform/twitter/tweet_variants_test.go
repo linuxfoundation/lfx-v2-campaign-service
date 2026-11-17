@@ -302,6 +302,16 @@ func TestCreateCampaign_VariantAbortNamesThePublishedTweets(t *testing.T) {
 	if len(res.PromotedTweets) != 2 || !res.PromotedTweets[1].Authored || res.PromotedTweets[1].PromotedTweetID != "" {
 		t.Errorf("partial PromotedTweets = %+v", res.PromotedTweets)
 	}
+	// The single fields repeat the FIRST authored / promoted entry on a partial result too.
+	if len(res.PromotedTweets) > 0 {
+		first := res.PromotedTweets[0]
+		if first.TweetID == "" || first.PromotedTweetID == "" {
+			t.Fatalf("first variant = %+v, want it authored and promoted", first)
+		}
+		if res.AuthoredTweetID != first.TweetID || res.PromotedTweetID != first.PromotedTweetID {
+			t.Errorf("partial AuthoredTweetID=%q PromotedTweetID=%q, want %q / %q (the first entry)", res.AuthoredTweetID, res.PromotedTweetID, first.TweetID, first.PromotedTweetID)
+		}
+	}
 	if f.promotes != 1 {
 		t.Errorf("%d promotions, want 1", f.promotes)
 	}

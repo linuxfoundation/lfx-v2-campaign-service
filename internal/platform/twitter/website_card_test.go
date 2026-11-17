@@ -111,6 +111,8 @@ func TestCreateCampaign_WebsiteCardFailureAuthorsNothing(t *testing.T) {
 				t.Fatalf("a tweet was authored or promoted after the card failed")
 			}
 			if !strings.Contains(res.PromotedTweetWarning, "no tweet was authored or promoted") ||
+				!strings.Contains(res.PromotedTweetWarning, "reconcile in X Ads Manager") ||
+				strings.Contains(res.PromotedTweetWarning, "; retry,") ||
 				strings.Contains(res.PromotedTweetWarning, "UNCONFIRMED") != tc.unconfirmed {
 				t.Errorf("warning = %q (unconfirmed want %v)", res.PromotedTweetWarning, tc.unconfirmed)
 			}

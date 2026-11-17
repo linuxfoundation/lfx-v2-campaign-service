@@ -141,10 +141,12 @@ func buildTwitterCardUTMURL(in CampaignInput) (string, error) {
 
 // websiteCardFailure is the PromotedTweetWarning for a website card that could not be created:
 // nothing was authored or promoted, and an ambiguous outcome says the card may exist (harmless: a
-// card is neither public nor billable).
+// card is neither public nor billable). It names X Ads Manager, never a retry: the dispatcher saves
+// this outcome as created_degraded with a campaign id, and a retry returns that row without
+// dispatching again, so it would never create the card or the tweet.
 func websiteCardFailure(err error) string {
 	if createOutcomeAmbiguous(err) {
-		return fmt.Sprintf("website card creation UNCONFIRMED (%s) — a card may exist (cards are neither public nor billable); no tweet was authored or promoted; retry, or post the tweet manually and add it as a promoted tweet in X Ads Manager", err.Error())
+		return fmt.Sprintf("website card creation UNCONFIRMED (%s) — a card may exist (cards are neither public nor billable); no tweet was authored or promoted; reconcile in X Ads Manager (post the tweet manually and add it as a promoted tweet there) — a retry reuses this campaign as created_degraded and does not create the card or tweet", err.Error())
 	}
-	return fmt.Sprintf("website card creation failed (%s) — no tweet was authored or promoted; retry, or post the tweet manually and add it as a promoted tweet in X Ads Manager", err.Error())
+	return fmt.Sprintf("website card creation failed (%s) — no tweet was authored or promoted; reconcile in X Ads Manager (post the tweet manually and add it as a promoted tweet there) — a retry reuses this campaign as created_degraded and does not create the card or tweet", err.Error())
 }

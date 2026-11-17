@@ -439,7 +439,8 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		"duplicate) does not stop the others and nothing is rolled back, since a published tweet cannot be "+
 		"unpublished: the row is created_degraded with a step naming the failed variants. "+
 		"On a line item reused by name, no variant is authored when its promoted tweets cannot be read or "+
-		"their count differs from the variants; exactly as many are reused. "+
+		"their count is nonzero and differs from the variants; exactly as many are reused. "+
+		"A reused line item with no promoted tweet has every variant authored. "+
 		"Pause, resume, budget, bid and keyword levers act on the campaign and line item, so they govern "+
 		"every variant at once. "+
 		"OFF unless TWITTER_TWEET_VARIANTS_ENABLED is exactly \"true\"; a non-empty list while off, a rule "+
