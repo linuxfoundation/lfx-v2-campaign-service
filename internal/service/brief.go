@@ -1687,6 +1687,13 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "error", terr)
 			return nil, &briefs.ConflictError{Code: "409", Message: "this campaign's ad set is recorded as deliberately paused, but Meta reports it ACTIVE, so resuming the campaign would let it serve; nothing was changed — pause the ad set (or resume it to clear the record) through the ad-set status endpoint, then resume the campaign"}
+		case errors.Is(terr, domain.ErrMetaHeldAdActive):
+			// The per-ad sibling of the held ad set above (#550, gap 14): decided by pure reads
+			// before any write, so nothing changed.
+			slog.WarnContext(ctx, "campaign activate refused: a deliberately paused Meta ad is ACTIVE on Meta",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "error", terr)
+			return nil, &briefs.ConflictError{Code: "409", Message: "an ad of this campaign is recorded as deliberately paused, but Meta reports it ACTIVE, so resuming the campaign would let it serve; nothing was changed — pause the ad (or resume it to clear the record) through the ad status endpoint, then resume the campaign"}
 		case errors.Is(terr, ErrCampaignNotProvisioned):
 			// The campaign is not fully provisioned for this toggle — either it has no upstream
 			// platform id yet (still creating / ambiguous create), or it lacks the child entities

@@ -474,6 +474,11 @@ var (
 	// ErrAccountsUnsupported: the platform is never contacted.
 	ErrTargetingLookupUnsupported = errors.New("targeting lookup is not supported for this platform")
 
+	// ErrMetaTargetingSearchInvalid indicates a Meta targeting taxonomy search (#550) the dispatcher
+	// refused before any request: a type it does not serve, or an unusable query. Maps to 400. The
+	// service layer refuses both first; this guards a caller that bypasses it.
+	ErrMetaTargetingSearchInvalid = errors.New("meta targeting search is not valid")
+
 	// ErrAccountMetricsUnsupported indicates the platform has no account-scoped monitor
 	// capability wired (the AccountMetricsReader interface). The platform is never contacted.
 	//
@@ -677,6 +682,31 @@ var (
 	// paused" ad set serve, so nothing is written; mapped to 409. The operator pauses the ad set,
 	// or clears the record by resuming it, through toggle-meta-ad-set-status first.
 	ErrMetaHeldAdSetActive = errors.New("the campaign's deliberately paused ad set is ACTIVE on Meta")
+
+	// ErrMetaAdInvalid indicates an ad id that cannot name a Meta ad (not a canonical numeric id).
+	// Refused before any connection work; mapped to 400 (#550, gap 14).
+	ErrMetaAdInvalid = errors.New("not a valid meta ad id")
+
+	// ErrMetaAdNotInAdSet indicates the named ad is not provably an ad of the named ad set of THIS
+	// campaign under the project's connected ad account. Decided by a read BEFORE any write, so
+	// nothing was changed; mapped to 409.
+	ErrMetaAdNotInAdSet = errors.New("the ad does not belong to this ad set of this campaign under the connected ad account")
+
+	// ErrMetaAdUnwritable indicates the ad is in a state a pause/resume cannot address (Meta reports
+	// it DELETED or ARCHIVED). Nothing was changed; mapped to 409.
+	ErrMetaAdUnwritable = errors.New("the ad's status cannot be changed")
+
+	// ErrMetaAdNotRecorded indicates an ACTIVATE of an ad under an ad set other than the one this
+	// service created for the campaign: the campaign cascade never activates such an ad, so neither
+	// does the per-ad lever. Pausing any of the campaign's ads stays allowed. Decided before any
+	// write; mapped to 409.
+	ErrMetaAdNotRecorded = errors.New("only an ad of the ad set this service created for the campaign can be activated here")
+
+	// ErrMetaHeldAdActive refuses a Meta campaign ACTIVATE when an ad the row holds as deliberately
+	// paused is ACTIVE on Meta (its pause was never applied, or it was re-activated elsewhere):
+	// activating the campaign would let it serve, so nothing is written; mapped to 409. The operator
+	// pauses the ad, or clears the record by resuming it, through toggle-meta-ad-status first.
+	ErrMetaHeldAdActive = errors.New("a deliberately paused ad of the campaign is ACTIVE on Meta")
 
 	// ErrStoredPlatformIDInvalid indicates the campaign row's stored platform campaign id is not a
 	// valid id for its platform, so nothing under it can be addressed. Decided locally — the

@@ -97,17 +97,18 @@ func (s *BriefService) ListMetaAds(ctx context.Context, p *briefs.ListMetaAdsPay
 	}
 	for _, a := range rb.Ads {
 		out.Ads = append(out.Ads, &briefs.MetaAd{
-			ID:              a.ID,
-			Listed:          a.Listed,
-			Name:            a.Name,
-			Status:          a.Status,
-			EffectiveStatus: a.EffectiveStatus,
-			CreativeID:      a.CreativeID,
-			CreativeName:    a.CreativeName,
-			Impressions:     a.Impressions,
-			Clicks:          a.Clicks,
-			CostMicros:      a.CostMicros,
-			Ctr:             a.Ctr,
+			ID:                 a.ID,
+			Listed:             a.Listed,
+			Name:               a.Name,
+			Status:             a.Status,
+			EffectiveStatus:    a.EffectiveStatus,
+			CreativeID:         a.CreativeID,
+			CreativeName:       a.CreativeName,
+			Impressions:        a.Impressions,
+			Clicks:             a.Clicks,
+			CostMicros:         a.CostMicros,
+			Ctr:                a.Ctr,
+			DeliberatelyPaused: a.DeliberatelyPaused,
 		})
 	}
 	out.AdCount = len(out.Ads)

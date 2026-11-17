@@ -606,13 +606,13 @@ func TestMetaAdSetRecord_RefusesToRunWithoutTheClaim(t *testing.T) {
 	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, &adSetDispatcher{})
 	row := recordedMetaRow()
 	zero := domain.CampaignLockToken{}
-	if _, err := s.settleMetaAdSetRecord(context.Background(), repo, row, "888", 3, &zero); !errors.Is(err, errMetaAdSetClaimLost) {
+	if _, err := s.settleMetaAdSetRecord(context.Background(), repo, row, adSetPauseRecord("888"), 3, &zero); !errors.Is(err, errMetaAdSetClaimLost) {
 		t.Fatalf("settle without a claim: %v; want errMetaAdSetClaimLost", err)
 	}
-	if _, err := s.writeMetaAdSetRecord(context.Background(), repo, row, "888", 3, &zero); !errors.Is(err, errMetaAdSetClaimLost) {
+	if _, err := s.writeMetaAdSetRecord(context.Background(), repo, row, adSetPauseRecord("888"), 3, &zero); !errors.Is(err, errMetaAdSetClaimLost) {
 		t.Fatalf("write without a claim: %v; want errMetaAdSetClaimLost", err)
 	}
-	if err := s.withdrawMetaAdSetRecord(context.Background(), repo, row, 3, &zero, true, "888"); !errors.Is(err, errMetaAdSetClaimLost) {
+	if err := s.withdrawMetaAdSetRecord(context.Background(), repo, row, 3, &zero, true, adSetPauseRecord("888"), adSetPauseRecord("")); !errors.Is(err, errMetaAdSetClaimLost) {
 		t.Fatalf("withdraw without a claim: %v; want errMetaAdSetClaimLost", err)
 	}
 	if repo.replaces != 0 || repo.verifies != 0 || held(repo) {
@@ -678,6 +678,8 @@ func TestToggleCampaignStatus_HeldAdSetRefusals(t *testing.T) {
 	}{
 		"held ad set active":     {fmt.Errorf("verify: %w", domain.ErrMetaHeldAdSetActive), 409, "recorded as deliberately paused, but Meta reports it ACTIVE"},
 		"held ad set unreadable": {errors.New("verify the held meta ad set: read failed (nothing was changed)"), 503, "the campaign was not modified"},
+		// The per-ad sibling (#550, gap 14).
+		"held ad active": {fmt.Errorf("verify: %w", domain.ErrMetaHeldAdActive), 409, "an ad of this campaign is recorded as deliberately paused, but Meta reports it ACTIVE"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			row := heldRow(t)

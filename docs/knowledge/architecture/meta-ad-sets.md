@@ -129,7 +129,7 @@ campaign writer through the claim.
 Product decision: **a deliberate pause of the campaign's recorded ad set made here survives a
 campaign pause and resume.** `toggle-campaign-status` ACTIVE on Meta normally cascades to the
 recorded ad set and its ads (`UpdateCampaignAndChildrenStatus`); when the row holds a pause of
-that ad set it instead calls `meta.Client.ActivateCampaignHoldingAdSet`, which activates the ads
+that ad set it instead calls `meta.Client.ActivateCampaignHolding` with the ad set held, which activates the ads
 and then the campaign (last, as always) but never posts the ad set. Its ads are activated so a
 later resume of the ad set alone is enough to serve; the paused ad set gates them meanwhile. A
 campaign PAUSE cascades exactly as before.
@@ -137,7 +137,7 @@ campaign PAUSE cascades exactly as before.
 **The record is checked against Meta before it is honoured.** It is this service's record, not
 Meta's: an UNCONFIRMED pause that never applied, or an ad set re-activated in Ads Manager, leaves
 it over an ACTIVE ad set, and a holding activation would then switch on the ads and the campaign
-over a serving ad set. So before `ActivateCampaignHoldingAdSet` the dispatcher READS the held ad
+over a serving ad set. So before a holding activation the dispatcher READS the held ad
 set (`GET /{ad_set_id}?fields=id,campaign_id,account_id,status`, `verifyMetaHeldAdSetPaused`). Its
 CONFIGURED status decides, because an ad set under a paused campaign is effectively
 `CAMPAIGN_PAUSED` whatever it is configured to, and the configured status is what serves once the
@@ -267,7 +267,37 @@ that resuming it here is the way to clear it. Meta's `status` alone cannot say t
 
 A read-only listing of one ad set's ads (`list-meta-ads`, decision D7 first step) reuses this
 read's provenance, raw-body checks and error mapping; see
-[Meta Ad Read Under an Ad Set](meta-ads.md). A per-ad pause/resume is a later decision.
+[Meta Ad Read Under an Ad Set](meta-ads.md).
+
+## Per-ad pause/resume (#550, gap 14)
+
+`POST …/meta-ad-sets/{ad_set_id}/ads/{ad_id}/status` (`toggle-meta-ad-status`) is this lever for one
+ad, behind `META_AD_PAUSE_ENABLED` (default off; off, the endpoint is 400 before the row is read). It
+is `BriefService.ToggleMetaAdStatus` → `Orchestrator.ToggleMetaAdStatus` →
+`MetaDispatcher.ToggleMetaAdStatus` (`internal/dispatch/meta_ad_status.go`), mirroring each ad-set
+step: If-Match and the claim, provenance, `GET /{ad_id}?fields=id,adset_id,campaign_id,account_id,status`
+proving the ad is under `ad_set_id`, this campaign and the connection's account
+(`ErrMetaAdNotInAdSet`), ACTIVATE only under the recorded ad set (`ErrMetaAdNotRecorded`; an adopted
+row is `ErrCampaignNotProvisioned`), `DELETED`/`ARCHIVED` refused (`ErrMetaAdUnwritable`),
+ALREADY_IN_STATE sending nothing, and one unretried `POST /{ad_id}` (`meta.Client.UpdateAdStatusOnce`,
+which shares `updateStatusOnce` with the ad-set write) classified by `meta.ClassifyAdSetWrite`.
+
+**The record.** The owner decided (2026-11-14) that the resume cascade follows #309's rule for ads
+too: it must not re-activate an ad an operator paused. A pause of an ad of the recorded ad set adds
+its id to `UserPausedAdIDs` in the row's Result blob (`model.WithMetaUserPausedAd`), under exactly
+the ad-set record's rules — written by the beforeWrite hook before the pause is sent (or after
+ALREADY_IN_STATE), withdrawn when the write definitely changed nothing, cleared only by a CONFIRMED
+resume. The record writes reuse the ad-set lever's reconciliation (`writeMetaAdSetRecord` and its
+helpers now take a `metaPauseRecord`: what to apply and how to recognise it landed). On ACTIVATE,
+`ToggleStatus` reads every held ad first (`verifyMetaHeldAdsPaused`; ACTIVE is
+`ErrMetaHeldAdActive` → 409, unreadable → 503, nothing written) and then runs
+`meta.Client.ActivateCampaignHolding`, which skips each held ad's POST (and the held ad set's, when
+both apply). PAUSE still cascades to every ad. The record is honoured whatever the flag says, so
+turning the flag off never re-activates a paused ad. `list-meta-ads` reports `deliberately_paused`
+per ad of the recorded ad set.
+
+Gateway: the path nests under `/briefs/**`, so it inherits the HTTPRoute briefs match and the
+`campaign_manager` RuleSet rule like its siblings; `parity_test.go` pins it.
 
 ## Verified from Meta's docs only (not against a live account)
 

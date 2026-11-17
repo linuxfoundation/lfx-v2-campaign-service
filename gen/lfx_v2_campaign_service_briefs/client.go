@@ -46,6 +46,7 @@ type Client struct {
 	ListMetaAdSetsEndpoint         goa.Endpoint
 	ListMetaAdsEndpoint            goa.Endpoint
 	ToggleMetaAdSetStatusEndpoint  goa.Endpoint
+	ToggleMetaAdStatusEndpoint     goa.Endpoint
 	DeleteCampaignEndpoint         goa.Endpoint
 	GetJobEndpoint                 goa.Endpoint
 	StartEmailWizardPlanEndpoint   goa.Endpoint
@@ -60,7 +61,7 @@ type Client struct {
 
 // NewClient initializes a "lfx-v2-campaign-service-briefs" service client
 // given the endpoints.
-func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, uploadCreativeAsset, listCreativeAssets, getCreativeAsset, getAssetPlan, deleteCreativeAsset, createCampaigns, createSendWorkflow, adoptCampaign, getCampaign, getCampaignMetrics, getCampaignSettings, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, updateCampaignBudget, updateCampaignBid, applyKeywordActions, addNegativeKeywords, getKeywordTargeting, removeKeywordTargeting, listMetaAdSets, listMetaAds, toggleMetaAdSetStatus, deleteCampaign, getJob, startEmailWizardPlan, planEmailWizard, generateWizardContent, updateWizardSections, cloneWizardEmail, setWizardSendList, chatWizardTurn, getWizardSession goa.Endpoint) *Client {
+func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, uploadCreativeAsset, listCreativeAssets, getCreativeAsset, getAssetPlan, deleteCreativeAsset, createCampaigns, createSendWorkflow, adoptCampaign, getCampaign, getCampaignMetrics, getCampaignSettings, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, updateCampaignBudget, updateCampaignBid, applyKeywordActions, addNegativeKeywords, getKeywordTargeting, removeKeywordTargeting, listMetaAdSets, listMetaAds, toggleMetaAdSetStatus, toggleMetaAdStatus, deleteCampaign, getJob, startEmailWizardPlan, planEmailWizard, generateWizardContent, updateWizardSections, cloneWizardEmail, setWizardSendList, chatWizardTurn, getWizardSession goa.Endpoint) *Client {
 	return &Client{
 		CreateBriefEndpoint:            createBrief,
 		FindBriefEndpoint:              findBrief,
@@ -93,6 +94,7 @@ func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, dele
 		ListMetaAdSetsEndpoint:         listMetaAdSets,
 		ListMetaAdsEndpoint:            listMetaAds,
 		ToggleMetaAdSetStatusEndpoint:  toggleMetaAdSetStatus,
+		ToggleMetaAdStatusEndpoint:     toggleMetaAdStatus,
 		DeleteCampaignEndpoint:         deleteCampaign,
 		GetJobEndpoint:                 getJob,
 		StartEmailWizardPlanEndpoint:   startEmailWizardPlan,
@@ -731,6 +733,28 @@ func (c *Client) ToggleMetaAdSetStatus(ctx context.Context, p *ToggleMetaAdSetSt
 		return
 	}
 	return ires.(*MetaAdSetStatusChange), nil
+}
+
+// ToggleMetaAdStatus calls the "toggle-meta-ad-status" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// ToggleMetaAdStatus may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
+//   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
+//   - error: internal error
+func (c *Client) ToggleMetaAdStatus(ctx context.Context, p *ToggleMetaAdStatusPayload) (res *MetaAdStatusChange, err error) {
+	var ires any
+	ires, err = c.ToggleMetaAdStatusEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*MetaAdStatusChange), nil
 }
 
 // DeleteCampaign calls the "delete-campaign" endpoint of the
