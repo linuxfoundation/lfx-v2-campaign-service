@@ -564,7 +564,7 @@ the LFX One BFF's `reddit-ads.service.ts`. A Reddit connection is bound to exact
 one ad account, so the dispatcher additionally scopes the requested `account_id` to
 that resolved connection's own account. See
 [Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md) for the
-credential-scoping (`resolveOwned`, no system-account fallback) and the ported rule
+credential rule (`credsSource.monitorResolver`, #615: the project's own row, or the LF system row for the system account only) and the ported rule
 engine (`internal/service/rules/monitor_reddit.go`). The three quirks it carried over
 from the BFF were fixed rather than preserved: the hardcoded `conversions: 0` is now
 absent — not a measured zero — on the row and in the account totals alike

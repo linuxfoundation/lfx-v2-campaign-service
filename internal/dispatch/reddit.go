@@ -933,27 +933,31 @@ func (d *RedditDispatcher) readAccountMonitor(ctx context.Context, projectID str
 	return &model.AccountMonitorRead{Rows: out, Currency: currency}, nil
 }
 
-// resolveMonitorClient resolves the project's OWN Reddit connection and its client — never the
-// LF system fallback (d.creds.resolveOwned, not d.creds.resolve) — then confirms accountID
-// names the SAME account the connection resolves to. A raw ad account id that does not match is
-// refused rather than silently served the connection's own account's data under a different
-// label, or silently ignored — either of which would misattribute whichever account the caller
-// thought it was reading.
+// resolveMonitorClient resolves the Reddit credential for the account-monitor read of accountID
+// and its client, then confirms accountID names the SAME account the resolved connection is
+// configured for. A raw ad account id that does not match is refused rather than silently served
+// the connection's own account's data under a different label, or silently ignored — either of
+// which would misattribute whichever account the caller thought it was reading.
 //
-// Trust boundary (round-17 review, fixed): the account-id equality check alone does NOT close
-// the credential-scope gap round-16 fixed on Google/LinkedIn/Meta's monitor reads — it
-// constrains WHICH account is read, not WHOSE credential is lent. A project with no Reddit
-// connection of its own previously fell back to the shared LF system row, and any caller who
-// simply knew that system account's id (recoverable from its own past campaigns' result blobs,
-// see redditCreationAccountID) satisfied the equality check and was served every campaign on
-// the shared account, including ones dispatched by other projects through the same fallback.
-// resolveOwned closes this the same way it does for Google/LinkedIn/Meta: a project with no
-// connection of its own now gets domain.ErrNotFound (404) before any account-id comparison
-// runs. Google has since dropped the same refusal for its monitor (#591, googleads.go's
-// resolveGoogleAdsMonitorClient) because the read is now reduced to the project's own recorded
-// campaigns; Reddit's is too, and is a candidate for the same change.
+// The credential follows credsSource.monitorResolver (#615), the rule Google's monitor adopted in
+// #591: the project's own connection when it is configured for accountID; otherwise the LF system
+// row when THAT is configured for it; otherwise the project's own connection again, which the
+// equality check below then refuses as before. So a project whose campaigns were created on the
+// LF system account — every project with no Reddit connection of its own, every project that
+// disconnected its own, and every project while forced-system creation is on — can monitor them.
+//
+// Trust boundary (round-17 review): the account-id equality check alone did NOT close the
+// credential-scope gap, because the read then returned every campaign on the account, and any
+// caller who knew the shared LF system account's id (recoverable from its own past campaigns'
+// result blobs, see redditCreationAccountID) was served every foundation's campaigns on it. That
+// is why the system fallback was refused outright. Orchestrator.ReadAccountCampaignMetrics now
+// reduces the read to the campaigns this service recorded for the project before anything leaves
+// the service (scopeAccountMonitor, filterMonitorRows), and MonitorScopeForAccount refuses a
+// campaign recorded under another account, or under none, with a 409. The rule kept from the
+// refusal: the LF system credential reads only the account the LF system row is configured for;
+// any other account is a 404 (noOwnConnection) before any client is built or request is sent.
 func (d *RedditDispatcher) resolveMonitorClient(ctx context.Context, projectID string, platform model.Provider, accountID string) (*reddit.Client, error) {
-	client, res, err := d.resolveRedditClientWithCreds(ctx, projectID, platform, d.creds.resolveOwned)
+	client, res, err := d.resolveRedditClientWithCreds(ctx, projectID, platform, d.creds.monitorResolver(accountID))
 	if err != nil {
 		return nil, err
 	}
