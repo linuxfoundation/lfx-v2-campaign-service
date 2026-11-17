@@ -967,6 +967,20 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "platform", platform,
 				"reason", unusableConnectionReason(lerr))
 			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign could not be verified with the ad platform"}
+		case accountID != "" && errors.Is(lerr, domain.ErrCredentialDecryptionFailed):
+			// The LF system row failed AUTHENTICATED decryption (#581): a wrong or rotated
+			// application key, or this one row's ciphertext corrupted. decryptConn wraps it
+			// with this sentinel, not ErrConnectionNotUsable, so systemScoped does not add
+			// ErrSystemConnectionNotUsable and the arm above misses it. Without this arm it
+			// fell to the 503 default — promising a retry an operator's repair alone can make
+			// good — and logged the error chain there. Same 500 as a broken LF row, and NO
+			// error text, as on the metrics arm: domain.Encryptor is an interface whose
+			// implementations may quote the ciphertext or key they failed on. The row named
+			// is the LF system row, the one that failed, with the requester beside it.
+			slog.ErrorContext(ctx, "campaign adoption from the LF system account blocked: the LF system connection's stored credentials could not be decrypted (key mismatch or corrupted row)",
+				"project_id", model.SystemProjectID, "requested_by_project_id", p.ProjectID,
+				"brief_id", p.BriefID, "platform", platform)
+			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign could not be verified with the ad platform"}
 		case errors.Is(lerr, domain.ErrAdoptionRequiresOwnConnection):
 			// ABOVE every connection arm below, which would otherwise send an operator to
 			// repair a connection that is working exactly as designed. Nothing is broken

@@ -4,10 +4,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -206,6 +208,76 @@ func TestAdoptCampaign_SystemAccountLookupErrors(t *testing.T) {
 				t.Fatal("a refused adoption bound a row")
 			}
 		})
+	}
+}
+
+// TestAdoptCampaign_SystemRowDecryptFailureIs500AndLogsNoErrorText pins the account_id path's
+// answer to an LF system row that fails authenticated decryption: the same 500 as a broken LF
+// row, never the 503 default, and a log line that names the LF row but carries none of the
+// decryptor's error text (domain.Encryptor may quote the ciphertext or key it failed on).
+// decryptConn wraps ErrCredentialDecryptionFailed, not ErrConnectionNotUsable, so systemScoped
+// adds no ErrSystemConnectionNotUsable and the broken-row arm alone would miss it.
+func TestAdoptCampaign_SystemRowDecryptFailureIs500AndLogsNoErrorText(t *testing.T) {
+	t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, "true")
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	const leaked = "SUPERSECRETCIPHERTEXTBYTES"
+	disp := &systemAccountAdopter{err: fmt.Errorf("decrypt linkedin-ads credentials: %w: aesgcm: open failed on %s",
+		domain.ErrCredentialDecryptionFailed, leaked)}
+	s, camps := newAdoptService(t, model.ProviderLinkedInAds, disp)
+	s.SetMarketingOpsChecker(&fakeMarketingOps{allow: true})
+	_, err := s.AdoptCampaign(ctxWithActor(testActor), systemAdoptPayload("500928401"))
+
+	var internal *briefs.InternalServerError
+	if !errors.As(err, &internal) {
+		t.Fatalf("err = %T %v, want the 500 a broken LF system row gets", err, err)
+	}
+	if strings.Contains(internal.Message, leaked) {
+		t.Errorf("the decryptor's error text reached the response: %q", internal.Message)
+	}
+	if len(camps.adopted) != 0 {
+		t.Fatal("a refused adoption bound a row")
+	}
+	logged := buf.String()
+	if strings.Contains(logged, leaked) {
+		t.Errorf("the decryptor's error text reached the log.\nlog: %s", logged)
+	}
+	if !strings.Contains(logged, "project_id="+model.SystemProjectID) || !strings.Contains(logged, "requested_by_project_id=") {
+		t.Errorf("the log must name the LF system row that failed, with the requester beside it.\nlog: %s", logged)
+	}
+}
+
+// TestListLinkedinAdsAdoptableCampaigns_SystemRowDecryptFailureIs500AndLogsNoErrorText pins the
+// candidate list's twin of the adoption arm above. classifyDiscoveryError already answers an
+// authenticated-decryption failure with a 500 and a fixed log line; this keeps the two #581
+// endpoints from drifting apart.
+func TestListLinkedinAdsAdoptableCampaigns_SystemRowDecryptFailureIs500AndLogsNoErrorText(t *testing.T) {
+	t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, "true")
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	const leaked = "SUPERSECRETCIPHERTEXTBYTES"
+	disp := &systemAccountAdopter{listErr: fmt.Errorf("%w: decrypt linkedin-ads credentials: %w: aesgcm: open failed on %s",
+		domain.ErrSystemConnectionOrigin, domain.ErrCredentialDecryptionFailed, leaked)}
+	camps := &fakeCampaignRepo{byID: map[string]*model.Campaign{}}
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	svc.SetOrchestrator(NewOrchestrator(camps, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: disp}))
+	_, err := svc.ListLinkedinAdsAdoptableCampaigns(context.Background(), &conn.ListLinkedinAdsAdoptableCampaignsPayload{ProjectID: "cncf", AccountID: "500928401"})
+
+	var internal *conn.InternalServerError
+	if !errors.As(err, &internal) {
+		t.Fatalf("err = %T %v, want the 500", err, err)
+	}
+	if strings.Contains(internal.Message, leaked) {
+		t.Errorf("the decryptor's error text reached the response: %q", internal.Message)
+	}
+	if logged := buf.String(); strings.Contains(logged, leaked) {
+		t.Errorf("the decryptor's error text reached the log.\nlog: %s", logged)
 	}
 }
 

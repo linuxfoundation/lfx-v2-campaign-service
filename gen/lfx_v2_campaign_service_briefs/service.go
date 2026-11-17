@@ -350,10 +350,11 @@ type Service interface {
 	// and to deployments with LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED, the campaign
 	// must report that account, a campaign already bound anywhere is still the
 	// 409, a missing or unusable LF system LinkedIn connection (an expired or
-	// revoked LF token or a rejected LF application credential included) is 500,
-	// an operator's fault rather than the 409 that asks for the project's
-	// connection to be repaired, and an exact repeat of an adoption that already
-	// succeeded returns the bound campaign (201) without contacting LinkedIn.
+	// revoked LF token or a rejected LF application credential included), or the
+	// LF row's credential cannot be decrypted, is 500, an operator's fault rather
+	// than the 409 that asks for the project's connection to be repaired, and an
+	// exact repeat of an adoption that already succeeded returns the bound
+	// campaign (201) without contacting LinkedIn.
 	// list-linkedin-ads-adoptable-campaigns lists the candidates.
 	AdoptCampaign(context.Context, *AdoptCampaignPayload) (res *Campaign, err error)
 	// Get one campaign under a brief; returns ETag.
