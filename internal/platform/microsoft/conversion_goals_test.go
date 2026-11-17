@@ -59,7 +59,7 @@ func TestCheckConversionGoals_RequestShapeAndSuccess(t *testing.T) {
 		t.Fatalf("CheckConversionGoals: %v", err)
 	}
 	cs := calls()
-	const want = `{"ConversionGoalIds":[5002,5001],"ConversionGoalTypes":"Url Duration PagesViewedPerVisit Event AppInstall OfflineConversion InStoreTransaction"}`
+	const want = `{"ConversionGoalIds":[5002,5001],"ConversionGoalTypes":"Url Duration PagesViewedPerVisit Event AppInstall OfflineConversion InStoreTransaction AppDownload"}`
 	if len(cs) != 1 || cs[0].method != http.MethodPost || cs[0].path != "ConversionGoals/QueryByIds" || cs[0].body != want {
 		t.Fatalf("calls = %+v, want one POST ConversionGoals/QueryByIds %s", cs, want)
 	}
@@ -78,6 +78,12 @@ func TestCheckConversionGoals_Refusals(t *testing.T) {
 		{"inactive", `{"ConversionGoals":[{"Id":5001,"Status":"Active"},{"Id":5002,"Status":"InActive"}]}`, `"5002" is InActive, not Active`, true},
 		{"no status", `{"ConversionGoals":[{"Id":5001,"Status":"Active"},{"Id":5002}]}`, `"5002" is`, true},
 		{"short", `{"ConversionGoals":[{"Id":5001,"Status":"Active"}]}`, "returned 1 entries for 2 ids", false},
+		// Longer than the request: decodeCappedList is capped at len(ids), so the third entry is
+		// refused as it begins. The garbage after it proves nothing past the cap is decoded — a
+		// whole-body decode would fail as "not the documented shape" instead.
+		{"long", `{"ConversionGoals":[{"Id":5001,"Status":"Active"},{"Id":5002,"Status":"Active"},{"Id":5003,"Status":"Active"}]}`, "more entries than the 2 ids asked for", false},
+		{"long with garbage past the cap", `{"ConversionGoals":[{"Id":5001,"Status":"Active"},{"Id":5002,"Status":"Active"},{} THIS IS NOT JSON`, "more entries than the 2 ids asked for", false},
+		{"null array", `{"ConversionGoals":null}`, "no ConversionGoals array", false},
 		{"other goal", `{"ConversionGoals":[{"Id":5001,"Status":"Active"},{"Id":9,"Status":"Active"}]}`, "position 2 is not the conversion goal asked for", false},
 		{"no array", `{"PartialErrors":[]}`, "no ConversionGoals array", false},
 		{"not json", `[`, "not the documented shape", false},
@@ -154,9 +160,10 @@ func TestValidateBiddingScheme_MaxConversions(t *testing.T) {
 	}
 }
 
-// The picker read is streamed: maxConversionGoalRows goals are accepted, and one more is
-// refused as soon as that entry begins, before trailing garbage is ever read.
-func TestListConversionGoals_RowCapIsEnforcedWhileStreaming(t *testing.T) {
+// The row cap stops decoding: maxConversionGoalRows goals are accepted, and one more is refused
+// as soon as that entry begins, before the decoder reaches the trailing garbage in the (already
+// buffered) body.
+func TestListConversionGoals_RowCapStopsDecoding(t *testing.T) {
 	rows := func(n int) string {
 		parts := make([]string, n)
 		for i := range parts {

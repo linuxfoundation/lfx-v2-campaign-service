@@ -208,7 +208,7 @@ func TestMicrosoftConversionGoals_DispatchChecksThenCreates(t *testing.T) {
 			if lookup < 0 || create < 0 || lookup > create {
 				t.Fatalf("call order = %v", calls)
 			}
-			if !strings.Contains(bodies[lookup], `"ConversionGoalIds":[5001,5002]`) || !strings.Contains(bodies[lookup], `"ConversionGoalTypes":"Url Duration PagesViewedPerVisit Event AppInstall OfflineConversion InStoreTransaction"`) {
+			if !strings.Contains(bodies[lookup], `"ConversionGoalIds":[5001,5002]`) || !strings.Contains(bodies[lookup], `"ConversionGoalTypes":"Url Duration PagesViewedPerVisit Event AppInstall OfflineConversion InStoreTransaction AppDownload"`) {
 				t.Errorf("lookup body = %s", bodies[lookup])
 			}
 			if !strings.Contains(bodies[create], `"GoalIds":[5001,5002]`) || !strings.Contains(bodies[create], tc.scheme) {

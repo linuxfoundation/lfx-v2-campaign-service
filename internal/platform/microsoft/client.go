@@ -1704,9 +1704,11 @@ type cappedListResponse[T any] struct {
 	PartialErrors indexedErrors
 }
 
-// decodeCappedList decodes a picker read's top-level object by STREAMING it with json.Decoder,
-// so a list longer than max is refused (errListOverCap) as soon as entry max+1 begins, before
-// the rest of the body is read or the rows allocated. Keys are matched case-insensitively, as
+// decodeCappedList decodes a picker read's top-level object token by token with json.Decoder,
+// so a list longer than max is refused (errListOverCap) as soon as entry max+1 begins: row
+// decoding stops there, and no further rows are decoded or allocated. The cap limits decoding
+// only, not the HTTP read: raw is the body doRequest has already buffered (up to
+// maxResponseBytes, 8 MiB) before this runs. Keys are matched case-insensitively, as
 // encoding/json matches them. Any other key is skipped. A body that is not one JSON object, or a
 // list that is neither an array nor null, is a plain error (the caller classifies both as
 // malformed).

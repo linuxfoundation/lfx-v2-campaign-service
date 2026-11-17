@@ -48,9 +48,11 @@ const (
 	// refusal readable.
 	MaxConversionGoals = 20
 
-	// conversionGoalTypesAll is every ConversionGoalType, space-delimited, so the read never
-	// misses a goal for its type.
-	conversionGoalTypesAll = "Url Duration PagesViewedPerVisit Event AppInstall OfflineConversion InStoreTransaction"
+	// conversionGoalTypesAll is every v13 ConversionGoalType (the value set's eight members, in
+	// the reference's schema order), space-delimited, so the read never misses a goal for its
+	// type: a goal of a type left out would vanish from the picker and read as nonexistent in
+	// the pre-create check.
+	conversionGoalTypesAll = "Url Duration PagesViewedPerVisit Event AppInstall OfflineConversion InStoreTransaction AppDownload"
 
 	// conversionGoalStatusActive is the only status a goal can be bid toward: a Paused or
 	// InActive goal records no conversions and a Deleted one is gone. An allow-list, so a status
@@ -107,11 +109,6 @@ type msConversionGoal struct {
 	Scope  string       `json:"Scope"`
 }
 
-type getConversionGoalsByIDsResponse struct {
-	ConversionGoals []*msConversionGoal `json:"ConversionGoals"`
-	PartialErrors   indexedErrors       `json:"PartialErrors"`
-}
-
 // errConversionGoalLookupMalformed marks a GetConversionGoalsByIds answer this client cannot
 // believe.
 var errConversionGoalLookupMalformed = errors.New("microsoft-ads conversion goal lookup could not be confirmed")
@@ -120,7 +117,10 @@ var errConversionGoalLookupMalformed = errors.New("microsoft-ads conversion goal
 // the client's account can use, with ONE GetConversionGoalsByIds read. An id the answer leaves
 // null (not retrieved), or returns Paused or Deleted, is a domain.PreflightRefusal naming the
 // field and the id. A call that fails, or an answer that cannot be believed (no ConversionGoals
-// array, not index-aligned, an entry that is not the goal asked for), is a plain error. Either
+// array, not index-aligned, an entry that is not the goal asked for), is a plain error. The
+// answer is decoded with decodeCappedList capped at len(ids) (at most MaxConversionGoals), so an
+// answer longer than the request stops decoding at the first extra entry instead of allocating
+// every one; it still gets the identity check (a key declared twice is refused). Either
 // way nothing is created. A partial error alone is not attributed (Microsoft documents that they
 // do not follow the request order); the null entry at that index is what refuses the id.
 func (c *Client) CheckConversionGoals(ctx context.Context, ids []string) error {
@@ -137,22 +137,26 @@ func (c *Client) CheckConversionGoals(ctx context.Context, ids []string) error {
 	if err != nil {
 		return fmt.Errorf("microsoft-ads conversion goal lookup failed: %w", err)
 	}
-	var probe map[string]json.RawMessage
-	var resp getConversionGoalsByIDsResponse
-	// decodeTrusted refuses a key declared twice (case variants included): last-key-wins would let
-	// `{"Id":9,"Id":5001}` or `{"Status":"Paused","status":"Active"}` state an identity or a status
-	// the bytes do not state unambiguously, and accept the goal.
-	if decodeTrusted(raw, &resp) != nil || json.Unmarshal(raw, &probe) != nil {
+	// decodeCappedList applies identityjson.Check, as decodeTrusted does, so a key declared twice
+	// (case variants included) is refused: last-key-wins would let `{"Id":9,"Id":5001}` or
+	// `{"Status":"Paused","status":"Active"}` state an identity or a status the bytes do not
+	// state unambiguously, and accept the goal. The cap is len(ids): an index-aligned answer
+	// never holds more entries than ids asked for.
+	resp, err := decodeCappedList[msConversionGoal](raw, "ConversionGoals", len(ids))
+	if errors.Is(err, errListOverCap) {
+		return fmt.Errorf("%w: it returned more entries than the %d ids asked for", errConversionGoalLookupMalformed, len(ids))
+	}
+	if err != nil {
 		return fmt.Errorf("%w: the response is not the documented shape", errConversionGoalLookupMalformed)
 	}
-	if goals, ok := probe["ConversionGoals"]; !ok || isJSONNullRaw(goals) {
+	if !resp.SawList {
 		return fmt.Errorf("%w: the response carries no ConversionGoals array", errConversionGoalLookupMalformed)
 	}
-	if len(resp.ConversionGoals) != len(ids) {
-		return fmt.Errorf("%w: it returned %d entries for %d ids", errConversionGoalLookupMalformed, len(resp.ConversionGoals), len(ids))
+	if len(resp.Rows) != len(ids) {
+		return fmt.Errorf("%w: it returned %d entries for %d ids", errConversionGoalLookupMalformed, len(resp.Rows), len(ids))
 	}
 	for i, id := range ids {
-		g := resp.ConversionGoals[i]
+		g := resp.Rows[i]
 		if g == nil {
 			return domain.PreflightRefusalf("invalid microsoftConfig.%s: Microsoft Advertising has no conversion goal %s on this account; marketing ops creates goals, this service only names existing ones", FieldConversionGoalIDs, domain.CallerValue(id))
 		}
@@ -195,8 +199,9 @@ func (c *Client) ListConversionGoals(ctx context.Context) ([]ConversionGoal, err
 	if err != nil {
 		return nil, fmt.Errorf("microsoft-ads conversion goal read failed: %w", err)
 	}
-	// Streamed (decodeCappedList), so an answer longer than maxConversionGoalRows is refused at
-	// the first row past the cap instead of after every row is decoded.
+	// Decoded token by token (decodeCappedList), so row decoding stops at the first row past
+	// maxConversionGoalRows instead of after every row is decoded. doRequest has already
+	// buffered the body; the cap does not limit that read.
 	resp, err := decodeCappedList[msConversionGoal](raw, "ConversionGoals", maxConversionGoalRows)
 	if errors.Is(err, errListOverCap) {
 		return nil, fmt.Errorf("%w: it returned more than %d conversion goals", ErrConversionGoalsMalformed, maxConversionGoalRows)

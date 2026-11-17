@@ -6,6 +6,7 @@ package microsoft
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -68,6 +69,11 @@ func TestListRemarketingLists_RefusesAnUnbelievableAnswer(t *testing.T) {
 		"negative size":     `{"Audiences":[{"Id":1,"Type":"RemarketingList","SearchSize":"-3"}]}`,
 		"bad duration":      `{"Audiences":[{"Id":1,"Type":"RemarketingList","MembershipDuration":"thirty"}]}`,
 		"duration overflow": `{"Audiences":[{"Id":1,"Type":"RemarketingList","MembershipDuration":99999999999}]}`,
+		// One past math.MaxInt32, bare and quoted: MembershipDuration is an int, so the 32-bit
+		// parse refuses it rather than converting a wider value to int.
+		"duration max int32+1":        `{"Audiences":[{"Id":1,"Type":"RemarketingList","MembershipDuration":2147483648}]}`,
+		"quoted duration max int32+1": `{"Audiences":[{"Id":1,"Type":"RemarketingList","MembershipDuration":"2147483648"}]}`,
+		"size max int64+1":            `{"Audiences":[{"Id":1,"Type":"RemarketingList","SearchSize":"9223372036854775808"}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, body })
@@ -76,6 +82,21 @@ func TestListRemarketingLists_RefusesAnUnbelievableAnswer(t *testing.T) {
 				t.Fatalf("got (%v, %v), want ErrRemarketingListsMalformed and no rows", rows, err)
 			}
 		})
+	}
+}
+
+// The largest values each field's type holds are accepted unchanged: MembershipDuration
+// math.MaxInt32 and SearchSize math.MaxInt64.
+func TestListRemarketingLists_AcceptsTheLargestInRangeValues(t *testing.T) {
+	c, _ := kwRecorder(t, func(string, string) (int, string) {
+		return http.StatusOK, `{"Audiences":[{"Id":1,"Type":"RemarketingList","MembershipDuration":2147483647,"SearchSize":"9223372036854775807"}]}`
+	})
+	rows, err := c.ListRemarketingLists(context.Background())
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("got (%+v, %v)", rows, err)
+	}
+	if r := rows[0]; r.MembershipDuration == nil || *r.MembershipDuration != math.MaxInt32 || r.SearchSize == nil || *r.SearchSize != math.MaxInt64 {
+		t.Errorf("row = %+v", r)
 	}
 }
 
@@ -121,10 +142,10 @@ func TestListRemarketingLists_QuotedAndNumericLongs(t *testing.T) {
 	}
 }
 
-// The read is streamed: maxRemarketingListRows lists are accepted, and one more is refused as
-// soon as that entry begins — before the rest of the body, here garbage that a whole-body
-// decode would reject as "not the documented shape", is ever read.
-func TestListRemarketingLists_RowCapIsEnforcedWhileStreaming(t *testing.T) {
+// The row cap stops decoding: maxRemarketingListRows lists are accepted, and one more is refused
+// as soon as that entry begins — before the decoder reaches the rest of the (already buffered)
+// body, here garbage that a whole-body decode would reject as "not the documented shape".
+func TestListRemarketingLists_RowCapStopsDecoding(t *testing.T) {
 	rows := func(n int) string {
 		parts := make([]string, n)
 		for i := range parts {
