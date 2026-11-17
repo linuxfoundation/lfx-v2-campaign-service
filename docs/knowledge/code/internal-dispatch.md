@@ -1878,6 +1878,13 @@ classified. Nothing is written until every guard has passed.
   time (`UpdatedAt` + window, RFC 3339); `UpdateCampaignBid` maps it, before the generic
   `ErrBidUnwritable` text, to a 409 saying the refusal is temporary. A row with no `UpdatedAt`
   never settles and keeps the generic 409.
+  An unconfirmed further ad group that cannot be reconciled is refused with
+  `reconcileBidWriteError` (also wrapping `ErrBidUnwritable`), whose service-authored
+  `BidReconcileReason` names the entry and the remedy and whose `BidReconcileRetryable` says
+  whether a retry can clear it: true when the lookup failed or could not prove the group found or
+  absent (409: usually temporary, retry later), false when no name is recorded or can be
+  recomposed (409: retrying will not help — set the bid in Microsoft Advertising or recreate the
+  campaign). The lookup's upstream error reaches only the log.
 - **Reddit** (`reddit_bid.go`): writes `bid_value` of the ad group recorded in the result blob
   (`redditChildIDs`; its shape is checked with `reddit.CheckAdGroupID` before any request).
   Reads the CAMPAIGN first (`GetCampaignBudget`, which now also reports `bid_strategy`): under

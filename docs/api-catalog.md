@@ -1212,8 +1212,11 @@ adGroups?: object[]             — Up to 5 ad groups under the campaign instead
                                   message says the refusal is temporary and names the entry and
                                   the time to retry after); both
                                   persisted with the bid — and when the lookup cannot establish it
-                                  the write is refused with 409 naming the entry, until a retry
-                                  resolves it), and
+                                  the write is refused with 409 naming the entry, whose message
+                                  says the refusal is usually temporary and to retry later; a
+                                  legacy group with no recorded or recomposable name is refused
+                                  with 409 saying retrying will not help — set the bid in
+                                  Microsoft Advertising or recreate the campaign), and
                                   keyword actions may name any such group, one
                                   per request. The
                                   monitor and reports are campaign-level and unaffected. OFF unless

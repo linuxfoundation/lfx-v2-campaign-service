@@ -131,12 +131,25 @@ func (d *MicrosoftDispatcher) WriteBid(ctx context.Context, projectID string, pl
 	if len(unnamed) > 0 {
 		// A legacy row recorded no name for the group and none could be recomposed from its
 		// siblings: no lookup can establish it, so a retry will not clear this refusal.
-		return fmt.Errorf("write microsoft campaign bid: campaign %s has ad group %s whose create was unconfirmed and for which no ad group name is recorded or can be recomposed, so it cannot be looked up and a retry will not clear this; find that ad group in Microsoft Advertising (it may not exist) and set its bid there, or recreate the campaign: %w",
-			campaignID, strings.Join(unnamed, ", "), domain.ErrBidUnwritable)
+		// The reason is this service's own sentence: remedy first (the service clips it), then the
+		// entry labels, which are the row's recorded positions and suffixes, never Microsoft's text.
+		return &reconcileBidWriteError{
+			reason: fmt.Sprintf("set the bid in Microsoft Advertising, or recreate the campaign — ad group %s has an unconfirmed create and no recorded name, so it cannot be looked up (it may not exist)",
+				strings.Join(unnamed, ", ")),
+			err: fmt.Errorf("write microsoft campaign bid: campaign %s has ad group %s whose create was unconfirmed and for which no ad group name is recorded or can be recomposed, so it cannot be looked up and a retry will not clear this; find that ad group in Microsoft Advertising (it may not exist) and set its bid there, or recreate the campaign: %w",
+				campaignID, strings.Join(unnamed, ", "), domain.ErrBidUnwritable),
+		}
 	}
 	if len(unresolved) > 0 {
-		return fmt.Errorf("write microsoft campaign bid: campaign %s has ad group %s whose create was unconfirmed and whose lookup by name could not establish it (the read failed or was unreadable, or the name resolved to an unusable or already-recorded id), so it cannot be re-bid; retry the bid change — it clears once the lookup finds that ad group or confirms it absent — or resolve the ad group in Microsoft Advertising: %w",
-			campaignID, strings.Join(unresolved, ", "), domain.ErrBidUnwritable)
+		// TEMPORARY as far as this service can tell: the lookup's own failure goes to the log
+		// through err, never into the reason.
+		return &reconcileBidWriteError{
+			reason: fmt.Sprintf("retry the bid change later — ad group %s has an unconfirmed create that a lookup in Microsoft Advertising could not yet find or confirm absent; it clears once the lookup succeeds",
+				strings.Join(unresolved, ", ")),
+			retryable: true,
+			err: fmt.Errorf("write microsoft campaign bid: campaign %s has ad group %s whose create was unconfirmed and whose lookup by name could not establish it (the read failed or was unreadable, or the name resolved to an unusable or already-recorded id), so it cannot be re-bid; retry the bid change — it clears once the lookup finds that ad group or confirms it absent — or resolve the ad group in Microsoft Advertising: %w",
+				campaignID, strings.Join(unresolved, ", "), domain.ErrBidUnwritable),
+		}
 	}
 	if len(unsettled) > 0 {
 		if retryAt, ok := microsoftCreateSettlesAt(campaign); ok {

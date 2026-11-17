@@ -917,6 +917,16 @@ func TestMicrosoftAdGroups_WriteBidReconcilesAnUnconfirmedLaterGroup(t *testing.
 			if !errors.Is(err, domain.ErrBidUnwritable) || !strings.Contains(err.Error(), "entry 2 (B)") || !strings.Contains(err.Error(), "clears once the lookup finds that ad group or confirms it absent") {
 				t.Fatalf("err = %v, want ErrBidUnwritable naming entry 2 (B) and how it clears", err)
 			}
+			var reconcile interface {
+				BidReconcileReason() string
+				BidReconcileRetryable() bool
+			}
+			if !errors.As(err, &reconcile) || !reconcile.BidReconcileRetryable() ||
+				!strings.Contains(reconcile.BidReconcileReason(), "retry the bid change later") ||
+				!strings.Contains(reconcile.BidReconcileReason(), "entry 2 (B)") ||
+				strings.Contains(reconcile.BidReconcileReason(), "555") {
+				t.Fatalf("err = %v, want a retryable reconcile reason naming entry 2 (B) and no campaign id", err)
+			}
 			if w := msWrites(calls()); len(w) != 0 {
 				t.Fatalf("writes = %+v, want none", w)
 			}
@@ -985,6 +995,15 @@ func TestMicrosoftAdGroups_WriteBidRecomposesALegacyUnnamedGroup(t *testing.T) {
 		if !errors.Is(err, domain.ErrBidUnwritable) || !strings.Contains(err.Error(), "entry 2 (B)") ||
 			!strings.Contains(err.Error(), "a retry will not clear this") || strings.Contains(err.Error(), "clears once the lookup") {
 			t.Fatalf("err = %v, want a 409 naming entry 2 (B) that says a retry will not clear it", err)
+		}
+		var reconcile interface {
+			BidReconcileReason() string
+			BidReconcileRetryable() bool
+		}
+		if !errors.As(err, &reconcile) || reconcile.BidReconcileRetryable() ||
+			!strings.Contains(reconcile.BidReconcileReason(), "set the bid in Microsoft Advertising, or recreate the campaign") ||
+			!strings.Contains(reconcile.BidReconcileReason(), "entry 2 (B)") {
+			t.Fatalf("err = %v, want a non-retryable reconcile reason naming entry 2 (B) and the remedy", err)
 		}
 		if w := msWrites(calls()); len(w) != 0 {
 			t.Fatalf("writes = %+v, want none", w)

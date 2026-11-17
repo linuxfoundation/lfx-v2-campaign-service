@@ -114,6 +114,10 @@ func (s *BriefService) UpdateCampaignBid(ctx context.Context, p *briefs.UpdateCa
 		}
 		var unconfirmed interface{ Unconfirmed() bool }
 		var settling interface{ BidSettlingReason() string }
+		var reconcile interface {
+			BidReconcileReason() string
+			BidReconcileRetryable() bool
+		}
 		switch {
 		case errors.Is(werr, ErrBidUnsupported):
 			return nil, &briefs.BadRequestError{Code: "400", Message: "bid changes are not supported for this campaign's platform"}
@@ -139,6 +143,21 @@ func (s *BriefService) UpdateCampaignBid(ctx context.Context, p *briefs.UpdateCa
 			slog.InfoContext(ctx, "campaign bid change refused for now: an ad group create is still settling",
 				append(logArgs, "platform_campaign_id", existing.PlatformCampaignID, "error", safeErrSummary(werr))...)
 			return nil, &briefs.ConflictError{Code: "409", Message: "this campaign's bid cannot be set yet — the refusal is temporary: " + safeErrSummary(errors.New(settling.BidSettlingReason()))}
+		case errors.As(werr, &reconcile):
+			// A child this service may have created (Microsoft: a later ad group whose create was
+			// unconfirmed) could not be reconciled. Checked BEFORE ErrBidUnwritable, which it wraps:
+			// the generic 409 carries neither remedy. The reason is the adapter's own
+			// service-authored sentence — which entry, and what to do — carrying no upstream text;
+			// the upstream cause goes to the log only.
+			reason := safeErrSummary(errors.New(reconcile.BidReconcileReason()))
+			if reconcile.BidReconcileRetryable() {
+				slog.WarnContext(ctx, "campaign bid change refused for now: an unconfirmed ad group could not be looked up",
+					append(logArgs, "platform_campaign_id", existing.PlatformCampaignID, "error", safeErrSummary(werr))...)
+				return nil, &briefs.ConflictError{Code: "409", Message: "this campaign's bid cannot be set yet — an ad group this service may have created could not be confirmed found or absent, which is usually temporary; retry later: " + reason}
+			}
+			slog.WarnContext(ctx, "campaign bid change refused: an unconfirmed ad group cannot be looked up",
+				append(logArgs, "platform_campaign_id", existing.PlatformCampaignID, "error", safeErrSummary(werr))...)
+			return nil, &briefs.ConflictError{Code: "409", Message: "this campaign's bid cannot be set here, and retrying will not help — an ad group this service may have created cannot be looked up: " + reason}
 		case errors.Is(werr, domain.ErrBidAdoptedCampaign):
 			// Checked BEFORE ErrBidUnwritable, which it is joined with: the generic 409 below
 			// talks about strategies and ad groups, which is not why an adopted campaign is

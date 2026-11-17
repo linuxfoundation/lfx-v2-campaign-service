@@ -52,3 +52,27 @@ func (e *settlingBidWriteError) Unwrap() error { return e.err }
 
 // BidSettlingReason returns the client-safe explanation of the temporary refusal.
 func (e *settlingBidWriteError) BidSettlingReason() string { return e.reason }
+
+// reconcileBidWriteError marks a bid write refused because a child this service may have created
+// (Microsoft: a later ad group whose create was unconfirmed) could not be reconciled, with the
+// platform unchanged, and carries the one sentence safe to hand back to the caller. err wraps
+// domain.ErrBidUnwritable, so every ErrBidUnwritable caller keeps matching; reason is authored by
+// this service (which entry blocks, and what to do), never upstream text. retryable says whether
+// a retry can clear it: true when the reconcile lookup failed or could not prove the child found
+// or absent, false when no lookup can ever run. The service detects it through
+// BidReconcileReason and answers a dedicated 409 for each kind rather than ErrBidUnwritable's
+// generic bidding-setup text, which carries neither remedy.
+type reconcileBidWriteError struct {
+	reason    string
+	retryable bool
+	err       error
+}
+
+func (e *reconcileBidWriteError) Error() string { return e.err.Error() }
+func (e *reconcileBidWriteError) Unwrap() error { return e.err }
+
+// BidReconcileReason returns the client-safe explanation of the refusal.
+func (e *reconcileBidWriteError) BidReconcileReason() string { return e.reason }
+
+// BidReconcileRetryable reports whether retrying the bid change can clear the refusal.
+func (e *reconcileBidWriteError) BidReconcileRetryable() bool { return e.retryable }

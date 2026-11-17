@@ -308,9 +308,6 @@ type CampaignResult struct {
 	// BidAdjustmentCriterionIDs are the device, age and gender criteria THIS RUN attached (#563
 	// gap 8), in send order.
 	BidAdjustmentCriterionIDs []string `json:"bidAdjustmentCriterionIds,omitempty"`
-	// ConversionGoalIDs are the conversion goals THIS RUN set as the campaign's GoalIds (#563 gap
-	// 7). Empty on a campaign found by name, which keeps the goals it has.
-	ConversionGoalIDs []string `json:"conversionGoalIds,omitempty"`
 	// AdGroups is every requested ad group's outcome, in request order, when the create asked for
 	// microsoftConfig.adGroups (#563 gap 12); omitted on the single-group path. The top-level
 	// AdGroupName/AdGroupID/AdID/KeywordIDs are its first entry's.
