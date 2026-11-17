@@ -50,6 +50,14 @@ diagnosed — whether a proxy and key are configured at all.
 exercised against a live ad account. Only exactly `"true"` enables them; the keyword-targeting
 read is not gated.
 
+`TWITTER_KEYWORD_ADD_ENABLED` is the same kind of gate for X, defaulting to `"false"` (#564 gap
+12): it opts a cluster in to the positive keyword add on an existing X campaign
+(`add-keyword-targeting`, `POST .../keyword-targeting/additions`), one `BROAD_KEYWORD` criterion
+(`operator_type` `EQ`) per keyword on the line item this service created. No positive criterion
+has been added to a live line item yet. Only exactly `"true"` enables it, read per call
+(`twitterKeywordAddEnabled` in `internal/dispatch/twitter_keyword_add.go`); off, the endpoint
+answers 400 before X is contacted. The X removal and negative add are not behind it.
+
 `GOOGLE_ADS_DEMAND_GEN_AUDIENCE_ENABLED` is a plain feature gate, defaulting to `"false"`
 (#459): it opts a cluster in to `googleAdsConfig.demandGenAudience`, one existing Google Ads
 Audience on a Demand Gen ad group. It is a per-deployment opt-in, turned on by setting it to

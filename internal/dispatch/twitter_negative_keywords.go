@@ -69,8 +69,11 @@ func twitterNegativeKey(targetingType, value string) string {
 // Guard order — every refusal before the first POST changes nothing: the batch (1..20, the shared
 // text rules, match type Broad / Phrase / Exact → BROAD_ / PHRASE_ / EXACT_KEYWORD, no
 // duplicates, no revision); provisioning; provenance FAILS CLOSED; the account; the line item is
-// X's, live and THIS campaign's (ownedTwitterLineItem); and its targeting criteria are listed
-// completely. A keyword the line item already excludes with the same type (text compared
+// X's, live and THIS campaign's (ownedTwitterLineItem); the line item's targeting write lock
+// (lockTwitterTargeting, shared with AddKeywordTargeting); its targeting criteria listed
+// completely; and the shared cap (checkTwitterCriteriaCap): no more than
+// twitter.MaxCreateTargetingCriteria live criteria of any type, counting those it holds plus the
+// negated keywords this request would send — domain.ErrKeywordTargetingLimit, a 409. A keyword the line item already excludes with the same type (text compared
 // ignoring case, as CreateNegativeKeywordCriterion accepts X's echo) is ALREADY_PRESENT and not
 // sent.
 //
@@ -81,7 +84,7 @@ func twitterNegativeKey(targetingType, value string) string {
 // the negated keyword sent). Adding a negative only narrows delivery, so unlike the removal there
 // is no re-read before each write. The call errors (UNCONFIRMED) only when no item has a definite
 // outcome — NOT_SENT counts as definite.
-func (d *TwitterDispatcher) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword, revision string) ([]model.NegativeKeywordOutcome, error) {
+func (d *TwitterDispatcher) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword, revision string) (retOut []model.NegativeKeywordOutcome, retErr error) {
 	const op = "add x negative keywords"
 	validated, err := validateNegativeKeywordBatch("x", keywords, maxTwitterNegativeKeywords, negativeMatchBroad, negativeMatchPhrase, negativeMatchExact)
 	if err != nil {
@@ -94,6 +97,20 @@ func (d *TwitterDispatcher) AddNegativeKeywords(ctx context.Context, projectID s
 	if err != nil {
 		return nil, err
 	}
+	// The positive add's lock (lockTwitterTargeting): a negated criterion counts against the same
+	// 60-criterion cap, so the read that decides it and every POST are serialized with any other
+	// LFX keyword add — positive or negative — to this line item.
+	hold, err := d.lockTwitterTargeting(ctx, op, client.AccountID(), lineItemID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		outcomes := make([]string, 0, len(retOut))
+		for _, o := range retOut {
+			outcomes = append(outcomes, o.Outcome)
+		}
+		d.settleTwitterTargetingLock(hold, retErr, outcomes)
+	}()
 	all, err := client.ListLineItemTargetingCriteria(ctx, lineItemID)
 	if err != nil {
 		if errors.Is(err, twitter.ErrTargetingUnreadable) {
@@ -106,6 +123,15 @@ func (d *TwitterDispatcher) AddNegativeKeywords(ctx context.Context, projectID s
 		if tc.NegativeKeyword() {
 			present[twitterNegativeKey(tc.TargetingType, tc.TargetingValue)] = true
 		}
+	}
+	toSend := 0
+	for _, k := range validated {
+		if !present[twitterNegativeKey(twitterNegativeTargetingType(k.MatchType), k.Text)] {
+			toSend++
+		}
+	}
+	if err := checkTwitterCriteriaCap(op, lineItemID, all, toSend); err != nil {
+		return nil, err
 	}
 
 	out := make([]model.NegativeKeywordOutcome, 0, len(validated))

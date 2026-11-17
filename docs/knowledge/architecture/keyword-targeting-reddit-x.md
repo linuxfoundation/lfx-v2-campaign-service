@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "Keyword Targeting on Reddit and X"
-description: "The keyword levers for Reddit and X, where a keyword is an entry in the ad group's or line item's targeting rather than a pausable criterion: a live read, a reduce-only removal and a negative-keyword add, with ownership proven before any write, a compare-and-set revision on Reddit's whole-object write, and per-criterion outcomes on X; per-keyword metrics are a separate read-only Reddit read (keyword performance), and none on X."
+description: "The keyword levers for Reddit and X, where a keyword is an entry in the ad group's or line item's targeting rather than a pausable criterion: a live read, a reduce-only removal, a negative-keyword add and, on X only, a default-off positive keyword add serialized per line item and capped at 60 criteria, with ownership proven before any write, a compare-and-set revision on Reddit's whole-object write, and per-criterion outcomes on X; per-keyword metrics are a separate read-only Reddit read (keyword performance), and none on X."
 resource: "internal/service/brief_keyword_targeting.go"
 ---
 
@@ -133,14 +133,16 @@ argument (Reddit's token, required and non-blank there). For Microsoft and X the
 |---|---|---|
 | Where | `targeting.excluded_keywords` of the recorded ad group — `{"type":["array","null"],"maxItems":2000,"items":{"type":"string"}}`, "The keywords to exclude from targeting." | A keyword targeting criterion of the recorded line item with `operator_type` `NE` ("to set negated targeting, use operator_type=NE"). |
 | Match types | **Broad only.** The member is a plain string list with no match type, so `Exact`/`Phrase` would promise a mode Reddit does not offer (400). | `Broad`→`BROAD_KEYWORD`, `Phrase`→`PHRASE_KEYWORD`, `Exact`→`EXACT_KEYWORD` (the guide's Negative / Negative Phrase / Negative Exact). `UNORDERED_KEYWORD` is deprecated; the legacy `NEGATIVE_*` types now read back as the positive type with `NE`. Microsoft keeps Exact/Phrase. |
-| Write | The removal's whole-targeting PATCH in the other direction: every other member and every existing excluded element sent back as read, the new strings appended. Behind `REDDIT_KEYWORD_TARGETING_WRITES_ENABLED`; `revision` required, a stale one 409; over 2,000 array elements — a null element kept from the read counts — is `ErrNegativeKeywordLimit` (409). | One `POST accounts/:account_id/targeting_criteria` per keyword through the account write pacer, at most 20 per request (one write per second inside the 45 s mutation timeout). The batch endpoint (≤ 40) succeeds or fails as a group, so it is not used. |
+| Write | The removal's whole-targeting PATCH in the other direction: every other member and every existing excluded element sent back as read, the new strings appended. Behind `REDDIT_KEYWORD_TARGETING_WRITES_ENABLED`; `revision` required, a stale one 409; over 2,000 array elements — a null element kept from the read counts — is `ErrNegativeKeywordLimit` (409). | One `POST accounts/:account_id/targeting_criteria` per keyword through the account write pacer, at most 20 per request (one write per second inside the 45 s mutation timeout). The batch endpoint (≤ 40) succeeds or fails as a group, so it is not used. Held under the positive add's per-line-item lock, and counted against its 60-criterion cap: live criteria of every type plus the negatives this request would send over 60 is `ErrKeywordTargetingLimit` (409), nothing sent. |
 | Already there | Exact text already excluded → `ALREADY_PRESENT`, not resent; nothing new → no write. | A live `NE` criterion of the same type and text equal under `textfold.Key` after collapsing whitespace — the one simple-case-fold key also used for request duplicates and the echo check (`strings.ToLower` would split σ/ς), with the collapse inside `twitterNegativeKey` because the request side arrives normalised by `NormalizeNegativeKeywordText` and X's stored value does not → `ALREADY_PRESENT`, not sent. |
 | Outcomes | One PATCH, sent once (429 UNCONFIRMED); a re-read must show exactly the excluded list written and the fingerprint of every other member unchanged, else UNCONFIRMED. New items share the write's outcome — APPLIED, FAILED (`REJECTED` by Reddit, `NOT_SENT`) or UNCONFIRMED — and ALREADY_PRESENT items keep theirs; the call errors only when no item has a definite outcome (every item rode on an UNCONFIRMED write). No id. | Per item: APPLIED (+ criterion id as `negative_keyword_id`), FAILED `NOT_SENT` / `REJECTED`, or UNCONFIRMED (transport, 3xx, 5xx, 429, or a 2xx not echoing a live `NE` criterion of that type, line item and keyword — the value compared under `textfold`). `NOT_SENT` is definite; the call errors only when every item is UNCONFIRMED. |
 
 Guards are the removal's, in order: (Reddit) the flag; the batch — the text rules are Microsoft's
 (`microsoft.NormalizeNegativeKeywordText`) for every platform, because the endpoint publishes one
 input contract; provisioning; provenance FAILS CLOSED; the account; the ad group / line item read
-live and proven to be THIS campaign's; (Reddit) the revision; (X) a complete criteria list. Unlike
+live and proven to be THIS campaign's; (Reddit) the revision; (X) the line item's targeting lock,
+a complete criteria list, and the 60-criterion cap — both shared with the positive add below
+(`lockTwitterTargeting`, `checkTwitterCriteriaCap`). Unlike
 the X removal there is no re-list before each POST: a concurrent change cannot make a negative
 widen delivery.
 
@@ -151,6 +153,54 @@ read also cites. X: https://docs.x.com/x-ads-api/campaign-management (keyword ty
 variants, `NE`) and https://docs.x.com/x-ads-api/campaign-management/reference (`operator_type`,
 the `BROAD_KEYWORD` + `NE` example, the batch endpoint). **Unverified live**, like the rest of
 this concept.
+
+## Positive keyword add on X (`add-keyword-targeting`, #564 gap 12)
+
+`POST …/campaigns/{campaign_id}/keyword-targeting/additions`, `campaign_manager` (it nests under
+`/briefs/**` like the removal). The design note above ("there is no positive-keyword add") still
+holds for Reddit; on X the removal now has a counterpart. Body `{"keywords": [...]}`; response
+`{campaign_id, results: [{keyword, criterion_id?, outcome, error_code?}], applied_count}`.
+
+- **What is sent.** One `BROAD_KEYWORD` criterion with `operator_type` `EQ` per keyword on the
+  recorded line item (`twitter.Client.CreateKeywordCriterion`) — the criterion the create path
+  sends for `twitterConfig.keywords` (#574). It shares the negative add's POST
+  (`createKeywordCriterion`): paced, sent once, a 429 UNCONFIRMED, the echo checked for this line
+  item, type, operator (an absent one reads as `EQ`) and keyword under `textfold`.
+- **Text rules and caps are the create path's.** `twitter.NormalizeKeywordAdditions` runs
+  `NormalizeKeywordInterestTargeting` (trimmed, 1–80 characters, no control character, case-folded
+  duplicates dropped, first spelling kept), then allows 1–20 distinct keywords
+  (`MaxKeywordAdditions`: each is a paced POST inside the 45 s mutation timeout). The service runs
+  it first, so the 400 names the problem; results answer the DISTINCT keywords in order.
+- **60 criteria per line item.** After the criteria list, the live criteria of every type plus the
+  keywords this request would send must not exceed `twitter.MaxCreateTargetingCriteria` (60), else
+  `ErrKeywordTargetingLimit` (409) with nothing sent. The negative add enforces the same cap through
+  the same helper (`checkTwitterCriteriaCap`), since a negated keyword is a criterion too.
+- **Idempotent.** A keyword the line item already targets as a live `BROAD_KEYWORD` criterion with
+  `operator_type` `EQ` or none (X's default, read as on the write path's echo check;
+  `TargetingCriterion.PositiveBroadKeyword`), compared under `twitterNegativeKey`'s fold and
+  whitespace collapse, is `ALREADY_PRESENT` with that criterion's id and is not sent. A positive
+  PHRASE or EXACT criterion with the same text does not count. The request's keywords are first
+  de-duplicated under that same key (`dedupeTwitterKeywordAdditions`), so `cloud native` and
+  `cloud  native` are one keyword: one outcome, counted once against the cap, sent at most once.
+- **Lock.** The X removal takes no lock (it re-lists before each DELETE instead); the add needs one,
+  because two adds could each pass the cap or each send the same keyword. `TwitterDispatcher` now
+  has the Reddit dispatcher's `targetingLock` — in-process by default, the same Postgres advisory
+  lock once the container binds it (`bindKeywordTargetingWriteLock` binds both) — scoped
+  `twitter/{account}/line_items/{id}`, held from the criteria list through the last POST, released
+  at once when settled and kept for `KeywordTargetingUnconfirmedCooldown` (15 s) after any
+  UNCONFIRMED POST. A contended lock is 409 after 10 s, and is not recorded as an upstream call.
+  The X negative add takes the SAME lock (2026-11-17, PR #627 review): without it, from 59 live
+  criteria a positive and a negative add could each read 59, each pass the cap and end at 61.
+- **Gate.** `TWITTER_KEYWORD_ADD_ENABLED`, exact `"true"`, off by default (chart `"false"`): no
+  positive criterion has been added to a live line item. Off is
+  `ErrKeywordTargetingUnsupported` (400) before X is contacted. Any platform but X is 400.
+- **Guard order:** the gate; the batch; provisioning; provenance FAILS CLOSED; the account; the
+  line item live and THIS campaign's; the lock; a complete criteria list; the cap.
+
+Tests: `internal/dispatch/twitter_keyword_add_test.go`, `internal/platform/twitter/keyword_add_test.go`,
+`internal/service/keyword_targeting_add_test.go`, the metrics roster and lock rows in
+`orchestrator_metrics_test.go`, and the `/keyword-targeting/additions` parity row. **Unverified
+live.**
 
 ## Code
 
@@ -168,6 +218,8 @@ this concept.
   keywords") and [internal/platform/twitter](../code/internal-platform-twitter.md) ("Line-item
   negative keywords").
 - `internal/service/brief_keyword_targeting.go`; orchestrator `ReadKeywordTargeting` /
-  `RemoveKeywordTargeting` (`opReadKeywordTargeting`, `opRemoveKeywordTargeting`).
+  `RemoveKeywordTargeting` / `AddKeywordTargeting` (`opReadKeywordTargeting`,
+  `opRemoveKeywordTargeting`, `opAddKeywordTargeting`); X add in
+  `internal/dispatch/twitter_keyword_add.go`.
 - Routes inherit the `briefs(/.*)?` HTTPRoute match and `/briefs/**` RuleSet rule; pinned by
   `charts/lfx-v2-campaign-service/parity_test.go`.

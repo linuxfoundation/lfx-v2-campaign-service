@@ -29,6 +29,10 @@ type xNegStub struct {
 	mu    sync.Mutex
 	posts []url.Values
 	all   []xBidRequest
+	// reflect, when set before the first request, lists every criterion a POST created (once
+	// its 200 is answered) after the fixed criteria, as X would.
+	reflect bool
+	applied []string
 }
 
 func newXNegStub(t *testing.T, lineItem, criteria string, replies map[string]kwtReply) *xNegStub {
@@ -59,18 +63,35 @@ func newXNegStubSlow(t *testing.T, lineItem, criteria string, replies map[string
 			if d, ok := slow[q.Get("targeting_value")]; ok {
 				time.Sleep(d)
 			}
+			created := map[string]any{
+				"id": id, "line_item_id": q.Get("line_item_id"), "targeting_type": q.Get("targeting_type"),
+				"targeting_value": q.Get("targeting_value"), "operator_type": q.Get("operator_type"), "deleted": false,
+			}
 			reply, ok := replies[q.Get("targeting_value")]
 			if !ok {
-				echo, _ := json.Marshal(map[string]any{"data": map[string]any{
-					"id": id, "line_item_id": q.Get("line_item_id"), "targeting_type": q.Get("targeting_type"),
-					"targeting_value": q.Get("targeting_value"), "operator_type": q.Get("operator_type"), "deleted": false,
-				}})
+				echo, _ := json.Marshal(map[string]any{"data": created})
 				reply = kwtReply{http.StatusOK, string(echo)}
 			}
+			s.mu.Lock()
+			if s.reflect && reply.status == http.StatusOK {
+				entry, _ := json.Marshal(created)
+				s.applied = append(s.applied, string(entry))
+			}
+			s.mu.Unlock()
 			w.WriteHeader(reply.status)
 			_, _ = io.WriteString(w, reply.body)
 		case strings.HasSuffix(r.URL.Path, "/targeting_criteria"):
-			_, _ = io.WriteString(w, criteria)
+			listed := criteria
+			s.mu.Lock()
+			if extra := strings.Join(s.applied, ","); extra != "" {
+				if strings.Contains(listed, `"data":[]`) {
+					listed = strings.Replace(listed, `"data":[]`, `"data":[`+extra+`]`, 1)
+				} else {
+					listed = strings.Replace(listed, `],"next_cursor"`, `,`+extra+`],"next_cursor"`, 1)
+				}
+			}
+			s.mu.Unlock()
+			_, _ = io.WriteString(w, listed)
 		default:
 			_, _ = io.WriteString(w, lineItem)
 		}
@@ -393,5 +414,59 @@ func TestTwitterNegativeKey_TargetingTypeStillSeparates(t *testing.T) {
 	}
 	if twitterNegativeKey(twitter.TargetingBroadKeyword, text) == twitterNegativeKey(twitter.TargetingPhraseKeyword, text) {
 		t.Fatal("BROAD_KEYWORD and PHRASE_KEYWORD must not share a key")
+	}
+}
+
+// The negated keywords count against the line item's 60-criterion cap, as the positive add's do
+// (checkTwitterCriteriaCap): from 59 live criteria two new negatives are refused with the positive
+// add's 409 and nothing is sent; one new negative plus one already excluded reaches 60 and is sent.
+func TestTwitter_AddNegativeKeywords_CountsAgainstTheCriteriaCap(t *testing.T) {
+	excluded := `{"id":"n1","line_item_id":"li1","targeting_type":"BROAD_KEYWORD","targeting_value":"jobs","operator_type":"NE","deleted":false}`
+
+	// 58 locations + 1 negative = 59 live; two new negatives make 61.
+	s := newXNegStub(t, xKWTLineItem, xCriteriaWith(58, excluded), nil)
+	_, err := addXNegatives(s, xBidCampaign(), "",
+		model.NegativeKeyword{Text: "torrent", MatchType: "Broad"},
+		model.NegativeKeyword{Text: "free download", MatchType: "Phrase"})
+	if !errors.Is(err, domain.ErrKeywordTargetingLimit) {
+		t.Fatalf("want ErrKeywordTargetingLimit, got %v", err)
+	}
+	if n := len(s.sent()); n != 0 {
+		t.Errorf("%d POSTs sent over the cap", n)
+	}
+
+	s = newXNegStub(t, xKWTLineItem, xCriteriaWith(58, excluded), nil)
+	out, err := addXNegatives(s, xBidCampaign(), "",
+		model.NegativeKeyword{Text: "torrent", MatchType: "Broad"},
+		model.NegativeKeyword{Text: "jobs", MatchType: "Broad"})
+	if err != nil || len(out) != 2 || out[0].Outcome != model.KeywordOutcomeApplied || out[1].Outcome != model.KeywordOutcomeAlreadyPresent {
+		t.Fatalf("at the cap: %+v, %v", out, err)
+	}
+	if n := len(s.sent()); n != 1 {
+		t.Errorf("%d POSTs, want 1", n)
+	}
+}
+
+// A negative add holds the line item's targeting lock, as the positive add does: another holder
+// refuses it with nothing read for the write and nothing sent.
+func TestTwitter_AddNegativeKeywords_HoldsThePerLineItemLock(t *testing.T) {
+	s := newXNegStub(t, xKWTLineItem, xCriteria, nil)
+	s.d.targetingLock = newLocalTargetingLock(50 * time.Millisecond)
+	hold, err := s.d.targetingLock.Lock(context.Background(), twitterTargetingLockScope("acc1", "li1"))
+	if err != nil {
+		t.Fatalf("pre-lock: %v", err)
+	}
+	defer hold.Release()
+	before := s.count()
+	if _, err := addXNegatives(s, xBidCampaign(), "", model.NegativeKeyword{Text: "torrent", MatchType: "Broad"}); !errors.Is(err, domain.ErrKeywordTargetingWriteInProgress) {
+		t.Errorf("lock held elsewhere: want ErrKeywordTargetingWriteInProgress, got %v", err)
+	}
+	s.mu.Lock()
+	after := append([]xBidRequest(nil), s.all[before:]...)
+	s.mu.Unlock()
+	for _, r := range after {
+		if strings.HasSuffix(r.Path, "/targeting_criteria") {
+			t.Errorf("lock held elsewhere, yet %s %s was sent", r.Method, r.Path)
+		}
 	}
 }
