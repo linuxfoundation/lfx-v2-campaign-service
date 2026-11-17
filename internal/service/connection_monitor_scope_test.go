@@ -556,3 +556,65 @@ func TestClassifyMonitorError(t *testing.T) {
 		}
 	})
 }
+
+// connScopedLiveDispatcher is scopedLiveDispatcher whose scope rule depends on the connection
+// serving the read (AccountMonitorConnectionScoper, #628): its own rule refuses every scope, and
+// the connection's rule, when offered, is fakeMonitorScope.
+type connScopedLiveDispatcher struct {
+	scopedLiveDispatcher
+	offer bool
+	asked int
+}
+
+func (d *connScopedLiveDispatcher) MonitorScopeForAccount([]model.ProjectCampaignScope, string) ([]string, error) {
+	return nil, fmt.Errorf("base rule: %w", domain.ErrCampaignAccountMismatch)
+}
+
+func (d *connScopedLiveDispatcher) MonitorScoperForConnection(context.Context, string, string) AccountMonitorScoper {
+	d.asked++
+	if !d.offer {
+		return nil
+	}
+	return &d.scopedLiveDispatcher
+}
+
+// TestReadAccountCampaignMetricsUsesTheConnectionScoper pins the orchestrator half of #628: when a
+// dispatcher offers a connection-specific scoper it replaces the dispatcher's own rule for both
+// the initial scope and the post-read revalidation; nil keeps the dispatcher's rule; and a project
+// with no campaigns is answered without asking.
+func TestReadAccountCampaignMetricsUsesTheConnectionScoper(t *testing.T) {
+	rows := []model.AccountCampaignMetrics{{PlatformCampaignID: "c1"}, {PlatformCampaignID: "c2"}}
+	newD := func(offer bool) *connScopedLiveDispatcher {
+		d := &connScopedLiveDispatcher{offer: offer}
+		d.rows = rows
+		return d
+	}
+	t.Run("offered", func(t *testing.T) {
+		d := newD(true)
+		o := NewOrchestrator(scopeRepo([]string{"c1"}, nil), newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: d})
+		read, err := o.ReadAccountCampaignMetrics(context.Background(), "p", model.ProviderLinkedInAds, "acct", 30)
+		if err != nil || len(read.Rows) != 1 || read.Rows[0].PlatformCampaignID != "c1" {
+			t.Fatalf("read = %+v, %v; want only c1 through the connection's rule", read, err)
+		}
+		if d.asked != 2 {
+			t.Fatalf("connection scoper asked %d times, want 2 (scope and revalidation)", d.asked)
+		}
+	})
+	t.Run("declined", func(t *testing.T) {
+		d := newD(false)
+		o := NewOrchestrator(scopeRepo([]string{"c1"}, nil), newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: d})
+		if _, err := o.ReadAccountCampaignMetrics(context.Background(), "p", model.ProviderLinkedInAds, "acct", 30); !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+			t.Fatalf("err = %v, want the dispatcher's own refusal", err)
+		}
+	})
+	t.Run("no campaigns", func(t *testing.T) {
+		d := newD(true)
+		o := NewOrchestrator(scopeRepo([]string{}, nil), newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: d})
+		if _, err := o.ReadAccountCampaignMetrics(context.Background(), "p", model.ProviderLinkedInAds, "acct", 30); err != nil {
+			t.Fatalf("empty scope: %v", err)
+		}
+		if d.asked != 0 || d.reads != 0 {
+			t.Fatalf("empty scope asked the connection scoper %d times and read %d times, want 0 and 0", d.asked, d.reads)
+		}
+	})
+}

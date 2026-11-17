@@ -413,6 +413,23 @@ func SafeInconclusiveDetail(err error) string {
 // This mirrors resolveOrgID's own philosophy in targeting.go — fail closed on an actual
 // contradiction, and only on one this package can actually confirm.
 func (c *Client) VerifyAccountOrgReference(ctx context.Context, accountID, configuredOrgID string) error {
+	return c.verifyAccountOrgReference(ctx, accountID, configuredOrgID, false)
+}
+
+// VerifyGrantAccountOrg is the strict form of VerifyAccountOrgReference, for the LinkedIn account
+// grant installer (#581) alone: LinkedIn must REPORT an organization for accountID, and it must be
+// orgID. The one case VerifyAccountOrgReference lets through as nil — a reference that is absent,
+// person-scoped or malformed, so there is nothing to compare — is a confirmed refusal here
+// (ErrOrgVerificationFailed). The connection test can move on from "could not confirm", but a
+// grant is trusted for the life of the row, so a pairing LinkedIn never states is not written.
+// Every other outcome is VerifyAccountOrgReference's.
+func (c *Client) VerifyGrantAccountOrg(ctx context.Context, accountID, orgID string) error {
+	return c.verifyAccountOrgReference(ctx, accountID, orgID, true)
+}
+
+// verifyAccountOrgReference is the body of both checks above; requireReference is the only
+// difference between them.
+func (c *Client) verifyAccountOrgReference(ctx context.Context, accountID, configuredOrgID string, requireReference bool) error {
 	accountID = strings.TrimSpace(accountID)
 	configuredOrgID = strings.TrimSpace(configuredOrgID)
 	// Both ids are checked for SHAPE, not merely for presence, and both before contacting
@@ -466,7 +483,10 @@ func (c *Client) VerifyAccountOrgReference(ctx context.Context, accountID, confi
 			// a later page's failure discard a confirmed match or mismatch this page already
 			// proved. A confirmed contradiction found on page one is exactly as confirmed
 			// whether or not LinkedIn can enumerate page two.
-			if a.OrgID != "" && a.OrgID != configuredOrgID {
+			switch {
+			case a.OrgID == "" && requireReference:
+				matchErr = fmt.Errorf("linkedin reports no organization for ad account %s (its reference is absent, person-scoped or malformed), so its pairing with organization %s cannot be confirmed", accountID, configuredOrgID)
+			case a.OrgID != "" && a.OrgID != configuredOrgID:
 				matchErr = fmt.Errorf("linkedin ad account %s advertises on behalf of organization %s, not the configured organization %s", accountID, a.OrgID, configuredOrgID)
 			}
 			return true, nil

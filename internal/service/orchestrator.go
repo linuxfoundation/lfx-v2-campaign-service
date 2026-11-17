@@ -466,6 +466,28 @@ type AccountMonitorScoper interface {
 	MonitorScopeForAccount(scope []model.ProjectCampaignScope, accountID string) ([]string, error)
 }
 
+// AccountMonitorConnectionScoper is an OPTIONAL capability of an AccountMonitorScoper whose scope
+// rule depends on which connection will serve the read (LinkedIn, #628). MonitorScoperForConnection
+// returns the scoper to apply to projectID's read of accountID, or nil to keep the dispatcher's
+// own MonitorScopeForAccount. It may resolve a credential but must not call the platform, and it
+// returns no error: a connection it cannot resolve keeps the dispatcher's own (stricter) rule, and
+// the read itself then reports why the connection is unusable.
+type AccountMonitorConnectionScoper interface {
+	MonitorScoperForConnection(ctx context.Context, projectID, accountID string) AccountMonitorScoper
+}
+
+// monitorScoperFor is platform's AccountMonitorScoper for projectID's read of accountID: the
+// connection-specific one when the dispatcher offers it (AccountMonitorConnectionScoper),
+// otherwise the dispatcher itself.
+func (o *Orchestrator) monitorScoperFor(ctx context.Context, base AccountMonitorScoper, projectID, accountID string) AccountMonitorScoper {
+	if cs, ok := base.(AccountMonitorConnectionScoper); ok {
+		if s := cs.MonitorScoperForConnection(ctx, projectID, accountID); s != nil {
+			return s
+		}
+	}
+	return base
+}
+
 // AccountMonitorDefaulter is an OPTIONAL capability of an AccountMonitorScoper: name the account a
 // project's recorded campaigns were created under, for an account-monitor read whose caller names
 // none (#591). A project monitored on the LF system account has no connection of its own to take
@@ -3165,7 +3187,9 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 // campaign (BriefService.DeleteCampaign), and the monitor is where one still spending is seen.
 // Each is checked on its own by the same MonitorScopeForAccount rule as the live scope, and kept
 // unless the scoper refuses it (a different recorded account; on Google Ads, Reddit and X, also an
-// unrecorded one; an id the platform cannot read). A refused one is dropped and logged, never a 409: a deleted row
+// unrecorded one, and on LinkedIn's system row an unrecorded one is omitted; an id the platform
+// cannot read). The scoper is the connection-specific one when the dispatcher offers it
+// (monitorScoperFor). A refused one is dropped and logged, never a 409: a deleted row
 // cannot be re-dispatched or reconciled, so a 409 on it would have no remedy.
 func (o *Orchestrator) scopeAccountMonitor(ctx context.Context, projectID string, platform model.Provider, accountID string) (ids map[string]bool, scoped bool, err error) {
 	scoper, ok := o.dispatchers[platform].(AccountMonitorScoper)
@@ -3181,6 +3205,15 @@ func (o *Orchestrator) scopeAccountMonitor(ctx context.Context, projectID string
 	if err != nil {
 		return nil, true, err
 	}
+	deleted, err := o.campaigns.ListProjectPlatformDeletedCampaignIDs(ctx, projectID, platform)
+	if err != nil {
+		return nil, true, fmt.Errorf("resolve deleted campaign scope for project %s on %s: %w", projectID, platform, err)
+	}
+	if len(scope) > 0 || len(deleted) > 0 {
+		// Only with something to judge: a project with no campaigns gets its empty monitor
+		// without a credential being resolved.
+		scoper = o.monitorScoperFor(ctx, scoper, projectID, accountID)
+	}
 	ids = make(map[string]bool, len(scope))
 	if len(scope) > 0 {
 		campaignIDs, serr := scoper.MonitorScopeForAccount(scope, accountID)
@@ -3190,10 +3223,6 @@ func (o *Orchestrator) scopeAccountMonitor(ctx context.Context, projectID string
 		for _, id := range campaignIDs {
 			ids[id] = true
 		}
-	}
-	deleted, err := o.campaigns.ListProjectPlatformDeletedCampaignIDs(ctx, projectID, platform)
-	if err != nil {
-		return nil, true, fmt.Errorf("resolve deleted campaign scope for project %s on %s: %w", projectID, platform, err)
 	}
 	for _, d := range deleted {
 		campaignIDs, derr := scoper.MonitorScopeForAccount([]model.ProjectCampaignScope{d}, accountID)
@@ -3269,10 +3298,11 @@ func (o *Orchestrator) revalidateAccountMonitorScope(ctx context.Context, projec
 	if err != nil {
 		return nil, fmt.Errorf("revalidate account monitor scope for project %s on %s: %w", projectID, platform, err)
 	}
-	scoper, ok := o.dispatchers[platform].(AccountMonitorScoper)
+	base, ok := o.dispatchers[platform].(AccountMonitorScoper)
 	if !ok {
 		return nil, fmt.Errorf("revalidate account monitor scope: %s has no monitor scoper", platform)
 	}
+	scoper := o.monitorScoperFor(ctx, base, projectID, accountID)
 	ids := make(map[string]bool, len(initial))
 	for _, entry := range scope {
 		if !initial[entry.PlatformCampaignID] {
