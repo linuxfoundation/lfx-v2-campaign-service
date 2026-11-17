@@ -61,7 +61,7 @@ func (d *TwitterDispatcher) SharesAssetReserver(a *AssetReserver) bool {
 //
 // The release func is always non-nil. On success it owns the aggregate reservation, held until
 // the client has uploaded the bytes; on failure it is a no-op because nothing is held.
-func (d *TwitterDispatcher) resolveTwitterImage(ctx context.Context, brief *model.CampaignBrief, cfg twitterConfig, tweetID string) (*twitter.ImageInput, func(), error) {
+func (d *TwitterDispatcher) resolveTwitterImage(ctx context.Context, brief *model.CampaignBrief, cfg twitterConfig, tweetID string, hasVariants bool) (*twitter.ImageInput, func(), error) {
 	noop := func() {}
 	raw := strings.TrimSpace(cfg.ImageAssetID)
 	if raw == "" {
@@ -74,8 +74,9 @@ func (d *TwitterDispatcher) resolveTwitterImage(ctx context.Context, brief *mode
 	assetID := parsed.String()
 	// Judged on the SAME normalized inputs the client's authoring condition reads (tweetID is
 	// already trimmed by Dispatch), so the two cannot disagree about whether a tweet is authored.
-	if tweetID != "" || strings.TrimSpace(cfg.TweetText) == "" {
-		return nil, noop, domain.PreflightRefusalf("twitter imageAssetId %s is attached only to an authored tweet, so it requires tweetText and no tweetId", assetID)
+	// Tweet variants (#564 gap 10) are authored tweets too: the image rides on every variant.
+	if tweetID != "" || (strings.TrimSpace(cfg.TweetText) == "" && !hasVariants) {
+		return nil, noop, domain.PreflightRefusalf("twitter imageAssetId %s is attached only to an authored tweet, so it requires tweetText (or variants) and no tweetId", assetID)
 	}
 	if d.creatives == nil {
 		return nil, noop, domain.PreflightRefusalf("twitter config references creative asset %s but the creative-asset store is not configured", assetID)

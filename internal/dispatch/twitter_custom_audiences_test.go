@@ -50,6 +50,10 @@ var twitterUngatedFields = map[string]bool{
 	"audienceExpansion": true,
 	// #564 gap 4c: a public X user id names no account resource.
 	"followerLookalikeUserIds": true,
+	// #564 gap 10: tweet copy names no account resource.
+	"variants": true,
+	// #564 gap 6: a headline and the create's own image name no account resource.
+	"card": true,
 	// #564 gap 7: a stored asset of this brief names no account resource.
 	"videoAssetId": true,
 }

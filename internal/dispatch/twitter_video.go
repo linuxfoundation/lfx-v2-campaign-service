@@ -21,7 +21,7 @@ import (
 
 // X video creative (#564 gap 7): twitterConfig.videoAssetId, a stored MP4 creative asset
 // (upload-creative-asset, content_type video/mp4) uploaded as amplify_video and attached to the
-// authored tweet. This file adds the deployment gate, the
+// authored tweet(s), or used as the website card's media. This file adds the deployment gate, the
 // config-only rules (a synchronous 400, "invalid campaign config: twitterConfig.videoAssetId: ...")
 // and the asset read; the upload itself is twitter.Client's (video.go).
 
@@ -57,8 +57,8 @@ func checkTwitterVideo(cfg twitterConfig, nCriteria int) (string, error) {
 	if strings.TrimSpace(cfg.ImageAssetID) != "" {
 		return "", refuse("a tweet carries an image or a video, not both; omit imageAssetId or videoAssetId")
 	}
-	if strings.TrimSpace(cfg.TweetID) != "" || strings.TrimSpace(cfg.TweetText) == "" {
-		return "", refuse("a video is attached only to an authored tweet, so it requires tweetText and no tweetId")
+	if strings.TrimSpace(cfg.TweetID) != "" || (strings.TrimSpace(cfg.TweetText) == "" && len(cfg.Variants) == 0) {
+		return "", refuse("a video is attached only to an authored tweet, so it requires tweetText (or variants) and no tweetId")
 	}
 	if cerr := twitter.CheckCreateCriteriaCountWithVideo(nCriteria); cerr != nil {
 		return "", domain.WrapPreflightRefusal(fmt.Errorf("%w: twitterConfig: %w", domain.ErrCreateConfigInvalid, cerr))
