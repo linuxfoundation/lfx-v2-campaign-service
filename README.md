@@ -344,6 +344,15 @@ openssl rand -base64 32
   exists. It names no account resource; it keeps a line-item parameter no
   live create has sent off the shared ad account. The chart sets it to
   `"false"` (`app.environment.TWITTER_AUDIENCE_EXPANSION_ENABLED.value`).
+- `TWITTER_WEBSITE_CONVERSIONS_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `twitterConfig.goal` and `twitterConfig.primaryWebEventTag`
+  (#564 gap 5): the line item an X create makes is sent with `goal`
+  `WEBSITE_CONVERSIONS` and its `primary_web_event_tag`, so X optimizes toward
+  the conversions that web event tag records. Only the exact value `true`
+  enables it; anything else fails closed, and a create setting either field is
+  refused with a 400 before any job exists. It keeps line-item parameters no
+  live create has sent off the shared ad account. The chart sets it to
+  `"false"` (`app.environment.TWITTER_WEBSITE_CONVERSIONS_ENABLED.value`).
 - `TWITTER_FOLLOWER_LOOKALIKES_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `twitterConfig.followerLookalikeUserIds` (#564 gap 4c):
   each numeric X user id becomes a `SIMILAR_TO_FOLLOWERS_OF_USER` criterion on

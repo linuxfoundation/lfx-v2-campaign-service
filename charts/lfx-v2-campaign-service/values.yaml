@@ -472,6 +472,15 @@ app:
     TWITTER_AUDIENCE_EXPANSION_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to twitterConfig.goal (WEBSITE_CONVERSIONS) and
+    # twitterConfig.primaryWebEventTag (#564 gap 5), sent as goal and
+    # primary_web_event_tag on the new X line item. Default off: built from X's
+    # published v12 reference and no live create has sent them. While off, a
+    # create setting either is refused with a 400 before any job exists. Any
+    # value other than "true" is treated as off.
+    TWITTER_WEBSITE_CONVERSIONS_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to twitterConfig.followerLookalikeUserIds (#564 gap 4c),
     # SIMILAR_TO_FOLLOWERS_OF_USER criteria on the new X line item. Default off: no live
     # create has sent it. X has no user lookup, so an id X refuses fails at its criterion

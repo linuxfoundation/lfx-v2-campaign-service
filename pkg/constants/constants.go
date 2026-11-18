@@ -300,6 +300,18 @@ const (
 	// lfx-v2-argocd.
 	EnvTwitterAudienceExpansionEnabled = "TWITTER_AUDIENCE_EXPANSION_ENABLED"
 
+	// EnvTwitterWebsiteConversionsEnabled opts a deployment IN to twitterConfig.goal and
+	// twitterConfig.primaryWebEventTag (#564 gap 5): the line item an X create makes is sent with
+	// goal WEBSITE_CONVERSIONS and its primary_web_event_tag, so X optimizes delivery toward the
+	// conversions that web event tag records. Only the exact value "true" enables it; unset or any
+	// other value fails closed, and a create setting either field is refused with a 400 before any
+	// job exists (and again at dispatch, before anything upstream).
+	//
+	// It keeps UNVERIFIED line-item parameters (from X's published v12 reference; no live create
+	// has sent them) off the shared ad account until a live create confirms X accepts them on a
+	// WEBSITE_CLICKS line item. Turn it on per environment, in lfx-v2-argocd.
+	EnvTwitterWebsiteConversionsEnabled = "TWITTER_WEBSITE_CONVERSIONS_ENABLED"
+
 	// EnvTwitterFollowerLookalikesEnabled opts a deployment IN to
 	// twitterConfig.followerLookalikeUserIds (#564 gap 4c): each id becomes a
 	// SIMILAR_TO_FOLLOWERS_OF_USER criterion on the line item an X create makes. Only the exact
