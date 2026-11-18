@@ -1137,7 +1137,7 @@ authors a **VIDEO** post instead of an IMAGE one. The endpoint is the same one
 video first) immediately before the post, and each gets `validateImageURL`'s shape check. A missing
 source, a mix with a post URL or an image, a source error or a bad URL is `(nil, err)` before any
 mutating request. A post failure follows the image path's outcome table unchanged. A definite
-campaign refusal after a successful video post returns a partial result naming the post, not
+campaign refusal after a successful or unconfirmed video post returns a partial result naming the post, not
 `(nil, err)`, so the claim is kept. The success
 step reads "Authored promoted video post". The dispatcher keeps it behind `REDDIT_VIDEO_ENABLED`:
 see [Reddit Video Posts](../architecture/reddit-video-posts.md).

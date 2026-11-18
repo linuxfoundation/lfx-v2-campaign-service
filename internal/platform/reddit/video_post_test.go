@@ -210,6 +210,27 @@ func TestCreateCampaign_CampaignRefusalAfterVideoPostKeepsThePost(t *testing.T) 
 	}
 }
 
+// TestCreateCampaign_CampaignRefusalAfterUnconfirmedVideoPostKeepsTheClaim: a 5xx on the VIDEO
+// post is UNCONFIRMED (the post may exist). A definite campaign refusal after it must still
+// return a partial result saying so, never (nil, err), or a retry could author a duplicate.
+func TestCreateCampaign_CampaignRefusalAfterUnconfirmedVideoPostKeepsTheClaim(t *testing.T) {
+	v := &videoPostServer{postCode: http.StatusInternalServerError, campaignCode: http.StatusBadRequest}
+	c := newVideoPostClient(t, v)
+	in := lateSourceInput()
+	in.VideoURLSource = func(context.Context) (string, error) { return lateVideo, nil }
+	in.ThumbnailURLSource = func(context.Context) (string, error) { return lateThumb, nil }
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("want the campaign refusal as an error")
+	}
+	if res == nil {
+		t.Fatalf("result = nil with %v; a post that may exist would be forgotten and authored again on retry", err)
+	}
+	if joined := strings.Join(res.Steps, "\n"); !strings.Contains(joined, "promoted video post above may exist") {
+		t.Fatalf("steps do not warn that the video post may exist: %s", joined)
+	}
+}
+
 // TestCreateCampaign_VideoPostRefusalIsDegradedNotFatal: a definite 4xx on the VIDEO post (the
 // shape Reddit would answer if the unprobed schema were wrong) keeps the image path's partial
 // rule — the campaign and ad group are still created, with no ad and an AdWarning, so the

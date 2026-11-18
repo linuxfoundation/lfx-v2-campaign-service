@@ -791,8 +791,8 @@ videoAssetId?: string           — OPTIONAL (#549) id of a creative asset of TH
                                   or more variants is a synchronous **400**. A refused post leaves the campaign and ad group
                                   with no ad (`created_degraded`); an in-flight cancellation is an
                                   UNCONFIRMED partial. A definite refusal of the campaign AFTER the
-                                  post returns a partial result naming the unattached post (claim
-                                  kept), like one ad per variant, so a retry does not author another
+                                  post, or after an UNCONFIRMED post, returns a partial result naming
+                                  the unattached (or possibly existing) post (claim kept), like one ad per variant, so a retry does not author another
                                   post. OFF unless
                                   `REDDIT_VIDEO_ENABLED` is exactly `"true"`: the post shape comes from
                                   Reddit's public OpenAPI document (components_schema_post) and has not

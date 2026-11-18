@@ -83,8 +83,9 @@ The post is authored **before** the paid campaign, as on the image path:
   retained, and the operator follows the stray-post guidance;
 - an in-flight cancellation is an UNCONFIRMED partial, recorded by name;
 - a cancellation before send is `(nil, err)`, with nothing created;
-- a definite refusal of the campaign AFTER the post succeeded returns a partial result whose
-  steps name the unattached post, never `(nil, err)`. The dispatcher keeps the claim and records
+- a definite refusal of the campaign AFTER the post succeeded, or after an UNCONFIRMED post (a
+  5xx, a 2xx with no id), returns a partial result whose steps name the unattached or possibly
+  existing post, never `(nil, err)`. The dispatcher keeps the claim and records
   the row, so a retry does not author a second post. One ad per variant does the same for its
   posts; the one-post IMAGE path still returns `(nil, err)` there, which this change leaves
   alone.

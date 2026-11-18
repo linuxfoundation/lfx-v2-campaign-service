@@ -2348,10 +2348,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				}, err
 			}
 			// A VIDEO post (#549 gap 5) is likewise authored before the campaign: a definite
-			// refusal here leaves it unattached. Return a partial result so the caller keeps the
-			// claim and records the post, instead of authoring another one on retry.
-			if hasVideo && validatedPostID != "" {
-				steps = append(steps, fmt.Sprintf("Campaign creation was refused; the promoted video post %s above exists and is not attached to an ad", validatedPostID))
+			// refusal here leaves it unattached — or, when its authoring was UNCONFIRMED (a 5xx,
+			// a 2xx with no id), possibly existing. Either way return a partial result so the
+			// caller keeps the claim and records the post, instead of authoring another one on
+			// retry.
+			videoPostUnconfirmed := authorFailure != nil && authorFailure.Outcome == PromoAuthorUnconfirmed
+			if hasVideo && (validatedPostID != "" || videoPostUnconfirmed) {
+				if validatedPostID != "" {
+					steps = append(steps, fmt.Sprintf("Campaign creation was refused; the promoted video post %s above exists and is not attached to an ad", validatedPostID))
+				} else {
+					steps = append(steps, "Campaign creation was refused; the promoted video post above may exist (its creation was unconfirmed) and is not attached to an ad -- check the ad account's posts before retrying")
+				}
 				return &CampaignResult{
 					Platform:     "reddit-ads",
 					CampaignName: campaignName,
