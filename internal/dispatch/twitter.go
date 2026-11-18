@@ -95,6 +95,8 @@ type twitterConfig struct {
 	// Goal (WEBSITE_CONVERSIONS) and PrimaryWebEventTag (a web event tag id) are sent as the new
 	// line item's goal and primary_web_event_tag (#564 gap 5, twitter_conversion_goal.go). Behind
 	// TWITTER_WEBSITE_CONVERSIONS_ENABLED; omitted, X applies WEBSITE_CLICKS' default goal, as before.
+	// A non-blank PrimaryWebEventTag is global_marketing_ops only (service.TwitterMarketingOpsInputs):
+	// the tag belongs to the shared LF ad account. Goal names no account resource.
 	Goal               string `json:"goal,omitempty"`
 	PrimaryWebEventTag string `json:"primaryWebEventTag,omitempty"`
 	// FollowerLookalikeUserIDs (numeric X user ids) become SIMILAR_TO_FOLLOWERS_OF_USER criteria on

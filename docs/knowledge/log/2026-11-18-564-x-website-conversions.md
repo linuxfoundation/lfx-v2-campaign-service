@@ -9,6 +9,8 @@ item an X create makes, so X optimizes toward the conversions that web event tag
 - New default-off flag `TWITTER_WEBSITE_CONVERSIONS_ENABLED` (constants, chart values, README).
   While off, or for a bad pair or a non-string, the create is a synchronous 400 before any job.
 - A line item reused by name keeps its own goal; a warning step says so.
-- Not role-gated. No web-event-tag list read was built.
+- A non-blank `primaryWebEventTag` needs `global_marketing_ops` (`service.TwitterMarketingOpsInputs`),
+  as Microsoft conversion goals do: the tag belongs to the shared LF ad account. `goal` is not gated.
+- No web-event-tag list read was built.
 
 Not verified live: no X call was made. A live create is owed before the flag is turned on.

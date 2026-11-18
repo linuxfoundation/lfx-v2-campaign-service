@@ -1783,7 +1783,9 @@ campaign exists (a partial, as for any line-item failure). Both empty sends neit
 item this call creates carries them; a reused one keeps its goal, and a warning step says so. The
 dispatcher gates both on the default-off flag `TWITTER_WEBSITE_CONVERSIONS_ENABLED`
 (`internal/dispatch/twitter_conversion_goal.go`), with a synchronous 400 for the flag, a bad pair or
-a non-string. Not role-gated. Not verified live; no web-event-tag list read is built yet.
+a non-string. A non-blank tag needs `global_marketing_ops` (`service.TwitterMarketingOpsInputs`):
+a web event tag is a resource of the shared LF ad account, as Microsoft conversion goals are. Not
+verified live; no web-event-tag list read is built yet.
 
 ## Create-time follower look-alikes (`CampaignInput.FollowerLookalikeUserIDs`, #564 gap 4c)
 

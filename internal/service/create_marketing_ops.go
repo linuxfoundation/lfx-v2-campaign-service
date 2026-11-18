@@ -231,11 +231,14 @@ func RedditMarketingOpsInputs(config json.RawMessage) []string {
 
 // TwitterMarketingOpsInputs names, in config order, the twitterConfig inputs this config sets
 // that name an EXISTING custom audience on the connected X ad account (#564 gap 3):
-// customAudienceIds and excludedCustomAudienceIds. That account is the LF one every foundation
-// shares, so only global_marketing_ops may send them, exactly as for the Reddit inputs above.
+// customAudienceIds and excludedCustomAudienceIds, and an existing web event tag (#564 gap 5):
+// primaryWebEventTag, gated as Microsoft's conversionGoalIds and Google's conversionActions are.
+// That account is the LF one every foundation shares, so only global_marketing_ops may send them,
+// exactly as for the Reddit inputs above.
 //
 // Any non-empty list counts, whatever its entries hold, as the dispatcher's own gate
-// (dispatch.checkTwitterCustomAudiences) counts them. It decodes the envelope the way the
+// (dispatch.checkTwitterCustomAudiences) counts them; a primaryWebEventTag counts when it is not
+// blank, as dispatch.checkTwitterConversionGoal reads a blank tag as unset. It decodes the envelope the way the
 // dispatcher's unmarshalPlatformConfig does (exact envelope key, then encoding/json into the same
 // field names and types, so a case variant of a field counts too), and dispatch's
 // TestEveryTwitterConfigFieldIsClassifiedForTheMarketingOpsGate requires every twitterConfig
@@ -255,6 +258,7 @@ func TwitterMarketingOpsInputs(config json.RawMessage) []string {
 	var cfg struct {
 		CustomAudienceIDs         []string `json:"customAudienceIds"`
 		ExcludedCustomAudienceIDs []string `json:"excludedCustomAudienceIds"`
+		PrimaryWebEventTag        string   `json:"primaryWebEventTag"`
 	}
 	_ = json.Unmarshal(raw, &cfg) // a partial decode is still inspected, as for Google
 	var set []string
@@ -263,6 +267,9 @@ func TwitterMarketingOpsInputs(config json.RawMessage) []string {
 	}
 	if len(cfg.ExcludedCustomAudienceIDs) > 0 {
 		set = append(set, "excludedCustomAudienceIds")
+	}
+	if strings.TrimSpace(cfg.PrimaryWebEventTag) != "" {
+		set = append(set, "primaryWebEventTag")
 	}
 	return set
 }

@@ -107,3 +107,28 @@ func TestCreateCampaign_BadConversionGoalSendsNothing(t *testing.T) {
 		t.Errorf("writes=%v lookups=%v, want nothing sent", writes, lookups)
 	}
 }
+
+// Manual bidding and the conversion goal ride on the same line-item POST: the MAX bid charged per
+// link click is unchanged by the goal. Whether X accepts that pair is part of the owed live probe;
+// this pins exactly what is sent.
+func TestCreateCampaign_ConversionGoalWithManualBid(t *testing.T) {
+	f := newTargetingFakeX()
+	c := targetingClient(t, f)
+	in := twitterBiddingInput(2.5)
+	in.Goal, in.PrimaryWebEventTag = "WEBSITE_CONVERSIONS", "o3bk1"
+	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	f.mu.Lock()
+	raw := f.lineItemQuery
+	f.mu.Unlock()
+	q, _ := url.ParseQuery(raw)
+	for k, want := range map[string]string{
+		"objective": "WEBSITE_CLICKS", "goal": "WEBSITE_CONVERSIONS", "primary_web_event_tag": "o3bk1",
+		"bid_strategy": BidStrategyMax, "pay_by": PayByLinkClick, "bid_amount_local_micro": "2500000",
+	} {
+		if q.Get(k) != want {
+			t.Errorf("line-item query %q: %s = %q, want %q", raw, k, q.Get(k), want)
+		}
+	}
+}
