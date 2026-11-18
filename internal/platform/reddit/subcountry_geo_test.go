@@ -260,6 +260,7 @@ func TestValidateSubCountryGeoTargets_UnconfirmedIsAnError(t *testing.T) {
 		"different country than id":              {200, `{"data":[{"geolocation":{"id":"US-CA","country":"CA"}}]}`},
 		"repeated id, conflicting country last":  {200, `{"data":[{"geolocation":{"id":"US-CA","country":"US"}},{"geolocation":{"id":"US-CA","country":"CA"}}]}`},
 		"repeated id, conflicting country first": {200, `{"data":[{"geolocation":{"id":"US-CA","country":"CA"}},{"geolocation":{"id":"us-ca","country":"US"}}]}`},
+		"unattributed error beside a valid row":  {200, `{"data":[{"geolocation":{"id":"US-CA","country":"US"}},{"error_message":"invalid geolocation"}]}`},
 		"repeated id, refused then valid":        {200, `{"data":[{"geolocation":{"id":"US-CA"},"error_message":"no"},{"geolocation":{"id":"US-CA","country":"US"}}]}`},
 	} {
 		t.Run(name, func(t *testing.T) {

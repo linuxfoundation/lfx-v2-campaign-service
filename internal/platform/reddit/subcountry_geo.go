@@ -242,15 +242,17 @@ func (c *Client) ValidateSubCountryGeoTargets(ctx context.Context, entries []Sub
 		}
 		valid[id] = strings.ToUpper(strings.TrimSpace(it.Geolocation.Country))
 	}
+	// An error Reddit did not tie to an id could belong to any of them, so it leaves every id
+	// unconfirmed, even when each one also has a clean row.
+	if unattributed > 0 {
+		return fmt.Errorf("reddit geolocation validation: Reddit refused %d geolocation(s) without naming them", unattributed)
+	}
 	for _, e := range entries {
 		if _, bad := refused[e.ID]; bad {
 			return domain.PreflightRefusalf("invalid redditConfig.%s: entry %d (%s) is not a targetable Reddit geolocation", FieldSubCountryGeoTargets, e.Entry, domain.CallerValue(e.ID))
 		}
 		country, ok := valid[e.ID]
 		if !ok {
-			if unattributed > 0 {
-				return fmt.Errorf("reddit geolocation validation: Reddit refused %d geolocation(s) without naming them, so %s is unconfirmed", unattributed, e.ID)
-			}
 			return fmt.Errorf("reddit geolocation validation: the answer does not mention %s", e.ID)
 		}
 		// A blank country cannot contradict the id; a different one means the overlap rules were
