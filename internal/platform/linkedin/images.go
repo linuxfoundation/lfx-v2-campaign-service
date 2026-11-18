@@ -203,7 +203,8 @@ type imageStatusResponse struct {
 func (c *Client) uploadVariantImages(ctx context.Context, accountID string, in CampaignInput) (map[string]string, []string, error) {
 	var order []string
 	seen := map[string]bool{}
-	assetIDs := make([]string, 0, len(in.Variants)+len(in.TextAds))
+	// Grown by append rather than pre-sized from len+len (CodeQL go/allocation-size-overflow).
+	var assetIDs []string
 	for _, v := range in.Variants {
 		assetIDs = append(assetIDs, v.ImageAssetID)
 	}

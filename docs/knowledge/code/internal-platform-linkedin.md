@@ -1129,7 +1129,8 @@ The contract is LinkedIn's li-lms-2026-02 "Text Ads API" page (creative `content
 `headline` up to 25 characters, `description` up to 75, `landingPage`, optional `image` of
 100x100 px, at most 2 MB, JPG or PNG) and the "Campaign Objectives" mapping, where the Text
 format under Website Visits and Website Conversions has only MANUAL rows (optimizationTargetType
-None, CPC or CPM). So a text create requires `ManualCPCBid > 0` and uses the existing manual plan
+None, CPC or CPM); the client sends LinkedIn-Version 202611 since #639, and the live probe owed
+in #586 confirms the shape there. So a text create requires `ManualCPCBid > 0` and uses the existing manual plan
 (WEBSITE_CONVERSION / CPC / NONE / unitCost); the automatic MAX_CLICK plan is refused. No
 `format` field is sent on the campaign, as LinkedIn's own Text ads example sends none.
 

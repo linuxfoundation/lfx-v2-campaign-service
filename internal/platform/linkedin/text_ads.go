@@ -13,8 +13,8 @@ import (
 // LinkedIn Text Ads (#586).
 //
 // A Text Ad campaign is campaign type TEXT_AD, and its creatives carry their copy inline as
-// content.textAd — there is no dark post. Sources, li-lms-2026-02 (the pinned apiVersion
-// 202602), consulted 2026-11-13:
+// content.textAd — there is no dark post. Sources, li-lms-2026-02, consulted 2026-11-13 (the
+// client now sends LinkedIn-Version 202611, #639; the live probe owed in #586 confirms the shape):
 //
 //   - "Text Ads API"
 //     (https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads/advertising-targeting/version/text-ads-integrations?view=li-lms-2026-02):

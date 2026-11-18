@@ -88,7 +88,8 @@ func (d *LinkedInDispatcher) resolveLinkedInImages(ctx context.Context, brief *m
 		assetID  *string
 		imageURN string
 	}
-	refs := make([]imageRef, 0, len(cfg.Variants)+len(cfg.TextAds))
+	// Grown by append rather than pre-sized from len+len (CodeQL go/allocation-size-overflow).
+	var refs []imageRef
 	for i := range cfg.Variants {
 		refs = append(refs, imageRef{fmt.Sprintf("variants[%d]", i), &cfg.Variants[i].ImageAssetID, cfg.Variants[i].ImageURN})
 	}
