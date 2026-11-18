@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -320,5 +321,58 @@ func TestCreateCampaign_VideoWaitLeavesTimeForTheOtherAds(t *testing.T) {
 	}
 	if steps := strings.Join(res.Steps, "\n"); !strings.Contains(steps, "was not ready within") || !strings.Contains(steps, "no creative or ad was created for variant 2") {
 		t.Fatalf("steps %q do not report the not-ready video on variant 2", steps)
+	}
+}
+
+// TestCreateCampaign_VideoWaitIsBoundedByTheClock: slow status reads spend the readiness wait too.
+// With a 3 s wait and every read taking 1.5 s, the poll stops when the clock passes the wait rather
+// than after its full count of rounds, and the image variant still gets its ad (local review).
+func TestCreateCampaign_VideoWaitIsBoundedByTheClock(t *testing.T) {
+	vs := newVideoServer(t, "processing")
+	inner := vs.handler()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Query().Get("fields") == "status" {
+			time.Sleep(1500 * time.Millisecond)
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	base, start := fixedMetaClock()(), time.Now()
+	clock := func() time.Time { return base.Add(time.Since(start)) }
+	var sleeps int32
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srv.URL), WithClock(clock), WithVideoPolling(time.Second, 3*time.Second),
+		withSleepFn(func(context.Context, time.Duration) error { atomic.AddInt32(&sleeps, 1); return nil }))
+	in := metaFieldInput()
+	in.Variants = []AdVariant{
+		{PrimaryText: "Join us", Headline: "Image", ImageURL: "https://cdn.example.org/a.png"},
+		videoVariant("Keynote"),
+	}
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v (a not-ready video is a degraded success)", err)
+	}
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	if vs.statusReads > 3 {
+		t.Fatalf("read the status %d times; a 3 s wait of 1.5 s reads allows at most 3", vs.statusReads)
+	}
+	if res.AdCount != 1 || len(res.Ads) != 1 || res.Ads[0].Variant != 1 {
+		t.Fatalf("AdCount=%d Ads=%+v; want the image variant's ad only", res.AdCount, res.Ads)
+	}
+}
+
+// TestStepSafeErrText: a non-envelope APIError body is dropped, wrapped or not; a parsed Graph
+// message is kept.
+func TestStepSafeErrText(t *testing.T) {
+	raw := &APIError{StatusCode: 502, Method: "GET", Path: "/9100000000001", Message: "<html>PROXY-ECHO-MARKER</html>"}
+	for _, err := range []error{raw, fmt.Errorf("status read: %w", raw)} {
+		if got := stepSafeErrText(err, 300); strings.Contains(got, "PROXY-ECHO-MARKER") || !strings.Contains(got, "(502)") {
+			t.Fatalf("stepSafeErrText(%v) = %q; want the status without the body", err, got)
+		}
+	}
+	graph := &APIError{StatusCode: 400, Method: "GET", Path: "/9", Message: "Unsupported get request", EnvelopeParsed: true}
+	if got := stepSafeErrText(graph, 300); !strings.Contains(got, "Unsupported get request") {
+		t.Fatalf("stepSafeErrText dropped a Graph message: %q", got)
 	}
 }

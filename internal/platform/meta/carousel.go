@@ -186,7 +186,7 @@ func (c *Client) createCarouselAd(ctx context.Context, in CampaignInput, adSetID
 // scrubURLFromErr does for one variant: when any card URL carries a query or fragment (where a
 // pre-signed URL keeps its signature) the upstream text is withheld altogether.
 func scrubCarouselErr(err error, variants []AdVariant) string {
-	msg := err.Error()
+	msg := stepSafeErrText(err, len(err.Error()))
 	for _, v := range variants {
 		raw := strings.TrimSpace(v.ImageURL)
 		if raw == "" {

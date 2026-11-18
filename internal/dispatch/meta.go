@@ -346,7 +346,7 @@ type creativeAssetReader interface {
 // MetaDispatcher creates Meta (Facebook/Instagram) campaigns for the orchestrator.
 type MetaDispatcher struct {
 	creds *credsSource
-	// creatives resolves a variant's imageAssetId to image bytes at dispatch. Bound by
+	// creatives resolves a variant's imageAssetId / videoAssetId (#550) to bytes at dispatch. Bound by
 	// registerDispatchers on the live and cold-start paths; nil in the direct-construction
 	// tests that create no image-by-asset variants, where it is never read
 	// (resolveVariantAssets touches it only for a variant that references an asset).
@@ -529,14 +529,15 @@ const VariantAssetReserveWait = 30 * time.Second
 // truncation window.
 const maxAssetIDInError = 64
 
-// resolveVariantAssets loads each variant's referenced image (imageAssetId) into the bytes
+// resolveVariantAssets loads each variant's referenced image (imageAssetId) or video
+// (videoAssetId, #550 gap 9) into the bytes
 // the Meta client uploads, returning a COPY so the caller's cfg.Variants — reused by
 // campaignFromMeta for the degraded-count check and the config snapshot — is not mutated.
 // The copy is for CALLER ISOLATION: those later readers must see the config the caller
 // sent, not one this function rewrote. It is not what keeps bytes out of the persisted
 // snapshot — meta.AdVariant.ImageBytes is tagged `json:"-"` (internal/platform/meta/
 // client.go:2469), so resolved bytes never marshal into config_snapshot regardless.
-// A variant with no imageAssetId passes through unchanged (a link-only or by-URL creative).
+// A variant referencing neither passes through unchanged (a link-only or by-URL creative).
 //
 // Every failure here is a caller/wiring error that MUST fail the dispatch BEFORE any
 // upstream create — the sole call site wraps the returned error in notCreated so the
@@ -692,7 +693,7 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		// "peak is the cap plus one asset" overshoot is gone.
 		totalBytes += size
 		if totalBytes > maxVariantAssetBytes {
-			return domain.PreflightRefusalf("meta variants reference more than %d bytes of distinct creative assets (%d bytes at variant %d); split the campaign or reuse fewer images",
+			return domain.PreflightRefusalf("meta variants reference more than %d bytes of distinct creative assets (%d bytes at variant %d); split the campaign or reuse fewer assets",
 				maxVariantAssetBytes, totalBytes, i+1)
 		}
 
@@ -720,7 +721,11 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		// than proceed: leaving ImageBytes empty here would build a LINK-ONLY ad for a
 		// variant that asked for an image — a silent downgrade that spends money.
 		if len(asset.Bytes) == 0 {
-			return domain.PreflightRefusalf("meta variant %d references creative asset %s, which has no stored image bytes", i+1, assetID)
+			kind := "image"
+			if video {
+				kind = "video"
+			}
+			return domain.PreflightRefusalf("meta variant %d references creative asset %s, which has no stored %s bytes", i+1, assetID, kind)
 		}
 		if err := checkMetaSlotMime(i, assetID, asset.MimeType, video); err != nil {
 			return err

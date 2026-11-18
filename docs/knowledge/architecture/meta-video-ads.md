@@ -35,7 +35,9 @@ After the ad set exists and before the first creative, `prepareVideos`:
 2. polls `GET /{video_id}?fields=status` every 3 s until `video_status` is `ready`, within ONE 60 s
    wait shared by all videos (it runs inside the orchestrator's two-minute provider call, so it
    is cut short to leave `videoDeadlineReserve`, 20 s, of the caller's deadline for the thumbnails,
-   creatives and ads: a not-ready video then fails only its own variants);
+   creatives and ads: a not-ready video then fails only its own variants). The wait is bounded by
+   the client clock as well as the poll count, and each status read runs under the time left (at
+   least 2 s), so slow or throttled reads cannot overrun it;
 3. reads `GET /{video_id}/thumbnails?fields=uri,is_preferred` and takes the preferred https
    thumbnail (else the first).
 
@@ -49,6 +51,9 @@ usable thumbnail fails only its variants: a Steps line, no creative or ad reques
 persists `created_degraded` (reused as-is, never re-dispatched). A cancelled caller during the
 uploads or the wait returns the partial result, so the claim is retained. Every minted id is on
 `CampaignResult.VideoIDs` (asset id -> video id) and each ad's `AdResult.VideoID`.
+
+Steps never carry a raw non-Graph error body: `stepSafeErrText` keeps method, path, status and
+the parsed diagnostic fields only (the carousel's `scrubCarouselErr` uses it too).
 
 ## Not live-verified (blockers for the flag)
 

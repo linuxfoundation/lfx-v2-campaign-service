@@ -25,6 +25,7 @@ type carouselServer struct {
 	creatives      []map[string]any
 	ads            int
 	creativeStatus int
+	creativeBody   string
 	uploadStatus   int
 }
 
@@ -52,7 +53,11 @@ func (s *carouselServer) handler() http.Handler {
 			s.creatives = append(s.creatives, decodeBody(s.t, r))
 			if s.creativeStatus != 0 {
 				w.WriteHeader(s.creativeStatus)
-				_, _ = io.WriteString(w, `{"error":{"message":"invalid child attachment","code":100}}`)
+				body := s.creativeBody
+				if body == "" {
+					body = `{"error":{"message":"invalid child attachment","code":100}}`
+				}
+				_, _ = io.WriteString(w, body)
 				return
 			}
 			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
@@ -234,5 +239,22 @@ func TestCreateCampaign_SingleFormatKeepsOneAdPerVariant(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "variant 2 must have non-empty primary text") {
 			t.Fatalf("format %q: CreateCampaign err = %v; want variant 2's missing primaryText refused", f, err)
 		}
+	}
+}
+
+// TestCreateCampaign_CarouselStepDropsANonGraphErrorBody: a creative refused with a body that is not
+// a Graph error envelope (a proxy page echoing the request) reaches Steps as method, path and status
+// only, never the body text (local review: platform errors must not carry untrusted text).
+func TestCreateCampaign_CarouselStepDropsANonGraphErrorBody(t *testing.T) {
+	cs := &carouselServer{t: t, creativeStatus: http.StatusBadGateway, creativeBody: "<html>upstream echo X-Debug: PROXY-ECHO-MARKER</html>"}
+	srv := httptest.NewServer(cs.handler())
+	defer srv.Close()
+	res, err := biddingClient(srv.URL, 100).CreateCampaign(context.Background(), carouselInput())
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	steps := strings.Join(res.Steps, "\n")
+	if strings.Contains(steps, "PROXY-ECHO-MARKER") || !strings.Contains(steps, "(502)") {
+		t.Fatalf("steps %q must name the 502 and drop the non-Graph body", steps)
 	}
 }

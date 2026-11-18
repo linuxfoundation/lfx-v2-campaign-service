@@ -58,11 +58,13 @@ const MimeTypeVideoMP4 = "video/mp4"
 // from create rather than lengthening the wait.
 //
 // videoDeadlineReserve is the part of the caller's remaining deadline the readiness wait leaves for
-// what follows it: the thumbnail reads and every variant's creative and ad.
+// what follows it: the thumbnail reads and every variant's creative and ad. minVideoStatusRead is
+// the least time one readiness status read is given, however little of the wait is left.
 const (
 	defaultVideoPollInterval = 3 * time.Second
 	defaultVideoReadyWait    = 60 * time.Second
 	videoDeadlineReserve     = 20 * time.Second
+	minVideoStatusRead       = 2 * time.Second
 )
 
 // Meta's video_status values (Video `status` field).
@@ -214,13 +216,20 @@ func (c *Client) prepareVideos(ctx context.Context, variants []AdVariant, steps 
 	if wait > 0 {
 		polls = max(1, int(wait/c.videoPollInterval))
 	}
+	// The wait is bounded by the clock as well as by the poll count: a slow or throttled status
+	// read spends the wait too. Each read runs under the time left (never less than
+	// minVideoStatusRead, so a read is not cut off the instant it starts), and a read cut short by
+	// that bound alone is a failed read, not a cancelled caller.
+	end := c.timeNow().Add(wait)
 	for round := 0; ; round++ {
 		waiting := 0
 		for _, p := range order {
 			if p.err != nil || p.status == videoStatusReady {
 				continue
 			}
-			status, err := c.videoStatus(ctx, p.videoID)
+			readCtx, cancelRead := context.WithTimeout(ctx, max(end.Sub(c.timeNow()), minVideoStatusRead))
+			status, err := c.videoStatus(readCtx, p.videoID)
+			cancelRead()
 			if err != nil {
 				if ctx.Err() != nil {
 					return nil, fmt.Errorf("meta video readiness poll cut short (caller context done): %w", ctx.Err())
@@ -244,14 +253,14 @@ func (c *Client) prepareVideos(ctx context.Context, variants []AdVariant, steps 
 		if waiting == 0 {
 			break
 		}
-		if round >= polls {
+		if round >= polls || !c.timeNow().Before(end) {
 			for _, p := range order {
 				if p.err != nil || p.status == videoStatusReady {
 					continue
 				}
 				detail := "status " + domain.CallerValue(p.status)
 				if p.readErr != nil {
-					detail = "last status read failed: " + truncateErr(p.readErr, 200)
+					detail = "last status read failed: " + stepSafeErrText(p.readErr, 200)
 				}
 				p.err = &videoStageError{msg: fmt.Sprintf("video %s was not ready within %s (%s); it is kept in the ad account library and can be attached in Meta Ads Manager once ready", p.videoID, wait.Truncate(time.Millisecond), detail)}
 			}
@@ -270,7 +279,7 @@ func (c *Client) prepareVideos(ctx context.Context, variants []AdVariant, steps 
 				if ctx.Err() != nil {
 					return nil, fmt.Errorf("meta video thumbnail read cut short (caller context done): %w", ctx.Err())
 				}
-				p.err = &videoStageError{msg: fmt.Sprintf("video %s has no usable auto-generated thumbnail: %s", p.videoID, truncateErr(err, 300))}
+				p.err = &videoStageError{msg: fmt.Sprintf("video %s has no usable auto-generated thumbnail: %s", p.videoID, stepSafeErrText(err, 300))}
 			} else {
 				for _, i := range p.variants {
 					out[i] = preparedVideo{videoID: p.videoID, thumbnail: thumb}
@@ -283,6 +292,22 @@ func (c *Client) prepareVideos(ctx context.Context, variants []AdVariant, steps 
 		}
 	}
 	return out, nil
+}
+
+// stepSafeErrText renders err for a persisted Step, truncated to n runes, with the raw response
+// body dropped from any *APIError whose Message is not a parsed Graph envelope message: that
+// fallback text is a proxy/CDN/WAF page or a reflection of the request, which redactSecrets
+// bounds by known credential shapes only. Method, path, status and the parsed diagnostic fields
+// stay, and truncation runs after the redaction, never instead of it.
+func stepSafeErrText(err error, n int) string {
+	msg := err.Error()
+	var ae *APIError
+	if errors.As(err, &ae) && !ae.EnvelopeParsed && ae.Message != "" {
+		safe := *ae
+		safe.Message = ""
+		msg = strings.Replace(msg, ae.Error(), safe.Error(), 1)
+	}
+	return truncate(msg, n)
 }
 
 // variantList renders 0-based variant indexes as "variant 1, 2".
