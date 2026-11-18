@@ -35,8 +35,10 @@ const baseURL = "https://api.linkedin.com/rest"
 // Before bumping, read every "Recent Changes" entry between the two versions
 // against the endpoints this package calls
 // (docs/knowledge/log/2026-11-17-580-linkedin-version-202611.md is the audit for
-// 202602 -> 202611) and re-probe live: the version selects request and response
-// shapes, not just a label.
+// 202602 -> 202611). After the bump merges, probe it live in dev (dev follows
+// main) and hold the next campaign-service prod release until the probe passes:
+// the version selects request and response shapes, not just a label. Rolling
+// back is a one-line revert of this constant (and the header test).
 // https://learn.microsoft.com/en-us/linkedin/marketing/versioning
 // https://learn.microsoft.com/en-us/linkedin/marketing/integrations/migrations
 // https://learn.microsoft.com/en-us/linkedin/marketing/integrations/recent-changes
