@@ -574,9 +574,9 @@ activated". Manual keeps the objective every campaign had before, `WEBSITE_CONVE
 name's Objective segment follows (`Traffic` / `Conversions`), which also changes the `utm_term` of
 automatic campaigns; a same-name campaign in the group that reports a DIFFERENT `objectiveType` is
 never reused (the create aborts). The settings readback COMPARES `objective_type` against the
-objective the recorded strategy implies (and, since #582, the recorded `objective`; for an
-automatic row it reads `unknown` when the stored config was not written by the create — e.g.
-replaced through `PUT .../campaigns/{campaign_id}` — rather than assuming `WEBSITE_VISIT`). Before LFXV2-2665 a LinkedIn create sent
+objective the recorded strategy implies (and, since #582, the `objectiveType` the create recorded
+in the campaign's result, which a campaign update cannot change; a row written before #582 reads
+`WEBSITE_VISIT`, the only automatic objective then). Before LFXV2-2665 a LinkedIn create sent
 `WEBSITE_CONVERSION`, `costType` `CPC` and no `optimizationTargetType`, which LinkedIn defaults to
 manual bidding at `unitCost` 0 — a campaign that does not deliver.
 
@@ -1557,10 +1557,11 @@ Bid updates: an automatic `conversions` campaign has no manual bid, so `PATCH ..
 `409`, as for `MAX_CLICK`. Name reuse: both `conversions` shapes are named `Conversions`, so the
 create's by-name reuse also compares the bidding mode — a same-name campaign reporting a manual
 `optimizationTargetType` (`NONE`, `ENHANCED_CONVERSION`) is never reused for `MAX_CONVERSION`, nor
-the reverse (the create aborts). The settings readback's `objective_type` reads the recorded
-`objective` from the config snapshot (automatic + `conversions` → `WEBSITE_CONVERSION`, `traffic`
-or none → `WEBSITE_VISIT`), and only from a snapshot the create wrote: a config replaced by a
-campaign update makes the recorded side `unknown` rather than a guessed `WEBSITE_VISIT`.
+the reverse, and a same-name `WEBSITE_CONVERSION` campaign that reports no `optimizationTargetType`
+is not reused either (the create aborts). The settings readback's `objective_type` reads the
+`objectiveType` the create recorded in the campaign's result (automatic + `conversions` →
+`WEBSITE_CONVERSION`, otherwise `WEBSITE_VISIT`), never the config snapshot, which a campaign
+update can replace.
 
 #### LinkedInConfig daily cap (`linkedInConfig.dailyCapUsd`, #584)
 

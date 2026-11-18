@@ -333,7 +333,7 @@ func TestLinkedIn_DispatchReusedCampaignRecordsNoBid(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
 			if strings.Contains(r.URL.Path, "adCampaigns") && !strings.Contains(r.URL.Path, "adCampaignGroups") {
-				_, _ = io.WriteString(w, `{"elements":[{"name":"`+name+`","status":"PAUSED","id":"urn:li:sponsoredCampaign:777","campaignGroup":"urn:li:sponsoredCampaignGroup:100"}],"metadata":{"nextPageToken":""}}`)
+				_, _ = io.WriteString(w, `{"elements":[{"name":"`+name+`","status":"PAUSED","id":"urn:li:sponsoredCampaign:777","campaignGroup":"urn:li:sponsoredCampaignGroup:100","objectiveType":"WEBSITE_CONVERSION","optimizationTargetType":"NONE"}],"metadata":{"nextPageToken":""}}`)
 				return
 			}
 			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)

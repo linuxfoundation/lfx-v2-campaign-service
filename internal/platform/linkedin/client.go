@@ -329,6 +329,12 @@ type CampaignResult struct {
 	// (LFXV2-2665). A campaign reused by name keeps its existing bidding, so the dispatcher records
 	// the strategy and starting bid only when this is true. Set only on the successful result.
 	BidApplied bool `json:"bidApplied,omitempty"`
+	// ObjectiveType and OptimizationTarget are the objectiveType and optimizationTargetType this run
+	// created the campaign with (#582), set beside BidApplied and omitted otherwise. The result blob
+	// is written only by the service, never by a caller's campaign update, so the settings readback
+	// takes the recorded objective from here rather than from the caller-replaceable config snapshot.
+	ObjectiveType      string `json:"objectiveType,omitempty"`
+	OptimizationTarget string `json:"optimizationTarget,omitempty"`
 	// ConversionsAssociated and ConversionsFailed split CampaignInput.Conversions (#552) by
 	// whether this run's Campaign Conversions PUT succeeded. Omitted when none were requested.
 	// A non-empty ConversionsFailed makes the dispatcher report the campaign created_degraded.
@@ -1531,8 +1537,13 @@ func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, n
 		// Website conversions campaigns share the "Conversions" name segment, so the objective no
 		// longer tells them apart: a manual campaign (NONE / ENHANCED_CONVERSION) is never reused
 		// for MAX_CONVERSION, nor the reverse. Only manual-vs-automated is compared, so a manual
-		// campaign moved between NONE and ENHANCED_CONVERSION in Campaign Manager is still reused,
-		// and an unreported optimizationTargetType cannot contradict.
+		// campaign moved between NONE and ENHANCED_CONVERSION in Campaign Manager is still reused.
+		// Under WEBSITE_CONVERSION an UNREPORTED optimizationTargetType is ambiguous — the campaign
+		// could be either mode, and reuse keeps its existing strategy — so it aborts too (PR #637
+		// review). Under WEBSITE_VISIT only automated MAX_CLICK is created, so it cannot contradict.
+		if optimizationTarget != "" && el.OptimizationTargetType == "" && objectiveType == ObjectiveWebsiteConversion {
+			return false, fmt.Errorf("campaign %q already exists in this campaign group with objectiveType %s but LinkedIn did not report its optimizationTargetType, so it cannot be confirmed to bid %s; aborting rather than reuse it or create a duplicate — check its bidding in Campaign Manager", el.Name, ObjectiveWebsiteConversion, optimizationTarget)
+		}
 		if optimizationTarget != "" && el.OptimizationTargetType != "" &&
 			manualBiddingTarget(el.OptimizationTargetType) != manualBiddingTarget(optimizationTarget) {
 			return false, fmt.Errorf("campaign %q already exists in this campaign group with optimizationTargetType %s, not %s — it was not created for this bidding strategy; aborting rather than reuse it or create a duplicate", el.Name, el.OptimizationTargetType, optimizationTarget)
@@ -3335,6 +3346,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	result := withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps))
 	result.BidApplied = !campaignReused
+	if result.BidApplied {
+		result.ObjectiveType = bidding.objectiveType
+		result.OptimizationTarget = bidding.optimizationTarget
+	}
 	return result, nil
 }
 

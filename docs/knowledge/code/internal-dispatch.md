@@ -5465,13 +5465,12 @@ identity-checked, with a 404 proven absent only by a confirming ad-account read 
   and `end_date`; upstream-only `status`, `bidding_strategy_type` (`optimizationTargetType`),
   `cost_type`, `unit_cost`, `unit_cost_currency` (`unitCost.currencyCode`; `unit_cost` is absent
   whenever the currency is missing, never a bare number); `objective_type` is COMPARED (LFXV2-2665)
-  against `linkedinRecordedObjective` — manual → `WEBSITE_CONVERSION`; automatic → the snapshot's
-  `objective` (#582: `conversions` → `WEBSITE_CONVERSION`, `traffic` or absent → `WEBSITE_VISIT`),
-  but only from a snapshot the adapter provably wrote (it carries the non-`omitempty`
-  `lifetimeBudget` key, `linkedinSnapshotAuthorshipKey`): an empty, non-object or caller-written
-  snapshot (`UpdateCampaign` stores caller JSON verbatim), a null/non-string objective or one
-  outside `traffic`/`conversions` → `unknown`, as `googleAdsRecordedChannelType` does for
-  `channel`; `unknown` with no recorded strategy. An `account` URN naming another account →
+  against `linkedinRecordedObjective` — manual → `WEBSITE_CONVERSION`; automatic → the
+  `objectiveType` the create recorded in the row's Result blob (`linkedinResultObjective`, #582),
+  `WEBSITE_VISIT` for a blob written before #582 recorded it; an empty or undecodable blob, or a
+  value outside the two this service creates → `unknown`. The config snapshot is never read for
+  it: `UpdateCampaign` stores caller JSON there verbatim, so any marker in it can be forged (PR
+  #637 review); Result is server-written only. `unknown` with no recorded strategy. An `account` URN naming another account →
   `ErrCampaignUpstreamIdentityMismatch`; a 401 → the usual `linkedinExpiry` re-tag.
 - **Bid** (`WriteBid`): the bid is the CAMPAIGN's `unitCost`, so there is no child id to require.
   Order: provenance (fail closed), bid type CPC, adopted row → `ErrBidAdoptedCampaign` joined with `ErrBidUnwritable` (the handler
@@ -5538,8 +5537,8 @@ cents), the client choosing the objective from the strategy (automatic `WEBSITE_
 `linkedInConfig.objective` (#582: `traffic` automatic only; `conversions` automatic is
 `WEBSITE_CONVERSION` / `MAX_CONVERSION` and requires a non-empty `conversions`, so it inherits
 `LINKEDIN_ADS_CONVERSIONS_ENABLED` and `global_marketing_ops`; `checkObjectiveShape` refuses null,
-`""` and non-strings; the settings readback reads the snapshot's `objective` in
-`linkedinRecordedObjective`, only from an adapter-written snapshot); X nothing further. Refusals wrap `domain.ErrCreateConfigInvalid` with
+`""` and non-strings; the settings readback reads the objectiveType recorded in the row's Result in
+`linkedinRecordedObjective`); X nothing further. Refusals wrap `domain.ErrCreateConfigInvalid` with
 `<configKey>.bidding: <reason>`, and `biddingInvalid` marks every one a `domain.PreflightRefusal`
 (issue #208): each is a pure check raised before any upstream call, its only caller-derived text is
 an amount or a config key rendered through `domain.CallerValue` (`quoteKey`), so when `Dispatch`

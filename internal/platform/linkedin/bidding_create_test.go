@@ -192,7 +192,7 @@ func TestCreateCampaign_ReusedCampaignDoesNotApplyTheBid(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
 			if strings.Contains(r.URL.Path, "adCampaigns") && !strings.Contains(r.URL.Path, "adCampaignGroups") {
-				_, _ = io.WriteString(w, `{"elements":[{"name":"`+name+`","status":"PAUSED","id":"urn:li:sponsoredCampaign:777","campaignGroup":"urn:li:sponsoredCampaignGroup:100","objectiveType":"WEBSITE_CONVERSION"}],"metadata":{"nextPageToken":""}}`)
+				_, _ = io.WriteString(w, `{"elements":[{"name":"`+name+`","status":"PAUSED","id":"urn:li:sponsoredCampaign:777","campaignGroup":"urn:li:sponsoredCampaignGroup:100","objectiveType":"WEBSITE_CONVERSION","optimizationTargetType":"NONE"}],"metadata":{"nextPageToken":""}}`)
 				return
 			}
 			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
@@ -388,7 +388,8 @@ func TestCampaignBidding_ObjectiveMatrix(t *testing.T) {
 
 // TestFindCampaignByNameInGroup_RefusesABiddingModeMismatch (#582): automatic and manual Website
 // conversions campaigns share a name, so a same-name, same-objective campaign is reused only in
-// the same bidding MODE — manual (NONE, ENHANCED_CONVERSION) or automated — or when unreported.
+// the same bidding MODE — manual (NONE, ENHANCED_CONVERSION) or automated. An unreported
+// optimizationTargetType is ambiguous under WEBSITE_CONVERSION and aborts (PR #637 review).
 func TestFindCampaignByNameInGroup_RefusesABiddingModeMismatch(t *testing.T) {
 	const name = "Events | KubeCon | NA | Conversions | Prospecting | Static | tlf | MoFU"
 	for label, tc := range map[string]struct {
@@ -396,7 +397,8 @@ func TestFindCampaignByNameInGroup_RefusesABiddingModeMismatch(t *testing.T) {
 		wantErr        bool
 	}{
 		"automatic reuses automatic":            {want: OptimizationTargetMaxConversion, reported: `,"optimizationTargetType":"MAX_CONVERSION"`},
-		"automatic reuses unreported":           {want: OptimizationTargetMaxConversion, reported: ``},
+		"automatic refuses unreported":          {want: OptimizationTargetMaxConversion, reported: ``, wantErr: true},
+		"manual refuses unreported":             {want: OptimizationTargetNone, reported: ``, wantErr: true},
 		"automatic refuses manual NONE":         {want: OptimizationTargetMaxConversion, reported: `,"optimizationTargetType":"NONE"`, wantErr: true},
 		"manual refuses automatic":              {want: OptimizationTargetNone, reported: `,"optimizationTargetType":"MAX_CONVERSION"`, wantErr: true},
 		"manual reuses ENHANCED_CONVERSION":     {want: OptimizationTargetNone, reported: `,"optimizationTargetType":"ENHANCED_CONVERSION"`},

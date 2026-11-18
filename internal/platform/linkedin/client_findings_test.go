@@ -2224,7 +2224,7 @@ func TestCreateCampaign_StepWordingNeutralForFoundCampaign(t *testing.T) {
 				_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | tlf","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:`+groupID+`"}],"metadata":{"nextPageToken":""}}`)
 			case strings.Contains(r.URL.Path, "adCampaigns"):
 				// An EXISTING ACTIVE campaign under the same group — found idempotently.
-				_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | LinkedIn | Conversions | Prospecting | Static | tlf | MoFU","status":"ACTIVE","id":"urn:li:sponsoredCampaign:200","campaignGroup":"urn:li:sponsoredCampaignGroup:`+groupID+`"}],"metadata":{"nextPageToken":""}}`)
+				_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | LinkedIn | Conversions | Prospecting | Static | tlf | MoFU","status":"ACTIVE","id":"urn:li:sponsoredCampaign:200","campaignGroup":"urn:li:sponsoredCampaignGroup:`+groupID+`","objectiveType":"WEBSITE_CONVERSION","optimizationTargetType":"NONE"}],"metadata":{"nextPageToken":""}}`)
 			default:
 				_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			}
