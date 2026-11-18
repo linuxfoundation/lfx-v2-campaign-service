@@ -6,7 +6,9 @@ activated. The client checked only the flat $100 lifetime minimum.
 
 - Rule (`linkedin.ValidateFixedScheduleLifetime`): an uncapped lifetime total on a fixed schedule
   must be at least max($100, $10 × days), at wire precision. Days are UTC calendar days from start
-  through end, inclusive; a start that has begun counts from today.
+  through end, inclusive; a start that has begun counts from the
+  UTC day of now plus the start buffer (the instant sent to LinkedIn), so a request just before
+  UTC midnight counts from tomorrow.
 - Checked before anything exists: `PreflightCreate` (synchronous 400), `Dispatch`, and
   `CreateCampaign` after `validateSchedule`.
 - Budget edit (`WriteBudget`): a lifetime change on a campaign whose `runSchedule` has an end is

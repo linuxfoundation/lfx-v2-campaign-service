@@ -1573,7 +1573,8 @@ at least **max($100, $10 × flight days)**.
 
 - **Days** run from the start date through the end date, inclusive, in UTC: the campaign's
   schedule is sent as 00:00 UTC of the start day and 23:59:59.999 UTC of the end day. A start
-  that has already begun counts from today. 18 Nov–18 Dec is 31 days, so the minimum is $310.
+  that has already begun counts from the UTC day of now plus the start buffer (the instant sent
+  to LinkedIn), so a request just before UTC midnight counts from tomorrow. 18 Nov–18 Dec is 31 days, so the minimum is $310.
 - **Refused** with a synchronous 400 before any job exists. The sentence names the minimum
   for the given dates. The check uses the two-decimal wire value, so 309.996 ("310.00") passes.
   Dispatch and the client repeat the check before anything is created.
