@@ -156,12 +156,12 @@ func TestVerifyRejectsExpiredAndOverlongExpiry(t *testing.T) {
 	// A VALIDLY signed URL whose expiry is further away than MaxTTL+MaxClockSkew is refused: a
 	// leaked key must not be able to mint long-lived URLs this service honours.
 	far := now.Add(MaxTTL + MaxClockSkew + time.Second).Unix()
-	farSig := base64.RawURLEncoding.EncodeToString(s.mac(p, b, a, far))
+	farSig := base64.RawURLEncoding.EncodeToString(s.mac(KindImage, p, b, a, far))
 	if s.Verify(p, b, a, far, farSig) {
 		t.Fatal("a signature over an expiry beyond MaxTTL+MaxClockSkew must not verify")
 	}
 	edge := now.Add(MaxTTL + MaxClockSkew).Unix()
-	edgeSig := base64.RawURLEncoding.EncodeToString(s.mac(p, b, a, edge))
+	edgeSig := base64.RawURLEncoding.EncodeToString(s.mac(KindImage, p, b, a, edge))
 	if !s.Verify(p, b, a, edge, edgeSig) {
 		t.Fatal("an expiry exactly MaxTTL+MaxClockSkew away should verify")
 	}
@@ -360,5 +360,60 @@ func TestValidateIDs(t *testing.T) {
 		if ValidateIDs(in[0], in[1], in[2]) == nil {
 			t.Errorf("%s: invalid id accepted", name)
 		}
+	}
+}
+
+// TestVideoKindIsBoundIntoTheSignature pins the #549 slot separation: a video URL carries
+// kind=video and verifies ONLY as a video, an image URL verifies ONLY as an image, and the image
+// URL is byte-identical to what Mint produced before video support (no kind parameter).
+func TestVideoKindIsBoundIntoTheSignature(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	s := newTestSigner(t, now)
+
+	img, _, err := s.Mint(testProject, testBrief, testAsset)
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	if u, _ := url.Parse(img); u.Query().Has(KindParam) {
+		t.Fatalf("image URL %q carries a %s parameter; pre-#549 URLs must be unchanged", img, KindParam)
+	}
+	vid, _, err := s.MintKind(KindVideo, testProject, testBrief, testAsset)
+	if err != nil {
+		t.Fatalf("MintKind(video): %v", err)
+	}
+	u, _ := url.Parse(vid)
+	if got := u.Query().Get(KindParam); got != KindVideoValue {
+		t.Fatalf("video URL %s = %q, want %q", KindParam, got, KindVideoValue)
+	}
+
+	ip, ib, ia, ie, isig := parts(t, img)
+	vp, vb, va, ve, vsig := parts(t, vid)
+	if isig == vsig {
+		t.Fatal("image and video signatures over the same tuple must differ")
+	}
+	if !s.VerifyKind(KindImage, ip, ib, ia, ie, isig) || s.VerifyKind(KindVideo, ip, ib, ia, ie, isig) {
+		t.Fatal("an image signature must verify as an image and never as a video")
+	}
+	if !s.VerifyKind(KindVideo, vp, vb, va, ve, vsig) || s.VerifyKind(KindImage, vp, vb, va, ve, vsig) || s.Verify(vp, vb, va, ve, vsig) {
+		t.Fatal("a video signature must verify as a video and never as an image")
+	}
+	if s.VerifyKind(Kind(99), vp, vb, va, ve, vsig) {
+		t.Fatal("an unknown kind must verify nothing")
+	}
+	if _, _, err := s.MintKind(Kind(99), testProject, testBrief, testAsset); err == nil {
+		t.Fatal("MintKind must refuse an unknown kind")
+	}
+}
+
+func TestKindFromParam(t *testing.T) {
+	video, other := KindVideoValue, "image"
+	if k, ok := KindFromParam(nil); !ok || k != KindImage {
+		t.Fatalf("absent kind = %v,%v, want image,true", k, ok)
+	}
+	if k, ok := KindFromParam(&video); !ok || k != KindVideo {
+		t.Fatalf("kind=video = %v,%v, want video,true", k, ok)
+	}
+	if _, ok := KindFromParam(&other); ok {
+		t.Fatal("an unknown kind value must not map to a kind")
 	}
 }

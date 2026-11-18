@@ -19,7 +19,8 @@ const (
 	MimeTypeJPEG = "image/jpeg"
 	// MimeTypeMP4 is the verified content type of an MP4 video upload (#586). Only an X
 	// campaign (twitterConfig.videoAssetId, #564) and a LinkedIn video variant
-	// (linkedInConfig.variants[].videoAssetId, #586) consume it; every image consumer refuses an
+	// (linkedInConfig.variants[].videoAssetId, #586) and a Reddit video post
+	// (redditConfig.videoAssetId, #549) consume it; every image consumer refuses an
 	// asset of this type.
 	MimeTypeMP4 = "video/mp4"
 )

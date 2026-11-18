@@ -49,6 +49,7 @@ func DecodeGetSignedCreativeAssetRequest(mux goahttp.Muxer, decoder func(*http.R
 			assetID   string
 			exp       int64
 			sig       string
+			kind      *string
 			err       error
 
 			params = mux.Vars(r)
@@ -79,10 +80,19 @@ func DecodeGetSignedCreativeAssetRequest(mux goahttp.Muxer, decoder func(*http.R
 			err = goa.MergeErrors(err, goa.MissingFieldError("sig", "query string"))
 		}
 		err = goa.MergeErrors(err, goa.ValidatePattern("sig", sig, "^[A-Za-z0-9_-]{43}$"))
+		kindRaw := qp.Get("kind")
+		if kindRaw != "" {
+			kind = &kindRaw
+		}
+		if kind != nil {
+			if !(*kind == "video") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("kind", *kind, []any{"video"}))
+			}
+		}
 		if err != nil {
 			return payload, err
 		}
-		payload = NewGetSignedCreativeAssetPayload(projectID, briefID, assetID, exp, sig)
+		payload = NewGetSignedCreativeAssetPayload(projectID, briefID, assetID, exp, sig, kind)
 
 		return payload, nil
 	}

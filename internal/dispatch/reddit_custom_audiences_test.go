@@ -52,6 +52,8 @@ var redditUngatedFields = map[string]bool{
 	// Gender, languages and dayparting (#549 gap 13) are Reddit's fixed targeting enums and a
 	// weekly schedule.
 	"gender": true, "languages": true, "schedule": true,
+	// The video post's assets (#549 gap 5) are stored assets of this brief, like imageAssetId.
+	"videoAssetId": true, "thumbnailAssetId": true,
 	// Sub-country geolocation ids (#549 gap 11) are Reddit's public geolocation taxonomy.
 	"subCountryGeoTargets": true,
 }
