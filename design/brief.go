@@ -314,6 +314,7 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		"group ending at the campaign's end is refused). Refused with a 400 before any job exists when it is "+
 		"set without lifetimeBudget, is not a number (null included), is not above zero, is under LinkedIn's "+
 		"$10 daily minimum, or is more than the lifetime budget. "+
+		"Without a cap, a lifetime budget must be at least $10 per flight day (UTC, inclusive), or 400 (#633). "+
 		"REDDIT CONVERSION EVENT (#549): redditConfig.conversionEvent names the pixel event a conversions "+
 		"campaign optimizes toward, sent as the campaign's and the ad group's optimization_goal: "+
 		"PURCHASE, SIGN_UP, LEAD, PAGE_VISIT, VIEW_CONTENT, ADD_TO_CART, ADD_TO_WISHLIST or SEARCH, "+

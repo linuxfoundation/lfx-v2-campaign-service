@@ -1563,6 +1563,24 @@ dailyCapUsd?: number             — OPTIONAL daily spending cap beside a LIFETI
 - **Editing** (`PATCH .../budget`): a `lifetime` amount change writes `totalBudget` alone and
   leaves the cap in force. It is refused (400) when the new total is below the cap. A `daily`
   change is 409: change the cap in LinkedIn Campaign Manager.
+
+#### LinkedIn lifetime budget on a fixed schedule (#633)
+
+LinkedIn spreads an uncapped lifetime budget (`lifetimeBudget: true`, no `dailyCapUsd`) over every
+day of its fixed schedule and needs at least $10 a day. A smaller total creates a campaign that
+cannot be activated (prod campaign 930195766: $100 over 31 days, $3.23/day). So the total must be
+at least **max($100, $10 × flight days)**.
+
+- **Days** run from the start date through the end date, inclusive, in UTC: the campaign's
+  schedule is sent as 00:00 UTC of the start day and 23:59:59.999 UTC of the end day. A start
+  that has already begun counts from today. 18 Nov–18 Dec is 31 days, so the minimum is $310.
+- **Refused** with a synchronous 400 before any job exists. The sentence names the minimum
+  for the given dates. The check uses the two-decimal wire value, so 309.996 ("310.00") passes.
+  Dispatch and the client repeat the check before anything is created.
+- **Editing** (`PATCH .../budget`): a `lifetime` amount change on a campaign whose schedule has
+  an end is held to the same floor over its whole schedule (400).
+- **Not affected:** a lifetime budget with a daily cap (#584). It runs on a continuous schedule
+  and its cap is held to $10.
 #### GoogleAdsConfig (the `googleAdsConfig` object)
 
 Google Ads per-platform config. Which campaign is created depends on `channel`. The default
