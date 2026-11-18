@@ -5,6 +5,7 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/url"
 	"strconv"
@@ -29,6 +30,14 @@ func videoSizer() *fakeAssetSizer {
 		sizes: map[[3]string]int64{{"cncf", raBrief, rvVideo}: 20 << 20, {"cncf", raBrief, rvThumb}: 4096},
 		mimes: map[[3]string]string{{"cncf", raBrief, rvVideo}: model.MimeTypeMP4},
 	}
+}
+
+// captured returns the authored post's type, media_url and thumbnail_url under the harness's
+// mutex, which the fake handler writes them under.
+func (h *redditAssetHarness) captured() (postType, mediaURL, thumbURL string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.postType, h.mediaURL, h.thumbURL
 }
 
 func videoExtra(video, thumb string) string {
@@ -68,19 +77,20 @@ func TestRedditVideo_AuthorsAVideoPostFromSignedURLs(t *testing.T) {
 	if camp.Status != campaignStatusCreated {
 		t.Fatalf("status = %q, want created", camp.Status)
 	}
-	if h.postType != "VIDEO" {
-		t.Fatalf("post type = %q, want VIDEO", h.postType)
+	postType, mediaURL, thumbURL := h.captured()
+	if postType != "VIDEO" {
+		t.Fatalf("post type = %q, want VIDEO", postType)
 	}
-	p, b, a, exp, sig, q := signedParts(t, h.mediaURL)
+	p, b, a, exp, sig, q := signedParts(t, mediaURL)
 	if a != rvVideo || b != raBrief || q.Get(assetsign.KindParam) != assetsign.KindVideoValue {
-		t.Fatalf("media_url %q is not a video URL for the stored MP4", h.mediaURL)
+		t.Fatalf("media_url %q is not a video URL for the stored MP4", mediaURL)
 	}
 	if !signer.VerifyKind(assetsign.KindVideo, p, b, a, exp, sig) || signer.Verify(p, b, a, exp, sig) {
 		t.Fatal("the video URL must verify as a video and never as an image")
 	}
-	tp, tb, ta, texp, tsig, tq := signedParts(t, h.thumbURL)
+	tp, tb, ta, texp, tsig, tq := signedParts(t, thumbURL)
 	if ta != rvThumb || tq.Has(assetsign.KindParam) {
-		t.Fatalf("thumbnail_url %q is not an image URL for the thumbnail", h.thumbURL)
+		t.Fatalf("thumbnail_url %q is not an image URL for the thumbnail", thumbURL)
 	}
 	if !signer.Verify(tp, tb, ta, texp, tsig) || signer.VerifyKind(assetsign.KindVideo, tp, tb, ta, texp, tsig) {
 		t.Fatal("the thumbnail URL must verify as an image and never as a video")
@@ -113,8 +123,9 @@ func TestRedditVideo_PostRefusalDegradesAndNeverPersistsSignatures(t *testing.T)
 	if camp.Status != campaignStatusCreatedDegraded {
 		t.Fatalf("status = %q, want created_degraded", camp.Status)
 	}
-	_, _, _, _, vsig, _ := signedParts(t, h.mediaURL)
-	_, _, _, _, tsig, _ := signedParts(t, h.thumbURL)
+	_, mediaURL, thumbURL := h.captured()
+	_, _, _, _, vsig, _ := signedParts(t, mediaURL)
+	_, _, _, _, tsig, _ := signedParts(t, thumbURL)
 	row := string(camp.ConfigSnapshot) + string(camp.Result)
 	if strings.Contains(row, vsig) || strings.Contains(row, tsig) {
 		t.Fatal("a signature leaked into the persisted campaign row")
@@ -213,6 +224,43 @@ func TestRedditVideo_PreflightRefusesSynchronously(t *testing.T) {
 	requireConfigInvalid(t, pre(videoExtra(rvVideo, rvThumb)+`,"imageAssetId":"`+raAsset+`"`), "cannot be combined")
 	requireConfigInvalid(t, pre(videoExtra(rvVideo, rvVideo)), "name the same asset")
 	requireConfigInvalid(t, pre(videoExtra("x", rvThumb)), "not a valid asset id")
+
+	// With one ad per variant on, a video create with two variants would silently drop all but
+	// the first: refused, while one variant (or the flag off) is the one-ad video create.
+	twoVariants := `,"variants":[{"headline":"A"},{"headline":"B"}]`
+	t.Setenv(constants.EnvRedditAdPerVariantEnabled, "true")
+	requireConfigInvalid(t, d.PreflightCreate(context.Background(), "cncf", model.ProviderRedditAds,
+		json.RawMessage(`{"redditConfig":{"budgetUsd":50,"startDate":"2099-08-01","endDate":"2099-08-31","objective":"traffic"`+twoVariants+videoExtra(rvVideo, rvThumb)+`}}`)),
+		"one ad per variant applies to image posts only")
+	if err := pre(videoExtra(rvVideo, rvThumb)); !errors.Is(err, domain.ErrPreflightNotApplicable) {
+		t.Fatalf("one-variant video config with ad-per-variant on: err = %v, want ErrPreflightNotApplicable", err)
+	}
+	t.Setenv(constants.EnvRedditAdPerVariantEnabled, "")
+}
+
+// TestRedditVideo_MistypedFieldIsA400 pins the raw-config shape check: a non-string videoAssetId
+// or thumbnailAssetId would decode to "" in the best-effort pre-flight decode and skip the video
+// gate, so it is refused as a synchronous 400 (flag on or off), and again at Dispatch before any
+// Reddit call.
+func TestRedditVideo_MistypedFieldIsA400(t *testing.T) {
+	for _, flag := range []string{"", "true"} {
+		t.Setenv(constants.EnvRedditVideoEnabled, flag)
+		h := &redditAssetHarness{}
+		d := h.dispatcher(t)
+		d.SetCreativeAssetURLs(videoSizer(), testAssetSigner(t))
+		for _, extra := range []string{
+			`,"videoAssetId":123,"thumbnailAssetId":"` + rvThumb + `"`,
+			`,"videoAssetId":"` + rvVideo + `","THUMBNAILASSETID":["x"]`,
+		} {
+			cfg := redditAssetCfg(extra)
+			requireConfigInvalid(t, d.PreflightCreate(context.Background(), "cncf", model.ProviderRedditAds, cfg), "must be a string")
+			_, err := d.Dispatch(context.Background(), assetBrief(), model.ProviderRedditAds, cfg)
+			requireConfigInvalid(t, err, "must be a string")
+		}
+		if n := h.calls.Load(); n != 0 {
+			t.Fatalf("flag %q: %d Reddit calls, want none", flag, n)
+		}
+	}
 }
 
 // TestScrubRedditOutcome_ScrubsEveryMintedURL: a video post mints two URLs, and an echo of

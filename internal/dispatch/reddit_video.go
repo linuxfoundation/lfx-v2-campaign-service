@@ -5,6 +5,7 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -77,6 +78,11 @@ func (d *RedditDispatcher) checkRedditVideoChoice(cfg redditConfig) (videoID, th
 		// which one the caller meant, and the client would refuse the mix anyway.
 		return "", "", redditVideoInvalid("%s cannot be combined with postUrl, imageUrl or imageAssetId", redditVideoAssetField)
 	}
+	if redditAdPerVariantEnabled() && len(cfg.Variants) >= 2 {
+		// One ad per variant (#549 gap 6) is image-only: a video create authors one post and one
+		// ad, so a deployment that turned it on must not silently drop the other variants.
+		return "", "", redditVideoInvalid("%s authors one post and one ad; one ad per variant applies to image posts only, so supply at most one variant", redditVideoAssetField)
+	}
 	if d.assetURLs == nil {
 		return "", "", redditVideoInvalid("stored creative assets are not enabled for Reddit on this deployment, so %s cannot be served", redditVideoAssetField)
 	}
@@ -92,6 +98,36 @@ func (d *RedditDispatcher) checkRedditVideoChoice(cfg redditConfig) (videoID, th
 		return "", "", redditVideoInvalid("%s and %s name the same asset; the thumbnail must be a separate PNG or JPEG", redditVideoAssetField, redditThumbnailAssetField)
 	}
 	return v.String(), th.String(), nil
+}
+
+// checkRedditVideoShape refuses a non-null, non-string videoAssetId or thumbnailAssetId on the
+// raw config. The best-effort decode in PreflightCreate would read either as "", skip the video
+// gate and its 400, and leave Dispatch's strict decode to fail the job instead, so this runs
+// first in both places, like checkTwitterVideoShape.
+func checkRedditVideoShape(config json.RawMessage) error {
+	if len(config) == 0 {
+		return nil
+	}
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(config, &envelope) != nil {
+		return nil
+	}
+	var platformCfg map[string]json.RawMessage
+	if json.Unmarshal(envelope["redditConfig"], &platformCfg) != nil {
+		return nil
+	}
+	for k, raw := range platformCfg {
+		for _, field := range []string{redditVideoAssetField, redditThumbnailAssetField} {
+			if !strings.EqualFold(k, field) || isJSONNull(raw) {
+				continue
+			}
+			var str string
+			if json.Unmarshal(raw, &str) != nil {
+				return domain.WrapPreflightRefusal(fmt.Errorf("%w: redditConfig.%s: must be a string", domain.ErrCreateConfigInvalid, field))
+			}
+		}
+	}
+	return nil
 }
 
 // checkRedditVideoAssets proves, before any Reddit call, everything about the two stored assets

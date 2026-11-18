@@ -121,6 +121,10 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 	if err := checkRedditDemographicShape(config); err != nil {
 		return err
 	}
+	// And a wrong-typed videoAssetId or thumbnailAssetId (#549 gap 5).
+	if err := checkRedditVideoShape(config); err != nil {
+		return err
+	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can past a type
 	// error, so the bid plan runs even when an unrelated field is broken — an invalid bidding is
 	// always the synchronous 400. The asset checks keep their old scope: they run only on a config
@@ -163,7 +167,8 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 		return err
 	}
 	// The video post's gate and config rules (#549) run on the best-effort decode too, so a gated
-	// or contradictory video config is the synchronous 400 even beside an unrelated broken field.
+	// or contradictory video config is the synchronous 400 even beside an unrelated broken field
+	// (checkRedditVideoShape above already refused a mistyped video field).
 	if _, _, err := d.checkRedditVideoChoice(cfg); err != nil {
 		return err
 	}

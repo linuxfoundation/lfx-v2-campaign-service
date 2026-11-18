@@ -278,6 +278,10 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	if err := checkRedditDemographicShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	// And a mistyped videoAssetId or thumbnailAssetId (#549 gap 5).
+	if err := checkRedditVideoShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg redditConfig
 	if err := unmarshalPlatformConfig(config, "redditConfig", &cfg); err != nil {
 		// A wrong-typed conversionEvent also fails this decode; report it by its own field-specific

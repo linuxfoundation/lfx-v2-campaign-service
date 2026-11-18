@@ -235,7 +235,10 @@ func TestCreateCampaign_VideoInputsRefusedBeforeAnyMutation(t *testing.T) {
 			if err == nil || res != nil {
 				t.Fatalf("want (nil, err), got (%+v, %v)", res, err)
 			}
-			if v.mutated {
+			v.mu.Lock()
+			mutated := v.mutated
+			v.mu.Unlock()
+			if mutated {
 				t.Fatal("a mutating request was made")
 			}
 			if strings.Contains(err.Error(), "sig=") {
