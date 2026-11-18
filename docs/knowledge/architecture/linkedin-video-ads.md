@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "LinkedIn Video Sponsored Content"
-description: "How a LinkedIn dispatch creates video Sponsored Content behind LINKEDIN_ADS_VIDEO_ENABLED: linkedInConfig.variants[].videoAssetId names a stored MP4, every variant must carry one, the campaign is created SINGLE_VIDEO and named Video, each distinct video is uploaded once through the Videos API (initializeUpload, part PUTs, finalizeUpload, AVAILABLE poll) after the campaign exists, and each dark post carries it as content.media with the registration URL as landing page."
+description: "How a LinkedIn dispatch creates video Sponsored Content behind LINKEDIN_ADS_VIDEO_ENABLED: linkedInConfig.variants[].videoAssetId names a stored MP4, every variant must carry one, the campaign is created SINGLE_VIDEO and named Motion, each distinct video is uploaded once through the Videos API (initializeUpload, part PUTs, finalizeUpload, AVAILABLE poll) after the campaign exists, and each dark post carries it as content.media with the registration URL as landing page."
 resource: "internal/platform/linkedin/videos.go"
 ---
 
