@@ -4212,6 +4212,30 @@ audienceExpansion?: string       — Line-item audience expansion (#564 gap 11):
                                   outside the set, or one that is not a string (null reads as
                                   absent), is a synchronous 400 `invalid campaign config:
                                   twitterConfig.audienceExpansion: …`. Not role-gated.
+goal?: string                    — Conversion optimization (#564 gap 5): `WEBSITE_CONVERSIONS`
+                                  (trimmed, case-insensitive) is the only value. Sent as the new
+                                  line item's `goal` on `POST accounts/:id/line_items` ("the
+                                  optimization setting to use with this line item"), so X optimizes
+                                  delivery toward the conversions the web event tag below records;
+                                  the `objective` stays `WEBSITE_CLICKS` and bidding is unchanged.
+                                  Omitted or blank, nothing is sent and X applies the objective's
+                                  default goal, as before.
+primaryWebEventTag?: string      — The web event tag that goal optimizes toward, sent as the line
+                                  item's `primary_web_event_tag` (X: "required when the line item's
+                                  goal is set to WEBSITE_CONVERSIONS"). The tag's id as
+                                  `GET accounts/:id/web_event_tags` lists it (e.g. `o3bk1`; not the
+                                  `tw-…-…` event id Events Manager shows): trimmed, lower-cased,
+                                  1-32 letters or digits. Checked for shape only — no tag list is
+                                  read — so a tag X does not know fails the line-item POST, after the
+                                  PAUSED campaign exists, and the job returns it as a partial.
+                                  For BOTH: `goal` needs `primaryWebEventTag` and
+                                  `primaryWebEventTag` needs `goal`. A line item reused by name keeps
+                                  its own goal, and a warning step says so. OFF unless
+                                  TWITTER_WEBSITE_CONVERSIONS_ENABLED is exactly "true" — while off,
+                                  either one non-blank is a synchronous 400 naming the flag. A value
+                                  that breaks these rules, or is not a string (null reads as absent),
+                                  is a synchronous 400 `invalid campaign config: twitterConfig.<field>:
+                                  …`, re-checked at dispatch. Not role-gated. Not verified live.
 followerLookalikeUserIds?: string[] — Follower look-alikes (#564 gap 4c): numeric X user ids
                                   (1-19 digits, no leading zero, within int64; trimmed and
                                   de-duplicated; at most 60), e.g. `14230524`. Each is sent as a
