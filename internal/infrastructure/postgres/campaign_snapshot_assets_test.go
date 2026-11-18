@@ -71,6 +71,13 @@ func TestSnapshotAssetIDs_FindsVideoAssetKey(t *testing.T) {
 	wantIDs(t, `{"variants":[{"videoAssetId":"`+assetA+`"},{"imageAssetId":"`+assetB+`"}]}`, assetA, assetB)
 }
 
+// TestSnapshotAssetIDs_FindsRedditVideoKeys pins the Reddit video post (#549): its video under
+// videoAssetId and its thumbnail under thumbnailAssetId are both guarded, in every spelling.
+func TestSnapshotAssetIDs_FindsRedditVideoKeys(t *testing.T) {
+	wantIDs(t, `{"redditConfig":{"videoAssetId":"`+assetA+`","thumbnailAssetId":"`+assetB+`"}}`, assetA, assetB)
+	wantIDs(t, `{"redditConfig":{"THUMBNAILASSETID":"`+assetB+`"}}`, assetB)
+}
+
 // TestSnapshotAssetIDs_WalksNestedShapes pins that the walk reaches the place the two biggest
 // platforms actually put the id: inside `variants`, an ARRAY of objects. A top-level-only scan
 // would find nothing at all for Meta and LinkedIn.

@@ -20,7 +20,7 @@ import (
 
 // ErrSignedAssetNotFound is the ONE error every rejected signed-asset request resolves to:
 // the feature off, a bad or expired signature, a missing, foreign or archived asset, a
-// disallowed stored type. It is deliberately NOT a Goa named error, so it reaches the
+// stored type the URL's slot kind does not serve. It is deliberately NOT a Goa named error, so it reaches the
 // generated encoder's default arm and is rendered by the mount's formatter exactly as a
 // request-decoding failure is — the same bare 404, with the same headers. A named error would
 // add a `goa-error` header that decode failures do not carry, which is a difference a caller
@@ -93,7 +93,13 @@ func (s *SignedAssetService) reader() signedAssetReader {
 // asset exists to someone who does not hold a valid URL for it. Logs carry the asset id and
 // expiry only — never the signature or the URL.
 func (s *SignedAssetService) GetSignedCreativeAsset(ctx context.Context, p *signedassetsvc.GetSignedCreativeAssetPayload) (*signedassetsvc.SignedCreativeAssetResult, io.ReadCloser, error) {
-	if p == nil || !s.signer.Verify(p.ProjectID, p.BriefID, p.AssetID, p.Exp, p.Sig) {
+	if p == nil {
+		return nil, nil, ErrSignedAssetNotFound
+	}
+	// The slot kind is part of what was signed (#549): an image URL verifies only as an image
+	// and a kind=video URL only as a video, so neither can be re-labelled into the other.
+	kind, known := assetsign.KindFromParam(p.Kind)
+	if !known || !s.signer.VerifyKind(kind, p.ProjectID, p.BriefID, p.AssetID, p.Exp, p.Sig) {
 		return nil, nil, ErrSignedAssetNotFound
 	}
 	logger := slog.With("asset_id", p.AssetID, "exp", p.Exp)
@@ -141,7 +147,7 @@ func (s *SignedAssetService) GetSignedCreativeAsset(ctx context.Context, p *sign
 		logger.ErrorContext(ctx, "signed creative asset: load failed", log.ErrKey, err)
 		return nil, nil, unavailable()
 	}
-	if len(asset.Bytes) == 0 || (asset.MimeType != model.MimeTypePNG && asset.MimeType != model.MimeTypeJPEG) {
+	if len(asset.Bytes) == 0 || !servableAs(kind, asset.MimeType) {
 		return nil, nil, ErrSignedAssetNotFound
 	}
 
@@ -155,6 +161,21 @@ func (s *SignedAssetService) GetSignedCreativeAsset(ctx context.Context, p *sign
 		ContentDisposition:  "inline",
 		XContentTypeOptions: "nosniff",
 	}, body, nil
+}
+
+// servableAs reports whether a stored asset of mimeType may be served at a URL minted for kind.
+// An image URL serves PNG or JPEG and NEVER a video, so an image slot that somehow named a stored
+// MP4 still gets the generic 404; a video URL (#549, a Reddit VIDEO post's media) serves
+// video/mp4 and nothing else, so a thumbnail or other image is never fetched through it.
+func servableAs(kind assetsign.Kind, mimeType string) bool {
+	switch kind {
+	case assetsign.KindImage:
+		return mimeType == model.MimeTypePNG || mimeType == model.MimeTypeJPEG
+	case assetsign.KindVideo:
+		return mimeType == model.MimeTypeMP4
+	default:
+		return false
+	}
 }
 
 func unavailable() error {

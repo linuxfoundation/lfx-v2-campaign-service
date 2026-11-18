@@ -12,13 +12,14 @@ import lfxv2campaignservicesignedassets "github.com/linuxfoundation/lfx-v2-campa
 // NewGetSignedCreativeAssetPayload builds a
 // lfx-v2-campaign-service-signed-assets service get-signed-creative-asset
 // endpoint payload.
-func NewGetSignedCreativeAssetPayload(projectID string, briefID string, assetID string, exp int64, sig string) *lfxv2campaignservicesignedassets.GetSignedCreativeAssetPayload {
+func NewGetSignedCreativeAssetPayload(projectID string, briefID string, assetID string, exp int64, sig string, kind *string) *lfxv2campaignservicesignedassets.GetSignedCreativeAssetPayload {
 	v := &lfxv2campaignservicesignedassets.GetSignedCreativeAssetPayload{}
 	v.ProjectID = projectID
 	v.BriefID = briefID
 	v.AssetID = assetID
 	v.Exp = exp
 	v.Sig = sig
+	v.Kind = kind
 
 	return v
 }

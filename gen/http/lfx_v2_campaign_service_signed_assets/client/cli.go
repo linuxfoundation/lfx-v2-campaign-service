@@ -18,7 +18,7 @@ import (
 // BuildGetSignedCreativeAssetPayload builds the payload for the
 // lfx-v2-campaign-service-signed-assets get-signed-creative-asset endpoint
 // from CLI flags.
-func BuildGetSignedCreativeAssetPayload(lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetProjectID *string, lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetBriefID *string, lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetAssetID *string, lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetExp *string, lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetSig *string) (*lfxv2campaignservicesignedassets.GetSignedCreativeAssetPayload, error) {
+func BuildGetSignedCreativeAssetPayload(lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetProjectID *string, lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetBriefID *string, lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetAssetID *string, lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetExp *string, lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetSig *string, lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetKind *string) (*lfxv2campaignservicesignedassets.GetSignedCreativeAssetPayload, error) {
 	var err error
 	var projectID string
 	{
@@ -80,12 +80,25 @@ func BuildGetSignedCreativeAssetPayload(lfxV2CampaignServiceSignedAssetsGetSigne
 			return nil, err
 		}
 	}
+	var kind *string
+	{
+		if lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetKind != nil {
+			kind = lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetKind
+			if !(*lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetKind == "video") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("kind", *lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetKind, []any{"video"}))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	v := &lfxv2campaignservicesignedassets.GetSignedCreativeAssetPayload{}
 	v.ProjectID = projectID
 	v.BriefID = briefID
 	v.AssetID = assetID
 	v.Exp = exp
 	v.Sig = sig
+	v.Kind = kind
 
 	return v, nil
 }

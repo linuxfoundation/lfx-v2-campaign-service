@@ -188,7 +188,7 @@ func (c *Client) authorVariantPosts(ctx context.Context, accountID string, in Ca
 			}
 			imageURL = lateURL
 		}
-		postID, err := c.createPromotedPost(ctx, accountID, in, i, headline, cta, imageURL)
+		postID, err := c.createPromotedPost(ctx, accountID, in, i, headline, cta, promotedPostMedia{Type: postTypeImage, MediaURL: imageURL})
 		if err == nil {
 			run.ads[i].PostID = postID
 			*steps = append(*steps, variantStep(i+1, fmt.Sprintf("Authored promoted post: %s (CTA: %s)", postID, cta)))
