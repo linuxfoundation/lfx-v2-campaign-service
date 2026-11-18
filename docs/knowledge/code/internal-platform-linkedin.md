@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding whose objective follows the strategy (automatic WEBSITE_VISIT + MAX_CLICK + CPM, manual WEBSITE_CONVERSION + CPC/NONE/unitCost) where the create once sent no optimizationTargetType, and optional single-flight access-token refresh."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding whose objective follows the strategy (automatic WEBSITE_VISIT + MAX_CLICK + CPM, manual WEBSITE_CONVERSION + CPC/NONE/unitCost) unless the caller asks for automatic website conversions (WEBSITE_CONVERSION + MAX_CONVERSION + CPM, only with a conversion to associate), where the create once sent no optimizationTargetType, and optional single-flight access-token refresh."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -25,6 +25,16 @@ process environment or files.
 Authentication is a Bearer access token; every request also sends the
 `LinkedIn-Version` and `X-RestLi-Protocol-Version` headers required by the
 Marketing API.
+
+**API version.** `LinkedIn-Version` is `202611` (November 2026), named once as
+`apiVersion` in `config.go` with no env override (no platform client here wires
+its version from the environment). LinkedIn supports 202611 until November 16,
+2027; the previous pin, 202602, sunsets February 15, 2027 (Marketing API
+"Migrations", API Migration Status). The 202602 → 202611 Recent Changes audit
+found no breaking change on any endpoint the package calls (#580); the header
+test pins the literal so a future bump is a deliberate, audited edit. The live
+probe of 202611 runs in dev after merge (dev follows main), and the next prod
+release is held until it passes; rolling back is a one-line constant revert.
 
 **Token refresh is OPTIONAL.** LinkedIn issues programmatic refresh tokens only
 to approved Marketing Developer Platform partners, so `Credentials` may carry an
@@ -483,7 +493,9 @@ in Campaign Manager. Pinned by `group_capped_test.go` (including
 
 `GetCampaignBudget(ctx, campaignID)` reads the campaign under the resolved account
 (`adAccounts/{acct}/adCampaigns/{id}`, numeric ids only) and returns a `CampaignBudget` carrying
-`DailyBudget`, `TotalBudget`, `CurrencyCode` and `Status`. An **absent** field stays `nil`
+`DailyBudget`, `TotalBudget`, `CurrencyCode` and `Status`, plus each field's own currency
+(`DailyBudgetCurrency`, `TotalBudgetCurrency`): `CurrencyCode` prefers the daily one, so it says
+nothing about the total's when both are present (#636). An **absent** field stays `nil`
 rather than becoming zero — nil is what a caller reads as "this campaign does not use this
 field" — while a field that is PRESENT but unparseable sets `AmountUnparseable` instead of
 silently reading as absent; those are opposite facts and only one of them is safe to write
@@ -897,6 +909,17 @@ that is `null` or not a string also sets that row's `PacingUnknown`; rows are ne
 it. No extra request. `ListAccountCampaigns` wraps it and drops the currency. See
 [Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).
 
+**Spend before the window (#636).** When the list holds a lifetime budget with a daily cap and no
+end date that started before the window, `fillSpendBeforeWindow` makes ONE more account-level
+analytics read, from the earliest such start through the day before the window, and sets
+`AccountCampaignRow.SpendBeforeWindow` on those rows (0 for one absent from the response). The
+rules pace that campaign's window against what remains of its total, so the window that spends
+its last dollars no longer reads as underspending. A remainder under a tenth of the daily cap
+counts as spent (LinkedIn stops a lifetime budget a little short of its total, for example
+$999.70 of $1,000), and a spent total gives unknown pacing rather than 0% underspending. The read
+is best-effort: a failure is logged and leaves the field nil, and the rules fall back to the whole
+total.
+
 `LinkedInDispatcher.VerifyAccountOrg(ctx, projectID, platform)` implements another optional
 capability, `OrgReferenceVerifier` (`internal/service/orchestrator.go`) — LinkedIn is the ONLY
 adapter that does, since it is the only platform with an upstream signal to check (see "Org/account
@@ -995,6 +1018,29 @@ an unreported objective cannot contradict, so it is reused. The two strategies' 
 differ in the Objective segment, which also changes the automatic campaigns' `utm_term`. The bid is
 resolved before the first POST. Neither shape is verified against a live account.
 
+**Automatic website conversions (#582)**: `CampaignInput.Objective` (`""`, `ObjectiveWebsiteVisit`,
+`ObjectiveWebsiteConversion`) is passed to `campaignBidding(manualBid, objective)`. Automatic with
+`WEBSITE_CONVERSION` is `objectiveType` `WEBSITE_CONVERSION`, `optimizationTargetType`
+`MAX_CONVERSION` (`OptimizationTargetMaxConversion`, LinkedIn's "Maximum delivery"), `costType`
+`CPM`, no `unitCost`, name segment `Conversions`. `CreateCampaign` refuses it before any POST
+without at least one conversion id (`ErrAutomaticConversionsNeedConversion`), because LinkedIn's
+"Create and Manage Campaigns" says MAX_CONVERSION campaigns "must have a conversion associated with
+it to be activated ... should be created and then associated with a conversion before activating"
+— the create sends `PAUSED` and associates `Conversions` right after the campaign POST. Manual
+with `WEBSITE_VISIT`, or any other objective, is refused before any POST. `campaignBiddingPlan`
+now carries `optimizationTarget`, and since automatic and manual conversions share the
+`Conversions` name, `findCampaignByNameInGroup` also aborts on a same-name, same-objective campaign
+of the other bidding MODE (`manualBiddingTarget`: NONE / ENHANCED_CONVERSION versus automated,
+`responseElement.OptimizationTargetType`); under `WEBSITE_CONVERSION` an unreported target aborts
+an automatic create too, since it could be a manual campaign (PR #637 review), while a manual
+create still reuses it (whether LinkedIn echoes `NONE` is unverified until the live probe). `CampaignResult.ObjectiveType` and
+`OptimizationTarget` record what a created campaign was sent, beside `BidApplied`. The bid
+lever already refuses MAX_CONVERSION (not a manual CPC). Sources (li-lms-2026-02, pinned when
+written, before #639 moved to `202611`; the same text li-lms-2025-11..2026-10, consulted 2026-11-13): "Ad Budget Type Allowable
+Combinations" (WEBSITE_CONVERSION allows NONE, ENHANCED_CONVERSION, MAX_CONVERSION; auto-bidding
+`costType` is always CPM) and "Create and Manage Campaigns" row `STANDARD_UPDATE | AUTO |
+MAX_CONVERSION` (costType CPM, Bid Type CPC, conversion tracking Required). Not verified live.
+
 `CampaignResult.BidApplied` is false when `createSponsoredCampaign` reused a campaign found by name
 in the group (it now returns `(id, reused, err)`), with a "bid NOT applied to reused campaign" step.
 
@@ -1062,6 +1108,21 @@ handled: a group whose start is after the new campaign's start is still refused 
 Pinned by `TestEnsureCampaignGroupCoversEnd` (and its `_WriteFailureIsAnError`,
 `_ReWidensAfterAConcurrentShortening` and `_ConcurrentCallersKeepTheLaterEnd` siblings) and
 `TestCreateCampaign_ReusedGroupScheduleCoversCampaign`.
+
+## Profile targeting shape (`targeting.go`, #585)
+
+`buildTargetingCriteria(profile, geoURNs, jobFns)` sends `include.and` as locations, then
+`(skills OR groups)` from the profile, then `jobFunctions` in a clause of its own: Campaign
+Manager's "narrow audience" (AND) structure, which LF's own campaigns use. The TypeScript port put
+the job functions in the skills/groups `or`, which made every member in those functions eligible.
+The skills/groups clause is omitted when both are empty rather than sent empty; the
+`validatePrerequisites` non-empty check still holds because a job-function clause is always sent.
+`jobFns` is `CampaignInput.JobFunctions` (`linkedInConfig.jobFunctions`), checked by
+`ValidateJobFunctions` (the targeting facet's `urn:li:function:<id>` rule, via `cleanFacet`); nil
+means the default three in `config.go`. `CreateCampaign` refuses `JobFunctions` with `Targeting`
+as a pre-flight refusal, and the dispatcher refuses it, and a wrong JSON type
+(`checkJobFunctionsShape`), as a synchronous 400. A campaign reused by name with `JobFunctions` set
+stops before its creatives, as with `Targeting` (see Caller targeting).
 
 ## Picker lookups (`lookups.go`, #552)
 
@@ -1132,7 +1193,9 @@ and name, no creative) with a `targeting NOT applied to reused campaign` error f
 the conservative choice Microsoft makes for its create-time-only targeting
 (`internal/platform/microsoft/campaign.go`). A profile create (no `Targeting`) still reuses the
 campaign and attaches creatives: its criteria derive from the service's own profile, and that
-retry path predates #552. Pinned by
+retry path predates #552. Caller `JobFunctions` (#585) are per-campaign input too and reach only
+a created campaign's criteria, so a reuse with them set stops the same way, its step and error
+naming `linkedInConfig.jobFunctions`; only the default job functions keep reusing. Pinned by
 `TestCreateCampaign_ReusedCampaignWithTargetingStopsBeforeCreatives`.
 
 That partial sets `CampaignResult.TargetingNotApplied`. A campaign id with no creative would

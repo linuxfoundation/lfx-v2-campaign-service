@@ -5,6 +5,7 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -256,22 +257,48 @@ func TestLinkedIn_ReadSettings_PaddedStoredIDFailsClosed(t *testing.T) {
 	}
 }
 
-// TestLinkedIn_ReadSettings_ObjectiveIsComparedAgainstTheRecordedStrategy (LFXV2-2665): the
-// create's objective follows the bidding strategy it records — automatic → WEBSITE_VISIT, manual →
-// WEBSITE_CONVERSION — so objective_type is compared on a row that recorded one, and stays
-// `unknown` (never guessed) on a row that did not.
+// resultWith is a Result blob as campaignFromLinkedIn persists it, with extra raw members spliced in.
+func resultWith(extra string) string {
+	const base = `{"accountId":"123456789","campaignId":"777","campaignGroupId":"42","bidApplied":true`
+	if extra == "" {
+		return base + "}"
+	}
+	return base + "," + extra + "}"
+}
+
+// TestLinkedIn_ReadSettings_ObjectiveIsComparedAgainstTheRecordedStrategy (LFXV2-2665, #582): the
+// create records its objective — manual → WEBSITE_CONVERSION, automatic → the objectiveType in the
+// server-written result blob — so objective_type is compared on a row that recorded one, and stays
+// `unknown` (never guessed) on a row that did not. The caller-replaceable config snapshot is never
+// read for it.
 func TestLinkedIn_ReadSettings_ObjectiveIsComparedAgainstTheRecordedStrategy(t *testing.T) {
 	automatic, manual := model.BiddingAutomatic, model.BiddingManual
+	// written is a snapshot as applyCampaignConfig records it: every non-omitempty linkedinConfig
+	// member present, objective absent (omitempty) — a pre-#582 or traffic row.
+	legacy := resultWith("") // written before #582 recorded objectiveType
+	conv := resultWith(`"objectiveType":"WEBSITE_CONVERSION","optimizationTarget":"MAX_CONVERSION"`)
+	visit := resultWith(`"objectiveType":"WEBSITE_VISIT","optimizationTarget":"MAX_CLICK"`)
 	cases := []struct {
 		name     string
 		strategy *model.BiddingStrategy
+		result   string
+		snapshot string
 		upstream string
 		want     fieldWant
 	}{
-		{"manual matches WEBSITE_CONVERSION", &manual, "WEBSITE_CONVERSION", fieldWant{"WEBSITE_CONVERSION", "WEBSITE_CONVERSION", model.SettingsMatch}},
-		{"automatic matches WEBSITE_VISIT", &automatic, "WEBSITE_VISIT", fieldWant{"WEBSITE_VISIT", "WEBSITE_VISIT", model.SettingsMatch}},
-		{"automatic diverges from WEBSITE_CONVERSION", &automatic, "WEBSITE_CONVERSION", fieldWant{"WEBSITE_VISIT", "WEBSITE_CONVERSION", model.SettingsDiverged}},
-		{"unrecorded is unknown", nil, "WEBSITE_CONVERSION", fieldWant{"", "WEBSITE_CONVERSION", model.SettingsUnknown}},
+		{"manual matches WEBSITE_CONVERSION", &manual, "", "", "WEBSITE_CONVERSION", fieldWant{"WEBSITE_CONVERSION", "WEBSITE_CONVERSION", model.SettingsMatch}},
+		{"automatic pre-#582 matches WEBSITE_VISIT", &automatic, legacy, "", "WEBSITE_VISIT", fieldWant{"WEBSITE_VISIT", "WEBSITE_VISIT", model.SettingsMatch}},
+		{"automatic pre-#582 diverges from WEBSITE_CONVERSION", &automatic, legacy, "", "WEBSITE_CONVERSION", fieldWant{"WEBSITE_VISIT", "WEBSITE_CONVERSION", model.SettingsDiverged}},
+		{"unrecorded is unknown", nil, "", "", "WEBSITE_CONVERSION", fieldWant{"", "WEBSITE_CONVERSION", model.SettingsUnknown}},
+		{"automatic conversions matches WEBSITE_CONVERSION", &automatic, conv, "", "WEBSITE_CONVERSION", fieldWant{"WEBSITE_CONVERSION", "WEBSITE_CONVERSION", model.SettingsMatch}},
+		{"automatic conversions diverges from WEBSITE_VISIT", &automatic, conv, "", "WEBSITE_VISIT", fieldWant{"WEBSITE_CONVERSION", "WEBSITE_VISIT", model.SettingsDiverged}},
+		{"automatic traffic matches WEBSITE_VISIT", &automatic, visit, "", "WEBSITE_VISIT", fieldWant{"WEBSITE_VISIT", "WEBSITE_VISIT", model.SettingsMatch}},
+		// PR #637 review: UpdateCampaign stores caller JSON verbatim in config_snapshot, so no
+		// snapshot content — objective, lifetimeBudget or anything else — moves the recorded side.
+		{"caller snapshot cannot fabricate a divergence", &automatic, conv, `{"budgetUsd":100,"lifetimeBudget":false}`, "WEBSITE_CONVERSION", fieldWant{"WEBSITE_CONVERSION", "WEBSITE_CONVERSION", model.SettingsMatch}},
+		{"caller snapshot objective cannot fabricate a match", &automatic, visit, `{"budgetUsd":100,"lifetimeBudget":false,"objective":"conversions"}`, "WEBSITE_CONVERSION", fieldWant{"WEBSITE_VISIT", "WEBSITE_CONVERSION", model.SettingsDiverged}},
+		{"objectiveType outside the closed set is unknown", &automatic, resultWith(`"objectiveType":"LEAD_GENERATION"`), "", "WEBSITE_VISIT", fieldWant{"", "WEBSITE_VISIT", model.SettingsUnknown}},
+		{"manual ignores the result objective", &manual, visit, "", "WEBSITE_CONVERSION", fieldWant{"WEBSITE_CONVERSION", "WEBSITE_CONVERSION", model.SettingsMatch}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -279,6 +306,12 @@ func TestLinkedIn_ReadSettings_ObjectiveIsComparedAgainstTheRecordedStrategy(t *
 			d, _ := liLeverDispatcher(t, map[string]settingsRoute{liCampaignPath: {status: 200, body: body}})
 			row := liRow()
 			row.BiddingStrategy = tc.strategy
+			if tc.result != "" {
+				row.Result = json.RawMessage(tc.result)
+			}
+			if tc.snapshot != "" {
+				row.ConfigSnapshot = json.RawMessage(tc.snapshot)
+			}
 			rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderLinkedInAds, row)
 			if err != nil {
 				t.Fatalf("ReadSettings: %v", err)
@@ -288,5 +321,21 @@ func TestLinkedIn_ReadSettings_ObjectiveIsComparedAgainstTheRecordedStrategy(t *
 				t.Fatalf("objective_type = %q / %q / %s, want %+v", derefOr(f.Recorded), derefOr(f.Upstream), f.Comparison, tc.want)
 			}
 		})
+	}
+}
+
+// TestLinkedInRecordedObjective_UnreadableResultIsUnknown (#582): an automatic row whose result blob
+// is missing or not an object has no recorded objective. ReadSettings refuses such a row before it
+// compares anything (the blob also carries the creation account), so this pins the helper directly.
+func TestLinkedInRecordedObjective_UnreadableResultIsUnknown(t *testing.T) {
+	automatic := model.BiddingAutomatic
+	for _, result := range []string{"", "[1]", "not json"} {
+		row := &model.Campaign{ID: "camp-1", BiddingStrategy: &automatic}
+		if result != "" {
+			row.Result = json.RawMessage(result)
+		}
+		if got := linkedinRecordedObjective(context.Background(), row); got != nil {
+			t.Errorf("result %q: recorded objective = %q, want nil (unknown)", result, *got)
+		}
 	}
 }

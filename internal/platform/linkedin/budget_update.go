@@ -35,7 +35,17 @@ type CampaignBudget struct {
 	// "USD" (see createSponsoredCampaign), and the minimums below are USD-specific, so a
 	// campaign denominated in anything else is a campaign whose minimums this service
 	// cannot check. Empty when the platform did not report it.
+	//
+	// With BOTH budgets present this is the daily budget's currency when it is nonempty, so it
+	// says nothing about the total's. A guard that must know every present amount is USD reads
+	// DailyBudgetCurrency and TotalBudgetCurrency instead (#636).
 	CurrencyCode string
+	// DailyBudgetCurrency is the currencyCode LinkedIn reported on dailyBudget, empty when it
+	// reported none or did not report dailyBudget at all.
+	DailyBudgetCurrency string
+	// TotalBudgetCurrency is the currencyCode LinkedIn reported on totalBudget, empty when it
+	// reported none or did not report totalBudget at all.
+	TotalBudgetCurrency string
 	// Status is the campaign's current status, carried so a caller can report what it was
 	// writing against. Not itself a guard — a paused campaign's budget is writable.
 	Status string
@@ -260,6 +270,7 @@ func (c *Client) GetCampaignBudget(ctx context.Context, campaignID string) (*Cam
 		} else {
 			out.AmountUnparseable = true
 		}
+		out.DailyBudgetCurrency = resp.DailyBudget.CurrencyCode
 		if resp.DailyBudget.CurrencyCode != "" {
 			out.CurrencyCode = resp.DailyBudget.CurrencyCode
 		}
@@ -270,6 +281,7 @@ func (c *Client) GetCampaignBudget(ctx context.Context, campaignID string) (*Cam
 		} else {
 			out.AmountUnparseable = true
 		}
+		out.TotalBudgetCurrency = resp.TotalBudget.CurrencyCode
 		if out.CurrencyCode == "" && resp.TotalBudget.CurrencyCode != "" {
 			out.CurrencyCode = resp.TotalBudget.CurrencyCode
 		}

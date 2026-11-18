@@ -6,6 +6,8 @@ package linkedin
 import (
 	"context"
 	"errors"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -290,5 +292,100 @@ func TestListAccountCampaigns_UnattributableAnalyticsElement_IsRejected(t *testi
 				t.Errorf("error = %v, want it to report the pivotValues problem", err)
 			}
 		})
+	}
+}
+
+// spendBeforeWindowList is a campaign list with two capped campaigns with no end that started
+// before a 7-day window ending 2026-06-15 (111 on 2026-04-21, 222 on 2026-05-01) and one daily
+// campaign (333) that needs no spend before the window.
+func spendBeforeWindowList() string {
+	ms := func(y int, m time.Month, d int) string {
+		return strconv.FormatInt(time.Date(y, m, d, 0, 0, 0, 0, time.UTC).UnixMilli(), 10)
+	}
+	capped := `"dailyBudget":{"amount":"20.00","currencyCode":"USD"},"totalBudget":{"amount":"1000.00","currencyCode":"USD"}`
+	return `{"elements":[
+		{"id":111,"name":"One","status":"ACTIVE",` + capped + `,"runSchedule":{"start":` + ms(2026, 4, 21) + `}},
+		{"id":222,"name":"Two","status":"ACTIVE",` + capped + `,"runSchedule":{"start":` + ms(2026, 5, 1) + `}},
+		{"id":333,"name":"Three","status":"ACTIVE","dailyBudget":{"amount":"20.00","currencyCode":"USD"},"runSchedule":{"start":` + ms(2026, 4, 21) + `}}
+	],"metadata":{}}`
+}
+
+// TestListAccountCampaigns_ReadsSpendBeforeWindowForCappedNoEnd pins #636's second analytics
+// read: one account-level call from the earliest capped no-end start through the day before the
+// window, whose spend becomes SpendBeforeWindow on those rows only. A capped campaign absent from
+// that response had no delivery before the window, so its figure is 0, not unknown.
+func TestListAccountCampaigns_ReadsSpendBeforeWindowForCappedNoEnd(t *testing.T) {
+	srv, rec := adAccountsServer(t,
+		spendBeforeWindowList(),
+		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":100,"clicks":5,"costInLocalCurrency":"40.00"}]}`,
+		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":9000,"clicks":90,"costInLocalCurrency":"960.00"}]}`,
+	)
+	fixedNow := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL), WithClock(func() time.Time { return fixedNow }))
+
+	rows, err := c.ListAccountCampaigns(context.Background(), "512345678", 7)
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	byID := map[string]AccountCampaignRow{}
+	for _, r := range rows {
+		byID[r.CampaignID] = r
+	}
+	if r := byID["111"]; r.Spend != 40 || r.SpendBeforeWindow == nil || *r.SpendBeforeWindow != 960 {
+		t.Errorf("campaign 111 = spend %v, before %v; want 40 in the window and 960 before it", r.Spend, r.SpendBeforeWindow)
+	}
+	if r := byID["222"]; r.SpendBeforeWindow == nil || *r.SpendBeforeWindow != 0 {
+		t.Errorf("campaign 222 SpendBeforeWindow = %v, want 0 for a campaign absent from the response", r.SpendBeforeWindow)
+	}
+	if r := byID["333"]; r.SpendBeforeWindow != nil {
+		t.Errorf("campaign 333 SpendBeforeWindow = %v, want nil for a daily-only campaign", *r.SpendBeforeWindow)
+	}
+
+	uris := rec.all()
+	if len(uris) != 3 {
+		t.Fatalf("got %d requests, want the list, the window's analytics and the read before it: %v", len(uris), uris)
+	}
+	before := uris[2]
+	want := "dateRange=(start:" + restLiDate(time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC)) +
+		",end:" + restLiDate(time.Date(2026, 6, 8, 0, 0, 0, 0, time.UTC)) + ")"
+	if decoded, _ := url.QueryUnescape(before); !strings.Contains(before, want) && !strings.Contains(decoded, want) {
+		t.Errorf("read before the window = %s, want it to contain %s", before, want)
+	}
+}
+
+// TestListAccountCampaigns_NoCappedNoEndMakesNoSecondRead: without a capped campaign with no end
+// that started before the window, the monitor costs one analytics call as before. The server
+// fails the test on any request past the two configured.
+func TestListAccountCampaigns_NoCappedNoEndMakesNoSecondRead(t *testing.T) {
+	srv, _ := adAccountsServer(t,
+		`{"elements":[{"id":111,"name":"One","status":"ACTIVE","dailyBudget":{"amount":"20.00","currencyCode":"USD"}}],"metadata":{}}`,
+		`{"elements":[]}`,
+	)
+	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
+	if _, err := c.ListAccountCampaigns(context.Background(), "512345678", 7); err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+}
+
+// TestListAccountCampaigns_FailedReadBeforeWindowLeavesItUnknown: the read before the window is
+// best-effort. Its failure must not fail the monitor, and must leave SpendBeforeWindow nil so the
+// rule falls back to the whole total rather than reading a zero it never measured.
+func TestListAccountCampaigns_FailedReadBeforeWindowLeavesItUnknown(t *testing.T) {
+	srv, _ := adAccountsServer(t,
+		spendBeforeWindowList(),
+		`{"elements":[]}`,
+		`{"elements":null}`,
+	)
+	fixedNow := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL), WithClock(func() time.Time { return fixedNow }))
+
+	rows, err := c.ListAccountCampaigns(context.Background(), "512345678", 7)
+	if err != nil {
+		t.Fatalf("a failed read before the window failed the monitor: %v", err)
+	}
+	for _, r := range rows {
+		if r.SpendBeforeWindow != nil {
+			t.Errorf("campaign %s SpendBeforeWindow = %v, want nil after a failed read", r.CampaignID, *r.SpendBeforeWindow)
+		}
 	}
 }

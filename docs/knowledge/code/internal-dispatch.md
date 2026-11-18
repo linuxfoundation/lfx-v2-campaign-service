@@ -1528,6 +1528,12 @@ the redenomination the guard exists to prevent. Placed above the pacing guard it
 empty to let the first case through; placed below it, the first case has already been refused
 ("NEITHER budget present"), so the only empty left is the second and it is REFUSED.
 
+**Every present budget's currency is checked, not the one the read collapses them to (#636).**
+`linkedin.CampaignBudget.CurrencyCode` prefers the daily budget's code, so on a lifetime budget
+with a daily cap a USD cap over a total whose currency is missing or different passed a single
+check. The guard reads `DailyBudgetCurrency` and `TotalBudgetCurrency` and requires an explicit
+USD on each field that is present.
+
 The amount then converts through `linkedin.ValidateBudgetAmount`, the same function the create
 path calls — `$10` daily and `$100` lifetime minimums — and **the WIRE STRING it returns is what
 is sent**, never a re-formatted float, so the amount validated is byte-for-byte the amount
@@ -5465,8 +5471,12 @@ identity-checked, with a 404 proven absent only by a confirming ad-account read 
   and `end_date`; upstream-only `status`, `bidding_strategy_type` (`optimizationTargetType`),
   `cost_type`, `unit_cost`, `unit_cost_currency` (`unitCost.currencyCode`; `unit_cost` is absent
   whenever the currency is missing, never a bare number); `objective_type` is COMPARED (LFXV2-2665)
-  against `linkedinRecordedObjective` — automatic → `WEBSITE_VISIT`, manual → `WEBSITE_CONVERSION`,
-  `unknown` with no recorded strategy. An `account` URN naming another account →
+  against `linkedinRecordedObjective` — manual → `WEBSITE_CONVERSION`; automatic → the
+  `objectiveType` the create recorded in the row's Result blob (`linkedinResultObjective`, #582),
+  `WEBSITE_VISIT` for a blob written before #582 recorded it; an empty or undecodable blob, or a
+  value outside the two this service creates → `unknown`. The config snapshot is never read for
+  it: `UpdateCampaign` stores caller JSON there verbatim, so any marker in it can be forged (PR
+  #637 review); Result is server-written only. `unknown` with no recorded strategy. An `account` URN naming another account →
   `ErrCampaignUpstreamIdentityMismatch`; a 401 → the usual `linkedinExpiry` re-tag.
 - **Bid** (`WriteBid`): the bid is the CAMPAIGN's `unitCost`, so there is no child id to require.
   Order: provenance (fail closed), bid type CPC, adopted row → `ErrBidAdoptedCampaign` joined with `ErrBidUnwritable` (the handler
@@ -5534,7 +5544,12 @@ rounds) — and each platform's `*BidPlan` adds its own: Microsoft `microsoft.Va
 and `automatic` refuses it); Meta `meta.ManualBidSupported` (traffic/leads) and at most two
 decimals; Reddit `reddit.ManualCPCBidSupported` (traffic); LinkedIn `linkedin.ValidateBidAmount` (whole
 cents), the client choosing the objective from the strategy (automatic `WEBSITE_VISIT` +
-`MAX_CLICK`, manual `WEBSITE_CONVERSION`; decision 2026-10-13); X nothing further. Refusals wrap `domain.ErrCreateConfigInvalid` with
+`MAX_CLICK`, manual `WEBSITE_CONVERSION`; decision 2026-10-13), and `linkedinObjective` resolving
+`linkedInConfig.objective` (#582: `traffic` automatic only; `conversions` automatic is
+`WEBSITE_CONVERSION` / `MAX_CONVERSION` and requires a non-empty `conversions`, so it inherits
+`LINKEDIN_ADS_CONVERSIONS_ENABLED` and `global_marketing_ops`; `checkObjectiveShape` refuses null,
+`""` and non-strings; the settings readback reads the objectiveType recorded in the row's Result in
+`linkedinRecordedObjective`); X nothing further. Refusals wrap `domain.ErrCreateConfigInvalid` with
 `<configKey>.bidding: <reason>`, and `biddingInvalid` marks every one a `domain.PreflightRefusal`
 (issue #208): each is a pure check raised before any upstream call, its only caller-derived text is
 an amount or a config key rendered through `domain.CallerValue` (`quoteKey`), so when `Dispatch`
