@@ -969,6 +969,30 @@ The dispatcher keeps both behind `REDDIT_TARGETING_EXCLUSIONS_ENABLED` (default 
 create has sent either field. What Reddit answers for an excluded community that does not exist
 is unknown, so it is not part of the communities-fallback match.
 
+## Sub-country geolocations (`subcountry_geo.go`, #549 gap 11)
+
+`CampaignInput.SubCountryGeoTargets` takes Reddit geolocation ids below country level, as
+`GET /targeting/geolocations` lists them: a region (`US-CA`), a city (`CA:6167865`) or a DMA
+(`662`, always in the US). `NormalizeSubCountryGeoTargets` is the one rule set: ids are trimmed,
+uppercased and de-duplicated, and the cap is 50. It refuses a blank entry, a bare country, a postal
+code or any other shape, and an unassigned country. It also refuses an id inside a country that
+`geoTargets` targets (the country already covers it, the same overlap rule as Meta's #612 regions)
+or that `excludedGeoTargets` excludes. `CreateCampaign` appends the ids to
+`targeting.geolocations` after the countries. With no countries it drops the `US` default and names
+the campaign's Region after the first id's country. `NormalizeTargetingExclusions` reads the same
+effective targeting, so excluding the US beside sub-country ids alone is not an overlap.
+
+`ValidateSubCountryGeoTargets` confirms the ids with one `POST /targeting/geolocations_validations`.
+An id Reddit answers with an `error_message` is a `domain.PreflightRefusal` naming the entry, and
+Reddit's text is not quoted. Anything else that leaves an id unconfirmed is a plain error: a failed
+read, a body identityjson rejects, a row with no id, an id the answer omits, an unattributed error,
+or a country other than the id's. The dispatcher (`reddit_subcountry_geo.go`) gates the field on
+`REDDIT_SUBCOUNTRY_GEO_ENABLED`. It runs the read like the targeting resolution: fail-open in
+`PreflightCreate` and fail-closed in `Dispatch`, before anything is created.
+
+Not verified live. Before the flag is turned on, a probe should confirm that the validations answer
+echoes each id as sent, and that an ad group accepts region, city and DMA ids beside countries.
+
 ## Gender, language and dayparting (`demographic_targeting.go`, #549 gap 13)
 
 `CampaignInput.Gender`, `Languages` and `Schedule` come from Reddit's public v3 OpenAPI document.

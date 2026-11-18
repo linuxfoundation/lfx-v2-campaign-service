@@ -94,7 +94,8 @@ func (d *RedditDispatcher) checkRedditAssetChoice(cfg redditConfig) (string, err
 // expandTargeting are refused (checkRedditPlacementTargeting, #549 gap 7), or whose budgetType is
 // refused (checkRedditBudgetType, #549 gap 9), or whose variants break the one-ad-per-variant
 // rules (checkRedditAdPerVariant, #549 gap 6), or whose gender, languages or schedule are refused
-// (checkRedditDemographicTargeting, #549 gap 13). It
+// (checkRedditDemographicTargeting, #549 gap 13), or whose subCountryGeoTargets are refused
+// (checkRedditSubCountryGeo, #549 gap 11). It
 // never calls Reddit, so every other outcome is ErrPreflightNotApplicable. Whether the asset belongs to the brief cannot be checked here (the
 // pre-check is not given the brief); Dispatch checks it before any upstream call. A config that does
 // not decode is left to Dispatch, except a wrong-typed `bidding` (checkBiddingShape).
@@ -110,6 +111,10 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 	}
 	// A wrong-typed exclusion list is a synchronous 400 too (#549).
 	if err := checkRedditExclusionsShape(config); err != nil {
+		return err
+	}
+	// And a wrong-typed subCountryGeoTargets (#549 gap 11).
+	if err := checkRedditSubCountryGeoShape(config); err != nil {
 		return err
 	}
 	// And a wrong-typed placements, platforms or expandTargeting (#549 gap 7).
@@ -146,6 +151,11 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 	if err := checkRedditTargetingExclusions(cfg); err != nil {
 		return err
 	}
+	// Sub-country locations (#549 gap 11): gate and rules on the best-effort decode, like the
+	// exclusions; checkRedditSubCountryGeoShape above already refused a mistyped list.
+	if err := checkRedditSubCountryGeo(cfg); err != nil {
+		return err
+	}
 	// Placements, platforms and expansion (#549 gap 7): gate and rules on the best-effort decode,
 	// like the exclusions; checkRedditPlacementShape above already refused a mistyped value.
 	if err := checkRedditPlacementTargeting(cfg); err != nil {
@@ -172,10 +182,11 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 	if err := checkRedditAdPerVariant(cfg, redditAdPerVariantEnabled()); err != nil {
 		return err
 	}
-	// Community and interest resolution (#549 gaps 4 and 8): the one check here that reads
-	// Reddit, so it runs last, after every refusal decidable from the config alone. Behind
-	// REDDIT_TARGETING_RESOLUTION_ENABLED; see reddit_targeting_resolution.go.
-	if needsRedditTargetingResolution(cfg) {
+	// Community and interest resolution (#549 gaps 4 and 8) and sub-country geolocation
+	// validation (#549 gap 11): the checks here that read Reddit, so they run last, after every
+	// refusal decidable from the config alone. Behind REDDIT_TARGETING_RESOLUTION_ENABLED and
+	// REDDIT_SUBCOUNTRY_GEO_ENABLED; see reddit_targeting_resolution.go.
+	if needsRedditTargetingResolution(cfg) || needsRedditSubCountryGeoValidation(cfg) {
 		return d.preflightRedditTargeting(ctx, projectID, platform, cfg)
 	}
 	return domain.ErrPreflightNotApplicable

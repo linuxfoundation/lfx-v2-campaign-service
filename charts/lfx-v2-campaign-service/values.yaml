@@ -389,6 +389,16 @@ app:
     REDDIT_TARGETING_RESOLUTION_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to redditConfig.subCountryGeoTargets (#549 gap
+    # 11): Reddit region, city and DMA geolocation ids, confirmed with
+    # POST /targeting/geolocations_validations before create and sent in the
+    # ad group's targeting.geolocations. Default off: neither the read nor a
+    # sub-country create has been exercised live. Not role-gated. While off, a
+    # create naming the field is refused with a 400 before any job exists. Any
+    # value other than "true" is treated as off.
+    REDDIT_SUBCOUNTRY_GEO_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to redditConfig.placements, platforms and
     # expandTargeting (#549 gap 7), sent at create time as the ad group's
     # targeting.locations, platforms and expand_targeting instead of the fixed

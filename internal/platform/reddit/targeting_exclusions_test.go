@@ -142,16 +142,16 @@ func newCountingServers(t *testing.T) (*Client, func() int64, func()) {
 }
 
 func TestNormalizeTargetingExclusions_NamesTheField(t *testing.T) {
-	_, err := NormalizeTargetingExclusions(nil, []string{"US"}, nil, []string{"US"})
+	_, err := NormalizeTargetingExclusions(nil, []string{"US"}, nil, nil, []string{"US"})
 	var exErr *ExclusionError
 	if !errors.As(err, &exErr) || exErr.Field != FieldExcludedGeoTargets {
 		t.Fatalf("want an ExclusionError on %s, got %v", FieldExcludedGeoTargets, err)
 	}
-	_, err = NormalizeTargetingExclusions(nil, nil, []string{"x"}, nil)
+	_, err = NormalizeTargetingExclusions(nil, nil, nil, []string{"x"}, nil)
 	if !errors.As(err, &exErr) || exErr.Field != FieldExcludedSubreddits {
 		t.Fatalf("want an ExclusionError on %s, got %v", FieldExcludedSubreddits, err)
 	}
-	if _, err := NormalizeTargetingExclusions(nil, nil, nil, make([]string, MaxExcludedGeoTargets+1)); !errors.As(err, &exErr) || !strings.Contains(exErr.Msg, "at most") {
+	if _, err := NormalizeTargetingExclusions(nil, nil, nil, nil, make([]string, MaxExcludedGeoTargets+1)); !errors.As(err, &exErr) || !strings.Contains(exErr.Msg, "at most") {
 		t.Fatalf("want the geo cap refusal, got %v", err)
 	}
 }
