@@ -33,8 +33,9 @@ const (
 // subredditNameRE is the shape of a subreddit name: 2 to 21 letters, digits or underscores.
 var subredditNameRE = regexp.MustCompile(`^[A-Za-z0-9_]{2,21}$`)
 
-// ExclusionError is a refused exclusion input. Field is the redditConfig key it belongs to and Msg
-// the service-authored reason; any caller value in Msg went through domain.CallerValue.
+// ExclusionError is a refused targeting input: an exclusion list, or the sub-country geolocation
+// ids (NormalizeSubCountryGeoTargets). Field is the redditConfig key it belongs to and Msg the
+// service-authored reason; any caller value in Msg went through domain.CallerValue.
 type ExclusionError struct {
 	Field string
 	Msg   string
@@ -59,10 +60,11 @@ type TargetingExclusions struct {
 //     excluding the same community is a contradiction Reddit would resolve silently.
 //   - excludedGeoTargets: trimmed and uppercased; a blank entry or anything that is not an
 //     assigned ISO 3166-1 alpha-2 code is refused; duplicates are dropped; a code also in the
-//     EFFECTIVE geoTargets (the "US" default when none is given) is refused.
+//     EFFECTIVE geoTargets (the "US" default when neither geoTargets nor subCountryGeoTargets is
+//     given) is refused.
 //
 // Each list is capped (MaxExcludedSubreddits, MaxExcludedGeoTargets) on its raw length.
-func NormalizeTargetingExclusions(subreddits, geoTargets, excludedSubreddits, excludedGeoTargets []string) (TargetingExclusions, error) {
+func NormalizeTargetingExclusions(subreddits, geoTargets, subCountryGeoTargets, excludedSubreddits, excludedGeoTargets []string) (TargetingExclusions, error) {
 	var out TargetingExclusions
 
 	if n := len(excludedSubreddits); n > MaxExcludedSubreddits {
@@ -101,7 +103,7 @@ func NormalizeTargetingExclusions(subreddits, geoTargets, excludedSubreddits, ex
 	if len(excludedGeoTargets) == 0 {
 		return out, nil
 	}
-	included := effectiveGeoSet(geoTargets)
+	included := effectiveGeoSet(geoTargets, len(subCountryGeoTargets) > 0)
 	seenGeo := make(map[string]struct{}, len(excludedGeoTargets))
 	for i, g := range excludedGeoTargets {
 		code := strings.ToUpper(strings.TrimSpace(g))
@@ -115,7 +117,7 @@ func NormalizeTargetingExclusions(subreddits, geoTargets, excludedSubreddits, ex
 			continue
 		}
 		if _, both := included[code]; both {
-			return out, &ExclusionError{Field: FieldExcludedGeoTargets, Msg: fmt.Sprintf("%s is also targeted (geoTargets, or the US default when geoTargets is empty); a country cannot be both targeted and excluded", code)}
+			return out, &ExclusionError{Field: FieldExcludedGeoTargets, Msg: fmt.Sprintf("%s is also targeted (geoTargets, or the US default when geoTargets and subCountryGeoTargets are empty); a country cannot be both targeted and excluded", code)}
 		}
 		seenGeo[code] = struct{}{}
 		out.Geolocations = append(out.Geolocations, code)
@@ -124,16 +126,17 @@ func NormalizeTargetingExclusions(subreddits, geoTargets, excludedSubreddits, ex
 }
 
 // effectiveGeoSet is the set of country codes CreateCampaign would target: the trimmed,
-// uppercased non-blank geoTargets, or "US" when there are none. An invalid code is kept as
-// spelled; CreateCampaign refuses it on its own.
-func effectiveGeoSet(geoTargets []string) map[string]struct{} {
+// uppercased non-blank geoTargets, or "US" when there are none and no sub-country locations
+// (hasSubCountry) replace the default. An invalid code is kept as spelled; CreateCampaign refuses
+// it on its own.
+func effectiveGeoSet(geoTargets []string, hasSubCountry bool) map[string]struct{} {
 	set := make(map[string]struct{}, len(geoTargets))
 	for _, g := range geoTargets {
 		if code := strings.ToUpper(strings.TrimSpace(g)); code != "" {
 			set[code] = struct{}{}
 		}
 	}
-	if len(set) == 0 {
+	if len(set) == 0 && !hasSubCountry {
 		set["US"] = struct{}{}
 	}
 	return set

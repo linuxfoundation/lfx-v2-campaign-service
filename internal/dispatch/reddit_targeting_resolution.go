@@ -68,28 +68,48 @@ func (e *upstreamConsultedRefusal) UpstreamConsulted() bool { return true }
 // preflightRedditTargeting is PreflightCreate's half: a refusal becomes the synchronous 400
 // (domain.ErrCreateConfigInvalid, marked as upstream-consulted); any other failure is returned
 // as is, which the orchestrator treats as a pre-check that could not be completed (fail open).
+//
+// It runs whichever lookups this create needs: the community and interest resolution
+// (needsRedditTargetingResolution) and the sub-country geolocation validation
+// (needsRedditSubCountryGeoValidation, #549 gap 11), each behind its own flag.
 func (d *RedditDispatcher) preflightRedditTargeting(ctx context.Context, projectID string, platform model.Provider, cfg redditConfig) error {
-	// The list caps are decided on the config alone, before any credential or Reddit call.
-	if n := len(reddit.NormalizeSubredditEntries(cfg.Subreddits)); n > reddit.MaxResolvedSubreddits {
-		return domain.WrapPreflightRefusal(fmt.Errorf("%w: redditConfig.subreddits: at most %d distinct communities are accepted, got %d", domain.ErrCreateConfigInvalid, reddit.MaxResolvedSubreddits, n))
-	}
-	if n := len(cfg.Interests); n > reddit.MaxResolvedInterests {
-		return domain.WrapPreflightRefusal(fmt.Errorf("%w: redditConfig.interests: at most %d entries are accepted, got %d", domain.ErrCreateConfigInvalid, reddit.MaxResolvedInterests, n))
+	resolve := needsRedditTargetingResolution(cfg)
+	if resolve {
+		// The list caps are decided on the config alone, before any credential or Reddit call.
+		if n := len(reddit.NormalizeSubredditEntries(cfg.Subreddits)); n > reddit.MaxResolvedSubreddits {
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: redditConfig.subreddits: at most %d distinct communities are accepted, got %d", domain.ErrCreateConfigInvalid, reddit.MaxResolvedSubreddits, n))
+		}
+		if n := len(cfg.Interests); n > reddit.MaxResolvedInterests {
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: redditConfig.interests: at most %d entries are accepted, got %d", domain.ErrCreateConfigInvalid, reddit.MaxResolvedInterests, n))
+		}
 	}
 	client, _, err := d.resolveRedditClientWithCreds(ctx, projectID, platform, d.creds.resolve)
 	if err != nil {
 		return fmt.Errorf("reddit targeting pre-check: %w", err)
 	}
-	if _, _, err := resolveRedditTargeting(ctx, client, cfg); err != nil {
-		var refusal *domain.PreflightRefusal
-		if errors.As(err, &refusal) {
-			// The client's text reads "invalid redditConfig.<field>: ..."; the 400 is
-			// "invalid campaign config: redditConfig.<field>: ...", the shape every other
-			// create refusal uses.
-			msg := strings.TrimPrefix(refusal.OperatorMessage(), "invalid ")
-			return &upstreamConsultedRefusal{err: domain.WrapPreflightRefusal(fmt.Errorf("%w: %s", domain.ErrCreateConfigInvalid, msg))}
+	if resolve {
+		if _, _, err := resolveRedditTargeting(ctx, client, cfg); err != nil {
+			return redditLookupPreflightError(err)
 		}
-		return fmt.Errorf("reddit targeting pre-check: %w", err)
+	}
+	if needsRedditSubCountryGeoValidation(cfg) {
+		if err := validateRedditSubCountryGeo(ctx, client, cfg); err != nil {
+			return redditLookupPreflightError(err)
+		}
 	}
 	return nil
+}
+
+// redditLookupPreflightError maps a pre-check lookup failure: a refusal becomes the synchronous
+// 400, marked as upstream-consulted; anything else is a pre-check that could not be completed.
+func redditLookupPreflightError(err error) error {
+	var refusal *domain.PreflightRefusal
+	if errors.As(err, &refusal) {
+		// The client's text reads "invalid redditConfig.<field>: ..."; the 400 is
+		// "invalid campaign config: redditConfig.<field>: ...", the shape every other
+		// create refusal uses.
+		msg := strings.TrimPrefix(refusal.OperatorMessage(), "invalid ")
+		return &upstreamConsultedRefusal{err: domain.WrapPreflightRefusal(fmt.Errorf("%w: %s", domain.ErrCreateConfigInvalid, msg))}
+	}
+	return fmt.Errorf("reddit targeting pre-check: %w", err)
 }
