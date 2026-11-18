@@ -209,17 +209,18 @@ type Service interface {
 	// create that selects twitter-ads requires global_marketing_ops on this
 	// project in the same single check; those audiences belong to the LF X ad
 	// account. MICROSOFT SHARED-ACCOUNT INPUTS (#563): likewise a microsoftConfig
-	// that sets audienceIds, excludedAudienceIds or sharedNegativeKeywordListIds
-	// (any non-empty list) on a create that selects microsoft-ads requires
+	// that sets audienceIds, excludedAudienceIds, sharedNegativeKeywordListIds or
+	// conversionGoalIds, or the audienceIds or excludedAudienceIds of any adGroups
+	// entry (any non-empty list), on a create that selects microsoft-ads requires
 	// global_marketing_ops on this project in the same single check; those
-	// remarketing lists and negative keyword lists belong to the LF Microsoft
-	// Advertising account. A remarketing list input that breaks its rules, or is
-	// sent while MICROSOFT_AUDIENCES_ENABLED is not "true", is a synchronous 400
-	// too (see the config attribute). So is a microsoftConfig.excludedGeoTargets,
-	// proximityTargets or languages that breaks its rules or is sent while
-	// MICROSOFT_CREATE_TARGETING_ENABLED is not "true". So is a
-	// microsoftConfig.searchPartners that is not a boolean or is sent while
-	// MICROSOFT_SEARCH_NETWORK_ENABLED is not "true". So is a
+	// remarketing lists, negative keyword lists and conversion goals belong to the
+	// LF Microsoft Advertising account. A remarketing list input that breaks its
+	// rules, or is sent while MICROSOFT_AUDIENCES_ENABLED is not "true", is a
+	// synchronous 400 too (see the config attribute). So is a
+	// microsoftConfig.excludedGeoTargets, proximityTargets or languages that
+	// breaks its rules or is sent while MICROSOFT_CREATE_TARGETING_ENABLED is not
+	// "true". So is a microsoftConfig.searchPartners that is not a boolean or is
+	// sent while MICROSOFT_SEARCH_NETWORK_ENABLED is not "true". So is a
 	// microsoftConfig.adSchedules that breaks its rules or is sent while
 	// MICROSOFT_AD_SCHEDULE_ENABLED is not "true". So is a
 	// microsoftConfig.deviceBidAdjustments, ageBidAdjustments or
@@ -230,58 +231,64 @@ type Service interface {
 	// microsoftConfig.structuredSnippets that breaks its rules or is sent while
 	// MICROSOFT_STRUCTURED_SNIPPETS_ENABLED is not "true". So is a
 	// microsoftConfig.logoAssetId or logoBusinessName that breaks its rules or is
-	// sent while MICROSOFT_LOGO_EXTENSION_ENABLED is not "true". An X custom
-	// audience list is also refused synchronously with 400 "invalid campaign
-	// config: twitterConfig.<field>: ..." when it is not an array of strings, when
-	// an id is not 1-32 letters or digits, repeats, or is in both lists, when a
-	// list holds more than 60 ids or the X targeting lists together name more than
-	// 60 criteria, and when TWITTER_CUSTOM_AUDIENCES_ENABLED is not "true" on this
-	// deployment. When both platforms' inputs are refused, the 403 names each
-	// platform's fields in its own sentence. A Reddit custom audience list is also
-	// refused synchronously with 400 "invalid campaign config:
-	// redditConfig.<field>: ..." when it is not an array of strings, when an id is
-	// not 1-64 letters, digits or underscores, repeats, or is in both lists, when
-	// a list holds more than 100 ids, and when REDDIT_CUSTOM_AUDIENCES_ENABLED is
-	// not "true" on this deployment. META SHARED-ACCOUNT INPUTS: likewise a
-	// metaConfig.targeting that sets customAudiences or excludedCustomAudiences
-	// (any non-empty list) names custom audiences of the Meta ad account every
-	// foundation shares, and a metaConfig.leadFormId (any value but null or "")
-	// names an Instant Form of the connection's Page, the shared LF Page for every
-	// project without its own connection; either requires global_marketing_ops on
-	// this project (403 naming them, 503 when the check cannot be made); age,
-	// gender and advantageAudience are not gated. An invalid metaConfig.targeting,
-	// or any targeting block while META_AUDIENCE_TARGETING_ENABLED is not "true"
-	// on the deployment, is a synchronous 400 "invalid campaign config:
-	// metaConfig.targeting..."; a block that sets only targeting.locales,
-	// targeting.devicePlatforms, targeting.interests, targeting.regions,
-	// targeting.cities, targeting.behaviors, targeting.workPositions or
-	// targeting.userOs needs META_LOCALE_TARGETING_ENABLED,
-	// META_DEVICE_TARGETING_ENABLED, META_INTEREST_TARGETING_ENABLED,
-	// META_REGION_TARGETING_ENABLED, META_BEHAVIOR_TARGETING_ENABLED or
-	// META_OS_TARGETING_ENABLED instead, and any of those lists while its flag is
-	// not "true", or devicePlatforms [desktop] with the audienceNetwork placement,
-	// a userOs value outside Meta's documented user_os formats, a version of one
-	// OS family with the other family, userOs with devicePlatforms [desktop], or
-	// an OS version on the awareness objective, is a synchronous 400 too. Every
-	// targeting.regions and targeting.cities key is looked up before anything is
-	// created; one whose country is sanctioned, regulated, already a geoTargets
-	// country, or in the EU without the DSA disclosures fails the job with nothing
-	// created. An invalid per-platform `bidding` object (see the config attribute)
-	// is also refused synchronously, with 400 "invalid campaign config:
-	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
-	// Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc)
-	// and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are
-	// immediately eligible for the bid lever, and eligibility follows the
-	// platform's current strategy. Every other dispatch failure, including an
-	// imageAssetId that does not exist for this brief, still arrives later, as the
-	// job's own result. That includes a Search
-	// googleAdsConfig.sharedNegativeKeywordLists entry that is not an ENABLED
-	// NEGATIVE_KEYWORDS shared set of the connected Google Ads account (#548). One
-	// read-only GAQL query reads every named list's shared_set.type and status
-	// before anything is created. A NEGATIVE_PLACEMENTS, BRANDS or other set, a
-	// REMOVED set or a set not in the account is refused in the job's Google Ads
-	// error, which names the set id and, for a set of another known type, that
-	// type. A read that fails stops the create too, with nothing created.
+	// sent while MICROSOFT_LOGO_EXTENSION_ENABLED is not "true". So is a
+	// microsoftConfig.conversionGoalIds, or a microsoftConfig.bidding strategy
+	// "maxConversions" or "targetCpa", that breaks its rules or is sent while
+	// MICROSOFT_CONVERSION_GOALS_ENABLED is not "true". So is a
+	// microsoftConfig.adGroups that breaks its rules (a group's display URL is
+	// checked against the brief) or is sent while MICROSOFT_AD_GROUPS_ENABLED is
+	// not "true". An X custom audience list is also refused synchronously with 400
+	// "invalid campaign config: twitterConfig.<field>: ..." when it is not an
+	// array of strings, when an id is not 1-32 letters or digits, repeats, or is
+	// in both lists, when a list holds more than 60 ids or the X targeting lists
+	// together name more than 60 criteria, and when
+	// TWITTER_CUSTOM_AUDIENCES_ENABLED is not "true" on this deployment. When both
+	// platforms' inputs are refused, the 403 names each platform's fields in its
+	// own sentence. A Reddit custom audience list is also refused synchronously
+	// with 400 "invalid campaign config: redditConfig.<field>: ..." when it is not
+	// an array of strings, when an id is not 1-64 letters, digits or underscores,
+	// repeats, or is in both lists, when a list holds more than 100 ids, and when
+	// REDDIT_CUSTOM_AUDIENCES_ENABLED is not "true" on this deployment. META
+	// SHARED-ACCOUNT INPUTS: likewise a metaConfig.targeting that sets
+	// customAudiences or excludedCustomAudiences (any non-empty list) names custom
+	// audiences of the Meta ad account every foundation shares, and a
+	// metaConfig.leadFormId (any value but null or "") names an Instant Form of
+	// the connection's Page, the shared LF Page for every project without its own
+	// connection; either requires global_marketing_ops on this project (403 naming
+	// them, 503 when the check cannot be made); age, gender and advantageAudience
+	// are not gated. An invalid metaConfig.targeting, or any targeting block while
+	// META_AUDIENCE_TARGETING_ENABLED is not "true" on the deployment, is a
+	// synchronous 400 "invalid campaign config: metaConfig.targeting..."; a block
+	// that sets only targeting.locales, targeting.devicePlatforms,
+	// targeting.interests, targeting.regions, targeting.cities,
+	// targeting.behaviors, targeting.workPositions or targeting.userOs needs
+	// META_LOCALE_TARGETING_ENABLED, META_DEVICE_TARGETING_ENABLED,
+	// META_INTEREST_TARGETING_ENABLED, META_REGION_TARGETING_ENABLED,
+	// META_BEHAVIOR_TARGETING_ENABLED or META_OS_TARGETING_ENABLED instead, and
+	// any of those lists while its flag is not "true", or devicePlatforms
+	// [desktop] with the audienceNetwork placement, a userOs value outside Meta's
+	// documented user_os formats, a version of one OS family with the other
+	// family, userOs with devicePlatforms [desktop], or an OS version on the
+	// awareness objective, is a synchronous 400 too. Every targeting.regions and
+	// targeting.cities key is looked up before anything is created; one whose
+	// country is sanctioned, regulated, already a geoTargets country, or in the EU
+	// without the DSA disclosures fails the job with nothing created. An invalid
+	// per-platform `bidding` object (see the config attribute) is also refused
+	// synchronously, with 400 "invalid campaign config: <configKey>.bidding: ...".
+	// Bidding defaults changed in LFXV2-2665: a Microsoft campaign created without
+	// bidding is MaxClicks (it was EnhancedCpc) and a LinkedIn one
+	// WEBSITE_VISIT/MAX_CLICK; manual-created campaigns are immediately eligible
+	// for the bid lever, and eligibility follows the platform's current strategy.
+	// Every other dispatch failure, including an imageAssetId that does not exist
+	// for this brief, still arrives later, as the job's own result. That includes
+	// a Search googleAdsConfig.sharedNegativeKeywordLists entry that is not an
+	// ENABLED NEGATIVE_KEYWORDS shared set of the connected Google Ads account
+	// (#548). One read-only GAQL query reads every named list's shared_set.type
+	// and status before anything is created. A NEGATIVE_PLACEMENTS, BRANDS or
+	// other set, a REMOVED set or a set not in the account is refused in the job's
+	// Google Ads error, which names the set id and, for a set of another known
+	// type, that type. A read that fails stops the create too, with nothing
+	// created.
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Create ONE HubSpot workflow that sends an already-staged series of emails,
 	// and return it DISABLED. Each brief named in brief_ids must already have a
@@ -1784,9 +1791,125 @@ type CampaignCreateInput struct {
 	// ad group stays English. All three apply only to a campaign this run creates:
 	// a create that finds its campaign by name stops before the ad group. OFF
 	// unless MICROSOFT_CREATE_TARGETING_ENABLED is exactly "true". A wrong JSON
-	// type (null reads as absent), a rule breach, or any of them while the flag is
-	// off is refused with 400 "invalid campaign config: microsoftConfig.<field>:
-	// ..." before any job exists. Not role-gated.
+	// type (null reads as absent) or a rule breach is refused with 400 "invalid
+	// campaign config: microsoftConfig.<field>: ..." before any job exists; any of
+	// them while the flag is off is refused with 400 "invalid campaign config:
+	// microsoftConfig: <fields> disabled on this deployment ...". Not role-gated.
+	// MICROSOFT SEARCH NETWORK (#563): microsoftConfig takes `searchPartners`, a
+	// boolean sent as the new ad group's Network: true is
+	// OwnedAndOperatedAndSyndicatedSearch, false OwnedAndOperatedOnly; omitted
+	// sends no Network (Microsoft's default, partners included), and a reused ad
+	// group keeps its own. OFF unless MICROSOFT_SEARCH_NETWORK_ENABLED is exactly
+	// "true"; while it is off the field (false included) is refused with 400
+	// "invalid campaign config: microsoftConfig: searchPartners disabled on this
+	// deployment ...", and a non-boolean (null reads as absent) with 400 "invalid
+	// campaign config: microsoftConfig.searchPartners: ...", before any job
+	// exists. MICROSOFT AD SCHEDULE (#563): microsoftConfig takes `adSchedules`,
+	// [{day, startHour, endHour, bidAdjustment?}]: day Monday..Sunday (any
+	// casing), whole hours startHour 0-23 and endHour 1-24 after it, bidAdjustment
+	// a whole percent -90..900 (omitted means 0); windows on a day may touch but
+	// not overlap, at most 7 per day and 49 in all. The hours are read in the
+	// Microsoft Advertising ACCOUNT's time zone, not the campaign's timeZone, and
+	// are sent untranslated; once any window exists the ads serve only inside the
+	// windows. They are attached to the campaign before the ad group, fail-closed:
+	// a failed, partial or unconfirmed attach stops the create with the PAUSED
+	// campaign reported and retained. OFF unless MICROSOFT_AD_SCHEDULE_ENABLED is
+	// exactly "true"; while it is off the list is refused with 400 "invalid
+	// campaign config: microsoftConfig: adSchedules disabled on this deployment
+	// ...", and a wrong JSON type (null reads as absent), an explicit null
+	// bidAdjustment or a rule breach with 400 "invalid campaign config:
+	// microsoftConfig.adSchedules: ...", before any job exists. MICROSOFT BID
+	// ADJUSTMENTS (#563): microsoftConfig takes `deviceBidAdjustments` (Computers,
+	// Smartphones, Tablets; -100..900, where -100 stops serving on the device),
+	// `ageBidAdjustments` (EighteenToTwentyFour, TwentyFiveToThirtyFour,
+	// ThirtyFiveToFortyNine, FiftyToSixtyFour, SixtyFiveAndAbove) and
+	// `genderBidAdjustments` (Male, Female), age and gender -90..900, each an
+	// object of segment name (any casing, each once) to a whole percent. They are
+	// set on the campaign after the ad schedule and before the ad group, under the
+	// same fail-closed rule; any device adjustment sends all three devices, an
+	// unrequested one at 0. OFF unless MICROSOFT_BID_ADJUSTMENTS_ENABLED is
+	// exactly "true"; a value that is not an object of numbers (a null field reads
+	// as absent; a null segment value is refused), an unknown or repeated segment,
+	// or an out-of-range or fractional percent is refused with 400 "invalid
+	// campaign config: microsoftConfig.<field>: ...", and any of the three while
+	// the flag is off with 400 "invalid campaign config: microsoftConfig: <fields>
+	// disabled on this deployment ..." (<fields> the ones sent, comma-separated),
+	// before any job exists. MICROSOFT SHARED NEGATIVE KEYWORD LISTS (#563):
+	// microsoftConfig takes `sharedNegativeKeywordListIds`, at most 20 ids of
+	// EXISTING account-level negative keyword lists, each the canonical decimal
+	// spelling of a positive int64, no repeat. One read before anything is created
+	// must hold every id as a negative keyword list, or the job fails with nothing
+	// created; they are then associated with the confirmed campaign, and a list
+	// not APPLIED leaves it created_degraded with a step. OFF unless
+	// MICROSOFT_SHARED_NEGATIVE_LISTS_ENABLED is exactly "true", and only for
+	// global_marketing_ops (see create-campaigns); a wrong JSON type (null reads
+	// as absent), a bad, repeated or over-cap id, or the list while the flag is
+	// off is refused with 400 "invalid campaign config:
+	// microsoftConfig.sharedNegativeKeywordListIds: ..." before any job exists.
+	// MICROSOFT STRUCTURED SNIPPETS (#563): microsoftConfig takes
+	// `structuredSnippets`, at most 10 {header, values}: header one of Microsoft's
+	// English headers (Amenities, Brands, Courses, Degree programs, Destinations,
+	// Featured hotels, Insurance coverage, Models, Neighborhoods, Service catalog,
+	// Shows, Styles, Types), matched ignoring case and each used once; values 3-10
+	// entries, each trimmed, 1-25 characters (12 with a double-width character),
+	// no control character and no case-insensitive repeat. They are created as
+	// extensions of the confirmed campaign; a campaign that already has a snippet
+	// (a retry) gets none added, and a snippet that is not, or may not be,
+	// attached leaves it created_degraded with a step. OFF unless
+	// MICROSOFT_STRUCTURED_SNIPPETS_ENABLED is exactly "true"; a wrong JSON type
+	// (null reads as absent), a rule breach, or the list while the flag is off is
+	// refused with 400 "invalid campaign config:
+	// microsoftConfig.structuredSnippets: ..." before any job exists. Not
+	// role-gated. MICROSOFT LOGO EXTENSION (#563): microsoftConfig takes
+	// `logoAssetId` (the UUID of a stored creative asset of this brief) and
+	// `logoBusinessName` (trimmed, 1-25 characters, no control or format
+	// character), set together. Before anything is created the asset must load as
+	// a square PNG or JPEG, 128-2048 pixels a side and at most 76,800 bytes, or
+	// the job fails with nothing created. Microsoft allows one logo per campaign,
+	// so a campaign that already has one gets none added; a logo that is not, or
+	// may not be, attached leaves the campaign created_degraded with a step. OFF
+	// unless MICROSOFT_LOGO_EXTENSION_ENABLED is exactly "true"; a non-string
+	// (null reads as absent), an id that is not a UUID, one field without the
+	// other, a bad business name, or either field while the flag is off is refused
+	// with 400 "invalid campaign config: microsoftConfig.<field>: ..." before any
+	// job exists. Not role-gated. MICROSOFT CONVERSION GOALS (#563):
+	// microsoftConfig takes `conversionGoalIds`, at most 20 ids of EXISTING
+	// conversion goals on the account (list-microsoft-ads-conversion-goals offers
+	// them), each the canonical decimal spelling of a positive int64, no repeat.
+	// One read before anything is created must return every id as Active, or the
+	// job fails with nothing created; they are set as the new campaign's GoalIds,
+	// and a campaign found by name keeps its own. microsoftConfig.bidding also
+	// takes {"strategy": "maxConversions"} and {"strategy": "targetCpa",
+	// "targetCpa": number} (greater than zero, at most 1,000,000, at most two
+	// decimals, in the account currency), sent as the campaign's
+	// MaxConversionsBiddingScheme; each needs conversionGoalIds, refuses bidAmount
+	// and cpcBid, and is recorded as automatic, so update-campaign-bid answers
+	// 409. OFF unless MICROSOFT_CONVERSION_GOALS_ENABLED is exactly "true", and
+	// conversionGoalIds only for global_marketing_ops (see create-campaigns); a
+	// wrong JSON type (null reads as absent for conversionGoalIds and is refused
+	// for targetCpa), a rule breach, or any of it while the flag is off is refused
+	// with 400 "invalid campaign config: microsoftConfig.conversionGoalIds: ..."
+	// or "invalid campaign config: microsoftConfig.bidding: ..." before any job
+	// exists. MICROSOFT AD GROUPS (#563): microsoftConfig takes `adGroups`, up to
+	// 5 {nameSuffix, keywords, negativeKeywords?, audienceIds?,
+	// excludedAudienceIds?, audienceBidAdjustment?, headlines?, descriptions?,
+	// path1?, path2?}, building that many ad groups instead of the single one,
+	// each named like it plus " | <nameSuffix>" (required, 1-40 characters, unique
+	// ignoring case and spacing) and needing at least one keyword. Each per-group
+	// field keeps its single-group twin's rules and flag (negativeKeywords sent at
+	// the ad group level; a group's audienceIds and excludedAudienceIds also need
+	// global_marketing_ops); the single-group keywords, copy and list fields are
+	// refused beside adGroups, and every campaign-level field applies to every
+	// group. A group's display URL (the brief url's domain plus its path1/path2)
+	// must fit 67 characters (33 with a double-width character), checked before
+	// any job exists. Groups are built in order: the first failing fails the
+	// create as for the single group; a later one leaves the earlier groups and
+	// marks the campaign created_degraded with a step naming each group not
+	// created, and the result records adGroups, one entry per group. OFF unless
+	// MICROSOFT_AD_GROUPS_ENABLED is exactly "true"; a wrong JSON type (null reads
+	// as absent), a rule breach, or a non-empty adGroups while the flag is off is
+	// refused with 400 "invalid campaign config: microsoftConfig.adGroups..."
+	// before any job exists.
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

@@ -292,6 +292,10 @@ type CampaignInput struct {
 	// seniorityExclusions; the runtime config's EmployerExclusions still join exclude.employers.
 	// CreateCampaign runs ValidateTargeting on it before any request. See targeting_criteria.go.
 	Targeting *Targeting
+	// JobFunctions replace the default job functions (urn:li:function:8, 13 and 16) in the
+	// profile's own jobFunctions clause (#585). Nil means the default. Not read with Targeting,
+	// which brings its own. CreateCampaign runs ValidateJobFunctions on it before any request.
+	JobFunctions []string
 }
 
 // CampaignResult is the outcome of CreateCampaign. Mirrors
@@ -379,10 +383,10 @@ type linkedInResponse struct {
 }
 
 // linkedInMetadata carries the cursor-pagination block used by the LinkedIn
-// search APIs at LinkedIn-Version 202602: the response advertises the next
-// page via metadata.nextPageToken, which the client echoes back as the
-// `pageToken` request param. An empty nextPageToken means the result set is
-// exhausted.
+// search APIs (cursor paging since LinkedIn-Version 202401, unchanged through
+// 202611): the response advertises the next page via metadata.nextPageToken,
+// which the client echoes back as the `pageToken` request param. An empty
+// nextPageToken means the result set is exhausted.
 type linkedInMetadata struct {
 	NextPageToken string `json:"nextPageToken"`
 }
@@ -1460,10 +1464,11 @@ const maxListPages = 1000
 // Statuses in skipStatuses are ignored. Mirrors findByName() (paginated search
 // across all statuses).
 //
-// At LinkedIn-Version 202602 the search APIs use CURSOR pagination, not offset
-// pagination: each response carries metadata.nextPageToken, and the client
-// echoes that token back as the `pageToken` request param to fetch the next
-// page. Pagination stops when nextPageToken comes back empty. An offset-based
+// Since LinkedIn-Version 202401 (and still at 202611) the search APIs use
+// CURSOR pagination, not offset pagination: each response carries
+// metadata.nextPageToken, and the client echoes that token back as the
+// `pageToken` request param to fetch the next page. Pagination stops when
+// nextPageToken comes back empty. An offset-based
 // walk (start/count) or a "full page" heuristic is the wrong model for this API
 // version and can miss results or loop, so it is not used.
 //
@@ -1566,7 +1571,7 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 			// buildRawQuery writes this value through untouched — see
 			// preEncodedParams.
 			"search": "(name:(values:List(" + restliEncode(name) + ")))",
-			// Cursor pagination at LinkedIn-Version 202602 uses `pageSize` (paired
+			// Cursor pagination (202401 onward, incl. 202611) uses `pageSize` (paired
 			// with `pageToken`), NOT the legacy offset param `count`. Sending
 			// `count` here was ignored by the cursor contract, so the page size the
 			// caller asked for silently did not take effect. No offset param
@@ -2128,7 +2133,7 @@ func (c *Client) readCampaignGroupEnd(ctx context.Context, path, groupID string)
 // single-flight claim is PLANNED but NOT provided here (tracked separately as
 // LFXV2-2665); until it exists, callers MUST NOT rely on any dedup guarantee and
 // must serialize concurrent calls for the same name on their own.
-func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, custom *Targeting, lifetimeBudget bool, bidding campaignBiddingPlan, dailyCap string) (id string, reused bool, err error) {
+func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, jobFns []string, custom *Targeting, lifetimeBudget bool, bidding campaignBiddingPlan, dailyCap string) (id string, reused bool, err error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
 	// Scope the idempotency lookup to the resolved campaign group: the campaign
@@ -2171,7 +2176,7 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 	if custom != nil {
 		targeting, err = c.buildCustomTargetingCriteria(custom, geoURNs)
 	} else {
-		targeting, err = c.buildTargetingCriteria(targetingProfile, geoURNs)
+		targeting, err = c.buildTargetingCriteria(targetingProfile, geoURNs, jobFns)
 	}
 	if err != nil {
 		return "", false, err
@@ -2606,9 +2611,9 @@ func stripDashes(text string) string {
 // profile actually yields usable targeting — i.e. that the FINAL assembled
 // targeting criteria would be non-empty. Mirroring the TS source, an empty
 // skills/groups config is acceptable AS LONG AS the resulting include criteria
-// is non-empty: buildTargetingCriteria always adds the hardcoded jobFunctions
-// facets to the include block, so a profile with empty skills AND groups still
-// contributes real targeting (the jobFunctions) and is accepted. The rejection
+// is non-empty: buildTargetingCriteria always adds a jobFunctions clause (the
+// default three, or the caller's non-empty list), so a profile with empty skills
+// AND groups still yields real targeting (locations AND jobFunctions) and is accepted. The rejection
 // keys off the ASSEMBLED include facets being empty, not merely off skills/groups
 // being empty. Because jobFunctions is always present, a config-only-blank
 // skills/groups profile is accepted, exactly as the TS does.
@@ -2640,8 +2645,8 @@ func (c *Client) validatePrerequisites(accountID, profile string) error {
 		// non-empty. Count only NON-BLANK skill/group entries — a config-supplied
 		// slice can contain blank strings (e.g. []string{""} or {"  "}) that are not
 		// usable facets and are dropped by buildTargetingCriteria before the wire —
-		// then add the always-present hardcoded jobFunctions facets that
-		// buildTargetingCriteria injects into the SAME include `or` block. Mirroring
+		// then add the always-present default jobFunctions that buildTargetingCriteria
+		// sends as their own include clause (a caller's list is non-empty too). Mirroring
 		// the TS source, empty skills AND groups is acceptable so long as the
 		// assembled criteria is non-empty: because jobFunctions is always non-empty,
 		// the include criteria is never empty and such a profile is ACCEPTED. Only a
@@ -2807,15 +2812,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Caller targeting (#552) replaces the profile, so the profile prerequisites are not read;
 	// the org and the configured employer exclusions still are, since both still reach the wire.
 	var targeting *Targeting
+	var jobFns []string
 	if in.Targeting != nil {
+		if in.JobFunctions != nil {
+			return nil, domain.WrapPreflightRefusal(targetingInvalid("jobFunctions is not read with targeting; put them in a targeting clause instead"))
+		}
 		if targeting, err = ValidateTargeting(in.Targeting, c.cfg.EmployerExclusions); err != nil {
 			return nil, domain.WrapPreflightRefusal(err)
 		}
 		if _, err := c.orgURN(accountID); err != nil {
 			return nil, domain.WrapPreflightRefusal(err)
 		}
-	} else if err := c.validatePrerequisites(accountID, in.TargetingProfile); err != nil {
-		return nil, domain.WrapPreflightRefusal(err)
+	} else {
+		if jobFns, err = ValidateJobFunctions(in.JobFunctions); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+		if err := c.validatePrerequisites(accountID, in.TargetingProfile); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
 	}
 
 	// EventName is semantically required: it is the sole distinguishing token in
@@ -3123,7 +3137,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
-	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, targeting, in.LifetimeBudget, bidding, dailyCap)
+	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, jobFns, targeting, in.LifetimeBudget, bidding, dailyCap)
 	unlockGroup()
 	if err != nil {
 		// findOrCreateCampaignGroup may have just created a PERMANENT campaign group
@@ -3179,19 +3193,25 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// dark posts and creatives, and returns the campaign for reconciliation — the conservative
 	// choice internal/platform/microsoft/campaign.go makes for its create-time-only targeting.
 	//
-	// A profile create (no targeting) keeps reusing the campaign as before: its criteria are
-	// derived from the service's own targeting profile rather than per-campaign caller input,
-	// and that retry path predates #552.
+	// Caller job functions (#585) are per-campaign caller input too: they reach only the
+	// profile criteria of a campaign this run creates, so a found campaign with them set stops
+	// here in the same way. A profile create with the default job functions keeps reusing the
+	// campaign as before: its criteria are derived from the service's own targeting profile
+	// rather than per-campaign caller input, and that retry path predates #552.
 	//
 	// The partial carries TargetingNotApplied so the dispatcher records it as pending rather than
 	// created_degraded: a campaign id with no creatives would otherwise read as a degraded success,
 	// which the orchestrator reuses, and a repeated request would report success for targeting that
 	// was never applied (#557 review).
-	if campaignReused && targeting != nil {
-		steps = append(steps, fmt.Sprintf("Stopped before the creatives: campaign %s was found by name (an earlier attempt or an operator made it), and linkedInConfig.targeting is applied only to a campaign this run creates; check its targeting in Campaign Manager and finish the campaign there", campaignID))
+	if campaignReused && (targeting != nil || jobFns != nil) {
+		field := "linkedInConfig.targeting"
+		if targeting == nil {
+			field = "linkedInConfig.jobFunctions"
+		}
+		steps = append(steps, fmt.Sprintf("Stopped before the creatives: campaign %s was found by name (an earlier attempt or an operator made it), and %s is applied only to a campaign this run creates; check its targeting in Campaign Manager and finish the campaign there", campaignID, field))
 		r := c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps)
 		r.TargetingNotApplied = true
-		return r, fmt.Errorf("linkedin targeting NOT applied to reused campaign %s (linkedInConfig.targeting is set only on a campaign this run creates; no conversion, image, dark post or creative was added): verify the campaign's targeting in Campaign Manager", campaignID)
+		return r, fmt.Errorf("linkedin targeting NOT applied to reused campaign %s (%s is set only on a campaign this run creates; no conversion, image, dark post or creative was added): verify the campaign's targeting in Campaign Manager", campaignID, field)
 	}
 
 	// Conversions (#552) are associated as soon as the campaign exists, on a reused campaign too
