@@ -414,21 +414,24 @@ type Service interface {
 	// Read LinkedIn professional demographics — job function, seniority, industry,
 	// company size and country — for this project's own campaigns, live from
 	// LinkedIn's Ad Analytics API. Scoped to the campaigns this service holds for
-	// the project, NOT to the connected ad account, and read from the project's
-	// OWN connection only (never the LF system account) and only the account that
-	// connection is bound to. LinkedIn serves MEMBER_* pivots only through its
-	// single-pivot Analytics finder, so the read issues one Ad Analytics request
-	// per (pivot, campaign), each filtered to that one campaign and the bound
-	// account, and sums the answers; at most 10 campaigns (50 requests), because
-	// the account is shared across foundations and the read must fit one request
-	// budget. A pure read-through; nothing is persisted. A project with no
-	// LinkedIn campaigns of its own receives an empty `buckets` array and LinkedIn
-	// is not contacted. All five pivots must load or the request fails (503).
-	// Values are LinkedIn URNs, verbatim, not names. Every counter is APPROXIMATE
-	// (see `approximate`): LinkedIn drops values under 3 events, withholds values
-	// for ads reaching too few members, keeps only the top 100 values per creative
-	// per day, and delays demographics 12-24 hours. Cost is USD (costInUsd). No
-	// conversions. Not gated: LinkedIn has no metrics feature flag.
+	// the project, NOT to the connected ad account, and read with the project's
+	// own connection when it is bound to the account those campaigns record (a
+	// campaign that records no account is accepted there), otherwise with the LF
+	// system credential when that account is its default or a grant, on which
+	// every campaign must record that account (409 otherwise). LinkedIn serves
+	// MEMBER_* pivots only through its single-pivot Analytics finder, so the read
+	// issues one Ad Analytics request per (pivot, campaign), each filtered to that
+	// one campaign and that account, and sums the answers; at most 10 campaigns
+	// (50 requests), because the account is shared across foundations and the read
+	// must fit one request budget. A pure read-through; nothing is persisted. A
+	// project with no LinkedIn campaigns of its own receives an empty `buckets`
+	// array and LinkedIn is not contacted. All five pivots must load or the
+	// request fails (503). Values are LinkedIn URNs, verbatim, not names. Every
+	// counter is APPROXIMATE (see `approximate`): LinkedIn drops values under 3
+	// events, withholds values for ads reaching too few members, keeps only the
+	// top 100 values per creative per day, and delays demographics 12-24 hours.
+	// Cost is USD (costInUsd). No conversions. Not gated: LinkedIn has no metrics
+	// feature flag.
 	GetLinkedinAdsAudience(context.Context, *GetLinkedinAdsAudiencePayload) (res *LinkedinAdsAudience, err error)
 	// List the ad segments (matched and retargeting audiences) on the LinkedIn ad
 	// account a create for this project uses, live from LinkedIn's Ad Segments
@@ -849,17 +852,18 @@ type Service interface {
 	// account_id is the account to read; omitted, it is the account this project's
 	// campaigns were created under, read from this service's own records: the
 	// response's account_id names it, and an empty account_id with no campaigns
-	// means the project has none recorded on the platform (answered without any
-	// upstream call). Live campaigns created under more than one account, or none
-	// recording one, fail with 409 whether or not account_id is given, until they
-	// are re-dispatched or reconciled onto one account. account_id is read with
-	// the project's own connection when that is configured for it, or when the
-	// shared LF system credential is not; otherwise with the LF system credential,
-	// which is the account campaigns are created in when a project has no
-	// connection of its own (or has disconnected it). The LF system credential
-	// reads only the account it is configured for: a project with no usable
-	// connection of its own, naming any other account, gets a 404. A pure read:
-	// nothing is persisted.
+	// means no account could be named (answered without any upstream call): the
+	// project has no campaigns recorded on the platform, or only deleted ones that
+	// record no account, which may still be spending. Live campaigns created under
+	// more than one account, or none recording one, fail with 409 whether or not
+	// account_id is given, until they are re-dispatched or reconciled onto one
+	// account. account_id is read with the project's own connection when that is
+	// configured for it, or when the shared LF system credential is not; otherwise
+	// with the LF system credential, which is the account campaigns are created in
+	// when a project has no connection of its own (or has disconnected it). The LF
+	// system credential reads only the account it is configured for: a project
+	// with no usable connection of its own, naming any other account, gets a 404.
+	// A pure read: nothing is persisted.
 	MonitorGoogleAdsAccount(context.Context, *MonitorGoogleAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read this project's own campaigns on a LinkedIn Ads account, live from the
 	// platform, with pacing and action items derived by this service's ported rule
@@ -876,20 +880,24 @@ type Service interface {
 	// omitted when the LF system credential serves it, since that credential is
 	// shared between foundations. Campaigns deleted in this service stay in the
 	// monitor, because a local delete does not stop the upstream campaign, unless
-	// it does not record account_id as the account it was created under or another
+	// it records a different account than account_id, records none while the LF
+	// system credential serves the read (the same rule as a live one), or another
 	// project has since taken it over; such a campaign is omitted, never a 409.
 	// account_id is the account to read; omitted, it is the account this project's
 	// campaigns were created under, read from this service's own records: the
 	// response's account_id names it, and an empty account_id with no campaigns
-	// means the project has none recorded on the platform (answered without any
-	// upstream call). Live campaigns created under more than one account fail with
-	// 409 whether or not account_id is given, and so does omitting account_id when
-	// no live campaign records one (name the account instead). account_id is read
-	// with the project's own connection when that is configured for it (a
-	// project's own connection reads only its own account), otherwise with the LF
-	// system credential when account_id is the system row's account or one of its
-	// grants. Any other account, for a project with no usable connection of its
-	// own, is a 404. A pure read: nothing is persisted.
+	// means no account could be named (answered without any upstream call): the
+	// project has no campaigns recorded on the platform, or only deleted ones that
+	// record no account, which may still be spending and, on the project's own
+	// connection, are read by naming the account. Live campaigns created under
+	// more than one account fail with 409 whether or not account_id is given, and
+	// so does omitting account_id when no live campaign records one (name the
+	// account instead). account_id is read with the project's own connection when
+	// that is configured for it (a project's own connection reads only its own
+	// account), otherwise with the LF system credential when account_id is the
+	// system row's account or one of its grants. Any other account, for a project
+	// with no usable connection of its own, is a 404. A pure read: nothing is
+	// persisted.
 	MonitorLinkedinAdsAccount(context.Context, *MonitorLinkedinAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read this project's own campaigns on a Meta Ads account, live from the
 	// platform, with pacing and action items derived by this service's ported rule
@@ -1041,7 +1049,12 @@ type AccessibleAccount struct {
 // AccountMonitor is the result type of the lfx-v2-campaign-service-connections
 // service monitor-google-ads-account method.
 type AccountMonitor struct {
-	// The account this read covers, echoed back from the request.
+	// The account this read covers: the request's account_id, or on Google Ads and
+	// LinkedIn, when that is omitted, the account the project's recorded campaigns
+	// name. Empty when no account can be named from them: the project has none on
+	// the platform, or only deleted ones that record no account (which may still
+	// be spending; on a project's own LinkedIn connection, naming the account
+	// reads them).
 	AccountID string
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed
@@ -1050,8 +1063,8 @@ type AccountMonitor struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days int
-	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
-	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// The campaigns this monitor covers — on Google Ads, LinkedIn, Meta, Reddit
+	// and X only those this service recorded for the project, on Microsoft Ads
 	// every campaign visible on the account — with the rule engine's per-row
 	// pacing output attached.
 	Campaigns []*AccountMonitorCampaign

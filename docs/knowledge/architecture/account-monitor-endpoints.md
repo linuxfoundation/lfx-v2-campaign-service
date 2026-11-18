@@ -21,10 +21,11 @@ Ports the LFX One BFF's `/api/campaigns/monitor` family (Google, LinkedIn,
 Meta, Reddit — Meta ships with a pagination fix, not a verbatim port; see
 below). `{project_id}` means "whose credential do I resolve," the same way
 it already does for the existing `connection-*-ads/accounts` discovery
-endpoints. On LinkedIn and Microsoft these are *account*-scoped reads (every
+endpoints. On Microsoft these are *account*-scoped reads (every
 campaign the credential reaches). On Google Ads, Meta, Reddit and X, whose
-one ad account every foundation shares, `{project_id}` also limits the
-response to the campaigns this service recorded for the project — see
+one ad account every foundation shares, and on LinkedIn, whose LF system
+credential reaches several foundations' accounts through its grants (#581),
+`{project_id}` also limits the response to the campaigns this service recorded for the project — see
 [Project scoping on shared accounts](#project-scoping-on-shared-accounts-lfx-self-serve-ops897).
 
 ## Shape
@@ -63,15 +64,16 @@ response to the campaigns this service recorded for the project — see
 - `internal/service/orchestrator.go`'s `AccountMetricsReader` capability +
   `Orchestrator.ReadAccountCampaignMetrics` follow the same optional-capability,
   type-assertion pattern as `AccountLister`/`MetricsReader`.
-- Each monitor dispatcher except Google Ads, Meta and Reddit (`internal/dispatch/{linkedin,microsoft_monitor,twitter_monitor}.go`)
+- Each monitor dispatcher except Google Ads, LinkedIn, Meta and Reddit (`internal/dispatch/{microsoft_monitor,twitter_monitor}.go`)
   resolves its monitor read's credential via `credsSource.resolveOwned` —
   the project's own connection only, never the LF system-account fallback
   chain (`resolve` → `resolveWithFallback` → `systemConn` → forced-system)
   that account discovery still uses. This is deliberately narrower than
   discovery: see the Trust boundary section below for why (round-16/17
-  review). Google Ads (`internal/dispatch/googleads.go`), Meta and Reddit instead read
+  review). Google Ads (`internal/dispatch/googleads.go`), LinkedIn, Meta and Reddit instead read
   `account_id` with the stored credential configured for it, which can be the
-  LF system row (`credsSource.monitorResolver`; #591 and #615, below), Google and Meta
+  LF system row (`credsSource.monitorResolver`; #591 and #615, below; LinkedIn through
+  `resolveLinkedInMonitorCredentials`, #581), Google and Meta
   building an account-agnostic client the same way discovery does; Reddit, LinkedIn, Meta, Microsoft and X additionally scope
   the requested `account_id` to their own resolved connection's single account. A
   connection is bound to exactly one ad account (`account_id TEXT NOT NULL` on
@@ -79,6 +81,15 @@ response to the campaigns this service recorded for the project — see
   index partial to `WHERE status <> 'deleted'`), so
   a request naming any other account is a request mismatch and answers
   `domain.ErrAccountNotManagedByConnection` (400) before any upstream call.
+  That 400 is for whichever connection resolved being the project's own. On
+  Google Ads, LinkedIn, Meta and Reddit, when the project has no connection of
+  its own (absent, or disconnected) and the LF system row is usable, naming an
+  account that row neither is configured for nor (on LinkedIn) grants gets 404
+  (`noOwnConnection`) instead, also before any upstream call. A project row that
+  is present but unusable keeps its own error (400) whenever the system row does
+  not serve the account
+  (`TestLinkedIn_AccountMonitor_SystemFallbackRefusesOtherAccounts` and its
+  Google, Meta and Reddit siblings).
   Reddit checked this first (round-18 review); LinkedIn and Meta followed,
   and Microsoft and X were built with it, since the property is the shared
   schema's and not a Reddit quirk. Google
@@ -510,8 +521,9 @@ not the primary gate for two of them.
 
 ## Trust boundary: `{project_id}` no longer means "or the system fallback"
 
-Google Ads (since #591), Meta and Reddit (since #615) are the exceptions: see "Google Ads: read
-with the credential configured for the account" and "Meta and Reddit: the same rule" below.
+Google Ads (since #591), LinkedIn (since #581), Meta and Reddit (since #615) are the exceptions:
+see "Google Ads: read with the credential configured for the account", "Meta and Reddit: the same
+rule" and "LinkedIn: campaign-scoped, served from the system row's grants" below.
 
 Round 15 documented, without fixing, a credential-scope gap: `{project_id}`
 in these URLs meant "whose credential resolves the platform client," and
@@ -526,12 +538,15 @@ Google/LinkedIn/Meta by adding a parallel "owned discovery" resolver per
 platform (`resolveOwnedGoogleAdsDiscoveryClient`, since replaced by
 `resolveGoogleAdsMonitorClient` in #591, `resolveLinkedInOwnedDiscoveryCredentials`,
 `resolveOwnedMetaDiscovery`)
-— and Meta's monitor since by `resolveMetaMonitorClient` in #615 —
 that refuses the system fallback the way `resolveOwned`
-(`internal/dispatch/creds.go`) already does for the adoption flow. A project
-with no connection of its own now gets `domain.ErrNotFound` → 404 via the
-existing `classifyDiscoveryError` arm, before any account id is even
-considered.
+(`internal/dispatch/creds.go`) already does for the adoption flow. At the time,
+a project with no connection of its own got `domain.ErrNotFound` → 404 via the
+existing `classifyDiscoveryError` arm, before any account id was even
+considered. That refusal is history for the monitors that became project-scoped:
+Google's (#591), LinkedIn's (`resolveLinkedInMonitorCredentials`, #581) and
+Meta's (`resolveMetaMonitorClient`, #615) now ALLOW the system fallback for the
+monitored account, and keep the 404 only for an account the system row does not
+serve (sections below).
 
 Round 17 review found the round-16 fix incomplete: Reddit's
 `resolveMonitorClient` still resolved via `d.creds.resolve` (the fallback-
@@ -553,7 +568,7 @@ system fallback on every platform, so a project operating entirely on the LF
 system ad account can still create campaigns and read their per-campaign
 metrics; it is only the account-wide monitor read that now refuses to serve
 that project at all, rather than scoping to what it created (except on Google
-Ads since #591 and Meta and Reddit since #615, which scope to what it created instead). This mirrors
+Ads since #591, LinkedIn since #581 and Meta and Reddit since #615, which scope to what it created instead). This mirrors
 the adoption flow's own precedent and its stated limit: a project on a
 shared credential has no "own" account to monitor, the same way it has no
 "own" account to adopt into. Google Ads carries a further, unavoidable
@@ -574,7 +589,7 @@ the BFF and on a direct call alike: the gateway check is `campaign_manager`
 on `project:{project_id}` and nothing else, and this service only verified
 identity.
 
-The four monitors are now project-scoped inside the service, for every
+The four monitors (five since LinkedIn joined with #581) are now project-scoped inside the service, for every
 caller (ROOT included), at one choke point mirroring
 `Orchestrator.ReadKeywordPerformance`:
 
@@ -587,7 +602,18 @@ caller (ROOT included), at one choke point mirroring
    SQL (`projectCampaignScope` → `ListProjectPlatformCampaignIDs`, filtered on
    `project_id`). The requested-account guards on Meta, Reddit and X need the
    stored connection, so they still run after the scope: a wrong `account_id`
-   there gets 200 empty or 409 before it can reach their 400.
+   there gets 200 empty or 409 before it can reach their 400. LinkedIn orders
+   this differently: with a non-empty scope, `scopeAccountMonitor` resolves the
+   read's connection (`MonitorScoperForConnection`, i.e.
+   `resolveLinkedInMonitorCredentials`) BEFORE `MonitorScopeForAccount`, so any
+   refusal of that resolution comes before a recorded-account 409. Which refusal
+   depends on the connection that resolves for `account_id`: the project's own
+   when it is configured for it, else the LF system row when that row's default
+   account or a grant is `account_id` (so a project with its own account can
+   still read a granted one), else the project's own row again, which then
+   refuses a different account with its 400; the system row resolving for an
+   account it does not serve is the 404 (`TestLinkedInMonitorScopeByConnection`).
+   An empty scope is still 200 empty on LinkedIn too.
 2. An empty scope answers 200 with an empty monitor before any upstream call
    and before the connection is resolved — so a project with no campaigns and
    no connection gets 200, not 404, as the insight reads already do. On X it
@@ -649,22 +675,23 @@ caller (ROOT included), at one choke point mirroring
 The 409s are mapped by `classifyMonitorError` (`connection_monitor.go`), with
 `classifyInsightsErrorFor`'s arm order and remedies: provenance mixed, then
 unknown (Google Ads, Reddit and X — they refuse a row that records no creating
-account), then mismatch, then an unreadable stored id. Google, Meta and Reddit
+account), then mismatch, then an unreadable stored id. Google, LinkedIn, Meta and Reddit
 answer `AccountMonitorScopeConflictError` and X its own
 `AccountMonitorConflictError`, each with a required `reason`
 `campaign_account_mismatch` or `campaign_scope_invalid`. Neither is the shared
 `ConflictError`, whose published example (`already_exists`, a connection
 collision) is a response no monitor returns. The arms apply only
-to those four platforms, so LinkedIn and Microsoft can never produce a 409
-their designs do not declare.
+to those five platforms, so Microsoft can never produce a 409 its design does
+not declare.
 
 The shared-tenancy marker is the OPTIONAL capability
 `service.AccountMonitorScoper`, implemented in
-`internal/dispatch/account_monitor_scope.go` by the four shared-tenancy
-dispatchers and by no others. LinkedIn runs an account per foundation and
-Microsoft's tenancy is not yet recorded
+`internal/dispatch/account_monitor_scope.go` by the five shared-tenancy
+dispatchers (LinkedIn since #581, whose LF system credential reaches several
+foundations' accounts through its grants) and by no others. Microsoft's tenancy
+is not yet recorded
 ([architecture.md § Account Tenancy](../../architecture.md#account-tenancy)),
-so both keep the account-wide read. X's saved report
+so it keeps the account-wide read. X's saved report
 (`account_monitor_reports`) still stores the account-wide rows; only the
 response is filtered, and the report's `metrics_as_of`, window and
 `metrics_pending` are returned unchanged.
@@ -701,17 +728,21 @@ read is reduced to the campaigns this service recorded for the project, and
   `Orchestrator.DefaultMonitorAccount` names it from this service's own rows: the
   one customer the project's live campaigns record (its soft-deleted ones only
   when it has no live ones), through the optional `AccountMonitorDefaulter`
-  capability, which only Google Ads implements. The response's `account_id`
+  capability, which Google Ads and LinkedIn (#581) implement. The response's `account_id`
   names it. No campaigns gives an empty monitor with an empty `account_id` and no
   upstream call. Live campaigns under more than one customer, or none recording
   one, give the 409 `campaign_account_mismatch` — the same 409 naming either
   customer gives, so the remedy is re-dispatching or reconciling them onto one.
+  LinkedIn differs when no live campaign records an account: omitting `account_id`
+  is that 409, but naming the account recovers the read, because LinkedIn's scope
+  keeps unrecorded campaigns on the project's own connection and omits them on the
+  LF system credential (below).
   Soft-deleted campaigns (consulted only when there are no live ones) are judged
   one at a time, as `scopeAccountMonitor` judges them: one recording no customer
   is skipped, and with several customers the one recorded most is named (ties to
   the lowest id). A deleted row cannot be re-dispatched, so it never causes a 409.
-- LinkedIn keeps its refusal: its monitor is not campaign-scoped. Meta and
-  Reddit followed in #615 (below).
+- LinkedIn followed with #581 once its monitor was campaign-scoped, and Meta and
+  Reddit in #615 (both below).
 
 ### Meta and Reddit: the same rule (#615)
 
@@ -734,7 +765,7 @@ provenance mismatch), so the Google rule applies unchanged:
 - **Unchanged.** A project with its own connection on `account_id` reads with its
   own credential. A project with nothing recorded gets the empty 200 with no
   upstream call (the orchestrator answers before the dispatcher runs).
-  `account_id` stays required: the `AccountMonitorDefaulter` is Google's only.
+  `account_id` stays required: only Google and LinkedIn implement `AccountMonitorDefaulter`.
 - Tests: `internal/dispatch/{meta,reddit}_monitor_fallback_test.go`, modelled on
   `googleads_monitor_fallback_test.go`, including a read through the orchestrator
   where the shared account also holds another foundation's campaign, which is not
@@ -781,11 +812,16 @@ campaigns. `LinkedInDispatcher` implements `service.AccountMonitorScoper` and
   account, so the scope then includes it (behind `LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED`).
 - LinkedIn audience insights follow the same resolution, keyed on the account the scope records
   (`linkedInScopeAccount`); served from the system row, every campaign must record that account.
+- #615's acceptance is pinned end to end in `internal/dispatch/linkedin_monitor_fallback_test.go`,
+  through the real dispatcher, orchestrator and `ConnectionService`: two projects with no
+  connection of their own on the shared system account each get only their own campaigns and
+  metrics, with `account_id` omitted and named in the response; nothing recorded is an empty
+  monitor with no upstream call.
 
 ### Expected interaction with `LFX_FORCE_SYSTEM_ADS_ACCOUNT`
 
-Google Ads (since #591), Meta and Reddit (since #615) no longer behave this way
-(above); the rest of this section applies to the other platforms.
+Google Ads (since #591), LinkedIn (since #581), Meta and Reddit (since #615) no
+longer behave this way (above); the rest of this section applies to the other platforms.
 
 The `resolveOwned*` resolvers above never consult `forceSystemPaidAds`
 (`internal/dispatch/creds.go`) — deliberately: an account-monitor read must
@@ -797,7 +833,7 @@ connection of its own still gets the endpoint's ordinary no-connection
 404 rather than falling through to the system account the create path uses,
 and a project WITH its own connection resolves credentials for its own
 account, which will not see campaigns actually living on the forced system
-account (on LinkedIn, Microsoft and X the account-id guard turns this into a
+account (on Microsoft and X the account-id guard turns this into a
 400 `ErrAccountNotManagedByConnection` instead). Neither outcome is a
 monitor-endpoint bug — read it as this flag's forced-system deployments
 trading monitor visibility for the create path's convenience, not as a

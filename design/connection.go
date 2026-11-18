@@ -1319,12 +1319,12 @@ var AccountMonitorTotals = Type("account-monitor-totals", func() {
 var AccountMonitor = Type("account-monitor", func() {
 	// No example: account ids differ in format per platform (act_<digits> on Meta, t2_… on Reddit),
 	// so each monitor method's body type sets its own (design/account_monitor_examples.go).
-	Attribute("account_id", String, "The account this read covers, echoed back from the request.", func() { Meta("openapi:example", "false") })
+	Attribute("account_id", String, "The account this read covers: the request's account_id, or on Google Ads and LinkedIn, when that is omitted, the account the project's recorded campaigns name. Empty when no account can be named from them: the project has none on the platform, or only deleted ones that record no account (which may still be spending; on a project's own LinkedIn connection, naming the account reads them).", func() { Meta("openapi:example", "false") })
 	Attribute("days", Int, "The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X's 90-day cap by an hour.", func() { Example(30) })
 	// No example on campaigns or action_items (nor on the type, below): rows and findings differ
 	// per platform, so each monitor method publishes its own whole-response example — see
 	// design/account_monitor_examples.go.
-	Attribute("campaigns", ArrayOf(AccountMonitorCampaign), "The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only those this service recorded for the project, on LinkedIn and Microsoft Ads every campaign visible on the account — with the rule engine's per-row pacing output attached.", func() {
+	Attribute("campaigns", ArrayOf(AccountMonitorCampaign), "The campaigns this monitor covers — on Google Ads, LinkedIn, Meta, Reddit and X only those this service recorded for the project, on Microsoft Ads every campaign visible on the account — with the rule engine's per-row pacing output attached.", func() {
 		Meta("openapi:example", "false")
 	})
 	Attribute("action_items", ArrayOf(AccountMonitorActionItem), "The rule engine's findings across the returned campaigns.", func() {
@@ -2624,8 +2624,9 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"or another project has since taken it over; such a campaign is omitted, never a 409. " +
 			"account_id is the account to read; omitted, it is the account this project's campaigns were " +
 			"created under, read from this service's own records: the response's account_id names it, " +
-			"and an empty account_id with no campaigns means the project has none recorded on the " +
-			"platform (answered without any upstream call). Live campaigns created under more than one " +
+			"and an empty account_id with no campaigns means no account could be named (answered without any " +
+			"upstream call): the project has no campaigns recorded on the platform, or only deleted ones that " +
+			"record no account, which may still be spending. Live campaigns created under more than one " +
 			"account, or none recording one, fail with 409 whether or not account_id is given, until " +
 			"they are re-dispatched or reconciled onto one account. " +
 			"account_id is read with the project's own connection when that is configured for it, or " +
@@ -2682,12 +2683,15 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"connection serves the read, as belonging to that connection's account, and omitted when the LF " +
 			"system credential serves it, since that credential is shared between foundations. " +
 			"Campaigns deleted in this service stay in the monitor, because a local delete does not stop the " +
-			"upstream campaign, unless it does not record account_id as the account it was created under " +
-			"or another project has since taken it over; such a campaign is omitted, never a 409. " +
+			"upstream campaign, unless it records a different account than account_id, records none while " +
+			"the LF system credential serves the read (the same rule as a live one), or another project has " +
+			"since taken it over; such a campaign is omitted, never a 409. " +
 			"account_id is the account to read; omitted, it is the account this project's campaigns were " +
 			"created under, read from this service's own records: the response's account_id names it, " +
-			"and an empty account_id with no campaigns means the project has none recorded on the " +
-			"platform (answered without any upstream call). Live campaigns created under more than one " +
+			"and an empty account_id with no campaigns means no account could be named (answered without any " +
+			"upstream call): the project has no campaigns recorded on the platform, or only deleted ones that " +
+			"record no account, which may still be spending and, on the project's own connection, are read " +
+			"by naming the account. Live campaigns created under more than one " +
 			"account fail with 409 whether or not account_id is given, and so does omitting account_id when " +
 			"no live campaign records one (name the account instead). " +
 			"account_id is read with the project's own connection when that is configured for it (a " +
