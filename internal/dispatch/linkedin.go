@@ -438,8 +438,10 @@ func checkVariantsShape(config json.RawMessage) error {
 // or request: a callToAction is refused while the deployment gate is off, and both are refused when
 // linkedin.ValidateVariantFields refuses them (an unknown label, two variants with one name). Both
 // are ErrCreateConfigInvalid pre-flight refusals, so PreflightCreate answers them with a synchronous
-// 400 and Dispatch fails the job with the same sentence.
-func linkedinVariants(cfg linkedinConfig) error {
+// 400 and Dispatch fails the job with the same sentence. eventName is the brief's event name, or
+// "" when it is not known; with one, a caller's name equal to another variant's
+// "<event> | variant-N" default is refused too (linkedin.ValidateCreativeNames).
+func linkedinVariants(cfg linkedinConfig, eventName string) error {
 	for i, v := range cfg.Variants {
 		if v.CallToAction != "" && !linkedinCallToActionEnabled() {
 			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.variants[%d].callToAction is disabled on this deployment (%s is not \"true\"); omit it, or ask an operator to set %s to \"true\"",
@@ -449,7 +451,25 @@ func linkedinVariants(cfg linkedinConfig) error {
 	if err := linkedin.ValidateVariantFields(cfg.Variants); err != nil {
 		return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.variants: %w", domain.ErrCreateConfigInvalid, err))
 	}
+	if err := linkedin.ValidateCreativeNames(eventName, cfg.Variants); err != nil {
+		return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.variants: %w", domain.ErrCreateConfigInvalid, err))
+	}
 	return nil
+}
+
+// linkedinPreflightEventName is the event name of the brief PreflightCreate runs for
+// (model.CreatePreflightBrief), or "" when there is none or its fields do not decode, in which
+// case the job decides.
+func linkedinPreflightEventName(ctx context.Context) string {
+	brief := model.CreatePreflightBrief(ctx)
+	if brief == nil {
+		return ""
+	}
+	bf, err := decodeBriefFields(brief)
+	if err != nil {
+		return ""
+	}
+	return bf.EventName
 }
 
 // linkedinBidPlan resolves linkedInConfig's bidding choice. The OBJECTIVE follows it (decision
@@ -599,7 +619,7 @@ func (d *LinkedInDispatcher) PreflightCreate(ctx context.Context, projectID stri
 	if err := checkVariantsShape(config); err != nil {
 		return err
 	}
-	if err := linkedinVariants(cfg); err != nil {
+	if err := linkedinVariants(cfg, linkedinPreflightEventName(ctx)); err != nil {
 		return err
 	}
 	// linkedInConfig.dailyCapUsd (#584) is a synchronous 400 too, a wrong JSON type included.
@@ -737,7 +757,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if err := checkVariantsShape(config); err != nil {
 		return nil, notCreated(err)
 	}
-	if err := linkedinVariants(cfg); err != nil {
+	if err := linkedinVariants(cfg, ""); err != nil {
 		return nil, notCreated(err)
 	}
 	// The daily cap beside a lifetime budget (#584), checked again here: PreflightCreate refuses

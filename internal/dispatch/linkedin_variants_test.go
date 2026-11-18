@@ -85,6 +85,48 @@ func TestLinkedIn_VariantFieldsPreflight(t *testing.T) {
 	}
 }
 
+// TestLinkedIn_VariantNameCollidingWithADefaultIsASynchronous400 (PR #638 review): with the
+// brief known, a caller's name equal to an unnamed variant's "<event> | variant-N" default — as the
+// client composes it, "|" in the event name included — is refused by PreflightCreate rather than
+// accepted with a 202 and failed in the job. Without a brief the config-only checks still pass it.
+func TestLinkedIn_VariantNameCollidingWithADefaultIsASynchronous400(t *testing.T) {
+	d := NewLinkedInDispatcher(fakeConnReader{}, identityEncryptor{})
+	const v = `"introText":"Join us","headline":"KubeCon 2099"`
+	brief := testBrief() // event name "KubeCon NA 2026"
+	piped := testBrief()
+	piped.EventDetails = json.RawMessage(`{"eventName":" KubeCon | NA ","registrationUrl":"https://events.example/kc","project":"cncf"}`)
+	for _, tc := range []struct {
+		name     string
+		brief    *model.CampaignBrief
+		variants string
+		refused  bool
+	}{
+		{"default collision", brief, `[{` + v + `},{` + v + `,"name":"KubeCon NA 2026 | variant-1"}]`, true},
+		{"normalized collision", brief, `[{` + v + `},{` + v + `,"name":"  KubeCon NA 2026   |  variant-1 "}]`, true},
+		{"piped event name", piped, `[{` + v + `},{` + v + `,"name":"KubeCon - NA | variant-1"}]`, true},
+		{"another variant's number is fine", brief, `[{` + v + `,"name":"KubeCon NA 2026 | variant-2"},{` + v + `,"name":"Big Tent"}]`, false},
+		{"no brief checks the config only", nil, `[{` + v + `},{` + v + `,"name":"KubeCon NA 2026 | variant-1"}]`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			if tc.brief != nil {
+				ctx = model.WithCreatePreflightBrief(ctx, tc.brief)
+			}
+			err := d.PreflightCreate(ctx, "cncf", model.ProviderLinkedInAds, linkedInVariantsConfig(tc.variants))
+			if !tc.refused {
+				if !errors.Is(err, domain.ErrPreflightNotApplicable) {
+					t.Fatalf("PreflightCreate = %v, want not applicable", err)
+				}
+				return
+			}
+			msg, pre := domain.AsPreflightRefusal(err)
+			if !errors.Is(err, domain.ErrCreateConfigInvalid) || !pre || !strings.Contains(msg, "repeats variant-1") {
+				t.Fatalf("PreflightCreate = %v, want a pre-flight 400 naming the collision with variant-1", err)
+			}
+		})
+	}
+}
+
 // TestLinkedIn_VariantFieldsReachTheWire is the end-to-end pin (#588, #589): Dispatch sends a
 // variant's call to action and description on its dark post and its name on its creative, a
 // variant without them keeps the earlier shape, and the stored snapshot redacts a link pasted

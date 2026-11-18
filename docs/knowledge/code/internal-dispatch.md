@@ -5750,7 +5750,10 @@ refuses, so a repeat answers reconciliation required. It is the state Microsoft'
 refuses a `variants[].name`, `callToAction` or `description` that is not a JSON string (null
 included), since the best-effort pre-flight decode would drop it silently; `linkedinVariants`
 refuses a `callToAction` while `linkedinCallToActionEnabled` (`LINKEDIN_ADS_CALL_TO_ACTION_ENABLED`,
-off by default) is off, then runs `linkedin.ValidateVariantFields` (label enum, repeated names).
+off by default) is off, then runs `linkedin.ValidateVariantFields` (label enum, repeated names)
+and, when the event name is known, `linkedin.ValidateCreativeNames` (a name equal to an unnamed
+variant's `<event> | variant-N` default; `PreflightCreate` takes the event name from
+`model.CreatePreflightBrief` through `linkedinPreflightEventName`, PR #638 review).
 `PreflightCreate` (synchronous 400) and `Dispatch` (not-created refusal) both run the two.
 `linkedinSnapshotConfig` redacts `Name` and `Description` like `IntroText`; `CallToAction` is an
 enum and kept.

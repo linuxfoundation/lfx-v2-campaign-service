@@ -2845,7 +2845,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// then building resources from the original untrimmed field let a value like
 	// "  KubeCon  " pass validation yet produce resources with leading/trailing
 	// whitespace and an inconsistent idempotency key.
-	eventName := strings.TrimSpace(in.EventName)
+	eventName := normalizeEventName(in.EventName)
 	if eventName == "" {
 		return nil, domain.PreflightRefusalf("event name is required and must not be empty or whitespace-only")
 	}
@@ -2853,7 +2853,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// so a caller value containing "|" would inject extra fields and corrupt the
 	// naming schema / project attribution and name-based idempotency. Replace "|"
 	// with "-" before composing names, matching the other platform clients.
-	eventName = strings.ReplaceAll(eventName, "|", "-")
 
 	// Trim the registration URL ONCE up front and use the trimmed value both for
 	// validation and everywhere downstream (BuildUTMURL). Validating a trimmed

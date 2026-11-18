@@ -1399,7 +1399,8 @@ variants[].description?: string  — OPTIONAL article description (content.artic
 
 Refused **synchronously** with `400 invalid campaign config: linkedInConfig.variants…` before any
 job exists: a value that is not a JSON string (an explicit `null` included; omit the key instead),
-an unknown `callToAction`, a repeated `name`, and any `callToAction` while
+an unknown `callToAction`, a repeated `name` (including one equal to an unnamed variant's
+`<event> | variant-N` default), and any `callToAction` while
 `LINKEDIN_ADS_CALL_TO_ACTION_ENABLED` is not exactly `"true"`. `name` and `description` are not
 gated. The stored `config_snapshot` redacts a link pasted into `name` or `description` like
 `introText`; LinkedIn receives the full text.

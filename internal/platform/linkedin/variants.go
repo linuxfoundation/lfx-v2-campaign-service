@@ -95,6 +95,26 @@ func ValidateVariantFields(variants []CreativeVariant) error {
 	return nil
 }
 
+// normalizeEventName is the event name CreateCampaign composes every name from: trimmed, with "|"
+// (the name delimiter) replaced by "-" so a caller value cannot inject extra name fields. ""
+// when the event name is blank.
+func normalizeEventName(eventName string) string {
+	return strings.ReplaceAll(strings.TrimSpace(eventName), "|", "-")
+}
+
+// ValidateCreativeNames refuses two variants whose creative names collide once resolved against
+// the brief's event name, as CreateCampaign resolves them — including a caller's name equal to an
+// unnamed variant's "<event> | variant-N" default. The dispatcher's PreflightCreate runs it with
+// the brief, so the collision is a synchronous 400 rather than a failed job (PR #638 review). A
+// blank event name checks nothing: CreateCampaign refuses that on its own.
+func ValidateCreativeNames(eventName string, variants []CreativeVariant) error {
+	eventName = normalizeEventName(eventName)
+	if eventName == "" {
+		return nil
+	}
+	return distinctCreativeNames(eventName, variants)
+}
+
 // distinctCreativeNames refuses two variants whose creative names, as creativeName resolves them,
 // match: ValidateVariantFields' check plus a caller's name equal to an unnamed variant's
 // "<event> | variant-N" default, which only a check that knows the event name can see.
