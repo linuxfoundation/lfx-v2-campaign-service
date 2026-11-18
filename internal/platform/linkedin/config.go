@@ -23,9 +23,24 @@ import (
 // baseURL is the LinkedIn Marketing API base. Mirrors LINKEDIN_BASE_URL.
 const baseURL = "https://api.linkedin.com/rest"
 
-// apiVersion is sent as the LinkedIn-Version header. Ported verbatim from
-// LINKEDIN_API_VERSION in the shared constants.
-const apiVersion = "202602"
+// apiVersion is sent as the LinkedIn-Version header on every request; it is the
+// single place the Marketing API version is named (NewClient copies it into
+// Client.apiVersion, which every request path reads).
+//
+// 202611 (November 2026) is the latest version LinkedIn publishes; LinkedIn
+// lists it as supported until November 16, 2027. The 202602 it replaces sunsets
+// February 15, 2027 (Marketing API "Migrations", API Migration Status table).
+// The #552 targeting, picker and conversion shapes were written against
+// li-lms-2026-10; 202611 adds nothing breaking on any endpoint this package calls.
+// Before bumping, read every "Recent Changes" entry between the two versions
+// against the endpoints this package calls
+// (docs/knowledge/log/2026-11-17-580-linkedin-version-202611.md is the audit for
+// 202602 -> 202611) and re-probe live: the version selects request and response
+// shapes, not just a label.
+// https://learn.microsoft.com/en-us/linkedin/marketing/versioning
+// https://learn.microsoft.com/en-us/linkedin/marketing/integrations/migrations
+// https://learn.microsoft.com/en-us/linkedin/marketing/integrations/recent-changes
+const apiVersion = "202611"
 
 // requestTimeout mirrors LINKEDIN_REQUEST_TIMEOUT_MS (30s).
 const requestTimeout = 30 * time.Second
