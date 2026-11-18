@@ -106,27 +106,9 @@ func WithImagePolling(interval, wait time.Duration) Option {
 // ValidateImage reports whether in can be uploaded as a single image ad thumbnail. It decodes
 // only the image HEADER, never the pixels. The bytes are never quoted in the error.
 func ValidateImage(in ImageUpload) error {
-	if len(in.Data) == 0 {
-		return fmt.Errorf("%w: the image has no bytes", ErrImageInvalid)
-	}
-	if len(in.Data) > MaxImageBytes {
-		return fmt.Errorf("%w: the image is %d bytes; LinkedIn single image ads accept at most %d", ErrImageInvalid, len(in.Data), MaxImageBytes)
-	}
-	var wantFormat string
-	switch in.MimeType {
-	case "image/png":
-		wantFormat = "png"
-	case "image/jpeg":
-		wantFormat = "jpeg"
-	default:
-		return fmt.Errorf("%w: only PNG and JPEG images are supported", ErrImageInvalid)
-	}
-	cfg, format, err := image.DecodeConfig(bytes.NewReader(in.Data))
+	cfg, err := decodeImageHeader(in, MaxImageBytes, "single image ads")
 	if err != nil {
-		return fmt.Errorf("%w: the image header could not be decoded", ErrImageInvalid)
-	}
-	if format != wantFormat {
-		return fmt.Errorf("%w: the image bytes are %s, not the recorded %s", ErrImageInvalid, domain.CallerValue(format), domain.MIMEValue(in.MimeType))
+		return err
 	}
 	w, h := cfg.Width, cfg.Height
 	if int64(w)*int64(h) >= maxImagePixels {
@@ -149,6 +131,36 @@ func ValidateImage(in ImageUpload) error {
 		return fmt.Errorf("%w: the %s image is %dx%d; LinkedIn accepts at most %dx%d", ErrImageInvalid, shape, w, h, maxW, maxH)
 	}
 	return nil
+}
+
+// decodeImageHeader holds the checks every LinkedIn image validator shares: the image has bytes,
+// at most maxBytes of them (adKind names the ad kind in that refusal, e.g. "text ads"), a PNG or
+// JPEG MIME type, and a decodable header whose format matches that MIME type. It decodes only the
+// HEADER, never the pixels, and never quotes the bytes; each caller keeps its own dimension rule.
+func decodeImageHeader(in ImageUpload, maxBytes int, adKind string) (image.Config, error) {
+	if len(in.Data) == 0 {
+		return image.Config{}, fmt.Errorf("%w: the image has no bytes", ErrImageInvalid)
+	}
+	if len(in.Data) > maxBytes {
+		return image.Config{}, fmt.Errorf("%w: the image is %d bytes; LinkedIn %s accept at most %d", ErrImageInvalid, len(in.Data), adKind, maxBytes)
+	}
+	var wantFormat string
+	switch in.MimeType {
+	case "image/png":
+		wantFormat = "png"
+	case "image/jpeg":
+		wantFormat = "jpeg"
+	default:
+		return image.Config{}, fmt.Errorf("%w: only PNG and JPEG images are supported", ErrImageInvalid)
+	}
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(in.Data))
+	if err != nil {
+		return image.Config{}, fmt.Errorf("%w: the image header could not be decoded", ErrImageInvalid)
+	}
+	if format != wantFormat {
+		return image.Config{}, fmt.Errorf("%w: the image bytes are %s, not the recorded %s", ErrImageInvalid, domain.CallerValue(format), domain.MIMEValue(in.MimeType))
+	}
+	return cfg, nil
 }
 
 // imageUploadError is a failed image step. It carries the step's own classification, because
@@ -191,12 +203,22 @@ type imageStatusResponse struct {
 func (c *Client) uploadVariantImages(ctx context.Context, accountID string, in CampaignInput) (map[string]string, []string, error) {
 	var order []string
 	seen := map[string]bool{}
+	// Grown by append rather than pre-sized from len+len (CodeQL go/allocation-size-overflow).
+	var assetIDs []string
 	for _, v := range in.Variants {
-		if v.ImageAssetID == "" || seen[v.ImageAssetID] {
+		assetIDs = append(assetIDs, v.ImageAssetID)
+	}
+	// A text create (#586) carries its images on TextAds; CreateCampaign refuses variants
+	// beside them, so the two never mix.
+	for _, ad := range in.TextAds {
+		assetIDs = append(assetIDs, ad.ImageAssetID)
+	}
+	for _, id := range assetIDs {
+		if id == "" || seen[id] {
 			continue
 		}
-		seen[v.ImageAssetID] = true
-		order = append(order, v.ImageAssetID)
+		seen[id] = true
+		order = append(order, id)
 	}
 	if len(order) == 0 {
 		return nil, nil, nil
@@ -210,7 +232,7 @@ func (c *Client) uploadVariantImages(ctx context.Context, accountID string, in C
 	urns := make(map[string]string, len(order))
 	var steps []string
 	for _, assetID := range order {
-		urn, uerr := c.uploadImage(ctx, owner, in.Images[assetID])
+		urn, uerr := c.uploadImage(ctx, owner, in.Images[assetID], in.Format)
 		if urn != "" {
 			urns[assetID] = urn
 		}
@@ -237,8 +259,8 @@ func (c *Client) uploadVariantImages(ctx context.Context, accountID string, in C
 
 // uploadImage runs initializeUpload and the PUT for one image, returning the minted URN (empty
 // when none is known). Neither call is retried.
-func (c *Client) uploadImage(ctx context.Context, owner string, img ImageUpload) (string, error) {
-	if err := ValidateImage(img); err != nil {
+func (c *Client) uploadImage(ctx context.Context, owner string, img ImageUpload, format string) (string, error) {
+	if err := ValidateImageForFormat(format, img); err != nil {
 		return "", &imageUploadError{err: err}
 	}
 	const initPath = "images?action=initializeUpload"

@@ -307,6 +307,12 @@ type CampaignInput struct {
 	// seniorityExclusions; the runtime config's EmployerExclusions still join exclude.employers.
 	// CreateCampaign runs ValidateTargeting on it before any request. See targeting_criteria.go.
 	Targeting *Targeting
+	// Format is the campaign format (#586): "" or FormatSingleImage creates today's
+	// SPONSORED_UPDATES campaign from Variants; FormatText creates a TEXT_AD campaign from
+	// TextAds, which requires a manual bid (ManualCPCBid > 0) and no Variants. See text_ads.go.
+	Format string
+	// TextAds are the Text Ad creatives of a FormatText create; refused under any other format.
+	TextAds []TextAd
 	// JobFunctions replace the default job functions (urn:li:function:8, 13 and 16) in the
 	// profile's own jobFunctions clause (#585). Nil means the default. Not read with Targeting,
 	// which brings its own. CreateCampaign runs ValidateJobFunctions on it before any request.
@@ -473,7 +479,9 @@ type responseElement struct {
 	// OptimizationTargetType is a campaign search result's bidding target, checked by
 	// findCampaignByNameInGroup so a manual campaign is not reused for automatic bidding (#582).
 	OptimizationTargetType string `json:"optimizationTargetType"`
-	// Type, Currency, Test, ServingStatuses and Reference are only populated for
+	// Type is also a campaign search result's campaign type (SPONSORED_UPDATES, TEXT_AD),
+	// checked by findCampaignByNameInGroup so a same-name campaign of another type is not
+	// reused (#586). Currency, Test, ServingStatuses and Reference are only populated for
 	// ad-account search results (ListAdAccounts, accounts.go). An ad account carries two
 	// independent health axes — its lifecycle `status`, decoded above, and the
 	// `servingStatuses` array below — and the picker needs both.
@@ -1525,7 +1533,7 @@ func (c *Client) findByName(ctx context.Context, nestedPath, name string) (strin
 // findMatch exhaust the set and report absence, and the caller would POST a
 // DUPLICATE. So this case returns an error to abort, consistent with the
 // fail-closed handling for matched-but-id-less elements inside findMatch.
-func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, name, groupID, objectiveType, optimizationTarget string) (string, error) {
+func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, name, groupID, objectiveType, optimizationTarget, campaignType string) (string, error) {
 	return c.findMatch(ctx, campaignsPath, name, func(el responseElement) (bool, error) {
 		if el.Name != name {
 			return false, nil
@@ -1564,6 +1572,14 @@ func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, n
 		if optimizationTarget != "" && el.OptimizationTargetType != "" &&
 			manualBiddingTarget(el.OptimizationTargetType) != manualBiddingTarget(optimizationTarget) {
 			return false, fmt.Errorf("campaign %q already exists in this campaign group with optimizationTargetType %s, not %s — it was not created for this bidding strategy; aborting rather than reuse it or create a duplicate", el.Name, el.OptimizationTargetType, optimizationTarget)
+		}
+		// Same name in the same group, but a DIFFERENT campaign type (#586): a TEXT_AD campaign
+		// cannot hold single-image creatives nor a SPONSORED_UPDATES one text ads, so reusing it
+		// fails at the first creative. The Ad Format name segment already differs between the
+		// two, so this too is reachable only through a hand-made campaign; an unreported type
+		// cannot contradict.
+		if campaignType != "" && el.Type != "" && el.Type != campaignType {
+			return false, fmt.Errorf("campaign %q already exists in this campaign group with type %s, not %s — aborting rather than reuse it or create a duplicate", el.Name, el.Type, campaignType)
 		}
 		return true, nil
 	})
@@ -2175,7 +2191,7 @@ func (c *Client) readCampaignGroupEnd(ctx context.Context, path, groupID string)
 // single-flight claim is PLANNED but NOT provided here (tracked separately as
 // LFXV2-2665); until it exists, callers MUST NOT rely on any dedup guarantee and
 // must serialize concurrent calls for the same name on their own.
-func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, jobFns []string, custom *Targeting, lifetimeBudget bool, bidding campaignBiddingPlan, dailyCap string) (id string, reused bool, err error) {
+func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, jobFns []string, custom *Targeting, lifetimeBudget bool, bidding campaignBiddingPlan, dailyCap, campaignType string) (id string, reused bool, err error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
 	// Scope the idempotency lookup to the resolved campaign group: the campaign
@@ -2184,7 +2200,7 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 	// new campaign is never created under the correct group. The lookup also refuses a
 	// same-name campaign reporting a DIFFERENT objectiveType (LFXV2-2665): reusing it would
 	// silently run the other bidding strategy.
-	existing, err := c.findCampaignByNameInGroup(ctx, campaignsPath, name, groupID, bidding.objectiveType, bidding.optimizationTarget)
+	existing, err := c.findCampaignByNameInGroup(ctx, campaignsPath, name, groupID, bidding.objectiveType, bidding.optimizationTarget, campaignType)
 	if err != nil {
 		return "", false, err
 	}
@@ -2236,7 +2252,8 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 		"campaignGroup": "urn:li:sponsoredCampaignGroup:" + groupID,
 		"name":          name,
 		"status":        "PAUSED",
-		"type":          "SPONSORED_UPDATES",
+		// SPONSORED_UPDATES, or TEXT_AD for a text create (#586, campaignTypeFor).
+		"type": campaignType,
 		// objectiveType, costType, optimizationTargetType and (manual only) unitCost come from
 		// campaignBidding and are merged below: WEBSITE_VISIT + MAX_CLICK for automatic,
 		// WEBSITE_CONVERSION + MAX_CONVERSION for automatic conversions (#582),
@@ -2429,7 +2446,7 @@ func buildCampaignName(eventName, nameObjective, project string, in CampaignInpu
 	if st := nameToken(in.StageToken); st != "" {
 		funnel = st
 	}
-	return fmt.Sprintf("Events | %s | %s | %s | %s | Static | %s | %s", eventName, linkedinRegion(in.GeoTargets), nameObjective, targetingSegment(in.Tactic, in.SlotToken), project, funnel)
+	return fmt.Sprintf("Events | %s | %s | %s | %s | %s | %s | %s", eventName, linkedinRegion(in.GeoTargets), nameObjective, targetingSegment(in.Tactic, in.SlotToken), adFormatNameSegment(in.Format), project, funnel)
 }
 
 // legacyCampaignName is the name buildCampaignName composed before #587, byte for byte: Region
@@ -2960,10 +2977,44 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, domain.WrapPreflightRefusal(ErrAutomaticConversionsNeedConversion)
 	}
 
+	// The format (#586), resolved before any POST. A text create needs a manual bid (LinkedIn
+	// offers Text Ads no automated bidding), its own creatives and no single-image variants; a
+	// single-image create takes no text ads. Every sentence here is service-authored.
+	format, err := NormalizeFormat(in.Format)
+	if err != nil {
+		return nil, domain.WrapPreflightRefusal(err)
+	}
+	in.Format = format
+	if format == FormatText {
+		if in.ManualCPCBid == 0 {
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: a text create requires manual bidding: LinkedIn Text Ads support only a manual bid (optimizationTargetType NONE)", ErrFormatInvalid))
+		}
+		if len(in.Variants) > 0 {
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: a text create takes its creatives from textAds, not variants", ErrFormatInvalid))
+		}
+		if err := ValidateTextAds(in.TextAds); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+		for i, ad := range in.TextAds {
+			if ad.ImageAssetID == "" {
+				continue
+			}
+			img, ok := in.Images[ad.ImageAssetID]
+			if !ok {
+				return nil, domain.PreflightRefusalf("text ad %d names stored image asset %s, which was not supplied", i+1, domain.CallerValue(ad.ImageAssetID))
+			}
+			if err := ValidateTextAdImage(img); err != nil {
+				return nil, domain.WrapPreflightRefusal(fmt.Errorf("text ad %d image asset %s: %w", i+1, domain.CallerValue(ad.ImageAssetID), err))
+			}
+		}
+	} else if len(in.TextAds) > 0 {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: textAds are accepted only with format %q", ErrFormatInvalid, FormatText))
+	}
+
 	// Refuse to create a campaign with no creatives: LinkedIn campaign-group and
 	// campaign creation are permanent side effects, so an empty variant set would
 	// leave an orphaned, un-adorned campaign upstream.
-	if len(in.Variants) == 0 {
+	if format != FormatText && len(in.Variants) == 0 {
 		return nil, domain.PreflightRefusalf("at least one creative variant is required")
 	}
 
@@ -3199,9 +3250,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// it, so a retry spanning the change reuses that campaign instead of creating a second one
 	// beside it. A new group cannot hold one, so it needs no lookup. A failed lookup returns
 	// (nil, err): the group existed before this call and nothing was created.
-	if groupReused {
+	// A text campaign (#586) postdates #587, so none can carry the legacy name: skip the lookup.
+	if groupReused && format != FormatText {
 		if legacy := legacyCampaignName(eventName, bidding.nameObjective, project, in); legacy != campaignName {
-			found, err := c.findCampaignByNameInGroup(ctx, fmt.Sprintf("adAccounts/%s/adCampaigns", accountID), legacy, groupID, bidding.objectiveType, bidding.optimizationTarget)
+			found, err := c.findCampaignByNameInGroup(ctx, fmt.Sprintf("adAccounts/%s/adCampaigns", accountID), legacy, groupID, bidding.objectiveType, bidding.optimizationTarget, campaignTypeFor(format))
 			if err != nil {
 				return nil, fmt.Errorf("campaign group %q: looking up a campaign under its pre-#587 name failed; nothing was created, and a retry looks again: %w", groupID, err)
 			}
@@ -3212,7 +3264,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
-	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, jobFns, targeting, in.LifetimeBudget, bidding, dailyCap)
+	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, jobFns, targeting, in.LifetimeBudget, bidding, dailyCap, campaignTypeFor(format))
 	unlockGroup()
 	if err != nil {
 		// findOrCreateCampaignGroup may have just created a PERMANENT campaign group
@@ -3326,6 +3378,28 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// per-(brief, platform) claim, LFXV2-2665) is intended to prevent re-runs, but
 	// it is NOT implemented yet — this loop provides no dedup itself; see the
 	// CreateCampaign godoc.
+	// finish is the success result of either creative path: one copy, so the text path cannot
+	// drift from the single-image one (the objective and optimization target are stamped beside
+	// BidApplied on both, #582).
+	finish := func(count int) *CampaignResult {
+		result := withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, count, steps))
+		result.BidApplied = !campaignReused
+		if result.BidApplied {
+			result.ObjectiveType = bidding.objectiveType
+			result.OptimizationTarget = bidding.optimizationTarget
+		}
+		return result
+	}
+	if format == FormatText {
+		count, textSteps, terr := c.createTextAds(ctx, accountID, campaignID, campaignName, eventName, reg, in, imageURNs)
+		steps = append(steps, textSteps...)
+		if terr != nil {
+			return withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, count, steps)),
+				fmt.Errorf("%w — group %q and campaign %q already exist", terr, groupID, campaignID)
+		}
+		return finish(count), nil
+	}
+
 	creativeCount := 0
 	for i, variant := range in.Variants {
 		destURL := BuildUTMURL(reg, in.HSToken, campaignName, i+1)
@@ -3402,13 +3476,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		creativeCount++
 	}
 
-	result := withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps))
-	result.BidApplied = !campaignReused
-	if result.BidApplied {
-		result.ObjectiveType = bidding.objectiveType
-		result.OptimizationTarget = bidding.optimizationTarget
-	}
-	return result, nil
+	return finish(creativeCount), nil
 }
 
 // campaignManagerURL returns the Campaign Manager deep link. When no campaign was

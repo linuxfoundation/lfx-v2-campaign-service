@@ -205,6 +205,11 @@ the default account and the grants. The same flag gates adopting LinkedIn campai
 `linkedin-ads/adoptable-campaigns` candidate list; off, both answer 400. Flip it only after the release that pauses, reads and budgets
 granted-account campaigns is in prod and the grants are installed.
 
+`LINKEDIN_ADS_TEXT_ADS_ENABLED` defaults to `"false"` (#586) and is the same kind of gate for
+LinkedIn: `linkedInConfig.format: "text"` creates a TEXT_AD campaign with `textAd` creatives, a
+shape taken from LinkedIn's documentation and not yet exercised against a live account. Only
+exactly `"true"` enables it; off, a create naming it is refused with a 400 before a job exists.
+
 `LINKEDIN_ADS_CALL_TO_ACTION_ENABLED` defaults to `"false"` (#588) and is the same kind of gate for
 `linkedInConfig.variants[].callToAction`: a call to action on an article dark post has not been
 sent to a live LinkedIn account. Only exactly `"true"` enables it; off, a create naming one is
