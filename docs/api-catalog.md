@@ -3800,6 +3800,13 @@ leadFormId?: string             — OPTIONAL existing Meta Instant Form id (#550
                                   503 when the check cannot be made): for a project without its
                                   own connection the Page is the shared LF Page, which holds
                                   every foundation's forms, so it is gated like the form list.
+format?: string                 — OPTIONAL creative format (#550 gap 10), case-insensitive:
+                                  `single` (default — one ad per variant, as before) or
+                                  `carousel` — ONE ad whose cards are the variants, in order
+                                  (`object_story_spec.link_data.child_attachments`). Anything
+                                  else is a synchronous 400; a non-string is a 400. While
+                                  META_CAROUSEL_ENABLED is not exactly "true", every value but
+                                  `single` is refused with a 400 naming the flag. See "Meta carousel" below the AdVariant block.
 targeting?: object              — OPTIONAL audience targeting on the ad set (#550). Refused
                                   with a 400 before any job exists unless the deployment sets
                                   META_AUDIENCE_TARGETING_ENABLED to exactly "true" (not yet
@@ -3952,7 +3959,65 @@ imageAssetId?: string            — OPTIONAL id of a creative asset previously 
                                   than discovered at the per-variant creative step where the
                                   campaign and ad set already exist. Supply one or neither;
                                   neither still yields the bare-link creative.
+videoAssetId?: string            — OPTIONAL id of an MP4 creative asset uploaded against THIS
+                                  brief (content_type video/mp4), #550 gap 9. The variant
+                                  becomes a VIDEO ad. Refused with a synchronous 400 unless
+                                  META_VIDEO_ENABLED is exactly "true"; a non-UUID id, or an
+                                  `imageUrl`/`imageAssetId` alongside it (Meta uses one of the
+                                  video's auto-generated thumbnails), is a synchronous 400 too,
+                                  and so is a video variant on a `leadFormId` create (video
+                                  lead ads are not supported).
+                                  Image and video variants may mix in one ad set. Resolved
+                                  before anything is created like `imageAssetId` (same brief
+                                  scope, same 240 MiB distinct-asset bound and reservation);
+                                  an asset that is not video/mp4 fails the job with nothing
+                                  created. After the ad set exists and before the first
+                                  creative, each DISTINCT video is uploaded ONCE to
+                                  `/act_<id>/advideos` (multipart `source`, never retried —
+                                  every upload creates a new video; an upload starts only while
+                                  the provider deadline holds a request timeout beyond the 20 s
+                                  reserve, else that video fails its variants), then `GET /{video_id}
+                                  ?fields=status` is polled every 3 s until `video_status` is
+                                  `ready`, within ONE 60 s wait shared by every video (cut
+                                  short so 20 s of the provider call's deadline remain for the
+                                  creatives and ads), and the
+                                  preferred auto-generated thumbnail (`GET /{video_id}/thumbnails`)
+                                  becomes the creative's image. The creative carries
+                                  `object_story_spec.video_data` {video_id, image_url, message =
+                                  primaryText, title = headline, link_description = description,
+                                  call_to_action {type, value.link = the UTM-tagged URL}}. A video
+                                  that fails to upload, ends `error`, is still processing when
+                                  the wait ends, or has no thumbnail fails only its variants
+                                  (Steps say why; nothing is re-uploaded — the campaign persists
+                                  as created_degraded and is reused as-is). Every uploaded video
+                                  id is recorded in the result's `VideoIDs` (asset id -> video
+                                  id) and on each ad as `VideoID`.
 ```
+
+**Meta carousel** (`metaConfig.format: "carousel"`, #550 gap 10). Each variant is one card:
+
+```
+cards                           — 2-10 variants (else a synchronous 400). Each card REQUIRES an
+                                  image — `imageUrl` (→ card `picture`) or `imageAssetId`
+                                  (uploaded once per distinct image → card `image_hash`) — and
+                                  carries no `videoAssetId`. Card fields: `headline` → `name`,
+                                  `description` → `description`, its own UTM-tagged registration
+                                  link (`utm_content=variant-N`) → `link`, and the ad's
+                                  `callToAction` button with that link.
+message                         — variant 1's `primaryText` (required) is the ad's one
+                                  `link_data.message`; every later card's `primaryText` must be
+                                  empty or identical (nothing is silently dropped) — else a 400.
+link                            — `link_data.link` (the end card and message destination) is card
+                                  1's UTM link. Meta's card ordering default is left as is.
+leadFormId                      — not allowed with a carousel (a synchronous 400): the form is
+                                  attached to a single creative's call to action only.
+```
+
+The creative is named `<eventName> - Carousel` and the ad `<eventName> - Carousel Ad`; the
+campaign and ad set are unchanged. One ad is the full count: the result has `AdCount` 1,
+`Format` `"carousel"` and the ad's per-card `CardImageHashes`. A card image the upload refuses
+creates no creative, and a creative or ad Meta refuses creates no ad — either leaves the
+campaign `created_degraded` with the reason in Steps (nothing is retried by a re-dispatch).
 
 Copy limits are enforced by the client before any upstream call, so a variant that
 exceeds them fails the platform job pre-create (async — not a synchronous 4xx). The

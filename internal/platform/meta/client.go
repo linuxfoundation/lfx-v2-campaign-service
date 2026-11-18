@@ -316,6 +316,15 @@ type Client struct {
 	// elapsed wall time, which no timing threshold could distinguish from a
 	// goroutine that simply was not scheduled.
 	sleepFn func(context.Context, time.Duration) error
+	// videoPollInterval and videoReadyWait bound the video readiness poll (#550, video.go): the
+	// interval between status reads and the total wait shared by every video of one
+	// CreateCampaign. WithVideoPolling overrides them.
+	videoPollInterval time.Duration
+	videoReadyWait    time.Duration
+	// videoWaitReserve and videoAdReserve are videoDeadlineReserve and videoAdReserve (video.go);
+	// fields only so a test can shrink them.
+	videoWaitReserve time.Duration
+	videoAdReserve   time.Duration
 }
 
 // Option customizes a Client.
@@ -422,6 +431,11 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		timeNow:        time.Now,
 		retryBaseDelay: retryBaseDelay,
 		sleepFn:        sleepCtx,
+
+		videoPollInterval: defaultVideoPollInterval,
+		videoReadyWait:    defaultVideoReadyWait,
+		videoWaitReserve:  videoDeadlineReserve,
+		videoAdReserve:    videoAdReserve,
 	}
 	for _, o := range opts {
 		o(c)
@@ -902,8 +916,8 @@ func (e *APIError) copyEnvelope(g *graphError) {
 	e.ErrorSubcode = g.ErrorSubcode
 	e.blameFields = g.blameFieldSpecs()
 	e.IsTransient = g.IsTransient
-	// Only an envelope the identity check accepted counts as read (see do()); the /adimages
-	// upload path never sets trusted, and nothing there consults this field.
+	// Only an envelope the identity check accepted counts as read (see do() and uploadVideo); the
+	// /adimages upload path never sets trusted, and nothing there consults this field.
 	e.EnvelopeParsed = g.trusted
 }
 
@@ -2794,6 +2808,16 @@ type AdVariant struct {
 	// the multipart part on the /adimages call. Like ImageBytes it is set by the
 	// dispatcher, not by caller JSON.
 	ImageMIME string `json:"-"`
+
+	// VideoAssetID references an MP4 uploaded against this brief (#550 gap 9): the variant
+	// becomes a VIDEO ad (object_story_spec.video_data). A config field like ImageAssetID — the
+	// dispatcher resolves it to VideoBytes/VideoMIME, and only it is snapshotted. A video
+	// variant carries no image (ValidateVideoVariant); Meta's auto-generated thumbnail is used.
+	VideoAssetID string
+	// VideoBytes and VideoMIME are the resolved video, set ONLY by the dispatcher (json:"-").
+	// VideoMIME must be video/mp4.
+	VideoBytes []byte `json:"-"`
+	VideoMIME  string `json:"-"`
 }
 
 // CampaignInput mirrors MetaCampaignCreateRequest.
@@ -2863,6 +2887,10 @@ type CampaignInput struct {
 	// DefaultConversionEvent (PURCHASE, the only event before #550). Refused before any request on
 	// any other objective or when not in the list.
 	ConversionEvent string
+	// Format is the creative format (metaConfig.format, #550 gap 10): "" or "single" keeps one ad
+	// per variant; "carousel" builds ONE ad whose cards are the variants (carousel.go,
+	// ValidateCarousel). Refused before any request when not one of the two.
+	Format string
 	// Targeting is the optional audience targeting (metaConfig.targeting, #550): age, gender,
 	// custom audiences to include and exclude, and the Advantage+ audience flag. Nil or zero adds
 	// nothing to the ad set's targeting. It is validated (NormalizeAudienceTargeting) before any
@@ -2964,6 +2992,14 @@ type CampaignResult struct {
 	// persisted result (the conversions metrics read, gap 6) never filters on an event the live ad
 	// set does not optimize for. Set only on the successful result.
 	ConversionEvent string `json:",omitempty"`
+	// VideoIDs names every video this run uploaded to the ad account (#550 gap 9), keyed by the
+	// variant's video asset id (or "variant-N" without one), whether or not its ad was created —
+	// so a video left unused by a failed or not-yet-ready variant is findable. Empty without
+	// video variants.
+	VideoIDs map[string]string `json:",omitempty"`
+	// Format is "carousel" when this run built one carousel ad from the variants (#550 gap 10);
+	// empty for one ad per variant. A carousel's full count is one ad.
+	Format string `json:",omitempty"`
 	// Ads carries one entry per SUCCESSFULLY-created ad (so len(Ads) == AdCount), in
 	// variant order, each with its ad/creative ids and the image_hash attached to its
 	// creative. A per-variant failure contributes a Steps line, not an Ads entry.
@@ -2986,6 +3022,12 @@ type AdResult struct {
 	AdID       string
 	CreativeID string
 	ImageHash  string
+	// VideoID is the uploaded video the ad's creative plays (#550 gap 9); empty for an image or
+	// link ad.
+	VideoID string `json:",omitempty"`
+	// CardImageHashes is a carousel ad's per-card image_hash, in card order ("" for an imageUrl
+	// card), #550 gap 10. Empty for a single-format ad, whose hash is ImageHash.
+	CardImageHashes []string `json:",omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -3015,6 +3057,27 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if len(in.Variants) == 0 {
 		return nil, domain.PreflightRefusalf("at least one ad variant is required for Meta campaign creation")
 	}
+	// The creative format (#550 gap 10): a carousel's cards are checked as a whole here, before
+	// the per-variant checks below, and its later cards need no primaryText of their own.
+	format, err := NormalizeFormat(in.Format)
+	if err != nil {
+		return nil, err
+	}
+	carousel := format == FormatCarousel
+	if carousel {
+		if err := CheckCarouselLeadForm(in.LeadFormID); err != nil {
+			return nil, err
+		}
+		if err := ValidateCarousel(in.Variants); err != nil {
+			return nil, err
+		}
+		if err := checkCarouselCardsResolved(in.Variants); err != nil {
+			return nil, err
+		}
+		if n := utf8.RuneCountInString(carouselCreativeName(in.EventName)); n > maxCreativeNameChars {
+			return nil, domain.PreflightRefusalf("carousel ad-creative name is %d characters; Meta allows at most %d (shorten the event name)", n, maxCreativeNameChars)
+		}
+	}
 
 	// Reject any variant missing primary text or headline by NAMING its index,
 	// rather than silently dropping it. Silent filtering would renumber the
@@ -3023,7 +3086,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// input ordering — a surprising mismatch. A partially-specified variant is a
 	// caller error, so fail fast (consistent with every other up-front check here).
 	for i, v := range in.Variants {
-		if strings.TrimSpace(v.PrimaryText) == "" || strings.TrimSpace(v.Headline) == "" {
+		needsText := !carousel || i == 0
+		if (needsText && strings.TrimSpace(v.PrimaryText) == "") || strings.TrimSpace(v.Headline) == "" {
 			return nil, domain.PreflightRefusalf("variant %d must have non-empty primary text and headline", i+1)
 		}
 	}
@@ -3057,6 +3121,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// exists rather than at the non-fatal per-variant creative create.
 		if err := validateVariantImage(v); err != nil {
 			return nil, domain.WrapPreflightRefusal(fmt.Errorf("variant %d: %w", i+1, err))
+		}
+		// A video variant (#550 gap 9): no image alongside, resolved MP4 bytes.
+		if err := ValidateVideoVariant(i, v); err != nil {
+			return nil, err
+		}
+		if variantHasVideo(v) && strings.TrimSpace(in.LeadFormID) != "" {
+			return nil, videoVariantInvalid(i, "a video variant cannot be combined with leadFormId; video lead ads are not supported")
 		}
 	}
 
@@ -3692,7 +3763,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Captured by reference like adCount, so a PARTIAL result returned from a failure
 	// after some ads were created still names them (and their image hashes).
 	var ads []AdResult
+	// Every video this run uploads (#550 gap 9), captured by reference like ads.
+	videoIDs := map[string]string{}
+	resultFormat := ""
+	if carousel {
+		resultFormat = FormatCarousel
+	}
 	partialResult := func() *CampaignResult {
+		var vids map[string]string
+		if len(videoIDs) > 0 {
+			vids = videoIDs
+		}
 		return &CampaignResult{
 			Platform:     "meta-ads",
 			CampaignName: campaignName,
@@ -3704,6 +3785,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
 			Steps:        steps,
 			Ads:          ads,
+			VideoIDs:     vids,
+			Format:       resultFormat,
 		}
 	}
 
@@ -3889,10 +3972,58 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// The upload cache is per-CAMPAIGN and created here, not on the Client: it must not
 	// outlive the campaign it was built for (see uploadCache's godoc).
 	uploads := newUploadCache()
+	// A carousel (#550 gap 10) is ONE ad whose cards are the variants, in place of the loop below.
+	if carousel {
+		adID, creativeID, hashes, cerr := c.createCarouselAd(ctx, in, adSetID, uploads)
+		switch {
+		case cerr != nil && ctx.Err() != nil:
+			if creativeID != "" {
+				return partialResult(), fmt.Errorf("meta campaign aborted while creating the carousel ad (campaign %s created, PAUSED; orphaned creative: %s): %w", campaignID, creativeID, ctx.Err())
+			}
+			return partialResult(), fmt.Errorf("meta campaign aborted while creating the carousel ad (campaign %s created, PAUSED): %w", campaignID, ctx.Err())
+		case cerr != nil:
+			steps = append(steps, carouselFailureStep(cerr, creativeID, in.Variants))
+			// The manual-create instruction only when no ad can exist: after an ambiguous creative
+			// or ad error Meta may have accepted it, and carouselFailureStep says to verify first
+			// (PR #653 review). A card upload failure sent no creative or ad request at all.
+			var upErr *uploadStageError
+			if errors.As(cerr, &upErr) || !createOutcomeAmbiguous(cerr) {
+				steps = append(steps, "No ads could be created — create them manually in Meta Ads Manager")
+			}
+		default:
+			adCount = 1
+			ads = append(ads, AdResult{Variant: 1, AdID: adID, CreativeID: creativeID, CardImageHashes: hashes})
+			steps = append(steps, fmt.Sprintf("Carousel ad created: %s (creative: %s, %d cards) → %s", adID, creativeID, len(in.Variants), displayMetaUTMURL(in, 0)))
+		}
+		r := partialResult()
+		r.BidApplied = adSetCreated
+		if ev, _ := promotedObject["custom_event_type"].(string); adSetCreated {
+			r.ConversionEvent = ev
+		}
+		return r, nil
+	}
+	// Videos (#550 gap 9) are uploaded and awaited once, before the first creative: each distinct
+	// video uploads once and every video shares one bounded readiness wait. The ad set already
+	// exists, so a cancelled caller returns the partial (the claim is retained, nothing re-uploads).
+	videos, perr := c.prepareVideos(ctx, validVariants, &steps, videoIDs)
+	if perr != nil {
+		return partialResult(), fmt.Errorf("meta campaign aborted while preparing videos (campaign %s created, PAUSED): %w", campaignID, perr)
+	}
 	for i, variant := range validVariants {
 		utmURL := buildUTMURL(in, i)
 
-		adID, creativeID, imageHash, verr := c.createVariantAd(ctx, in, variant, adSetID, utmURL, i, uploads)
+		video := videos[i]
+		if video.err != nil {
+			msg := fmt.Sprintf("Ad %d failed: %s, so no creative or ad was created for variant %d", i+1, video.err.Error(), i+1)
+			var vse *videoStageError
+			if errors.As(video.err, &vse) && vse.ambiguous {
+				msg += " (re-dispatching will NOT recreate this ad: the campaign persists as created_degraded and is reused as-is, so reconcile this variant in Meta Ads Manager)"
+			}
+			steps = append(steps, msg)
+			continue
+		}
+
+		adID, creativeID, imageHash, verr := c.createVariantAd(ctx, in, variant, adSetID, utmURL, i, uploads, video)
 		if verr != nil {
 			// A cancelled or deadlined CALLER context is fatal: continuing would let
 			// us report a "successful" campaign after the caller's context died. Key
@@ -3910,6 +4041,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				}
 				return partialResult(), fmt.Errorf("meta campaign aborted while creating ad %d (campaign %s created, PAUSED): %w", i+1, campaignID, ctx.Err())
 			}
+			// What a Step may say about verr (#550 gap 9). A video variant has no ImageURL; its
+			// creative carries Meta's thumbnail URL instead, so that is the URL to protect, and a
+			// non-Graph body (a proxy page that may echo the request) is dropped first.
+			stepURL, stepErr := variant.ImageURL, verr
+			if video.videoID != "" {
+				stepURL, stepErr = video.thumbnail, errors.New(stepSafeErrText(verr, len(verr.Error())))
+			}
 			// An AMBIGUOUS ad/creative error (transport/timeout, 5xx, or a 2xx with no
 			// id — all surfaced by createVariantAd) means Meta MAY already have created
 			// the object, so a definite "create it manually" instruction could
@@ -3924,7 +4062,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			var upErr *uploadStageError
 			if errors.As(verr, &upErr) {
 				msg := fmt.Sprintf("Ad %d failed: image upload did not complete, so no creative or ad was created for variant %d: %s",
-					i+1, i+1, scrubURLFromErr(verr, variant.ImageURL, 300))
+					i+1, i+1, scrubURLFromErr(stepErr, stepURL, 300))
 				if createOutcomeAmbiguous(upErr.err) {
 					// Only the IMAGE is in doubt, and it is content-addressed, so a landed
 					// image needs no cleanup: it is deduplicated by content and costs nothing
@@ -3947,9 +4085,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			}
 			if createOutcomeAmbiguous(verr) {
 				if creativeID != "" {
-					steps = append(steps, fmt.Sprintf("Ad/creative creation outcome UNCONFIRMED for variant %d; it may have been created — verify in Meta Ads Manager before recreating (orphaned creative: %s): %s", i+1, creativeID, scrubURLFromErr(verr, variant.ImageURL, 300)))
+					steps = append(steps, fmt.Sprintf("Ad/creative creation outcome UNCONFIRMED for variant %d; it may have been created — verify in Meta Ads Manager before recreating (orphaned creative: %s): %s", i+1, creativeID, scrubURLFromErr(stepErr, stepURL, 300)))
 				} else {
-					steps = append(steps, fmt.Sprintf("Ad/creative creation outcome UNCONFIRMED for variant %d; it may have been created — verify in Meta Ads Manager before recreating: %s", i+1, scrubURLFromErr(verr, variant.ImageURL, 300)))
+					steps = append(steps, fmt.Sprintf("Ad/creative creation outcome UNCONFIRMED for variant %d; it may have been created — verify in Meta Ads Manager before recreating: %s", i+1, scrubURLFromErr(stepErr, stepURL, 300)))
 				}
 				continue
 			}
@@ -3957,14 +4095,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// orphaned creative is visible (can be cleaned up / reused) rather than
 			// silently discarded.
 			if creativeID != "" {
-				steps = append(steps, fmt.Sprintf("Ad %d failed: %s (orphaned creative: %s)", i+1, scrubURLFromErr(verr, variant.ImageURL, 300), creativeID))
+				steps = append(steps, fmt.Sprintf("Ad %d failed: %s (orphaned creative: %s)", i+1, scrubURLFromErr(stepErr, stepURL, 300), creativeID))
 			} else {
-				steps = append(steps, fmt.Sprintf("Ad %d failed: %s", i+1, scrubURLFromErr(verr, variant.ImageURL, 300)))
+				steps = append(steps, fmt.Sprintf("Ad %d failed: %s", i+1, scrubURLFromErr(stepErr, stepURL, 300)))
 			}
 			continue
 		}
 		adCount++
-		ads = append(ads, AdResult{Variant: i + 1, AdID: adID, CreativeID: creativeID, ImageHash: imageHash})
+		ads = append(ads, AdResult{Variant: i + 1, AdID: adID, CreativeID: creativeID, ImageHash: imageHash, VideoID: video.videoID})
 		// Show the SANITIZED display URL in the human-readable step (Steps may be
 		// persisted/logged), not the full utmURL — which preserves the caller's
 		// original query/fragment and could leak a secret like ?token=... The real
@@ -4001,10 +4139,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 //     by the /adimages upload the caller already performed.
 //   - neither               → the pre-image link-only creative.
 //
-// It is also the seam for further creative formats: a video or carousel creative
-// differs from this one ONLY in this spec (video_data / child_attachments in place
-// of link_data), so a new format lands as a sibling builder selected here by the
-// resolved asset's kind, leaving createVariantAd's creative/ad POST flow untouched.
+// Other creative formats (#550) are siblings, not branches of this builder: a video
+// variant's video_data comes from videoStorySpec, which createVariantAd selects once
+// prepareVideos has produced a ready video id; a carousel is its own creative and ad
+// flow (createCarouselAd in carousel.go).
 func objectStorySpec(pageID, utmURL string, variant AdVariant, imageHash, callToAction string) map[string]any {
 	if callToAction == "" {
 		callToAction = DefaultCallToAction
@@ -4340,11 +4478,18 @@ func (c *Client) uploadImage(ctx context.Context, image []byte, contentType stri
 // treat the part as a file upload rather than a scalar field, and Meta echoes its basename back
 // as the response key. uploadImage reads the single entry by value rather than by that key.
 func multipartFraming(contentType string) (prefix, suffix []byte, headerValue string, err error) {
+	return multipartFramingNamed(contentType, "creative")
+}
+
+// multipartFramingNamed is multipartFraming with the part's filename chosen by the caller: the
+// video upload (#550) names its part "creative.mp4", so the file's type is evident from its name
+// as well as from its Content-Type.
+func multipartFramingNamed(contentType, filename string) (prefix, suffix []byte, headerValue string, err error) {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 
 	partHeader := textproto.MIMEHeader{}
-	partHeader.Set("Content-Disposition", `form-data; name="source"; filename="creative"`)
+	partHeader.Set("Content-Disposition", `form-data; name="source"; filename="`+filename+`"`)
 	if strings.TrimSpace(contentType) != "" {
 		partHeader.Set("Content-Type", contentType)
 	}
@@ -4569,8 +4714,11 @@ func (c *Client) uploadImageAttempt(ctx context.Context, path string, prefix, im
 // per-campaign uploadCache and the throttle retry safe. It is NOT a claim that a re-dispatch
 // re-runs it: an upload shortfall persists as a terminal created_degraded campaign that the
 // orchestrator reuses as-is, so this call is not reached again.
-func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant AdVariant, adSetID, utmURL string, i int, uploads *uploadCache) (adID, creativeID, imageHash string, err error) {
-	if len(variant.ImageBytes) > 0 {
+//
+// A VIDEO variant (#550 gap 9) arrives with its video already uploaded and ready (video.videoID,
+// prepareVideos): no image upload runs, and the creative carries video_data instead of link_data.
+func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant AdVariant, adSetID, utmURL string, i int, uploads *uploadCache, video preparedVideo) (adID, creativeID, imageHash string, err error) {
+	if video.videoID == "" && len(variant.ImageBytes) > 0 {
 		if imageHash, err = uploads.upload(ctx, c, variant.ImageBytes, variant.ImageMIME); err != nil {
 			// No bytes, size, or checksum in the message — only which variant failed.
 			//
@@ -4588,8 +4736,13 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 		"name":              fmt.Sprintf("%s - Variant %d", in.EventName, i+1),
 		"object_story_spec": objectStorySpec(c.account.PageID, utmURL, variant, imageHash, in.CallToAction),
 	}
+	if video.videoID != "" {
+		creativeBody["object_story_spec"] = videoStorySpec(c.account.PageID, utmURL, variant, video.videoID, video.thumbnail, in.CallToAction)
+	}
 	// An instant-form lead ad's button opens the form (#550, gap 8): Meta's Lead Ads guide puts
-	// lead_gen_form_id in link_data.call_to_action.value in place of the click link.
+	// lead_gen_form_id in link_data.call_to_action.value in place of the click link. A video
+	// variant never reaches here with a form: CreateCampaign's up-front variant loop refuses the
+	// pair (the variantHasVideo / LeadFormID check beside ValidateVideoVariant).
 	if in.LeadFormID != "" {
 		withLeadForm(creativeBody["object_story_spec"].(map[string]any), in.LeadFormID)
 	}

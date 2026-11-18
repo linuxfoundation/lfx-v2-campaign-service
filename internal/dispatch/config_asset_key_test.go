@@ -18,7 +18,8 @@ import (
 const snapshotAssetIDKey = "imageassetid"
 
 // snapshotVideoAssetIDKey is postgres.snapshotVideoAssetIDKey (#586), repeated for the same
-// reason: a LinkedIn video variant and a Reddit video post (#549) name their stored MP4 under it.
+// reason: a LinkedIn video variant, a Reddit video post (#549) and a Meta video variant (#550) name
+// their stored MP4 under it.
 // snapshotThumbnailAssetIDKey is postgres's third key: a Reddit video post's stored thumbnail.
 const (
 	snapshotVideoAssetIDKey     = "videoassetid"
@@ -56,7 +57,9 @@ func TestPlatformConfigsNameTheirAssetUnderOneKey(t *testing.T) {
 		"reddit-thumbnail": redditConfig{ThumbnailAssetID: assetID},
 		"microsoft":        microsoftConfig{ImageAssetID: assetID},
 		"meta":             metaConfig{Variants: []meta.AdVariant{{ImageAssetID: assetID}}},
-		"linkedin":         linkedinConfig{Variants: []linkedin.CreativeVariant{{ImageAssetID: assetID}}},
+		// The Meta video variant (#550) names its asset under the second key.
+		"meta-video": metaConfig{Variants: []meta.AdVariant{{VideoAssetID: assetID}}},
+		"linkedin":   linkedinConfig{Variants: []linkedin.CreativeVariant{{ImageAssetID: assetID}}},
 		// EVERY Google slot, not one of them: they are separate fields on several structs,
 		// and one more slot declared as a bare []string would carry no key on its elements
 		// at all.

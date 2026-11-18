@@ -1152,6 +1152,28 @@ campaign-id rule. `ActivateCampaignHolding(campaign, adSet, holdAdSet, heldAdIDs
 cascade that skips each held ad's POST (and the ad set's when held); `updateCampaignTree` /
 `updateAdSetAndAds` carry the held set, which PAUSE never uses.
 
+## Video ads (`video.go`, #550 gap 9)
+
+`AdVariant.VideoAssetID` (config) with `VideoBytes`/`VideoMIME` (`json:"-"`, set by the dispatcher)
+makes a variant a video ad. `ValidateVideoVariant` refuses an image alongside, unresolved bytes and
+a non-MP4 before any request. After the ad set exists, `prepareVideos` uploads each distinct video
+once to `/act_<id>/advideos` (`uploadVideo`: one attempt, multipart `source` framed in place by
+`multipartFramingNamed`), polls `video_status` within one shared wait (`WithVideoPolling`; defaults
+3 s / 60 s) and reads the preferred auto-generated thumbnail; `createVariantAd` then builds
+`videoStorySpec` (`video_data`) instead of `objectStorySpec`. Per-variant video failures are
+non-fatal Steps lines; a cancelled caller returns the partial. `CampaignResult.VideoIDs` and
+`AdResult.VideoID` record the minted ids. See [Meta Video Ads](../architecture/meta-video-ads.md).
+
+## Carousel ads (`carousel.go`, #550 gap 10)
+
+`CampaignInput.Format` (`NormalizeFormat`: single | carousel). A carousel is checked whole by
+`ValidateCarousel` (2-10 image cards, no video, one message) before the per-variant checks, which
+then require `primaryText` only on card 1; the creative name `<event> - Carousel` is bounded too.
+After the ad set, `createCarouselAd` replaces the variant loop: card images through the
+`uploadCache`, one `child_attachments` creative (`carouselStorySpec`), one ad. Failures are worded
+by `carouselFailureStep` (card URLs scrubbed as `scrubURLFromErr` does). `CampaignResult.Format`
+and `AdResult.CardImageHashes` record it. See [Meta Carousel Ads](../architecture/meta-carousel-ads.md).
+
 ## Audience targeting (`targeting.go`, #550)
 
 `CampaignInput.Targeting` (`metaConfig.targeting`) adds an age range, a gender, custom audiences to
