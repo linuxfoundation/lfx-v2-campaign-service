@@ -904,8 +904,11 @@ end date that started before the window, `fillSpendBeforeWindow` makes ONE more 
 analytics read, from the earliest such start through the day before the window, and sets
 `AccountCampaignRow.SpendBeforeWindow` on those rows (0 for one absent from the response). The
 rules pace that campaign's window against what remains of its total, so the window that spends
-its last dollars no longer reads as underspending. The read is best-effort: a failure is logged
-and leaves the field nil, and the rules fall back to the whole total.
+its last dollars no longer reads as underspending. A remainder under a tenth of the daily cap
+counts as spent (LinkedIn stops a lifetime budget a little short of its total, for example
+$999.70 of $1,000), and a spent total gives unknown pacing rather than 0% underspending. The read
+is best-effort: a failure is logged and leaves the field nil, and the rules fall back to the whole
+total.
 
 `LinkedInDispatcher.VerifyAccountOrg(ctx, projectID, platform)` implements another optional
 capability, `OrgReferenceVerifier` (`internal/service/orchestrator.go`) — LinkedIn is the ONLY

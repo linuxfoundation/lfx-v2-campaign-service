@@ -166,11 +166,22 @@ func linkedinRemainingTotal(m model.AccountCampaignMetrics) float64 {
 	return math.Max(0, m.TotalBudget-*m.SpendBeforeWindow)
 }
 
-// linkedinTotalSpentBeforeWindow reports a capped campaign with no end whose whole total was
-// spent before the window opened, so the window had nothing to spend (#636).
+// linkedinSpentRemainderOfCap is the share of the daily cap below which what remains of a capped
+// campaign's total counts as spent (#636). LinkedIn delivers in whole auction wins, each a click
+// or a block of impressions, and stops a lifetime budget once the next win could overrun it, so
+// it routinely leaves a few cents or dollars of the total unspent ($999.70 of $1,000). Pacing the
+// window against that stub would read the campaign's $0 as 0% and raise a HIGH "Underspending" on
+// a campaign that is simply finished. A tenth of a day's cap is well under what one day delivers,
+// and sizing it from the cap keeps it in the account's own currency.
+const linkedinSpentRemainderOfCap = 0.1
+
+// linkedinTotalSpentBeforeWindow reports a capped campaign with no end whose total was spent
+// before the window opened, so the window had nothing to spend (#636). "Spent" allows the stub
+// LinkedIn leaves when it stops just short of the total: a remainder under
+// linkedinSpentRemainderOfCap of the daily cap.
 func linkedinTotalSpentBeforeWindow(m model.AccountCampaignMetrics) bool {
 	return m.TotalBudget > 0 && m.BudgetDay > 0 && parseMonitorDate(m.EndDate).IsZero() &&
-		m.SpendBeforeWindow != nil && linkedinRemainingTotal(m) <= 0
+		m.SpendBeforeWindow != nil && linkedinRemainingTotal(m) < m.BudgetDay*linkedinSpentRemainderOfCap
 }
 
 // linkedinTotalExpected is the lifetime branch: the total spread evenly over the flight, times

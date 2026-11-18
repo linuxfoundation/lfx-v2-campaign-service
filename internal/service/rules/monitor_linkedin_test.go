@@ -174,6 +174,42 @@ func TestEvaluateLinkedInMonitor_CappedNoEndTotalSpentBeforeWindowIsUnknown(t *t
 	}
 }
 
+// TestEvaluateLinkedInMonitor_CappedNoEndStoppedJustShortOfTotalIsUnknown: LinkedIn stops a
+// lifetime budget once the next auction win could overrun it, so a campaign can end $0.30 short of
+// its $1,000 total. Paced against that $0.30 its $0 window reads 0%, a HIGH "Underspending" on a
+// finished campaign; a remainder under a tenth of the $20 cap counts as spent, so the row is
+// unknown pacing. A remainder of a tenth of the cap or more is still paced.
+func TestEvaluateLinkedInMonitor_CappedNoEndStoppedJustShortOfTotalIsUnknown(t *testing.T) {
+	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name        string
+		before      float64
+		wantUnknown bool
+	}{
+		{"30 cents left", 999.70, true},
+		{"just under a tenth of the cap left", 998.01, true},
+		{"a tenth of the cap left", 998, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := tc.before
+			m := model.AccountCampaignMetrics{PlatformCampaignID: "1", Name: "c", Status: "ACTIVE",
+				TotalBudget: 1000, BudgetDay: 20, StartDate: "2026-04-21", SpendBeforeWindow: &before}
+			rows, items := EvaluateLinkedInMonitor([]model.AccountCampaignMetrics{m}, 7, now, "USD")
+			if len(rows) != 1 || rows[0].Metrics.PacingUnknown != tc.wantUnknown {
+				t.Fatalf("row = %+v, want PacingUnknown=%v", rows, tc.wantUnknown)
+			}
+			if !tc.wantUnknown {
+				return
+			}
+			for _, it := range items {
+				if strings.Contains(it.Issue, "Underspending") {
+					t.Errorf("underspending item %q raised for a campaign LinkedIn stopped just short of its total", it.Issue)
+				}
+			}
+		})
+	}
+}
+
 // TestLinkedinActionItems_UnderspendingAndConstrained exercise the two label-driven rules and
 // the CTR/conversions/paused rules in isolation.
 func TestLinkedinActionItems_UnderspendingAndConstrained(t *testing.T) {
