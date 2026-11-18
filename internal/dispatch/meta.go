@@ -79,6 +79,10 @@ type metaConfig struct {
 	// meta.NormalizeConversionEvent's allow-list; empty keeps PURCHASE. Refused on any other
 	// objective, and while META_CONVERSION_EVENT_ENABLED is not "true".
 	ConversionEvent string `json:"conversionEvent"`
+	// Format is the creative format (#550 gap 10): "" or "single" keeps one ad per variant;
+	// "carousel" builds one ad whose 2-10 cards are the variants. Refused while
+	// META_CAROUSEL_ENABLED is not "true" (checkMetaFormat).
+	Format string `json:"format"`
 	// Targeting is the optional audience targeting (#550): age, gender, custom audiences to include
 	// and exclude, and the Advantage+ audience flag. Refused while META_AUDIENCE_TARGETING_ENABLED is
 	// not "true" (metaTargetingEnabled); the later fields (locales, devicePlatforms, interests, regions,
@@ -215,6 +219,32 @@ func checkMetaVideoVariants(cfg metaConfig) error {
 		}
 	}
 	return nil
+}
+
+// checkMetaFormat refuses a metaConfig.format the create cannot build (#550 gap 10): a value other
+// than single or carousel, a carousel while META_CAROUSEL_ENABLED is not exactly "true" (read per
+// call), a carousel on a leadFormId create (meta.CheckCarouselLeadForm), and a carousel whose
+// variants are not 2-10 image cards with one message (meta.ValidateCarousel). A blank format is single. The client re-checks all but the gate.
+func checkMetaFormat(cfg metaConfig) error {
+	format, err := meta.NormalizeFormat(cfg.Format)
+	if err != nil || format != meta.FormatCarousel {
+		return err
+	}
+	if os.Getenv(constants.EnvMetaCarouselEnabled) != "true" {
+		return metaCreativeOptionDisabled("format", constants.EnvMetaCarouselEnabled)
+	}
+	if err := meta.CheckCarouselLeadForm(cfg.LeadFormID); err != nil {
+		return err
+	}
+	return meta.ValidateCarousel(cfg.Variants)
+}
+
+// metaRequestedAds is the number of ads a create asks for: one per variant, or one for a carousel.
+func metaRequestedAds(cfg metaConfig) int {
+	if f, err := meta.NormalizeFormat(cfg.Format); err == nil && f == meta.FormatCarousel {
+		return 1
+	}
+	return len(cfg.Variants)
 }
 
 // metaTargetingEnabled reports whether this deployment opted in to metaConfig.targeting (#550).
@@ -954,6 +984,10 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	if err := checkMetaVideoVariants(cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// The creative format and the carousel's cards (#550 gap 10), before any request.
+	if err := checkMetaFormat(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	// The audience targeting gate and its shape (#550), before any Meta request. The client
 	// normalizes it again and reads each custom audience before the first write.
 	if err := checkMetaTargeting(cfg.Targeting, cfg.Placements, cfg.Objective); err != nil {
@@ -1062,6 +1096,8 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		LeadFormID: cfg.LeadFormID,
 		// The ad schedule; the client checks it again (#550). Gated above.
 		AdSchedule: cfg.AdSchedule,
+		// The creative format as the caller sent it (#550 gap 10); gated above.
+		Format: cfg.Format,
 		// The audience targeting as the caller sent it; the client normalizes it (#550).
 		Targeting: cfg.Targeting,
 
@@ -1098,7 +1134,8 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	// variant), so len(cfg.Variants) is the requested count.
 	bidApplied = result.BidApplied
 	camp = campaignFromMeta(ctx, result, cfg)
-	if result.AdCount < len(cfg.Variants) {
+	// A carousel (#550 gap 10) asks for one ad, not one per variant.
+	if result.AdCount < metaRequestedAds(cfg) {
 		camp.Status = campaignStatusCreatedDegraded
 	}
 	return camp, nil
@@ -1565,8 +1602,8 @@ func metaRunStatus(status string) (string, error) {
 // code passes through unchanged.
 //
 // Kept verbatim: Objective (refused by the client unless it names a known objective),
-// CallToAction, ConversionEvent and OptimizationGoal (#550: refused unless allow-listed, so only their casing can
-// differ from what was sent),
+// CallToAction, ConversionEvent, OptimizationGoal and Format (#550: refused unless allow-listed, so
+// only their casing can differ from what was sent),
 // InstagramUserID (refused unless numeric), Variants[].ImageAssetID and VideoAssetID (stored
 // asset keys; the snapshot guard reads both),
 // numbers, flags and dates. ImageBytes, ImageMIME, VideoBytes and VideoMIME are json:"-" and
@@ -1954,6 +1991,10 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 	if err := checkMetaVideoVariants(cfg); err != nil {
 		return err
 	}
+	// The creative format (#550 gap 10): the gate and a carousel's cards.
+	if err := checkMetaFormat(cfg); err != nil {
+		return err
+	}
 	// The audience targeting (#550): a wrong-typed block would decode to nil above and pass as
 	// absent, so it is decoded on its own first and a type error is a 400 too.
 	t, err := decodeMetaTargeting(config)
@@ -1985,9 +2026,9 @@ func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Pr
 }
 
 // metaStringConfigKeys are the string fields checkMetaStringFieldShape type-checks: the publish identity,
-// and since #550 the call-to-action, conversion event, optimization goal and lead form, which would otherwise
-// read as absent.
-var metaStringConfigKeys = []string{"instagramUserId", "callToAction", "conversionEvent", "dsaBeneficiary", "dsaPayor", "optimizationGoal", "leadFormId"}
+// and since #550 the call-to-action, conversion event, optimization goal, lead form and creative
+// format, which would otherwise read as absent.
+var metaStringConfigKeys = []string{"instagramUserId", "callToAction", "conversionEvent", "dsaBeneficiary", "dsaPayor", "optimizationGoal", "leadFormId", "format"}
 
 // decodeMetaTargeting decodes metaConfig.targeting on its own, so a wrong-typed block (or a
 // wrong-typed field in it) is a synchronous refusal rather than an absent block — PreflightCreate's
@@ -2054,7 +2095,7 @@ func decodeMetaConfigObject[T any](config json.RawMessage, key, shape string) (*
 }
 
 // checkMetaStringFieldShape refuses a metaConfig whose instagramUserId, dsaBeneficiary, dsaPayor,
-// callToAction or conversionEvent is present with a non-string JSON type (null is absent, as encoding/json reads it). PreflightCreate
+// callToAction, conversionEvent or format is present with a non-string JSON type (null is absent, as encoding/json reads it). PreflightCreate
 // decodes best-effort and ignores type errors, so without this `"instagramUserId": true` or
 // `"dsaBeneficiary": 1` on an EU target would read as absent and fail open into a 202 — then fail
 // the job on Dispatch's strict decode. Keys are matched case-insensitively, as encoding/json
