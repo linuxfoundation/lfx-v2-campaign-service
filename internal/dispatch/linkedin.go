@@ -201,7 +201,8 @@ type linkedinConfig struct {
 	TargetingProfiles  []linkedin.TargetingProfileConfig `json:"targetingProfiles"`
 	EmployerExclusions []string                          `json:"employerExclusions"`
 	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic:
-	// a WEBSITE_VISIT campaign bidding MAX_CLICK. Manual is WEBSITE_CONVERSION + a manual CPC.
+	// a WEBSITE_VISIT campaign bidding MAX_CLICK, or WEBSITE_CONVERSION bidding MAX_CONVERSION
+	// under objective "conversions" (#582). Manual is WEBSITE_CONVERSION + a manual CPC.
 	Bidding *biddingConfig `json:"bidding,omitempty"`
 	// Targeting is the caller's own targetingCriteria (#552), behind
 	// LINKEDIN_ADS_TARGETING_ENABLED. Set, it replaces TargetingProfile and the hard-coded
@@ -217,6 +218,41 @@ type linkedinConfig struct {
 	Format string `json:"format,omitempty"`
 	// TextAds are the Text Ad creatives of a "text" create (#586); refused with any other format.
 	TextAds []linkedin.TextAd `json:"textAds,omitempty"`
+	// Objective is the campaign's optimisation goal (#582): "traffic" or "conversions", exactly.
+	// Omitted, the bidding strategy decides as before (automatic → WEBSITE_VISIT / MAX_CLICK,
+	// manual → WEBSITE_CONVERSION / NONE). "conversions" with automatic bidding creates
+	// WEBSITE_CONVERSION / MAX_CONVERSION and requires Conversions. See linkedinObjective.
+	Objective string `json:"objective,omitempty"`
+	// JobFunctions replace the default job functions in the profile's jobFunctions clause
+	// (#585). Not read with Targeting. See linkedin.ValidateJobFunctions.
+	JobFunctions []string `json:"jobFunctions,omitempty"`
+}
+
+// checkJobFunctionsShape refuses a linkedInConfig.jobFunctions that is not a JSON array of
+// strings (#585), explicit null included. The best-effort pre-flight decode leaves a wrong-typed
+// value nil, which reads as "use the default", so without this a caller sending "urn:li:function:4"
+// would get the default three silently. Anything it cannot attribute to jobFunctions is left to
+// the ordinary decode.
+func checkJobFunctionsShape(config json.RawMessage) error {
+	const msg = "linkedInConfig.jobFunctions must be an array of job function URN strings, e.g. [\"urn:li:function:8\"]"
+	return checkStringArrayShape(config, "jobFunctions", msg, msg)
+}
+
+// linkedinJobFunctions checks linkedInConfig.jobFunctions before any job or request: refused
+// with targeting, which brings its own clauses and would leave it unread, and refused when
+// linkedin.ValidateJobFunctions refuses it. Returns the de-duplicated copy, nil for the default.
+func linkedinJobFunctions(cfg linkedinConfig) ([]string, error) {
+	if cfg.JobFunctions == nil {
+		return nil, nil
+	}
+	if cfg.Targeting != nil {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.jobFunctions is not read with linkedInConfig.targeting; put the job functions in a targeting clause instead", domain.ErrCreateConfigInvalid))
+	}
+	fns, err := linkedin.ValidateJobFunctions(cfg.JobFunctions)
+	if err != nil {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: %w", domain.ErrCreateConfigInvalid, err))
+	}
+	return fns, nil
 }
 
 // linkedinConversionsEnabled reports whether this deployment opted in to
@@ -259,6 +295,16 @@ func checkAdAccountIDShape(config json.RawMessage) error {
 // pre-flight decode keeps going, so without this a caller sending [104012] would be told "" is
 // not an id. Anything it cannot attribute to `conversions` is left to the ordinary decode.
 func checkConversionsShape(config json.RawMessage) error {
+	return checkStringArrayShape(config, "conversions",
+		"linkedInConfig.conversions must be an array of conversion rule id strings, e.g. [\"104012\"]",
+		"linkedInConfig.conversions entries must be strings, e.g. [\"104012\"]")
+}
+
+// checkStringArrayShape refuses a linkedInConfig.<field> that is not a JSON array of strings,
+// with notArray for a null or non-array value and notString for a non-string entry, each as an
+// ErrCreateConfigInvalid pre-flight refusal. The key is matched case-insensitively, as
+// encoding/json does. Anything it cannot attribute to the field is left to the ordinary decode.
+func checkStringArrayShape(config json.RawMessage, field, notArray, notString string) error {
 	var envelope map[string]json.RawMessage
 	if json.Unmarshal(config, &envelope) != nil {
 		return nil
@@ -268,19 +314,19 @@ func checkConversionsShape(config json.RawMessage) error {
 		return nil
 	}
 	for k, raw := range platformCfg {
-		if !strings.EqualFold(k, "conversions") {
+		if !strings.EqualFold(k, field) {
 			continue
 		}
 		var entries []json.RawMessage
 		// An explicit null decodes to a nil slice without error, which would read as "omitted";
 		// it is refused instead, as a non-array is.
 		if isJSONNull(raw) || json.Unmarshal(raw, &entries) != nil {
-			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.conversions must be an array of conversion rule id strings, e.g. [\"104012\"]", domain.ErrCreateConfigInvalid))
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: %s", domain.ErrCreateConfigInvalid, notArray))
 		}
 		for _, e := range entries {
 			var str string
 			if json.Unmarshal(e, &str) != nil {
-				return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.conversions entries must be strings, e.g. [\"104012\"]", domain.ErrCreateConfigInvalid))
+				return domain.WrapPreflightRefusal(fmt.Errorf("%w: %s", domain.ErrCreateConfigInvalid, notString))
 			}
 		}
 	}
@@ -305,6 +351,13 @@ func linkedinConversions(cfg linkedinConfig) ([]string, error) {
 	}
 	return ids, nil
 }
+
+// The linkedInConfig.objective spellings (#582), exactly — the Reddit and Meta configs' words for
+// the same two goals.
+const (
+	linkedinObjectiveTraffic     = "traffic"
+	linkedinObjectiveConversions = "conversions"
+)
 
 // linkedinTargetingEnabled reports whether this deployment opted in to linkedInConfig.targeting
 // (#552). Read per call so it flips without a rebuild. Off by default: no targeting shape has
@@ -394,10 +447,165 @@ func linkedinTargeting(cfg linkedinConfig) (*linkedin.Targeting, error) {
 	return t, nil
 }
 
-// linkedinBidPlan resolves linkedInConfig's bidding choice. The OBJECTIVE follows it (decision
-// 2026-10-13, Misha): automatic — the default — creates a WEBSITE_VISIT campaign optimising for
-// clicks (MAX_CLICK), because MAX_CONVERSION, the only automated target WEBSITE_CONVERSION allows,
-// needs a conversion association this service does not create; manual creates the WEBSITE_CONVERSION
+// linkedinCallToActionEnabled reports whether this deployment opted in to
+// linkedInConfig.variants[].callToAction (#588). Read per call so it flips without a rebuild. Off by
+// default: no call to action on an article dark post has been sent to a live LinkedIn account, and
+// a refused one fails the dark post after the campaign group and campaign exist.
+func linkedinCallToActionEnabled() bool {
+	return os.Getenv(constants.EnvLinkedInAdsCallToActionEnabled) == "true"
+}
+
+// variantStringFields are the optional per-variant strings checkVariantsShape type-checks.
+var variantStringFields = []string{"name", "callToAction", "description"}
+
+// checkVariantsShape refuses a linkedInConfig.variants entry whose name, callToAction or description
+// (#588, #589) is not a JSON string, explicit null included. encoding/json skips a wrong-typed field
+// in the best-effort pre-flight decode (a "callToAction": 1 decodes to ""), so without this a caller's
+// value would be silently dropped: the creative named by default, or created with no button. A
+// variants value that is not an array of objects is left to the ordinary decode.
+func checkVariantsShape(config json.RawMessage) error {
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(config, &envelope) != nil {
+		return nil
+	}
+	var platformCfg map[string]json.RawMessage
+	if json.Unmarshal(envelope["linkedInConfig"], &platformCfg) != nil {
+		return nil
+	}
+	for k, raw := range platformCfg {
+		if !strings.EqualFold(k, "variants") {
+			continue
+		}
+		var variants []map[string]json.RawMessage
+		if json.Unmarshal(raw, &variants) != nil {
+			return nil
+		}
+		for i, v := range variants {
+			for vk, vraw := range v {
+				for _, field := range variantStringFields {
+					var str string
+					if strings.EqualFold(vk, field) && (isJSONNull(vraw) || json.Unmarshal(vraw, &str) != nil) {
+						return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.variants[%d].%s must be a string; omit it for none", domain.ErrCreateConfigInvalid, i, field))
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// linkedinVariants checks the optional per-variant callToAction and name (#588, #589) before any job
+// or request: a callToAction is refused while the deployment gate is off, and both are refused when
+// linkedin.ValidateVariantFields refuses them (an unknown label, two variants with one name). Both
+// are ErrCreateConfigInvalid pre-flight refusals, so PreflightCreate answers them with a synchronous
+// 400 and Dispatch fails the job with the same sentence. eventName is the brief's event name, or
+// "" when it is not known; with one, a caller's name equal to another variant's
+// "<event> | variant-N" default is refused too (linkedin.ValidateCreativeNames).
+func linkedinVariants(cfg linkedinConfig, eventName string) error {
+	for i, v := range cfg.Variants {
+		if v.CallToAction != "" && !linkedinCallToActionEnabled() {
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.variants[%d].callToAction is disabled on this deployment (%s is not \"true\"); omit it, or ask an operator to set %s to \"true\"",
+				domain.ErrCreateConfigInvalid, i, constants.EnvLinkedInAdsCallToActionEnabled, constants.EnvLinkedInAdsCallToActionEnabled))
+		}
+	}
+	if err := linkedin.ValidateVariantFields(cfg.Variants); err != nil {
+		return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.variants: %w", domain.ErrCreateConfigInvalid, err))
+	}
+	if err := linkedin.ValidateCreativeNames(eventName, cfg.Variants); err != nil {
+		return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.variants: %w", domain.ErrCreateConfigInvalid, err))
+	}
+	return nil
+}
+
+// linkedinPreflightEventName is the event name of the brief PreflightCreate runs for
+// (model.CreatePreflightBrief), or "" when there is none or its fields do not decode, in which
+// case the job decides.
+func linkedinPreflightEventName(ctx context.Context) string {
+	brief := model.CreatePreflightBrief(ctx)
+	if brief == nil {
+		return ""
+	}
+	bf, err := decodeBriefFields(brief)
+	if err != nil {
+		return ""
+	}
+	return bf.EventName
+}
+
+// checkObjectiveShape refuses a linkedInConfig.objective that is not a non-empty JSON string
+// (#582), explicit null and "" included: the best-effort pre-flight decode skips a wrong-typed field, and a
+// skipped objective would read as omitted and create a traffic campaign. The value itself is
+// checked by linkedinObjective.
+func checkObjectiveShape(config json.RawMessage) error {
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(config, &envelope) != nil {
+		return nil
+	}
+	var platformCfg map[string]json.RawMessage
+	if json.Unmarshal(envelope["linkedInConfig"], &platformCfg) != nil {
+		return nil
+	}
+	for k, raw := range platformCfg {
+		if !strings.EqualFold(k, "objective") {
+			continue
+		}
+		var str string
+		// An empty string decodes like an omitted field and is refused as null is.
+		if isJSONNull(raw) || json.Unmarshal(raw, &str) != nil || str == "" {
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.objective must be the string \"traffic\" or \"conversions\"; omit it to let the bidding strategy decide", domain.ErrCreateConfigInvalid))
+		}
+	}
+	return nil
+}
+
+// linkedinObjective resolves linkedInConfig.objective (#582) against the bidding plan and the
+// validated conversions into the objectiveType the client creates ("" lets the strategy decide).
+// Every refusal is an ErrCreateConfigInvalid pre-flight refusal: a synchronous 400 from
+// PreflightCreate, and the same sentence failing the job from Dispatch.
+//
+//   - omitted: "" — automatic is WEBSITE_VISIT / MAX_CLICK, manual WEBSITE_CONVERSION / NONE.
+//   - "traffic": WEBSITE_VISIT, automatic only. A manual bid is created under WEBSITE_CONVERSION
+//     (the setup the bid lever re-bids), so traffic with manual is refused rather than silently
+//     created as a conversions campaign.
+//   - "conversions": WEBSITE_CONVERSION. Manual is the manual create unchanged. Automatic is
+//     MAX_CONVERSION, LinkedIn's "Maximum delivery" for Website conversions, which LinkedIn will
+//     not activate until a conversion is associated ("Create and Manage Campaigns",
+//     li-lms-2026-02: "Campaigns optimizing for MAX_CONVERSION must have a conversion associated
+//     with it to be activated"). DECISION (#582): it therefore REQUIRES linkedInConfig.conversions,
+//     which this service associates right after the create. With none it is refused: a campaign
+//     that can never be activated from this service is not created. It so inherits the
+//     conversions gates — LINKEDIN_ADS_CONVERSIONS_ENABLED and global_marketing_ops — and an
+//     association that fails after the create leaves the campaign PAUSED and created_degraded with
+//     the step to associate it in Campaign Manager before activating (#552's degraded path).
+func linkedinObjective(cfg linkedinConfig, plan bidPlan) (string, error) {
+	switch cfg.Objective {
+	case "":
+		return "", nil
+	case linkedinObjectiveTraffic:
+		if plan.manual() {
+			return "", domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.objective \"traffic\" is offered with automatic bidding only; a manual bid is created under the website conversions objective, so choose objective \"conversions\" (or omit it) for manual bidding",
+				domain.ErrCreateConfigInvalid))
+		}
+		return linkedin.ObjectiveWebsiteVisit, nil
+	case linkedinObjectiveConversions:
+		if !plan.manual() && len(cfg.Conversions) == 0 {
+			gate := ""
+			if !linkedinConversionsEnabled() {
+				gate = fmt.Sprintf(" (linkedInConfig.conversions is disabled on this deployment until an operator sets %s to \"true\")", constants.EnvLinkedInAdsConversionsEnabled)
+			}
+			return "", domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.objective \"conversions\" with automatic bidding optimises for conversions (MAX_CONVERSION), which LinkedIn will not activate until a conversion is associated, so it requires linkedInConfig.conversions%s; name the conversion rule ids to associate, or choose manual bidding or objective \"traffic\"",
+				domain.ErrCreateConfigInvalid, gate))
+		}
+		return linkedin.ObjectiveWebsiteConversion, nil
+	}
+	return "", domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.objective must be \"traffic\" or \"conversions\"", domain.ErrCreateConfigInvalid))
+}
+
+// linkedinBidPlan resolves linkedInConfig's bidding choice. Unless linkedInConfig.objective names
+// one (#582, linkedinObjective), the OBJECTIVE follows it (decision 2026-10-13, Misha): automatic —
+// the default — creates a WEBSITE_VISIT campaign optimising for clicks (MAX_CLICK), because
+// MAX_CONVERSION, the only automated target WEBSITE_CONVERSION allows, needs a conversion
+// association; manual creates the WEBSITE_CONVERSION
 // campaign with costType CPC, optimizationTargetType NONE and unitCost = the bid — the setup the bid
 // lever reads as a manual max CPC. See linkedin.campaignBidding for the citations.
 //
@@ -462,6 +670,26 @@ func linkedinDailyCap(cfg linkedinConfig) error {
 	return nil
 }
 
+// linkedinLifetimeFloor refuses, before any job or request, a lifetime budget on a fixed
+// schedule whose total is under LinkedIn's minimum for the flight, max($100, $10 × days) (#633):
+// LinkedIn creates such a campaign but will not activate it. Days are the UTC start-through-end
+// count linkedin.ValidateFixedScheduleLifetimeDates documents. A capped lifetime budget (#584)
+// runs on a continuous schedule with its own dailyBudget, so linkedinDailyCap covers it instead.
+// Malformed amounts and dates are left to the client's own refusals.
+func linkedinLifetimeFloor(cfg linkedinConfig, now time.Time) error {
+	if !cfg.LifetimeBudget || cfg.DailyCapUSD != nil {
+		return nil
+	}
+	if err := linkedin.ValidateFixedScheduleLifetimeDates(cfg.BudgetUSD, cfg.StartDate, cfg.EndDate, now); err != nil {
+		reason, ok := linkedin.BudgetAmountReason(err)
+		if !ok {
+			reason = "the lifetime budget is below LinkedIn's minimum for these dates"
+		}
+		return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.budgetUsd: %s", domain.ErrCreateConfigInvalid, reason))
+	}
+	return nil
+}
+
 // derefFloat returns *p, or 0 for nil.
 func derefFloat(p *float64) float64 {
 	if p == nil {
@@ -482,7 +710,9 @@ func derefFloat(p *float64) float64 {
 //   - adAccountId (#581): an `adAccountId` that is not a JSON string (checkAdAccountIDShape; null
 //     reads as omitted), or an account selectLinkedInAccount refuses for the resolved connection;
 //   - daily cap: a `dailyCapUsd` that is not a JSON number (checkDailyCapShape), or one
-//     linkedinDailyCap refuses (linkedin.ValidateDailyCap) (#584).
+//     linkedinDailyCap refuses (linkedin.ValidateDailyCap) (#584);
+//   - lifetime floor: an uncapped lifetime budget under max($100, $10 × flight days)
+//     (linkedinLifetimeFloor, #633).
 //
 // It never calls LinkedIn (adAccountId needs only the database read a create's resolution makes),
 // so every other outcome is ErrPreflightNotApplicable; a config that does not decode is otherwise
@@ -510,7 +740,17 @@ func (d *LinkedInDispatcher) PreflightCreate(ctx context.Context, projectID stri
 	if err := checkConversionsShape(config); err != nil {
 		return err
 	}
-	if _, err := linkedinConversions(cfg); err != nil {
+	conversions, err := linkedinConversions(cfg)
+	if err != nil {
+		return err
+	}
+	// linkedInConfig.objective (#582), after conversions so a disabled conversions list is named
+	// first; MAX_CONVERSION's conversion requirement is checked against the validated list.
+	if err := checkObjectiveShape(config); err != nil {
+		return err
+	}
+	cfg.Conversions = conversions
+	if _, err := linkedinObjective(cfg, plan); err != nil {
 		return err
 	}
 	// linkedInConfig.targeting (#552) is promised as a synchronous 400 too. checkTargetingShape
@@ -537,6 +777,14 @@ func (d *LinkedInDispatcher) PreflightCreate(ctx context.Context, projectID stri
 			}
 		}
 	}
+	// linkedInConfig.variants[].name, callToAction and description (#588, #589) are promised as a
+	// synchronous 400 too, a wrong JSON type included.
+	if err := checkVariantsShape(config); err != nil {
+		return err
+	}
+	if err := linkedinVariants(cfg, linkedinPreflightEventName(ctx)); err != nil {
+		return err
+	}
 	// linkedInConfig.dailyCapUsd (#584) is a synchronous 400 too, a wrong JSON type included.
 	if err := checkDailyCapShape(config); err != nil {
 		return err
@@ -554,6 +802,17 @@ func (d *LinkedInDispatcher) PreflightCreate(ctx context.Context, projectID stri
 	}
 	// Video variants (#586): the feature gate and the request shape are a synchronous 400 too.
 	if err := checkLinkedInVideoVariants(cfg); err != nil {
+		return err
+	}
+	// The fixed-schedule lifetime floor (#633), so the caller gets the 400 before a job exists.
+	if err := linkedinLifetimeFloor(cfg, time.Now()); err != nil {
+		return err
+	}
+	// linkedInConfig.jobFunctions (#585) likewise, a wrong JSON type included.
+	if err := checkJobFunctionsShape(config); err != nil {
+		return err
+	}
+	if _, err := linkedinJobFunctions(cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -595,11 +854,13 @@ type LinkedInDispatcher struct {
 	// fails pre-create and the reserver reserves nothing.
 	creatives creativeAssetReader
 	assets    *AssetReserver
+	// entities caches targeting typeahead answers (#585, linkedin_lookups.go).
+	entities *targetingEntityCache
 }
 
 // NewLinkedInDispatcher builds the adapter from the connection repo + encryptor.
 func NewLinkedInDispatcher(repo connReader, enc domain.Encryptor, opts ...linkedin.Option) *LinkedInDispatcher {
-	return &LinkedInDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts}
+	return &LinkedInDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), entities: newTargetingEntityCache(), opts: opts}
 }
 
 // Dispatch implements service.PlatformDispatcher for LinkedIn.
@@ -671,12 +932,28 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if cfg.Conversions, err = linkedinConversions(cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// The objective (#582), against the plan and the validated conversions, before any call.
+	if err := checkObjectiveShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	objective, err := linkedinObjective(cfg, plan)
+	if err != nil {
+		return nil, notCreated(err)
+	}
 	// Caller targeting (#552), gated and validated before any upstream call. The normalised copy
 	// replaces the request's, so the client and the stored snapshot both see it.
 	if err := checkTargetingShape(config); err != nil {
 		return nil, notCreated(err)
 	}
 	if cfg.Targeting, err = linkedinTargeting(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// Per-variant name, call to action and description (#588, #589), gated and validated before
+	// any upstream call.
+	if err := checkVariantsShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	if err := linkedinVariants(cfg, ""); err != nil {
 		return nil, notCreated(err)
 	}
 	// The daily cap beside a lifetime budget (#584), checked again here: PreflightCreate refuses
@@ -695,6 +972,17 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		return nil, notCreated(err)
 	}
 	if cfg.Format, err = linkedinFormat(cfg, plan); err != nil {
+		return nil, notCreated(err)
+	}
+	if err := linkedinLifetimeFloor(cfg, time.Now()); err != nil {
+		return nil, notCreated(err)
+	}
+	// Job functions (#585), validated before any upstream call; the de-duplicated copy replaces
+	// the request's, for the client and the stored snapshot.
+	if err := checkJobFunctionsShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	if cfg.JobFunctions, err = linkedinJobFunctions(cfg); err != nil {
 		return nil, notCreated(err)
 	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
@@ -781,10 +1069,12 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		Images:           images,
 		Videos:           videos,
 		ManualCPCBid:     plan.amount,
+		Objective:        objective,
 		Conversions:      cfg.Conversions,
 		Targeting:        cfg.Targeting,
 		Format:           cfg.Format,
 		TextAds:          cfg.TextAds,
+		JobFunctions:     cfg.JobFunctions,
 
 		// The name labels of the CLAIMED row (multi-campaign cs-4): its stored funnel stage and
 		// tactic (model.DispatchLabels) and its slot version, never the request's. Slot 2 on gets
@@ -1310,6 +1600,7 @@ func (d *LinkedInDispatcher) ReadAccountMonitor(ctx context.Context, projectID s
 			TotalBudget:        r.TotalBudget,
 			StartDate:          r.StartDate,
 			EndDate:            r.EndDate,
+			SpendBeforeWindow:  r.SpendBeforeWindow,
 			FetchFailed:        r.FetchFailed,
 			FailureClass:       r.FailureClass,
 		})
@@ -1677,8 +1968,9 @@ func linkedinRunStatus(status string) (string, error) {
 // Every caller string that the client does not shape-check goes through sanitizeSnapshotText
 // — the helper X's tweetText and Microsoft's keywords use — which reduces any link-shaped run
 // to scheme+host and drops one carrying userinfo. The fields that matter are
-// Variants[].IntroText and Headline: operator-authored ad copy where a link gets pasted, and a
-// password-reset or magic-link URL keeps its secret in the PATH as readily as in the query.
+// Variants[].IntroText, Headline, Description and Name: operator-authored ad copy where a link
+// gets pasted, and a password-reset or magic-link URL keeps its secret in the PATH as readily as
+// in the query.
 // GeoTargets[].Label, TargetingProfile and TargetingProfiles[].ID/Label are caller labels and
 // selectors bound for the same column and get the same treatment. So are
 // TargetingProfiles[].Skills/Groups: validFacets checks them only on the profile
@@ -1689,7 +1981,8 @@ func linkedinRunStatus(status string) (string, error) {
 // (and so a snapshot) exists: Variants[].ImageURN (urn:li:image:<id> only), EmployerExclusions
 // (validFacets: facet URNs only, and creation is refused when no profile matches), and
 // AdAccountID (refused unless it equals the connection's account). GeoTargets[].URN,
-// Variants[].ImageAssetID (a stored asset key), numbers, flags and dates are kept too.
+// Variants[].ImageAssetID (a stored asset key), Variants[].CallToAction (one of
+// linkedin.CallToActionLabels), numbers, flags and dates are kept too.
 // Bidding is kept verbatim too: resolveBidding refuses a strategy other than automatic or
 // manual before anything is sent, and bidAmount is a number
 // (TestConfigSnapshot_BiddingRoundTripsThroughTheValidator replays the stored copy).
@@ -1706,6 +1999,8 @@ func linkedinSnapshotConfig(cfg linkedinConfig) linkedinConfig {
 		for i := range snapshot.Variants {
 			snapshot.Variants[i].IntroText = sanitizeSnapshotText(cfg.Variants[i].IntroText)
 			snapshot.Variants[i].Headline = sanitizeSnapshotText(cfg.Variants[i].Headline)
+			snapshot.Variants[i].Name = sanitizeSnapshotText(cfg.Variants[i].Name)
+			snapshot.Variants[i].Description = sanitizeSnapshotText(cfg.Variants[i].Description)
 		}
 	}
 	if cfg.TextAds != nil {

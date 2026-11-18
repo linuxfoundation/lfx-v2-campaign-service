@@ -143,6 +143,12 @@ type AccountCampaignMetrics struct {
 	// RFC 3339 date-only (YYYY-MM-DD), empty when the platform did not report one.
 	StartDate string
 	EndDate   string
+	// SpendBeforeWindow is LinkedIn only: the campaign's spend from its start through the day
+	// before the metrics window, in the account's currency. It is read only for a lifetime
+	// budget with a daily cap and no end date that started before the window (#636), so the
+	// rule engine can pace the window against what remains of the total rather than the whole
+	// of it. nil when it was not read.
+	SpendBeforeWindow *float64
 	// FlightRanges is X only: the days the campaign is actually scheduled on, as the union of its
 	// line items' flights — sorted, disjoint, non-adjacent ranges of account-local calendar days.
 	// StartDate/EndDate above are only the envelope of these (earliest start, latest end), which

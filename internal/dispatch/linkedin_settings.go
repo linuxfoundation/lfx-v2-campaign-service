@@ -5,8 +5,10 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -41,7 +43,8 @@ const (
 //     absent whenever it is not reported). The create path records none of these, so each
 //     reads `unknown`.
 //   - objective_type is COMPARED since LFXV2-2665: the create path's objective follows the
-//     bidding strategy it records (automatic → WEBSITE_VISIT, manual → WEBSITE_CONVERSION;
+//     bidding strategy it records (manual → WEBSITE_CONVERSION; automatic → the objectiveType the
+//     create recorded in the result blob, #582, and WEBSITE_VISIT for a row written before it;
 //     linkedinRecordedObjective), so a row with a recorded strategy has a recorded objective. A
 //     row without one (legacy, adopted) reads `unknown`, never a guessed objective.
 //
@@ -149,7 +152,7 @@ func (d *LinkedInDispatcher) ReadSettings(ctx context.Context, projectID string,
 		model.CompareSettingsField(settingsFieldCostType, nil, settings.CostType),
 		model.CompareSettingsField(settingsFieldUnitCost, nil, unitCost),
 		model.CompareSettingsField(settingsFieldUnitCostCurrency, nil, unitCostCurrency),
-		model.CompareSettingsField(settingsFieldObjectiveType, linkedinRecordedObjective(campaign), settings.ObjectiveType),
+		model.CompareSettingsField(settingsFieldObjectiveType, linkedinRecordedObjective(ctx, campaign), settings.ObjectiveType),
 	}
 	rb.SummariseSettings()
 	return rb, nil
@@ -165,18 +168,57 @@ func linkedinAccountIDUnusable(res *resolved, projectID, op string) error {
 }
 
 // linkedinRecordedObjective is the objectiveType the create path sent for this row's recorded
-// bidding strategy (LFXV2-2665; linkedin.campaignBidding): automatic → WEBSITE_VISIT, manual →
-// WEBSITE_CONVERSION. nil when no strategy is recorded — a legacy or adopted row — so the field
-// reads `unknown` rather than comparing against a guess.
-func linkedinRecordedObjective(campaign *model.Campaign) *string {
+// bidding strategy (LFXV2-2665; linkedin.campaignBidding): manual → WEBSITE_CONVERSION; automatic →
+// the objectiveType the create recorded in the row's result blob (#582: WEBSITE_CONVERSION for
+// Maximum delivery conversions, WEBSITE_VISIT otherwise). nil when no strategy is recorded — a
+// legacy or adopted row — or when an automatic row's result cannot say, so the field reads
+// `unknown` rather than comparing against a guess (linkedinResultObjective).
+func linkedinRecordedObjective(ctx context.Context, campaign *model.Campaign) *string {
 	if campaign == nil || campaign.BiddingStrategy == nil {
 		return nil
 	}
 	switch *campaign.BiddingStrategy {
 	case model.BiddingAutomatic:
-		return strPtr(linkedin.ObjectiveWebsiteVisit)
+		return linkedinResultObjective(ctx, campaign)
 	case model.BiddingManual:
 		return strPtr(linkedin.ObjectiveWebsiteConversion)
 	}
+	return nil
+}
+
+// linkedinResultObjective reads the objectiveType an automatic row was created with from its
+// Result blob (linkedin.CampaignResult.ObjectiveType, #582).
+//
+// The result blob, not the config snapshot, because only this service writes it: UpdateCampaign
+// replaces config_snapshot with whatever JSON the caller sends, so any key in the snapshot —
+// `objective` or a marker of authorship — can be forged, and a forged snapshot would fabricate a
+// match or a divergence (PR #637 review). Result is never caller-writable.
+//
+// A blob with no objectiveType was written before #582 recorded it. Before #582 the only
+// objective an automatic create sent was WEBSITE_VISIT, so that is what such a row was created
+// with. An empty or undecodable blob, or an objectiveType outside the two this service creates,
+// is nil: nothing trustworthy was recorded.
+func linkedinResultObjective(ctx context.Context, campaign *model.Campaign) *string {
+	if len(campaign.Result) == 0 {
+		return nil
+	}
+	var blob struct {
+		ObjectiveType *string `json:"objectiveType"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		// Not an error for the caller: the readback still reports every other field.
+		slog.WarnContext(ctx, "linkedin result blob could not be decoded; objective_type has no recorded side",
+			"campaign_id", campaign.ID, "error", err)
+		return nil
+	}
+	if blob.ObjectiveType == nil {
+		return strPtr(linkedin.ObjectiveWebsiteVisit)
+	}
+	switch *blob.ObjectiveType {
+	case linkedin.ObjectiveWebsiteVisit, linkedin.ObjectiveWebsiteConversion:
+		return strPtr(*blob.ObjectiveType)
+	}
+	slog.WarnContext(ctx, "linkedin result blob records an objectiveType this service does not create; objective_type has no recorded side",
+		"campaign_id", campaign.ID)
 	return nil
 }

@@ -35,7 +35,17 @@ type CampaignBudget struct {
 	// "USD" (see createSponsoredCampaign), and the minimums below are USD-specific, so a
 	// campaign denominated in anything else is a campaign whose minimums this service
 	// cannot check. Empty when the platform did not report it.
+	//
+	// With BOTH budgets present this is the daily budget's currency when it is nonempty, so it
+	// says nothing about the total's. A guard that must know every present amount is USD reads
+	// DailyBudgetCurrency and TotalBudgetCurrency instead (#636).
 	CurrencyCode string
+	// DailyBudgetCurrency is the currencyCode LinkedIn reported on dailyBudget, empty when it
+	// reported none or did not report dailyBudget at all.
+	DailyBudgetCurrency string
+	// TotalBudgetCurrency is the currencyCode LinkedIn reported on totalBudget, empty when it
+	// reported none or did not report totalBudget at all.
+	TotalBudgetCurrency string
 	// Status is the campaign's current status, carried so a caller can report what it was
 	// writing against. Not itself a guard — a paused campaign's budget is writable.
 	Status string
@@ -44,6 +54,11 @@ type CampaignBudget struct {
 	// downstream reasons about the CURRENT budget, and reasoning about a value that failed
 	// to parse is reasoning about zero.
 	AmountUnparseable bool
+	// RunStartMs / RunEndMs are the campaign's runSchedule.start / end in epoch milliseconds, nil
+	// when not reported. An end makes a lifetime budget fixed-schedule, which the write path
+	// holds to ValidateFixedScheduleLifetime (#633).
+	RunStartMs *int64
+	RunEndMs   *int64
 }
 
 // budgetWireAmount is the wire precision LinkedIn budget amounts are serialized at, and the
@@ -231,6 +246,10 @@ func (c *Client) GetCampaignBudget(ctx context.Context, campaignID string) (*Cam
 			Amount       string `json:"amount"`
 			CurrencyCode string `json:"currencyCode"`
 		} `json:"totalBudget"`
+		RunSchedule *struct {
+			Start *int64 `json:"start"`
+			End   *int64 `json:"end"`
+		} `json:"runSchedule"`
 	}
 	path := fmt.Sprintf("adAccounts/%s/adCampaigns/%s", accountID, campaignID)
 	if err := c.doMonitorGET(ctx, path, nil, &resp); err != nil {
@@ -254,12 +273,16 @@ func (c *Client) GetCampaignBudget(ctx context.Context, campaignID string) (*Cam
 	}
 
 	out := &CampaignBudget{Status: resp.Status}
+	if resp.RunSchedule != nil {
+		out.RunStartMs, out.RunEndMs = resp.RunSchedule.Start, resp.RunSchedule.End
+	}
 	if resp.DailyBudget != nil {
 		if v, ok := parseUSDAmount(resp.DailyBudget.Amount); ok {
 			out.DailyBudget = &v
 		} else {
 			out.AmountUnparseable = true
 		}
+		out.DailyBudgetCurrency = resp.DailyBudget.CurrencyCode
 		if resp.DailyBudget.CurrencyCode != "" {
 			out.CurrencyCode = resp.DailyBudget.CurrencyCode
 		}
@@ -270,6 +293,7 @@ func (c *Client) GetCampaignBudget(ctx context.Context, campaignID string) (*Cam
 		} else {
 			out.AmountUnparseable = true
 		}
+		out.TotalBudgetCurrency = resp.TotalBudget.CurrencyCode
 		if out.CurrencyCode == "" && resp.TotalBudget.CurrencyCode != "" {
 			out.CurrencyCode = resp.TotalBudget.CurrencyCode
 		}

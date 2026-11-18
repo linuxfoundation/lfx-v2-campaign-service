@@ -282,7 +282,7 @@ func (c *Client) uploadVideo(ctx context.Context, owner string, v VideoUpload) (
 // video, with the destination as its landing page, and returns its post URN. The envelope is
 // createDarkPost's; only the content differs (Create and Manage Video Ads, "Create a Video Ad with
 // a New Post": "content": {"media": {"title": ..., "id": "urn:li:video:..."}}).
-func (c *Client) createVideoDarkPost(ctx context.Context, accountID, introText, headline, destURL, videoURN string) (string, error) {
+func (c *Client) createVideoDarkPost(ctx context.Context, accountID, introText, headline, destURL, videoURN, callToAction string) (string, error) {
 	author, err := c.orgURN(accountID)
 	if err != nil {
 		return "", err
@@ -298,6 +298,10 @@ func (c *Client) createVideoDarkPost(ctx context.Context, accountID, introText, 
 	body := darkPostEnvelope(author, intro, accountID)
 	body["content"] = map[string]any{"media": map[string]any{"title": head, "id": videoURN}}
 	body["contentLandingPage"] = destURL
-	body["contentCallToActionLabel"] = ctaRegister
+	// A video post always carries a call to action: the variant's own (#588) or REGISTER.
+	if callToAction == "" {
+		callToAction = ctaRegister
+	}
+	body["contentCallToActionLabel"] = callToAction
 	return c.postDarkPost(ctx, body)
 }

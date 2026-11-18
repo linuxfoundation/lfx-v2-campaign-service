@@ -753,6 +753,13 @@ openssl rand -base64 32
   (`app.environment.LINKEDIN_ADS_VIDEO_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once the live probe passes,
   including a measurement of real processing time for a 20-30 MiB MP4.
+- `LINKEDIN_ADS_CALL_TO_ACTION_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `linkedInConfig.variants[].callToAction` (#588), the
+  dark post's call-to-action button. Only the exact value `true` enables it;
+  anything else fails closed, and a create naming one is refused with a 400
+  before a job exists. The chart sets it to `"false"`
+  (`app.environment.LINKEDIN_ADS_CALL_TO_ACTION_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once the probe passes.
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request
   names no `source_workflow_url`. Unset or empty selects the in-code

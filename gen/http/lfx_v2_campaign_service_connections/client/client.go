@@ -274,6 +274,10 @@ type Client struct {
 	// the get-linkedin-ads-create-account endpoint.
 	GetLinkedinAdsCreateAccountDoer goahttp.Doer
 
+	// SearchLinkedinAdsTargetingEntities Doer is the HTTP client used to make
+	// requests to the search-linkedin-ads-targeting-entities endpoint.
+	SearchLinkedinAdsTargetingEntitiesDoer goahttp.Doer
+
 	// GetMicrosoftAdsKeywords Doer is the HTTP client used to make requests to the
 	// get-microsoft-ads-keywords endpoint.
 	GetMicrosoftAdsKeywordsDoer goahttp.Doer
@@ -395,100 +399,101 @@ func NewClient(
 	restoreBody bool,
 ) *Client {
 	return &Client{
-		CreateGoogleAdsDoer:                   doer,
-		GetGoogleAdsDoer:                      doer,
-		UpdateGoogleAdsDoer:                   doer,
-		DeleteGoogleAdsDoer:                   doer,
-		TestGoogleAdsDoer:                     doer,
-		SetCredentialGoogleAdsDoer:            doer,
-		CreateLinkedinAdsDoer:                 doer,
-		GetLinkedinAdsDoer:                    doer,
-		UpdateLinkedinAdsDoer:                 doer,
-		DeleteLinkedinAdsDoer:                 doer,
-		TestLinkedinAdsDoer:                   doer,
-		SetCredentialLinkedinAdsDoer:          doer,
-		CreateMetaAdsDoer:                     doer,
-		GetMetaAdsDoer:                        doer,
-		UpdateMetaAdsDoer:                     doer,
-		DeleteMetaAdsDoer:                     doer,
-		TestMetaAdsDoer:                       doer,
-		SetCredentialMetaAdsDoer:              doer,
-		CreateRedditAdsDoer:                   doer,
-		GetRedditAdsDoer:                      doer,
-		UpdateRedditAdsDoer:                   doer,
-		DeleteRedditAdsDoer:                   doer,
-		TestRedditAdsDoer:                     doer,
-		SetCredentialRedditAdsDoer:            doer,
-		CreateTwitterAdsDoer:                  doer,
-		GetTwitterAdsDoer:                     doer,
-		UpdateTwitterAdsDoer:                  doer,
-		DeleteTwitterAdsDoer:                  doer,
-		TestTwitterAdsDoer:                    doer,
-		SetCredentialTwitterAdsDoer:           doer,
-		CreateMicrosoftAdsDoer:                doer,
-		GetMicrosoftAdsDoer:                   doer,
-		UpdateMicrosoftAdsDoer:                doer,
-		DeleteMicrosoftAdsDoer:                doer,
-		TestMicrosoftAdsDoer:                  doer,
-		SetCredentialMicrosoftAdsDoer:         doer,
-		CreateHubspotDoer:                     doer,
-		GetHubspotDoer:                        doer,
-		UpdateHubspotDoer:                     doer,
-		DeleteHubspotDoer:                     doer,
-		TestHubspotDoer:                       doer,
-		SetCredentialHubspotDoer:              doer,
-		ListGoogleAdsAccountsDoer:             doer,
-		GetGoogleAdsKeywordsDoer:              doer,
-		GetGoogleAdsAudienceDoer:              doer,
-		SuggestGoogleAdsGeoTargetsDoer:        doer,
-		ListGoogleAdsUserListsDoer:            doer,
-		ListGoogleAdsConversionActionsDoer:    doer,
-		ListGoogleAdsAudiencesDoer:            doer,
-		ListMetaCustomAudiencesDoer:           doer,
-		SearchMetaTargetingOptionsDoer:        doer,
-		ListMetaLeadFormsDoer:                 doer,
-		ListRedditAdsCustomAudiencesDoer:      doer,
-		ListRedditAdsPixelsDoer:               doer,
-		ListTwitterAdsCustomAudiencesDoer:     doer,
-		ListMicrosoftAdsRemarketingListsDoer:  doer,
-		ListMicrosoftAdsConversionGoalsDoer:   doer,
-		GetMetaAdsAudienceDoer:                doer,
-		GetTwitterAdsAudienceDoer:             doer,
-		GetLinkedinAdsAudienceDoer:            doer,
-		ListLinkedinAdsAudiencesDoer:          doer,
-		ListLinkedinAdsConversionsDoer:        doer,
-		ListLinkedinAdsAdoptableCampaignsDoer: doer,
-		GetLinkedinAdsCreateAccountDoer:       doer,
-		GetMicrosoftAdsKeywordsDoer:           doer,
-		GetMicrosoftAdsAudienceDoer:           doer,
-		GetRedditAdsAudienceDoer:              doer,
-		GetRedditAdsKeywordsDoer:              doer,
-		ResolveGoogleAdsCampaignDoer:          doer,
-		ResolveMicrosoftAdsCampaignDoer:       doer,
-		ResolveMetaAdsCampaignDoer:            doer,
-		ResolveRedditAdsCampaignDoer:          doer,
-		ResolveTwitterAdsCampaignDoer:         doer,
-		ResolveLinkedinAdsCampaignDoer:        doer,
-		ListMetaAdsAccountsDoer:               doer,
-		ListLinkedinAdsAccountsDoer:           doer,
-		ListMicrosoftAdsAccountsDoer:          doer,
-		ListTwitterAdsAccountsDoer:            doer,
-		ListRedditAdsAccountsDoer:             doer,
-		ListHubspotEmailsDoer:                 doer,
-		SearchHubspotCampaignsDoer:            doer,
-		CreateHubspotCampaignDoer:             doer,
-		MonitorGoogleAdsAccountDoer:           doer,
-		MonitorLinkedinAdsAccountDoer:         doer,
-		MonitorMetaAdsAccountDoer:             doer,
-		MonitorRedditAdsAccountDoer:           doer,
-		MonitorMicrosoftAdsAccountDoer:        doer,
-		MonitorTwitterAdsAccountDoer:          doer,
-		MonitorHubspotAccountDoer:             doer,
-		RestoreResponseBody:                   restoreBody,
-		scheme:                                scheme,
-		host:                                  host,
-		decoder:                               dec,
-		encoder:                               enc,
+		CreateGoogleAdsDoer:                    doer,
+		GetGoogleAdsDoer:                       doer,
+		UpdateGoogleAdsDoer:                    doer,
+		DeleteGoogleAdsDoer:                    doer,
+		TestGoogleAdsDoer:                      doer,
+		SetCredentialGoogleAdsDoer:             doer,
+		CreateLinkedinAdsDoer:                  doer,
+		GetLinkedinAdsDoer:                     doer,
+		UpdateLinkedinAdsDoer:                  doer,
+		DeleteLinkedinAdsDoer:                  doer,
+		TestLinkedinAdsDoer:                    doer,
+		SetCredentialLinkedinAdsDoer:           doer,
+		CreateMetaAdsDoer:                      doer,
+		GetMetaAdsDoer:                         doer,
+		UpdateMetaAdsDoer:                      doer,
+		DeleteMetaAdsDoer:                      doer,
+		TestMetaAdsDoer:                        doer,
+		SetCredentialMetaAdsDoer:               doer,
+		CreateRedditAdsDoer:                    doer,
+		GetRedditAdsDoer:                       doer,
+		UpdateRedditAdsDoer:                    doer,
+		DeleteRedditAdsDoer:                    doer,
+		TestRedditAdsDoer:                      doer,
+		SetCredentialRedditAdsDoer:             doer,
+		CreateTwitterAdsDoer:                   doer,
+		GetTwitterAdsDoer:                      doer,
+		UpdateTwitterAdsDoer:                   doer,
+		DeleteTwitterAdsDoer:                   doer,
+		TestTwitterAdsDoer:                     doer,
+		SetCredentialTwitterAdsDoer:            doer,
+		CreateMicrosoftAdsDoer:                 doer,
+		GetMicrosoftAdsDoer:                    doer,
+		UpdateMicrosoftAdsDoer:                 doer,
+		DeleteMicrosoftAdsDoer:                 doer,
+		TestMicrosoftAdsDoer:                   doer,
+		SetCredentialMicrosoftAdsDoer:          doer,
+		CreateHubspotDoer:                      doer,
+		GetHubspotDoer:                         doer,
+		UpdateHubspotDoer:                      doer,
+		DeleteHubspotDoer:                      doer,
+		TestHubspotDoer:                        doer,
+		SetCredentialHubspotDoer:               doer,
+		ListGoogleAdsAccountsDoer:              doer,
+		GetGoogleAdsKeywordsDoer:               doer,
+		GetGoogleAdsAudienceDoer:               doer,
+		SuggestGoogleAdsGeoTargetsDoer:         doer,
+		ListGoogleAdsUserListsDoer:             doer,
+		ListGoogleAdsConversionActionsDoer:     doer,
+		ListGoogleAdsAudiencesDoer:             doer,
+		ListMetaCustomAudiencesDoer:            doer,
+		SearchMetaTargetingOptionsDoer:         doer,
+		ListMetaLeadFormsDoer:                  doer,
+		ListRedditAdsCustomAudiencesDoer:       doer,
+		ListRedditAdsPixelsDoer:                doer,
+		ListTwitterAdsCustomAudiencesDoer:      doer,
+		ListMicrosoftAdsRemarketingListsDoer:   doer,
+		ListMicrosoftAdsConversionGoalsDoer:    doer,
+		GetMetaAdsAudienceDoer:                 doer,
+		GetTwitterAdsAudienceDoer:              doer,
+		GetLinkedinAdsAudienceDoer:             doer,
+		ListLinkedinAdsAudiencesDoer:           doer,
+		ListLinkedinAdsConversionsDoer:         doer,
+		ListLinkedinAdsAdoptableCampaignsDoer:  doer,
+		GetLinkedinAdsCreateAccountDoer:        doer,
+		SearchLinkedinAdsTargetingEntitiesDoer: doer,
+		GetMicrosoftAdsKeywordsDoer:            doer,
+		GetMicrosoftAdsAudienceDoer:            doer,
+		GetRedditAdsAudienceDoer:               doer,
+		GetRedditAdsKeywordsDoer:               doer,
+		ResolveGoogleAdsCampaignDoer:           doer,
+		ResolveMicrosoftAdsCampaignDoer:        doer,
+		ResolveMetaAdsCampaignDoer:             doer,
+		ResolveRedditAdsCampaignDoer:           doer,
+		ResolveTwitterAdsCampaignDoer:          doer,
+		ResolveLinkedinAdsCampaignDoer:         doer,
+		ListMetaAdsAccountsDoer:                doer,
+		ListLinkedinAdsAccountsDoer:            doer,
+		ListMicrosoftAdsAccountsDoer:           doer,
+		ListTwitterAdsAccountsDoer:             doer,
+		ListRedditAdsAccountsDoer:              doer,
+		ListHubspotEmailsDoer:                  doer,
+		SearchHubspotCampaignsDoer:             doer,
+		CreateHubspotCampaignDoer:              doer,
+		MonitorGoogleAdsAccountDoer:            doer,
+		MonitorLinkedinAdsAccountDoer:          doer,
+		MonitorMetaAdsAccountDoer:              doer,
+		MonitorRedditAdsAccountDoer:            doer,
+		MonitorMicrosoftAdsAccountDoer:         doer,
+		MonitorTwitterAdsAccountDoer:           doer,
+		MonitorHubspotAccountDoer:              doer,
+		RestoreResponseBody:                    restoreBody,
+		scheme:                                 scheme,
+		host:                                   host,
+		decoder:                                dec,
+		encoder:                                enc,
 	}
 }
 
@@ -2039,6 +2044,31 @@ func (c *Client) GetLinkedinAdsCreateAccount() goa.Endpoint {
 		resp, err := c.GetLinkedinAdsCreateAccountDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "get-linkedin-ads-create-account", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// SearchLinkedinAdsTargetingEntities returns an endpoint that makes HTTP
+// requests to the lfx-v2-campaign-service-connections service
+// search-linkedin-ads-targeting-entities server.
+func (c *Client) SearchLinkedinAdsTargetingEntities() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeSearchLinkedinAdsTargetingEntitiesRequest(c.encoder)
+		decodeResponse = DecodeSearchLinkedinAdsTargetingEntitiesResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildSearchLinkedinAdsTargetingEntitiesRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.SearchLinkedinAdsTargetingEntitiesDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "search-linkedin-ads-targeting-entities", err)
 		}
 		return decodeResponse(resp)
 	}

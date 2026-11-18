@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -167,6 +168,51 @@ func TestLinkedInMonitor_LocalCurrency(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestLinkedInMonitor_CappedNoEndLastWindowIsNotUnderspending runs #636's case through the
+// dispatcher: a $1,000 total under a $20 cap with $960 spent before its last 7-day window, which
+// spends the remaining $40. The read before the window must reach the rules as SpendBeforeWindow,
+// so the window is paced against the $40 that remained (100%), not the cap's $120 (33%,
+// "Underspending").
+func TestLinkedInMonitor_CappedNoEndLastWindowIsNotUnderspending(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	start := time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC).UnixMilli()
+	var analyticsReads atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "adAnalytics") {
+			spend := "40.00" // the window
+			if analyticsReads.Add(1) == 2 {
+				spend = "960.00" // before the window
+			}
+			_, _ = io.WriteString(w, `{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:1"],"impressions":10000,"clicks":100,"costInLocalCurrency":"`+spend+`"}]}`)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"elements":[{"id":1,"name":"a","status":"ACTIVE",`+
+			`"dailyBudget":{"amount":"20.00","currencyCode":"USD"},"totalBudget":{"amount":"1000.00","currencyCode":"USD"},`+
+			`"runSchedule":{"start":%d}}],"metadata":{}}`, start)
+	}))
+	t.Cleanup(srv.Close)
+	d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return now }))
+
+	read, err := d.ReadAccountMonitor(context.Background(), "cncf", model.ProviderLinkedInAds, "123456789", 7)
+	if err != nil {
+		t.Fatalf("ReadAccountMonitor: %v", err)
+	}
+	if len(read.Rows) != 1 || read.Rows[0].SpendBeforeWindow == nil || *read.Rows[0].SpendBeforeWindow != 960 {
+		t.Fatalf("rows = %+v, want SpendBeforeWindow 960 carried to the rules", read.Rows)
+	}
+	rows, items := rules.EvaluateLinkedInMonitor(read.Rows, 7, now, read.Currency)
+	if rows[0].PacingLabel == model.MonitorPacingUnderspending || rows[0].PacingPct != 100 {
+		t.Errorf("row = %+v, want 100%% pacing against the $40 that remained", rows[0])
+	}
+	for _, it := range items {
+		if strings.Contains(it.Issue, "Underspending") {
+			t.Errorf("underspending item %q raised for a campaign spending the last of its total", it.Issue)
+		}
 	}
 }
 

@@ -102,6 +102,9 @@ func checkLinkedInVideoVariants(cfg linkedinConfig) error {
 		if strings.TrimSpace(v.ImageURN) != "" || strings.TrimSpace(v.ImageAssetID) != "" {
 			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.variants[%d] supplies a videoAssetId together with an image; a video variant carries no image", domain.ErrCreateConfigInvalid, i))
 		}
+		if strings.TrimSpace(v.Description) != "" {
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.variants[%d] supplies a videoAssetId together with a description; the description is the article's (#588) and a video post has none", domain.ErrCreateConfigInvalid, i))
+		}
 	}
 	if videos > 0 && videos != len(cfg.Variants) {
 		return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.variants mixes %d video variant(s) with %d without a videoAssetId; a LinkedIn video campaign (format SINGLE_VIDEO) takes only video creatives, so give every variant a videoAssetId or none", domain.ErrCreateConfigInvalid, videos, len(cfg.Variants)-videos))
@@ -152,7 +155,8 @@ func (d *LinkedInDispatcher) resolveLinkedInImages(ctx context.Context, brief *m
 		assetID  *string
 		imageURN string
 	}
-	refs := make([]imageRef, 0, len(cfg.Variants)+len(cfg.TextAds))
+	// Grown by append rather than pre-sized from len+len (CodeQL go/allocation-size-overflow).
+	var refs []imageRef
 	for i := range cfg.Variants {
 		refs = append(refs, imageRef{fmt.Sprintf("variants[%d]", i), &cfg.Variants[i].ImageAssetID, cfg.Variants[i].ImageURN})
 	}

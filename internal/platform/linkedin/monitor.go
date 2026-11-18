@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -42,6 +43,11 @@ type AccountCampaignRow struct {
 	TotalBudget float64
 	StartDate   string
 	EndDate     string
+	// SpendBeforeWindow is the campaign's spend from its start through the day before the
+	// analytics window, read only for a lifetime budget with a daily cap and no end date that
+	// started before the window (#636): what the pacing rule needs to know how much of the
+	// total is left for the window. nil when it was not read or could not be trusted.
+	SpendBeforeWindow *float64
 	// PacingUnknown is set on a row whose budget names a currency when the campaign list's
 	// budgets disagree about the account's currency: which of them is in the spend's currency
 	// cannot be told, so none is paced (see budgetCurrencies).
@@ -152,7 +158,62 @@ func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID
 		}
 		out = append(out, row)
 	}
+	c.fillSpendBeforeWindow(ctx, accountID, out, start)
 	return out, budgetCurrency.code(), nil
+}
+
+// fillSpendBeforeWindow sets SpendBeforeWindow on every row that is a lifetime budget with a
+// daily cap and no end date (#584) and started before windowStart, with ONE more account-level
+// analytics read covering the earliest such start through the day before the window. A
+// campaign cannot spend before it starts, so the account-wide sum since the earliest start is
+// each campaign's own spend since its start.
+//
+// The pacing rule caps a capped, no-end campaign's window at what remains of its total
+// (#636). Without this figure it can only cap at the whole total, and the window in which the
+// campaign spends its last dollars reads as underspending.
+//
+// It is best-effort: the window's own read has already succeeded, and losing this figure only
+// returns the rule to its whole-total cap, so a failure is logged and the rows are returned
+// without it rather than failing the monitor. A campaign absent from a successful response had
+// no delivery before the window (LinkedIn omits those, see ListAccountCampaignsWithCurrency); a
+// row whose spend would not parse is left nil.
+func (c *Client) fillSpendBeforeWindow(ctx context.Context, accountID string, rows []AccountCampaignRow, windowStart time.Time) {
+	windowStart = time.Date(windowStart.Year(), windowStart.Month(), windowStart.Day(), 0, 0, 0, 0, time.UTC)
+	var earliest time.Time
+	var need []int
+	for i, r := range rows {
+		if r.FetchFailed || r.PacingUnknown || r.DailyBudget <= 0 || r.TotalBudget <= 0 || r.EndDate != "" {
+			continue
+		}
+		started, err := time.Parse("2006-01-02", r.StartDate)
+		if err != nil || !started.Before(windowStart) {
+			continue
+		}
+		need = append(need, i)
+		if earliest.IsZero() || started.Before(earliest) {
+			earliest = started
+		}
+	}
+	if len(need) == 0 {
+		return
+	}
+	before, err := c.fetchAccountCampaignAnalytics(ctx, accountID, earliest, windowStart.AddDate(0, 0, -1))
+	if err != nil {
+		slog.WarnContext(ctx, "linkedin monitor: spend before the window was not read; capped campaigns with no end are paced against their whole total",
+			"account_id", accountID, "error", err)
+		return
+	}
+	for _, i := range need {
+		m, ok := before[rows[i].CampaignID]
+		if ok && m.FetchFailed {
+			continue
+		}
+		var spent float64
+		if ok {
+			spent = m.Spend
+		}
+		rows[i].SpendBeforeWindow = &spent
+	}
 }
 
 // ListAccountCampaignRefs is the campaign list ListAccountCampaigns walks, without the analytics

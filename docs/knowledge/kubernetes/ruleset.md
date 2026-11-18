@@ -78,6 +78,10 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    The Meta targeting search, `meta-ads/targeting-search` (#550), stays here: it answers Meta's own
    taxonomy, the same for every token, and `TestMetaTargetingSearchIsACampaignManagerRead` pins it
    to `project-api` and off `marketing-ops-api`.
+   `linkedin-ads/targeting-entities` (#585, the LinkedIn targeting typeahead) stays HERE: it
+   answers LinkedIn's own taxonomy, the same for every token, and names nothing any ad account
+   holds, so like `google-ads/geo-targets` it needs no wider audience than `campaign_manager`.
+   `TestLinkedInTargetingTypeaheadIsACampaignManagerRead` pins it to this rule.
 4. **`marketing-ops-api`** — `GET /projects/:projectId/google-ads/conversion-actions` (#458),
    `GET /projects/:projectId/google-ads/audiences` (#496),
    `GET /projects/:projectId/google-ads/user-lists`,
