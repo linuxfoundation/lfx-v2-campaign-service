@@ -3,7 +3,7 @@
 **Update** — `GET /projects/{id}/linkedin-ads/targeting-entities?facet=<facet>&query=<text>`
 (`search-linkedin-ads-targeting-entities`) lets self-serve (lfx-self-serve#5545) pick
 `linkedInConfig.targeting` values and `geoTargets` by name instead of pasting URNs. It proxies
-LinkedIn's `GET /rest/adTargetingEntities?q=typeahead` (LinkedIn-Version 202602) and returns
+LinkedIn's `GET /rest/adTargetingEntities?q=typeahead` (LinkedIn-Version 202611) and returns
 `{facet, entities: [{urn, name}], entity_count}`.
 
 - Facets: `skills`, `groups`, `titles`, `interests`, `industries`, `employers` (the targeting keys
@@ -16,4 +16,6 @@ LinkedIn's `GET /rest/adTargetingEntities?q=typeahead` (LinkedIn-Version 202602)
   characters, no control characters) is never logged, and a transport error's message has the
   request URL's query string cut off.
 
-Built from the LinkedIn Marketing API docs (Ad Targeting, li-lms-2026-02). Not yet probed live.
+Built from the LinkedIn Marketing API docs (Ad Targeting, li-lms-2026-02). The live probe is owed on
+LinkedIn-Version 202611, which the service now sends; the 202602 to 202611 audit (#580) did not
+cover `adTargetingEntities`.
