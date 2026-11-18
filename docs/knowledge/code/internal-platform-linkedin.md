@@ -491,6 +491,16 @@ in Campaign Manager. Pinned by `group_capped_test.go` (including
 `TestCreateCampaign_InterleavedCreatesCannotWidenUnderACappedCampaign`) and
 `TestCreateCampaign_LifetimeBudgetWithDailyCap` (no `end`; an uncapped lifetime keeps it).
 
+**An uncapped lifetime budget on a fixed schedule has a per-day floor (#633).** LinkedIn spreads
+the total over the flight and needs $10 a day, so `ValidateFixedScheduleLifetime(total, startMs,
+endMs)` (`budget_flight.go`) refuses a total under max($100, $10 × days) at wire precision. Days
+are UTC calendar days from start through end inclusive (`flightDaysUTC`), which are the
+campaign's own day boundaries because `toMs` sends UTC midnights. `CreateCampaign` calls it after
+`validateSchedule` when there is no cap. `ValidateFixedScheduleLifetimeDates` is the
+YYYY-MM-DD form the dispatch preflight uses, counting a begun start from now+startTimeBuffer, as `toMs` sends it. `GetCampaignBudget`
+also returns `RunStartMs`/`RunEndMs`, so the budget write applies the floor to a campaign whose
+schedule has an end. Pinned by `budget_flight_test.go`.
+
 `GetCampaignBudget(ctx, campaignID)` reads the campaign under the resolved account
 (`adAccounts/{acct}/adCampaigns/{id}`, numeric ids only) and returns a `CampaignBudget` carrying
 `DailyBudget`, `TotalBudget`, `CurrencyCode` and `Status`, plus each field's own currency
@@ -1139,6 +1149,27 @@ it goes under, from its type (RETARGETING → `dynamicSegments`; BULK, MARKET_AU
 BUSINESS_OBJECTIVE_BASED_AUDIENCE → `audienceMatchingSegments`; anything else unclassified).
 EXPIRED and FAILED segments are dropped; ARCHIVED stays, since LinkedIn documents it as usable
 until it expires. The offset parameters are LinkedIn's documented ones but not verified live.
+
+## Targeting typeahead (`targeting_entities.go`, #585)
+
+`SearchTargetingEntities` runs LinkedIn's typeahead finder, `GET adTargetingEntities?q=typeahead&facet=urn%3Ali%3AadTargetingFacet%3A<key>&query=<text>&queryVersion=QUERY_USES_URNS`
+(Ad Targeting › Find Entities by Typeahead; locale left at LinkedIn's en_US default), for the
+`GET .../linkedin-ads/targeting-entities` picker. `typeaheadFacets` serves `skills`, `groups`,
+`titles`, `interests`, `industries` and `employers`, each with its pattern taken from
+`targetingFacets` (so a URN offered is one `ValidateTargeting` accepts), plus `locations` with
+`geoURNRE` for `geoTargets`. `NormalizeTypeaheadQuery` (trim, then `MinTypeaheadQueryLen` = 2
+to `MaxTypeaheadQueryLen` = 100 runes, valid UTF-8, no control characters) is the one query check,
+shared with the service; the Goa design mirrors the bounds and the control-character ban on the
+raw parameter, leaving only invalid UTF-8 and the post-trim floor to runtime. The request is sent
+with `withSendOnce`, so a 429 comes back at once rather than after `doRequest`'s backoff: a
+typeahead's caller has moved on by then, and each retry spends the shared quota again. The
+query goes through `restliEncode` (`%20`, not `+`; reserved characters escaped) and `query`
+joins `preEncodedParams`. Answers keep LinkedIn's relevance order, de-duplicated by URN, capped
+at 100; an element with a URN of the wrong shape or no name is dropped and counted. A transport
+error never carries the search text (`scrubQuery`): the `*url.Error`'s URL is cut back to the
+path, and because `doRequest` wraps a pre-send dial failure (DNS, connection refused) with
+`fmt.Errorf("%w")`, which has already copied the full URL into its message, the returned error's
+message is rebuilt with that URL cut too, while it still unwraps to the original chain.
 
 ## Conversion association (`conversions.go`, #552)
 

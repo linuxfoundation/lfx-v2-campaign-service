@@ -1762,6 +1762,7 @@ var preEncodedParams = map[string]struct{}{
 	"search":    {}, // findMatch — the name filter
 	"campaigns": {}, // listCreativeURNs — the creatives finder's campaign List()
 	"accounts":  {}, // ListAdSegments — the ad segments finder's account List() (#552)
+	"query":     {}, // SearchTargetingEntities — the typeahead text, %20 not "+" (#585)
 }
 
 // buildRawQuery renders params as a query string, percent-encoding every value
@@ -1899,8 +1900,8 @@ func (c *Client) toMs(dateStr string, eod bool) (int64, error) {
 // toMs entirely and the flow would still proceed to create dark posts and
 // creatives on a broken schedule.
 //
-// The returned startMs is used ONLY for the up-front end<=start validation and is
-// otherwise DISCARDED by the caller: NEITHER create reuses it. Both
+// The returned startMs is used ONLY for up-front validation (end<=start, and the
+// fixed-schedule lifetime floor's day count, #633), and NEITHER create reuses it. Both
 // findOrCreateCampaignGroup and createSponsoredCampaign recompute their own
 // now+startTimeBuffer start immediately before their POST, because each create runs
 // after its own (worst-case ~5min) find-existing lookup, by which time a
@@ -3079,9 +3080,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// because toMs is non-deterministic for a today/past start (a moving
 	// now+startTimeBuffer) and the intervening find-existing lookups (each worst-case
 	// ~5min) could otherwise push a once-computed start into the past by POST time.
-	_, endMs, err := c.validateSchedule(in.StartDate, in.EndDate)
+	startMs, endMs, err := c.validateSchedule(in.StartDate, in.EndDate)
 	if err != nil {
 		return nil, domain.WrapPreflightRefusal(err)
+	}
+	// A lifetime budget on a fixed schedule must cover $10 for every day of the flight (#633),
+	// or LinkedIn creates a campaign it will not activate. Checked against the schedule just
+	// validated, before any POST. A capped lifetime budget (#584) runs on a continuous schedule
+	// and sends its own dailyBudget, so it is exempt.
+	if in.LifetimeBudget && dailyCap == "" {
+		if err := ValidateFixedScheduleLifetime(in.BudgetUSD, startMs, endMs); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
 	}
 
 	groupName := fmt.Sprintf("Events | %s | %s", eventName, project)

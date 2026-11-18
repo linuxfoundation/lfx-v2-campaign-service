@@ -663,6 +663,26 @@ func linkedinDailyCap(cfg linkedinConfig) error {
 	return nil
 }
 
+// linkedinLifetimeFloor refuses, before any job or request, a lifetime budget on a fixed
+// schedule whose total is under LinkedIn's minimum for the flight, max($100, $10 × days) (#633):
+// LinkedIn creates such a campaign but will not activate it. Days are the UTC start-through-end
+// count linkedin.ValidateFixedScheduleLifetimeDates documents. A capped lifetime budget (#584)
+// runs on a continuous schedule with its own dailyBudget, so linkedinDailyCap covers it instead.
+// Malformed amounts and dates are left to the client's own refusals.
+func linkedinLifetimeFloor(cfg linkedinConfig, now time.Time) error {
+	if !cfg.LifetimeBudget || cfg.DailyCapUSD != nil {
+		return nil
+	}
+	if err := linkedin.ValidateFixedScheduleLifetimeDates(cfg.BudgetUSD, cfg.StartDate, cfg.EndDate, now); err != nil {
+		reason, ok := linkedin.BudgetAmountReason(err)
+		if !ok {
+			reason = "the lifetime budget is below LinkedIn's minimum for these dates"
+		}
+		return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.budgetUsd: %s", domain.ErrCreateConfigInvalid, reason))
+	}
+	return nil
+}
+
 // derefFloat returns *p, or 0 for nil.
 func derefFloat(p *float64) float64 {
 	if p == nil {
@@ -683,7 +703,9 @@ func derefFloat(p *float64) float64 {
 //   - adAccountId (#581): an `adAccountId` that is not a JSON string (checkAdAccountIDShape; null
 //     reads as omitted), or an account selectLinkedInAccount refuses for the resolved connection;
 //   - daily cap: a `dailyCapUsd` that is not a JSON number (checkDailyCapShape), or one
-//     linkedinDailyCap refuses (linkedin.ValidateDailyCap) (#584).
+//     linkedinDailyCap refuses (linkedin.ValidateDailyCap) (#584);
+//   - lifetime floor: an uncapped lifetime budget under max($100, $10 × flight days)
+//     (linkedinLifetimeFloor, #633).
 //
 // It never calls LinkedIn (adAccountId needs only the database read a create's resolution makes),
 // so every other outcome is ErrPreflightNotApplicable; a config that does not decode is otherwise
@@ -763,6 +785,10 @@ func (d *LinkedInDispatcher) PreflightCreate(ctx context.Context, projectID stri
 	if err := linkedinDailyCap(cfg); err != nil {
 		return err
 	}
+	// The fixed-schedule lifetime floor (#633), so the caller gets the 400 before a job exists.
+	if err := linkedinLifetimeFloor(cfg, time.Now()); err != nil {
+		return err
+	}
 	// linkedInConfig.jobFunctions (#585) likewise, a wrong JSON type included.
 	if err := checkJobFunctionsShape(config); err != nil {
 		return err
@@ -809,11 +835,13 @@ type LinkedInDispatcher struct {
 	// fails pre-create and the reserver reserves nothing.
 	creatives creativeAssetReader
 	assets    *AssetReserver
+	// entities caches targeting typeahead answers (#585, linkedin_lookups.go).
+	entities *targetingEntityCache
 }
 
 // NewLinkedInDispatcher builds the adapter from the connection repo + encryptor.
 func NewLinkedInDispatcher(repo connReader, enc domain.Encryptor, opts ...linkedin.Option) *LinkedInDispatcher {
-	return &LinkedInDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts}
+	return &LinkedInDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), entities: newTargetingEntityCache(), opts: opts}
 }
 
 // Dispatch implements service.PlatformDispatcher for LinkedIn.
@@ -916,6 +944,9 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		return nil, notCreated(err)
 	}
 	if err := linkedinDailyCap(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	if err := linkedinLifetimeFloor(cfg, time.Now()); err != nil {
 		return nil, notCreated(err)
 	}
 	// Job functions (#585), validated before any upstream call; the de-duplicated copy replaces
