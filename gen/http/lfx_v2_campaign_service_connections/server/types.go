@@ -8015,7 +8015,12 @@ type HubspotCampaignResponseBody struct {
 // GoogleAdsAccountMonitorResponseBody is used to define fields on response
 // body types.
 type GoogleAdsAccountMonitorResponseBody struct {
-	// The account this read covers, echoed back from the request.
+	// The account this read covers: the request's account_id, or on Google Ads and
+	// LinkedIn, when that is omitted, the account the project's recorded campaigns
+	// name. Empty when no account can be named from them: the project has none on
+	// the platform, or only deleted ones that record no account (which may still
+	// be spending; on a project's own LinkedIn connection, naming the account
+	// reads them).
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed
@@ -8024,8 +8029,8 @@ type GoogleAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days int `form:"days" json:"days" xml:"days"`
-	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
-	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// The campaigns this monitor covers — on Google Ads, LinkedIn, Meta, Reddit
+	// and X only those this service recorded for the project, on Microsoft Ads
 	// every campaign visible on the account — with the rule engine's per-row
 	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
@@ -8200,7 +8205,12 @@ type AccountMonitorTotalsResponseBody struct {
 // LinkedinAdsAccountMonitorResponseBody is used to define fields on response
 // body types.
 type LinkedinAdsAccountMonitorResponseBody struct {
-	// The account this read covers, echoed back from the request.
+	// The account this read covers: the request's account_id, or on Google Ads and
+	// LinkedIn, when that is omitted, the account the project's recorded campaigns
+	// name. Empty when no account can be named from them: the project has none on
+	// the platform, or only deleted ones that record no account (which may still
+	// be spending; on a project's own LinkedIn connection, naming the account
+	// reads them).
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed
@@ -8209,8 +8219,8 @@ type LinkedinAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days int `form:"days" json:"days" xml:"days"`
-	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
-	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// The campaigns this monitor covers — on Google Ads, LinkedIn, Meta, Reddit
+	// and X only those this service recorded for the project, on Microsoft Ads
 	// every campaign visible on the account — with the rule engine's per-row
 	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
@@ -8267,7 +8277,12 @@ type LinkedinAdsAccountMonitorResponseBody struct {
 // MetaAdsAccountMonitorResponseBody is used to define fields on response body
 // types.
 type MetaAdsAccountMonitorResponseBody struct {
-	// The account this read covers, echoed back from the request.
+	// The account this read covers: the request's account_id, or on Google Ads and
+	// LinkedIn, when that is omitted, the account the project's recorded campaigns
+	// name. Empty when no account can be named from them: the project has none on
+	// the platform, or only deleted ones that record no account (which may still
+	// be spending; on a project's own LinkedIn connection, naming the account
+	// reads them).
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed
@@ -8276,8 +8291,8 @@ type MetaAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days int `form:"days" json:"days" xml:"days"`
-	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
-	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// The campaigns this monitor covers — on Google Ads, LinkedIn, Meta, Reddit
+	// and X only those this service recorded for the project, on Microsoft Ads
 	// every campaign visible on the account — with the rule engine's per-row
 	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
@@ -8334,7 +8349,12 @@ type MetaAdsAccountMonitorResponseBody struct {
 // RedditAdsAccountMonitorResponseBody is used to define fields on response
 // body types.
 type RedditAdsAccountMonitorResponseBody struct {
-	// The account this read covers, echoed back from the request.
+	// The account this read covers: the request's account_id, or on Google Ads and
+	// LinkedIn, when that is omitted, the account the project's recorded campaigns
+	// name. Empty when no account can be named from them: the project has none on
+	// the platform, or only deleted ones that record no account (which may still
+	// be spending; on a project's own LinkedIn connection, naming the account
+	// reads them).
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed
@@ -8343,8 +8363,8 @@ type RedditAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days int `form:"days" json:"days" xml:"days"`
-	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
-	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// The campaigns this monitor covers — on Google Ads, LinkedIn, Meta, Reddit
+	// and X only those this service recorded for the project, on Microsoft Ads
 	// every campaign visible on the account — with the rule engine's per-row
 	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
@@ -8401,7 +8421,12 @@ type RedditAdsAccountMonitorResponseBody struct {
 // MicrosoftAdsAccountMonitorResponseBody is used to define fields on response
 // body types.
 type MicrosoftAdsAccountMonitorResponseBody struct {
-	// The account this read covers, echoed back from the request.
+	// The account this read covers: the request's account_id, or on Google Ads and
+	// LinkedIn, when that is omitted, the account the project's recorded campaigns
+	// name. Empty when no account can be named from them: the project has none on
+	// the platform, or only deleted ones that record no account (which may still
+	// be spending; on a project's own LinkedIn connection, naming the account
+	// reads them).
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed
@@ -8410,8 +8435,8 @@ type MicrosoftAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days int `form:"days" json:"days" xml:"days"`
-	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
-	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// The campaigns this monitor covers — on Google Ads, LinkedIn, Meta, Reddit
+	// and X only those this service recorded for the project, on Microsoft Ads
 	// every campaign visible on the account — with the rule engine's per-row
 	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
@@ -8468,7 +8493,12 @@ type MicrosoftAdsAccountMonitorResponseBody struct {
 // TwitterAdsAccountMonitorResponseBody is used to define fields on response
 // body types.
 type TwitterAdsAccountMonitorResponseBody struct {
-	// The account this read covers, echoed back from the request.
+	// The account this read covers: the request's account_id, or on Google Ads and
+	// LinkedIn, when that is omitted, the account the project's recorded campaigns
+	// name. Empty when no account can be named from them: the project has none on
+	// the platform, or only deleted ones that record no account (which may still
+	// be spending; on a project's own LinkedIn connection, naming the account
+	// reads them).
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed
@@ -8477,8 +8507,8 @@ type TwitterAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days int `form:"days" json:"days" xml:"days"`
-	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
-	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// The campaigns this monitor covers — on Google Ads, LinkedIn, Meta, Reddit
+	// and X only those this service recorded for the project, on Microsoft Ads
 	// every campaign visible on the account — with the rule engine's per-row
 	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`

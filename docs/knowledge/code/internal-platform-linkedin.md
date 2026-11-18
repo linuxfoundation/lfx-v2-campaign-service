@@ -893,12 +893,15 @@ campaign is already the effective gate.
 
 ## Account-monitor read
 
-`monitor.go`'s `ListAccountCampaigns` backs the account-scoped
+`monitor.go`'s `ListAccountCampaigns` backs the
 `GET .../connection-linkedin-ads/account-monitor` endpoint, ported from the LFX One
-BFF's `linkedin-ads.service.ts`. It is a read over the WHOLE ad account the resolved
-credential reaches, not one project's own campaigns — see
+BFF's `linkedin-ads.service.ts`. The client reads the WHOLE ad account; since #581 the
+orchestrator reduces that to the project's own recorded campaigns (`MonitorScopeForAccount`)
+before rules and totals, and the dispatcher resolves the credential through
+`resolveLinkedInMonitorCredentials` (the project's own connection on its account, else the LF
+system row's default account or a grant) — see
 [Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md) for the
-credential-scoping (`resolveOwned`, no system-account fallback), the rule engine
+credential-scoping, the rule engine
 (`internal/service/rules/monitor_linkedin.go` — the BFF's `MED`/`MEDIUM` sort-map
 mismatch is NOT ported, items order through the shared `priorityRank`,
 `linuxfoundation/lfx-self-serve#3018`; and its low-CTR rule no longer excludes a 0%
@@ -933,8 +936,7 @@ total.
 `LinkedInDispatcher.VerifyAccountOrg(ctx, projectID, platform)` implements another optional
 capability, `OrgReferenceVerifier` (`internal/service/orchestrator.go`) — LinkedIn is the ONLY
 adapter that does, since it is the only platform with an upstream signal to check (see "Org/account
-reference verification" above). It is the connection-test endpoint's per-project READ, the same
-trust class as the account-monitor read above, so it resolves through
+reference verification" above). It is the connection-test endpoint's per-project READ, so it resolves through
 `resolveLinkedInOwnedDiscoveryCredentials` (`d.creds.resolveOwned`, no LF system fallback) rather
 than the way `Dispatch` resolves (`d.creds.resolve`) — the forced-system fallback is a create-time
 convenience, and honoring it here would let a connection-test on a project with no LinkedIn

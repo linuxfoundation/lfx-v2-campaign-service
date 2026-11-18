@@ -3654,8 +3654,8 @@ overlay flip like the cutover flags; the branch stays dormant until an operator 
 | Entry point | Callers | Account resolved |
 | --- | --- | --- |
 | `resolve` | `Dispatch` (creation) and the discovery/`ListAccounts` helpers | system when the flag is on, else project-then-fallback |
-| `resolveExisting` | `ToggleStatus`, `ReadMetrics` — anything holding a `*model.Campaign` — and the Google Ads (#591), Meta and Reddit (#615) account-monitor reads (`credsSource.monitorResolver`, keyed on the monitored account, refusing the LF system row for any account it is not configured for; via `resolveGoogleAdsMonitorClient`, `resolveMetaMonitorClient` and Reddit's `resolveMonitorClient`) | **the account the campaign RECORDS being created under** |
-| `resolveOwned` | adoption, and every other provider's account-monitor read (LinkedIn's `ReadAccountMonitor` and the `ListAccountCampaignMetrics` it wraps; Microsoft's and X's report-backed `ListAccountCampaigns`/`SubmitAccountReport`/`CheckAccountReport`/`ReadAccountCurrency` in `microsoft_monitor.go` and `twitter_monitor.go`, and Microsoft's report-backed keyword read in `microsoft_keyword_report.go`; round-16/17 review — see `account-monitor-endpoints.md`'s Trust boundary section) | project only (never forced, never fell back) |
+| `resolveExisting` | `ToggleStatus`, `ReadMetrics` — anything holding a `*model.Campaign` — and the Google Ads (#591), Meta and Reddit (#615) account-monitor reads (`credsSource.monitorResolver`, keyed on the monitored account, refusing the LF system row for any account it is not configured for; via `resolveGoogleAdsMonitorClient`, `resolveMetaMonitorClient` and Reddit's `resolveMonitorClient`), and LinkedIn's account monitor and audience read (#581: `resolveLinkedInMonitorCredentials`, and `existingResolver(linkedInScopeAccount(scope))`; the system row serves its default account or a grant) | **the account the campaign RECORDS being created under** |
+| `resolveOwned` | adoption, and every other provider's account-monitor read (Microsoft's and X's report-backed `ListAccountCampaigns`/`SubmitAccountReport`/`CheckAccountReport`/`ReadAccountCurrency` in `microsoft_monitor.go` and `twitter_monitor.go`, and Microsoft's report-backed keyword read in `microsoft_keyword_report.go`; round-16/17 review — see `account-monitor-endpoints.md`'s Trust boundary section) | project only (never forced, never fell back) |
 
 The rule for an existing campaign is NOT "never forced". It is "follow the recorded creation
 account", and the difference is the whole point: those two agree for a campaign created before the
@@ -4076,7 +4076,7 @@ VerifyAccountOrg(ctx, projectID, platform) error
 `LinkedInDispatcher.VerifyAccountOrg` (`internal/dispatch/linkedin.go`) backs the connection-test
 endpoint's extra LinkedIn cross-check (`ConnectionService.TestLinkedinAds`, see
 [internal-service.md](internal-service.md)'s "LinkedIn org/account pairing verification"
-section). It is a per-project READ, the same trust class as the account-monitor read, so it
+section). It is a per-project READ, so it
 resolves through `resolveLinkedInOwnedDiscoveryCredentials` (`d.creds.resolveOwned`, no LF
 system fallback) rather than the way `Dispatch` resolves (`d.creds.resolve`) — honoring the
 forced-system fallback here would let a connection-test on a project with no LinkedIn
@@ -5515,10 +5515,16 @@ Order: `linkedin.ValidateMetricsWindow` (→ `ErrMetricsWindowUnsupported`, 400)
 `linkedInAudienceScopeIDs` (canonical ids via `linkedin.ValidateAudienceCampaignID` →
 `ErrAudienceScopeInvalid`; more than `linkedin.MaxAudienceCampaigns` distinct ids →
 `ErrAudienceScopeTooLarge`; both 409) BEFORE any credential is decrypted; then
-`resolveLinkedInCredentials(…, d.creds.resolveOwned)` — the project's OWN connection only, like the
-LinkedIn account monitor (no connection of its own → `ErrNotFound`, 404; inactive / undecodable /
-no token / no account → `ErrConnectionNotUsable`, 400); then `linkedInAudienceScopeForAccount`: ANY
-entry whose `linkedInCreationAccountID` differs from the bound account refuses the whole read
+`resolveLinkedInCredentials(…, d.creds.existingResolver(linkedInScopeAccount(scope)))` (#581) — the
+project's own connection when bound to the account the scope records, else the LF system row as its
+default account or a grant, like the LinkedIn account monitor (no connection of its own and no LF
+system row, or a disconnected project whose scope records no account or one the system row does
+not serve → `ErrNotFound`, 404; the project's own connection inactive / undecodable / no token / no account →
+`ErrConnectionNotUsable`, 400; the same defects on the LF system row are re-tagged
+`ErrSystemConnectionNotUsable` by `systemScoped` and answer 500, an operator-owned failure);
+on the system credential `linkedInSystemScopeRecorded` refuses any entry that records no account
+(`ErrCampaignProvenanceUnknown`, 409); then `linkedInAudienceScopeForAccount`: ANY
+entry whose `linkedInCreationAccountID` differs from the serving account refuses the whole read
 (`ErrCampaignAccountMismatch`, 409). Only then the cached client's `GetAudienceInsights`, given the bound account so every request is
 confined to it by an `accounts` facet (one Analytics-finder request per pivot and campaign); its scope sentinels are re-tagged with the domain ones (a
 malformed stored account → `ErrConnectionNotUsable`), `linkedinConnectionDefect` errors go through
