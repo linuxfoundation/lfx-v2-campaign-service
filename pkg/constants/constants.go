@@ -703,6 +703,14 @@ const (
 	// and the system scope's LinkedIn accounts list returns the default account and the grants.
 	EnvLinkedInAdsAccountSelectionEnabled = "LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED"
 
+	// EnvLinkedInAdsCallToActionEnabled opts a deployment IN to linkedInConfig.variants[].callToAction
+	// (#588): the dark post's contentCallToActionLabel, sent with contentLandingPage. Only the exact
+	// value "true" enables it; unset or any other value fails closed, and a create naming one is
+	// refused before a job exists. It keeps an UNVERIFIED request shape (a call to action on an
+	// article dark post) off the live ad account until the probe in the field's docs passes: a
+	// refused label fails the dark post after the campaign group and campaign exist.
+	EnvLinkedInAdsCallToActionEnabled = "LINKEDIN_ADS_CALL_TO_ACTION_ENABLED"
+
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,
 	// so every campaign authenticates as the marketing-ops account regardless of any

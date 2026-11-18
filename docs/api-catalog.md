@@ -495,7 +495,7 @@ project?: string                — Canonical LFX project slug (e.g. 'cncf', 'tl
 driveFolderUrl?: string
 platforms?: CampaignPlatform[]
 googleAdsConfig?: object        — Google Ads-specific params (see GoogleAdsConfig below)
-linkedInConfig?: object         — LinkedIn-specific params (see the six LinkedInConfig sections below: variant images, targeting, conversions, ad account, objective and daily cap)
+linkedInConfig?: object         — LinkedIn-specific params (see the LinkedInConfig sections below: variant images, variant name, call to action and description, job functions, targeting, conversions, ad account, objective and daily cap)
 redditConfig?: object           — Reddit-specific params (see RedditConfig below)
 metaConfig?: object             — Meta-specific params (see MetaConfig below)
 twitterConfig?: object          — X/Twitter-specific params (see TwitterConfig below)
@@ -1375,6 +1375,39 @@ instead of the numeric id, an id that is not a positive integer without a leadin
 list (omit the field), more than 20 ids. Conversion rules belong to the ad account, so
 create-campaigns also requires `global_marketing_ops` on the project for `conversions` (`403`;
 `503` when the check cannot be made), as for `googleAdsConfig.conversionActions`.
+
+#### LinkedInConfig variant name, call to action and description (`linkedInConfig.variants[]`, #588, #589)
+
+Three optional strings per variant. Omitted (or `""`), each sends exactly what was sent before.
+
+```
+variants[].name?: string         — OPTIONAL name of this variant's creative in Campaign Manager
+                                  and reporting. Whitespace runs collapse to one space, the ends
+                                  are trimmed, and it is cut to LinkedIn's 255 characters; dashes
+                                  are kept ("OSSNA 2026 – Skill Up"). Omitted keeps
+                                  "<event> | variant-N". Two variants whose names match once
+                                  normalized are refused: their creatives could not be told apart.
+variants[].callToAction?: string — OPTIONAL button on the dark post, sent as
+                                  contentCallToActionLabel with contentLandingPage set to the
+                                  variant's UTM-tagged registration URL. Exactly one of APPLY,
+                                  DOWNLOAD, VIEW_QUOTE, LEARN_MORE, SIGN_UP, SUBSCRIBE, REGISTER,
+                                  JOIN, ATTEND, REQUEST_DEMO, SEE_MORE, BUY_NOW, SHOP_NOW (Posts
+                                  API ContentCallToActionLabel at LinkedIn-Version 202611;
+                                  case-sensitive). Omitted sends no button.
+                                  Behind LINKEDIN_ADS_CALL_TO_ACTION_ENABLED (off by default).
+variants[].description?: string  — OPTIONAL article description (content.article.description).
+                                  Normalized like introText (trimmed, em/en dashes to commas) and
+                                  cut to 300 characters, LinkedIn's single-image ad maximum.
+                                  Omitted sends "".
+```
+
+Refused **synchronously** with `400 invalid campaign config: linkedInConfig.variants…` before any
+job exists: a value that is not a JSON string (an explicit `null` included; omit the key instead),
+an unknown `callToAction`, a repeated `name` (including one equal to an unnamed variant's
+`<event> | variant-N` default), and any `callToAction` while
+`LINKEDIN_ADS_CALL_TO_ACTION_ENABLED` is not exactly `"true"`. `name` and `description` are not
+gated. The stored `config_snapshot` redacts a link pasted into `name` or `description` like
+`introText`; LinkedIn receives the full text.
 
 #### LinkedInConfig profile targeting and job functions (`linkedInConfig.jobFunctions`, #585)
 
