@@ -330,6 +330,9 @@ func TestLinkedInVideo_RefusedBeforeAnythingIsCreated(t *testing.T) {
 		{"malformed id", "true", liMP4Asset, []string{liVariant(`"videoAssetId":"not-a-uuid"`)}, true},
 		{"video and image on one variant", "true", liMP4Asset, []string{liVariant(`"videoAssetId":"` + msAssetID + `","imageUrn":"urn:li:image:X"`)}, true},
 		{"video mixed with an image variant", "true", liMP4Asset, []string{video, liVariant("")}, true},
+		{"numeric id, feature off", "", liMP4Asset, []string{liVariant(`"videoAssetId":123`)}, true},
+		{"numeric id, feature on", "true", liMP4Asset, []string{liVariant(`"videoAssetId":123`)}, true},
+		{"null id", "true", liMP4Asset, []string{liVariant(`"videoAssetId":null`)}, true},
 		{"video with a description", "true", liMP4Asset, []string{liVariant(`"videoAssetId":"` + msAssetID + `","description":"An article description"`)}, true},
 		{"image asset named as a video", "true", func() *scopedCreativeAssets {
 			a := liMP4Asset()

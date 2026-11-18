@@ -456,7 +456,9 @@ func linkedinCallToActionEnabled() bool {
 }
 
 // variantStringFields are the optional per-variant strings checkVariantsShape type-checks.
-var variantStringFields = []string{"name", "callToAction", "description"}
+// videoAssetId (#586) is one too: a wrong-typed one would decode to "" in the best-effort
+// pre-flight decode, skip the video gate and its 400, and fail the job in Dispatch's strict decode.
+var variantStringFields = []string{"name", "callToAction", "description", "videoAssetId"}
 
 // checkVariantsShape refuses a linkedInConfig.variants entry whose name, callToAction or description
 // (#588, #589) is not a JSON string, explicit null included. encoding/json skips a wrong-typed field
@@ -1981,7 +1983,8 @@ func linkedinRunStatus(status string) (string, error) {
 // (and so a snapshot) exists: Variants[].ImageURN (urn:li:image:<id> only), EmployerExclusions
 // (validFacets: facet URNs only, and creation is refused when no profile matches), and
 // AdAccountID (refused unless it equals the connection's account). GeoTargets[].URN,
-// Variants[].ImageAssetID (a stored asset key), Variants[].CallToAction (one of
+// Variants[].ImageAssetID and Variants[].VideoAssetID (stored asset keys, canonical uuids),
+// Variants[].CallToAction (one of
 // linkedin.CallToActionLabels), numbers, flags and dates are kept too.
 // Bidding is kept verbatim too: resolveBidding refuses a strategy other than automatic or
 // manual before anything is sent, and bidAmount is a number

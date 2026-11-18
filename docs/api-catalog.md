@@ -1388,7 +1388,8 @@ variants[].videoAssetId?: string — OPTIONAL id of an MP4 creative asset upload
                                   every variant carries one or none does, because the campaign
                                   is created with format SINGLE_VIDEO, which takes only video
                                   creatives; a video variant carries no imageUrn/imageAssetId.
-                                  A non-UUID id, an image alongside, or a mix is a synchronous
+                                  A value that is not a string (null included), a non-UUID id,
+                                  an image or a description alongside, or a mix is a synchronous
                                   400. Resolved before anything is created: an asset of another
                                   brief, outside 76,800..500,000,000 bytes (on byte_size), or not
                                   video/mp4 fails the job with nothing created. After the
@@ -1416,7 +1417,8 @@ supported yet.
 
 #### LinkedInConfig variant name, call to action and description (`linkedInConfig.variants[]`, #588, #589)
 
-Three optional strings per variant. Omitted (or `""`), each sends exactly what was sent before.
+Three optional strings per variant. Omitted (or `""`), each sends exactly what was sent before (a
+video variant's dark post still carries REGISTER; see LinkedInConfig variant videos).
 
 ```
 variants[].name?: string         — OPTIONAL name of this variant's creative in Campaign Manager
@@ -1431,7 +1433,8 @@ variants[].callToAction?: string — OPTIONAL button on the dark post, sent as
                                   DOWNLOAD, VIEW_QUOTE, LEARN_MORE, SIGN_UP, SUBSCRIBE, REGISTER,
                                   JOIN, ATTEND, REQUEST_DEMO, SEE_MORE, BUY_NOW, SHOP_NOW (Posts
                                   API ContentCallToActionLabel at LinkedIn-Version 202611;
-                                  case-sensitive). Omitted sends no button.
+                                  case-sensitive). Omitted sends no button on an image
+                                  variant; a video variant (videoAssetId) gets REGISTER.
                                   Behind LINKEDIN_ADS_CALL_TO_ACTION_ENABLED (off by default).
 variants[].description?: string  — OPTIONAL article description (content.article.description).
                                   Normalized like introText (trimmed, em/en dashes to commas) and

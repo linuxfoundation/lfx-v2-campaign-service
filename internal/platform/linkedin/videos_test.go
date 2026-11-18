@@ -124,6 +124,21 @@ func (a *videoAPI) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// videoCaptures is what the handler captured, copied out under the fake's lock.
+type videoCaptures struct {
+	campaign map[string]any
+	posts    []map[string]any
+	finBody  map[string]any
+}
+
+// snap returns the captured request bodies under a.mu, so the test goroutine never reads
+// handler-written state without a happens-before edge.
+func (a *videoAPI) snap() videoCaptures {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return videoCaptures{campaign: a.campaign, posts: append([]map[string]any(nil), a.posts...), finBody: a.finBody}
+}
+
 func (a *videoAPI) count(prefix string) int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -184,8 +199,8 @@ func TestCreateCampaign_Video_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
-	if api.campaign["format"] != "SINGLE_VIDEO" {
-		t.Errorf("campaign format = %v, want SINGLE_VIDEO", api.campaign["format"])
+	if api.snap().campaign["format"] != "SINGLE_VIDEO" {
+		t.Errorf("campaign format = %v, want SINGLE_VIDEO", api.snap().campaign["format"])
 	}
 	if !strings.Contains(res.CampaignName, " | Video | ") {
 		t.Errorf("campaign name = %q, want the Video Ad Format segment", res.CampaignName)
@@ -193,17 +208,17 @@ func TestCreateCampaign_Video_HappyPath(t *testing.T) {
 	if n := api.count("POST /videos?action=initializeUpload"); n != 1 {
 		t.Errorf("initializeUpload = %d, want 1 for one shared asset", n)
 	}
-	fin, _ := api.finBody["finalizeUploadRequest"].(map[string]any)
+	fin, _ := api.snap().finBody["finalizeUploadRequest"].(map[string]any)
 	if ids, _ := fin["uploadedPartIds"].([]any); len(ids) != 2 || ids[0] != "etag-1" || ids[1] != "etag-2" {
 		t.Errorf("uploadedPartIds = %v, want [etag-1 etag-2]", fin["uploadedPartIds"])
 	}
-	if len(api.posts) != 2 || res.CreativeCount != 2 {
-		t.Fatalf("posts = %d, creatives = %d, want 2 and 2", len(api.posts), res.CreativeCount)
+	if len(api.snap().posts) != 2 || res.CreativeCount != 2 {
+		t.Fatalf("posts = %d, creatives = %d, want 2 and 2", len(api.snap().posts), res.CreativeCount)
 	}
-	content, _ := api.posts[0]["content"].(map[string]any)
+	content, _ := api.snap().posts[0]["content"].(map[string]any)
 	media, _ := content["media"].(map[string]any)
-	if media["id"] != "urn:li:video:V1" || media["title"] != "Headline" || api.posts[0]["contentCallToActionLabel"] != "REGISTER" {
-		t.Errorf("video post = %v", api.posts[0])
+	if media["id"] != "urn:li:video:V1" || media["title"] != "Headline" || api.snap().posts[0]["contentCallToActionLabel"] != "REGISTER" {
+		t.Errorf("video post = %v", api.snap().posts[0])
 	}
 	if res.VideoURNs["vid-a"] != "urn:li:video:V1" || res.ImageURNs != nil {
 		t.Errorf("result URNs: video %v image %v", res.VideoURNs, res.ImageURNs)
@@ -219,8 +234,8 @@ func TestCreateCampaign_Video_VariantCallToAction(t *testing.T) {
 	if _, err := api.client().CreateCampaign(context.Background(), videoCampaignInput(learn, videoVariant())); err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
-	if len(api.posts) != 2 || api.posts[0]["contentCallToActionLabel"] != "LEARN_MORE" || api.posts[1]["contentCallToActionLabel"] != "REGISTER" {
-		t.Errorf("call to action labels: %v", api.posts)
+	if len(api.snap().posts) != 2 || api.snap().posts[0]["contentCallToActionLabel"] != "LEARN_MORE" || api.snap().posts[1]["contentCallToActionLabel"] != "REGISTER" {
+		t.Errorf("call to action labels: %v", api.snap().posts)
 	}
 }
 
@@ -233,15 +248,15 @@ func TestCreateCampaign_ImageCampaignUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
-	if _, has := api.campaign["format"]; has {
-		t.Errorf("an image campaign sent format %v; it must leave the format to LinkedIn as before", api.campaign["format"])
+	if _, has := api.snap().campaign["format"]; has {
+		t.Errorf("an image campaign sent format %v; it must leave the format to LinkedIn as before", api.snap().campaign["format"])
 	}
 	if !strings.Contains(res.CampaignName, " | Static | ") {
 		t.Errorf("campaign name = %q, want Static", res.CampaignName)
 	}
-	content, _ := api.posts[0]["content"].(map[string]any)
-	if _, ok := content["article"]; !ok || api.posts[0]["contentLandingPage"] != nil {
-		t.Errorf("image post = %v, want an article and no landing page field", api.posts[0])
+	content, _ := api.snap().posts[0]["content"].(map[string]any)
+	if _, ok := content["article"]; !ok || api.snap().posts[0]["contentLandingPage"] != nil {
+		t.Errorf("image post = %v, want an article and no landing page field", api.snap().posts[0])
 	}
 	if api.count("POST /videos") != 0 {
 		t.Error("an image campaign called the Videos API")
