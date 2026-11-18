@@ -491,6 +491,16 @@ in Campaign Manager. Pinned by `group_capped_test.go` (including
 `TestCreateCampaign_InterleavedCreatesCannotWidenUnderACappedCampaign`) and
 `TestCreateCampaign_LifetimeBudgetWithDailyCap` (no `end`; an uncapped lifetime keeps it).
 
+**An uncapped lifetime budget on a fixed schedule has a per-day floor (#633).** LinkedIn spreads
+the total over the flight and needs $10 a day, so `ValidateFixedScheduleLifetime(total, startMs,
+endMs)` (`budget_flight.go`) refuses a total under max($100, $10 × days) at wire precision. Days
+are UTC calendar days from start through end inclusive (`flightDaysUTC`), which are the
+campaign's own day boundaries because `toMs` sends UTC midnights. `CreateCampaign` calls it after
+`validateSchedule` when there is no cap. `ValidateFixedScheduleLifetimeDates` is the
+YYYY-MM-DD form the dispatch preflight uses, counting a begun start from now+startTimeBuffer, as `toMs` sends it. `GetCampaignBudget`
+also returns `RunStartMs`/`RunEndMs`, so the budget write applies the floor to a campaign whose
+schedule has an end. Pinned by `budget_flight_test.go`.
+
 `GetCampaignBudget(ctx, campaignID)` reads the campaign under the resolved account
 (`adAccounts/{acct}/adCampaigns/{id}`, numeric ids only) and returns a `CampaignBudget` carrying
 `DailyBudget`, `TotalBudget`, `CurrencyCode` and `Status`, plus each field's own currency

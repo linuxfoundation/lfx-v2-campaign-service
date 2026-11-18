@@ -1317,7 +1317,7 @@ func TestCreateCampaign_AcceptsMinimumBudget(t *testing.T) {
 				BudgetUSD:        tc.budget,
 				LifetimeBudget:   tc.lifetime,
 				StartDate:        "2099-01-01",
-				EndDate:          "2099-02-01",
+				EndDate:          "2099-01-10", // 10 days: the flat $100 binds, not #633's $10 × days
 				TargetingProfile: "cloud-native",
 				GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
 				Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
@@ -1356,7 +1356,7 @@ func TestCreateCampaign_BudgetMinimumChecksRoundedValue(t *testing.T) {
 				BudgetUSD:        tc.budget,
 				LifetimeBudget:   tc.lifetime,
 				StartDate:        "2099-01-01",
-				EndDate:          "2099-02-01",
+				EndDate:          "2099-01-10", // 10 days: the flat $100 binds, not #633's $10 × days
 				TargetingProfile: "cloud-native",
 				GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
 				Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
@@ -1387,7 +1387,7 @@ func TestCreateCampaign_BudgetMinimumChecksRoundedValue(t *testing.T) {
 				BudgetUSD:        tc.budget,
 				LifetimeBudget:   tc.lifetime,
 				StartDate:        "2099-01-01",
-				EndDate:          "2099-02-01",
+				EndDate:          "2099-01-10", // 10 days: the flat $100 binds, not #633's $10 × days
 				TargetingProfile: "cloud-native",
 				GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
 				Variants:         []CreativeVariant{{IntroText: "a", Headline: "b"}},
