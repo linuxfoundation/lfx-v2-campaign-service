@@ -3191,19 +3191,25 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// dark posts and creatives, and returns the campaign for reconciliation — the conservative
 	// choice internal/platform/microsoft/campaign.go makes for its create-time-only targeting.
 	//
-	// A profile create (no targeting) keeps reusing the campaign as before: its criteria are
-	// derived from the service's own targeting profile rather than per-campaign caller input,
-	// and that retry path predates #552.
+	// Caller job functions (#585) are per-campaign caller input too: they reach only the
+	// profile criteria of a campaign this run creates, so a found campaign with them set stops
+	// here in the same way. A profile create with the default job functions keeps reusing the
+	// campaign as before: its criteria are derived from the service's own targeting profile
+	// rather than per-campaign caller input, and that retry path predates #552.
 	//
 	// The partial carries TargetingNotApplied so the dispatcher records it as pending rather than
 	// created_degraded: a campaign id with no creatives would otherwise read as a degraded success,
 	// which the orchestrator reuses, and a repeated request would report success for targeting that
 	// was never applied (#557 review).
-	if campaignReused && targeting != nil {
-		steps = append(steps, fmt.Sprintf("Stopped before the creatives: campaign %s was found by name (an earlier attempt or an operator made it), and linkedInConfig.targeting is applied only to a campaign this run creates; check its targeting in Campaign Manager and finish the campaign there", campaignID))
+	if campaignReused && (targeting != nil || jobFns != nil) {
+		field := "linkedInConfig.targeting"
+		if targeting == nil {
+			field = "linkedInConfig.jobFunctions"
+		}
+		steps = append(steps, fmt.Sprintf("Stopped before the creatives: campaign %s was found by name (an earlier attempt or an operator made it), and %s is applied only to a campaign this run creates; check its targeting in Campaign Manager and finish the campaign there", campaignID, field))
 		r := c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps)
 		r.TargetingNotApplied = true
-		return r, fmt.Errorf("linkedin targeting NOT applied to reused campaign %s (linkedInConfig.targeting is set only on a campaign this run creates; no conversion, image, dark post or creative was added): verify the campaign's targeting in Campaign Manager", campaignID)
+		return r, fmt.Errorf("linkedin targeting NOT applied to reused campaign %s (%s is set only on a campaign this run creates; no conversion, image, dark post or creative was added): verify the campaign's targeting in Campaign Manager", campaignID, field)
 	}
 
 	// Conversions (#552) are associated as soon as the campaign exists, on a reused campaign too

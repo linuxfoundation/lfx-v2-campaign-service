@@ -8,4 +8,6 @@ ledger rows 9–10). `linkedInConfig.jobFunctions` replaces the default three; i
 like the targeting facet, refused as an empty list, a wrong JSON type, or together with
 `targeting`, and is neither role- nor flag-gated. Every live create through campaign-service so
 far stopped before its creative (#579), so no serving campaign's audience changes; campaigns
-already created keep the targeting they were created with.
+already created keep the targeting they were created with. A campaign found by name on a retry
+keeps its criteria too, so a create with `jobFunctions` set stops before its creatives with
+`TargetingNotApplied`, as one with `targeting` does.

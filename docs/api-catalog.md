@@ -1396,11 +1396,17 @@ value, and `jobFunctions` together with `targeting`, which brings its own clause
 unread. Not role-gated (job functions are LinkedIn's taxonomy, not an ad-account resource) and not
 flag-gated (the request shape is the one the default has always sent).
 
+Like `targeting`, `jobFunctions` reaches only a campaign the create makes. A campaign found by name
+in the event's campaign group keeps its existing criteria, so a create with `jobFunctions` set stops
+before any conversion, image, dark post or creative, exactly as the next section describes for
+`targeting` (`linkedin targeting NOT applied to reused campaign <id>`, row left `pending`). A create
+with the default job functions reuses the campaign as before.
+
 #### LinkedInConfig targeting (`linkedInConfig.targeting`, #552)
 
 The caller's own LinkedIn `targetingCriteria`, behind `LINKEDIN_ADS_TARGETING_ENABLED` (off by
 default; while off, any `targeting` is a synchronous `400` naming the flag). Omitted, the campaign
-is targeted by its profile, as the next section describes.
+is targeted by its profile, as the previous section describes.
 
 ```jsonc
 "targeting": {

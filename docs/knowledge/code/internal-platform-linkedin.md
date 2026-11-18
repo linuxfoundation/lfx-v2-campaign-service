@@ -1076,7 +1076,8 @@ The skills/groups clause is omitted when both are empty rather than sent empty; 
 `ValidateJobFunctions` (the targeting facet's `urn:li:function:<id>` rule, via `cleanFacet`); nil
 means the default three in `config.go`. `CreateCampaign` refuses `JobFunctions` with `Targeting`
 as a pre-flight refusal, and the dispatcher refuses it, and a wrong JSON type
-(`checkJobFunctionsShape`), as a synchronous 400.
+(`checkJobFunctionsShape`), as a synchronous 400. A campaign reused by name with `JobFunctions` set
+stops before its creatives, as with `Targeting` (see Caller targeting).
 
 ## Picker lookups (`lookups.go`, #552)
 
@@ -1147,7 +1148,9 @@ and name, no creative) with a `targeting NOT applied to reused campaign` error f
 the conservative choice Microsoft makes for its create-time-only targeting
 (`internal/platform/microsoft/campaign.go`). A profile create (no `Targeting`) still reuses the
 campaign and attaches creatives: its criteria derive from the service's own profile, and that
-retry path predates #552. Pinned by
+retry path predates #552. Caller `JobFunctions` (#585) are per-campaign input too and reach only
+a created campaign's criteria, so a reuse with them set stops the same way, its step and error
+naming `linkedInConfig.jobFunctions`; only the default job functions keep reusing. Pinned by
 `TestCreateCampaign_ReusedCampaignWithTargetingStopsBeforeCreatives`.
 
 That partial sets `CampaignResult.TargetingNotApplied`. A campaign id with no creative would

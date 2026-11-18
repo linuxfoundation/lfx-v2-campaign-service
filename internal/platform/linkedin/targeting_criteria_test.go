@@ -107,10 +107,11 @@ func TestCreateCampaign_CustomTargetingReachesTheWire(t *testing.T) {
 // when linkedInConfig.targeting is set and the campaign is found by name, its existing criteria are
 // not the requested ones as far as this run can tell, so the create stops before any conversion,
 // dark post or creative, leaves the campaign untouched, and returns it as a partial alongside an
-// error for reconciliation. The same lookup without targeting (a profile create) still reuses the
-// campaign and attaches the creatives.
+// error for reconciliation. Caller job functions (#585) stop it the same way. The same lookup
+// without either (a profile create with the default job functions) still reuses the campaign and
+// attaches the creatives.
 func TestCreateCampaign_ReusedCampaignWithTargetingStopsBeforeCreatives(t *testing.T) {
-	newInput := func(targeting *Targeting) CampaignInput {
+	newInput := func(targeting *Targeting, jobFns []string) CampaignInput {
 		return CampaignInput{
 			EventName: "KubeCon", RegistrationURL: "https://events.example.org/kubecon",
 			BudgetUSD: 100, StartDate: "2099-01-01", EndDate: "2099-02-01",
@@ -120,18 +121,22 @@ func TestCreateCampaign_ReusedCampaignWithTargetingStopsBeforeCreatives(t *testi
 			Project:          "CNCF",
 			Conversions:      []string{"104012"},
 			Targeting:        targeting,
+			JobFunctions:     jobFns,
 		}
 	}
 	for _, tc := range []struct {
 		name      string
 		targeting *Targeting
+		jobFns    []string
 		wantStop  bool
+		wantField string
 	}{
-		{"caller targeting", eventTargeting(), true},
-		{"profile", nil, false},
+		{"caller targeting", eventTargeting(), nil, true, "linkedInConfig.targeting"},
+		{"caller job functions", nil, []string{"urn:li:function:4"}, true, "linkedInConfig.jobFunctions"},
+		{"profile", nil, nil, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			in := newInput(tc.targeting)
+			in := newInput(tc.targeting, tc.jobFns)
 			plan, err := campaignBidding(0)
 			if err != nil {
 				t.Fatal(err)
@@ -180,8 +185,8 @@ func TestCreateCampaign_ReusedCampaignWithTargetingStopsBeforeCreatives(t *testi
 				}
 				return
 			}
-			if err == nil || !strings.Contains(err.Error(), "targeting NOT applied to reused campaign 777") {
-				t.Fatalf("want a reconciliation error for the reused campaign, got %v", err)
+			if err == nil || !strings.Contains(err.Error(), "targeting NOT applied to reused campaign 777 ("+tc.wantField+" ") {
+				t.Fatalf("want a reconciliation error naming %s for the reused campaign, got %v", tc.wantField, err)
 			}
 			if res == nil || res.CampaignID != "777" || res.CampaignGroupID != "100" || res.CampaignName != name || res.CreativeCount != 0 {
 				t.Fatalf("partial = %+v; want campaign 777 in group 100 with no creative", res)
