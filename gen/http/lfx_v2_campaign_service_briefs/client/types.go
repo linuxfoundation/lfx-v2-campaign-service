@@ -5748,18 +5748,17 @@ type CampaignCreateInputRequestBody struct {
 	// and a create that cannot keep the shared group ending at the campaign's end
 	// is refused). Refused with a 400 before any job exists when it is set without
 	// lifetimeBudget, is not a number (null included), is not above zero, is under
-	// LinkedIn's $10 daily minimum, or is more than the lifetime budget. Without a
-	// cap, a lifetime budget must be at least $10 per flight day (UTC, inclusive),
-	// or 400 (#633). REDDIT CONVERSION EVENT (#549): redditConfig.conversionEvent
-	// names the pixel event a conversions campaign optimizes toward, sent as the
-	// campaign's and the ad group's optimization_goal: PURCHASE, SIGN_UP, LEAD,
-	// PAGE_VISIT, VIEW_CONTENT, ADD_TO_CART, ADD_TO_WISHLIST or SEARCH,
-	// case-insensitive. Omitted means PURCHASE, as before. It is accepted only
-	// with objective conversions (also the default when objective is omitted) and
-	// only while the deployment sets REDDIT_CONVERSION_EVENT_ENABLED to "true". An
-	// unknown value, another objective, an explicit null, an empty or non-string
-	// value, a case variant of the key, or the field while the flag is off is
-	// refused synchronously with 400 "invalid campaign config:
+	// LinkedIn's $10 daily minimum, or is more than the lifetime budget. REDDIT
+	// CONVERSION EVENT (#549): redditConfig.conversionEvent names the pixel event
+	// a conversions campaign optimizes toward, sent as the campaign's and the ad
+	// group's optimization_goal: PURCHASE, SIGN_UP, LEAD, PAGE_VISIT,
+	// VIEW_CONTENT, ADD_TO_CART, ADD_TO_WISHLIST or SEARCH, case-insensitive.
+	// Omitted means PURCHASE, as before. It is accepted only with objective
+	// conversions (also the default when objective is omitted) and only while the
+	// deployment sets REDDIT_CONVERSION_EVENT_ENABLED to "true". An unknown value,
+	// another objective, an explicit null, an empty or non-string value, a case
+	// variant of the key, or the field while the flag is off is refused
+	// synchronously with 400 "invalid campaign config:
 	// redditConfig.conversionEvent: ..." before any job exists. REDDIT EXCLUSIONS
 	// (#549): redditConfig takes `excludedSubreddits` (subreddit names, an
 	// optional r/ prefix stripped, each 2-21 letters, digits or underscores, at
