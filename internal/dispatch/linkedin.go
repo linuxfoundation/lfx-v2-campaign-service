@@ -1360,6 +1360,7 @@ func (d *LinkedInDispatcher) ReadAccountMonitor(ctx context.Context, projectID s
 			TotalBudget:        r.TotalBudget,
 			StartDate:          r.StartDate,
 			EndDate:            r.EndDate,
+			SpendBeforeWindow:  r.SpendBeforeWindow,
 			FetchFailed:        r.FetchFailed,
 			FailureClass:       r.FailureClass,
 		})

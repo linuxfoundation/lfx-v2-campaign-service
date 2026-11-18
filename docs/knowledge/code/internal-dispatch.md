@@ -1528,6 +1528,12 @@ the redenomination the guard exists to prevent. Placed above the pacing guard it
 empty to let the first case through; placed below it, the first case has already been refused
 ("NEITHER budget present"), so the only empty left is the second and it is REFUSED.
 
+**Every present budget's currency is checked, not the one the read collapses them to (#636).**
+`linkedin.CampaignBudget.CurrencyCode` prefers the daily budget's code, so on a lifetime budget
+with a daily cap a USD cap over a total whose currency is missing or different passed a single
+check. The guard reads `DailyBudgetCurrency` and `TotalBudgetCurrency` and requires an explicit
+USD on each field that is present.
+
 The amount then converts through `linkedin.ValidateBudgetAmount`, the same function the create
 path calls — `$10` daily and `$100` lifetime minimums — and **the WIRE STRING it returns is what
 is sent**, never a re-formatted float, so the amount validated is byte-for-byte the amount
