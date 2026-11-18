@@ -48,6 +48,8 @@ type videoAPI struct {
 	finBody      map[string]any
 	// existing, when set, is the campaign search's response (a same-name campaign in the group).
 	existing string
+	// quoteETag answers each part PUT with a quoted entity tag (ETag: "etag-1").
+	quoteETag bool
 }
 
 func newVideoAPI(t *testing.T) *videoAPI {
@@ -77,7 +79,11 @@ func (a *videoAPI) serve(w http.ResponseWriter, r *http.Request) {
 			_, _ = io.WriteString(w, vidLeakText)
 			return
 		}
-		w.Header().Set("ETag", "etag-"+strings.TrimPrefix(r.URL.Path, "/dms-uploads/V/"))
+		etag := "etag-" + strings.TrimPrefix(r.URL.Path, "/dms-uploads/V/")
+		if a.quoteETag {
+			etag = `"` + etag + `"`
+		}
+		w.Header().Set("ETag", etag)
 	case r.Method == http.MethodPost && r.URL.Path == "/videos" && r.URL.Query().Get("action") == "initializeUpload":
 		if a.initStatus != 0 {
 			w.WriteHeader(a.initStatus)
@@ -226,6 +232,20 @@ func TestCreateCampaign_Video_HappyPath(t *testing.T) {
 	}
 	if res.VideoURNs["vid-a"] != "urn:li:video:V1" || res.ImageURNs != nil {
 		t.Errorf("result URNs: video %v image %v", res.VideoURNs, res.ImageURNs)
+	}
+}
+
+// TestCreateCampaign_Video_QuotedETagsAreUnquoted pins that a quoted entity tag on a part PUT
+// is finalized as the part id inside the quotes, not with the quotes as part of the id.
+func TestCreateCampaign_Video_QuotedETagsAreUnquoted(t *testing.T) {
+	api := newVideoAPI(t)
+	api.quoteETag = true
+	if _, err := api.client().CreateCampaign(context.Background(), videoCampaignInput(videoVariant())); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	fin, _ := api.snap().finBody["finalizeUploadRequest"].(map[string]any)
+	if ids, _ := fin["uploadedPartIds"].([]any); len(ids) != 2 || ids[0] != "etag-1" || ids[1] != "etag-2" {
+		t.Errorf("uploadedPartIds = %v, want [etag-1 etag-2]", fin["uploadedPartIds"])
 	}
 }
 

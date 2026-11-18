@@ -255,7 +255,12 @@ func (c *Client) uploadVideo(ctx context.Context, owner string, v VideoUpload) (
 			// The video is not finalized, so it can never be AVAILABLE or referenced.
 			return urn, &imageUploadError{err: fmt.Errorf("video upload: part %d of %d of %s failed: %w", i+1, len(parts), urn, perr)}
 		}
+		// An HTTP entity tag may arrive quoted (ETag: "abc"); the part id finalizeUpload names is
+		// the value inside the quotes.
 		etag := strings.TrimSpace(hdr.Get("ETag"))
+		if len(etag) >= 2 && strings.HasPrefix(etag, `"`) && strings.HasSuffix(etag, `"`) {
+			etag = strings.TrimSpace(etag[1 : len(etag)-1])
+		}
 		if etag == "" {
 			return urn, &imageUploadError{err: fmt.Errorf("video upload: part %d of %d of %s returned no ETag; the upload cannot be finalized", i+1, len(parts), urn)}
 		}
