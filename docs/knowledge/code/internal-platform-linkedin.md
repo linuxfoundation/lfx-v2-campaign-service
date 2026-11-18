@@ -438,6 +438,49 @@ than a `%w` in the message: wrapping with `%w` would append the sentinel's own t
 message and make the client-safe sentence indistinguishable from its chain — which matters
 because the dispatcher hands exactly that sentence to an API client.
 
+**A lifetime budget may carry a daily cap (#584).** `CampaignInput.DailyCapUSD` (zero for none)
+is sent as the campaign's `dailyBudget` beside its `totalBudget`. `ValidateDailyCap(cap, total,
+lifetime)` owns the rules:
+- a cap exists only beside a lifetime budget;
+- it obeys every daily rule, by running `ValidateBudgetAmount(cap, false)`, with the refusal
+  prefixed "daily cap:";
+- it may not exceed the lifetime total, compared with any finite positive total (even one under
+  the lifetime minimum, which `ValidateBudgetAmount` refuses on its own).
+
+`CreateCampaign` calls it before any POST, next to `ValidateBudgetAmount`, and passes the wire
+string to `createSponsoredCampaign`. The edit-side twin `ValidateTotalCoversCap(total, cap)`
+refuses a lifetime total below an existing cap. Both return `budgetAmountError`, so
+`BudgetAmountReason` surfaces their sentence as a 400. The shape is not yet verified against a
+live account (cs#579).
+
+A capped campaign is sent on LinkedIn's continuous schedule: `runSchedule.start` and NO `end`
+(Create and Manage Campaigns, Lifetime Pacing: "Use a Daily Budget and a Total Budget with a
+Continuous Schedule"; since 2020 a total plus a daily budget on a fixed schedule is not
+accepted). The end moves to the campaign group, which is shared by the event's campaigns, so
+`ensureCampaignGroupCoversEnd` takes a `capped` flag and guards it (`group_capped.go`, ported
+from Misha Rautela's #584 branch):
+- capped and the reused group ends later, or never: refused with
+  `ErrCampaignGroupScheduleConflict`; ending earlier, it is widened to exactly the campaign's end;
+- before the FIRST widening write of any create, `findUnboundedCappedCampaignInGroup` searches
+  the group's campaigns (`adCampaigns` `q=search` by group URN, fail-closed on an untrusted page
+  or an element with no campaign id, which is what `null` and `{}` decode to) and refuses the widening when one carries both budgets and no end, skipping CANCELED, REMOVED,
+  DELETED and PENDING_DELETION.
+
+Before any write the refusal is a `PreflightRefusal` carrying `ErrCreateConfigInvalid`;
+`CreateCampaign` returns it as `(nil, err)`. After this call's own write (another writer moved
+the end past the campaign's in between) it is a plain error.
+
+The sibling search only sees campaigns that exist, so a second create of the event could widen
+the group between a capped create's check and its campaign POST. `CreateCampaign` therefore
+holds `eventGroupLocks` (keyed on base URL, account and group NAME, since a group the create
+makes has no id yet) from `findOrCreateCampaignGroup` through `createSponsoredCampaign`: within
+the process, same-event creates run that span one at a time, and the next one's search sees the
+campaign. It is a separate lock set from `groupScheduleLocks` and always taken first. NOT
+covered: a create on another replica in that window (LFXV2-2665), and a hand edit of the group
+in Campaign Manager. Pinned by `group_capped_test.go` (including
+`TestCreateCampaign_InterleavedCreatesCannotWidenUnderACappedCampaign`) and
+`TestCreateCampaign_LifetimeBudgetWithDailyCap` (no `end`; an uncapped lifetime keeps it).
+
 `GetCampaignBudget(ctx, campaignID)` reads the campaign under the resolved account
 (`adAccounts/{acct}/adCampaigns/{id}`, numeric ids only) and returns a `CampaignBudget` carrying
 `DailyBudget`, `TotalBudget`, `CurrencyCode` and `Status`. An **absent** field stays `nil`

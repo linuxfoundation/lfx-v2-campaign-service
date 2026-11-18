@@ -29,6 +29,11 @@ type groupScheduleServer struct {
 	patches     []map[string]any
 	restliHdr   []string
 	afterPatch  func(g *groupScheduleServer)
+	// campaigns, when set, is the adCampaigns search page for the group (default: empty);
+	// searchStatus fails that search; searches records each search's query.
+	campaigns    string
+	searchStatus int
+	searches     []string
 }
 
 func i64(v int64) *int64 { return &v }
@@ -42,6 +47,22 @@ func (g *groupScheduleServer) currentEnd() *int64 {
 func (g *groupScheduleServer) start(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/adAccounts/123456789/adCampaigns") {
+			g.mu.Lock()
+			g.searches = append(g.searches, r.URL.RawQuery)
+			body, status := g.campaigns, g.searchStatus
+			g.mu.Unlock()
+			if status != 0 {
+				w.WriteHeader(status)
+				return
+			}
+			if body == "" {
+				body = `{"elements":[],"metadata":{}}`
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, body)
+			return
+		}
 		if !strings.HasSuffix(r.URL.Path, "/adAccounts/123456789/adCampaignGroups/555") {
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusBadRequest)
 			return
@@ -132,7 +153,7 @@ func TestEnsureCampaignGroupCoversEnd(t *testing.T) {
 					g.mu.Unlock()
 				}
 			}
-			wrote, err := g.client(t).ensureCampaignGroupCoversEnd(context.Background(), "123456789", "555", endMs)
+			wrote, err := g.client(t).ensureCampaignGroupCoversEnd(context.Background(), "123456789", "555", endMs, false)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("err = %v, want one containing %q", err, tc.wantErr)
@@ -159,7 +180,7 @@ func TestEnsureCampaignGroupCoversEnd(t *testing.T) {
 
 func TestEnsureCampaignGroupCoversEnd_WriteFailureIsAnError(t *testing.T) {
 	g := &groupScheduleServer{end: i64(3_000_000_000_000), patchStatus: http.StatusBadRequest}
-	wrote, err := g.client(t).ensureCampaignGroupCoversEnd(context.Background(), "123456789", "555", 4_000_000_000_000)
+	wrote, err := g.client(t).ensureCampaignGroupCoversEnd(context.Background(), "123456789", "555", 4_000_000_000_000, false)
 	if err == nil || wrote {
 		t.Fatalf("wrote=%v err=%v, want an error and no claim of a write", wrote, err)
 	}
@@ -183,7 +204,7 @@ func TestEnsureCampaignGroupCoversEnd_ReWidensAfterAConcurrentShortening(t *test
 			shorten(g)
 		}
 	}
-	wrote, err := g.client(t).ensureCampaignGroupCoversEnd(context.Background(), "123456789", "555", endMs)
+	wrote, err := g.client(t).ensureCampaignGroupCoversEnd(context.Background(), "123456789", "555", endMs, false)
 	if err != nil || !wrote {
 		t.Fatalf("wrote=%v err=%v, want a re-widen to succeed", wrote, err)
 	}
@@ -200,7 +221,7 @@ func TestEnsureCampaignGroupCoversEnd_ReWidensAfterAConcurrentShortening(t *test
 			shorten(g)
 		}
 	}
-	if wrote, err := third.client(t).ensureCampaignGroupCoversEnd(context.Background(), "123456789", "555", endMs); err != nil || !wrote {
+	if wrote, err := third.client(t).ensureCampaignGroupCoversEnd(context.Background(), "123456789", "555", endMs, false); err != nil || !wrote {
 		t.Fatalf("wrote=%v err=%v, want the third write verified as covering", wrote, err)
 	}
 	if len(third.patches) != groupScheduleAttempts || *third.currentEnd() != endMs {
@@ -208,7 +229,7 @@ func TestEnsureCampaignGroupCoversEnd_ReWidensAfterAConcurrentShortening(t *test
 	}
 
 	always := &groupScheduleServer{end: i64(3_000_000_000_000), afterPatch: shorten}
-	if _, err := always.client(t).ensureCampaignGroupCoversEnd(context.Background(), "123456789", "555", endMs); err == nil || !strings.Contains(err.Error(), "keeps shortening") {
+	if _, err := always.client(t).ensureCampaignGroupCoversEnd(context.Background(), "123456789", "555", endMs, false); err == nil || !strings.Contains(err.Error(), "keeps shortening") {
 		t.Fatalf("err = %v, want the bounded-attempts error", err)
 	}
 	if len(always.patches) != groupScheduleAttempts {
@@ -231,7 +252,7 @@ func TestEnsureCampaignGroupCoversEnd_ConcurrentCallersKeepTheLaterEnd(t *testin
 			go func(k int, end int64) {
 				defer wg.Done()
 				c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-				_, errs[k] = c.ensureCampaignGroupCoversEnd(context.Background(), "123456789", "555", end)
+				_, errs[k] = c.ensureCampaignGroupCoversEnd(context.Background(), "123456789", "555", end, false)
 			}(k, end)
 		}
 		wg.Wait()

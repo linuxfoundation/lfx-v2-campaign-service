@@ -28,8 +28,9 @@ import (
 //     cannot be attached to a second campaign, so the shared-budget refusal that dominates the
 //     Google path has no analogue and is deliberately absent rather than forgotten. Meta is
 //     the platform where that guard reappears, in the CBO form.
-//   - The two amount fields ARE still mutually exclusive in practice, and which one a campaign
-//     uses is the pacing model. So the pacing-match guard below is the same guard Google makes,
+//   - Which amount field a campaign carries is its pacing model: totalBudget present means
+//     lifetime pacing, and a dailyBudget beside it is a daily CAP (#584); dailyBudget alone
+//     means daily pacing. So the pacing-match guard below is the same guard Google makes,
 //     reached through a different fact.
 //
 // NOTHING IS MUTATED UNTIL EVERY GUARD HAS PASSED, so a caller seeing any refusal below knows
@@ -107,18 +108,22 @@ func (d *LinkedInDispatcher) WriteBudget(ctx context.Context, projectID string, 
 	// operator seeing it stated.
 	//
 	// LinkedIn reports the pacing model by WHICH FIELD IS PRESENT. A campaign reporting
-	// NEITHER has no budget this service can identify the shape of, and a campaign
-	// reporting BOTH is the genuinely ambiguous row — writing one of them would leave the
-	// other in force and the effective budget would be neither what was asked for nor what
-	// was there. Both are refused.
+	// NEITHER has no budget this service can identify the shape of, and is refused.
+	//
+	// A campaign reporting BOTH is a LIFETIME budget with a DAILY CAP (#584): the create path
+	// sends exactly that shape when linkedInConfig.dailyCapUsd is set, and LF runs ad sets that
+	// way. Its pacing model is lifetime, so a lifetime amount change writes totalBudget alone
+	// (PARTIAL_UPDATE $set leaves dailyBudget in force, which is the cap the operator chose),
+	// provided the new total is not below the cap. A DAILY amount request on that campaign is
+	// refused: it would rewrite the cap while reading as a change of pacing model.
 	hasDaily := current.DailyBudget != nil
 	hasTotal := current.TotalBudget != nil
 	switch {
-	case hasDaily && hasTotal:
-		return fmt.Errorf("write linkedin campaign budget: campaign %s reports BOTH a daily and a total budget, so writing either would leave the other in force; resolve which one applies in LinkedIn Campaign Manager: %w",
+	case hasDaily && hasTotal && budget.Type != model.BudgetLifetime:
+		return fmt.Errorf("write linkedin campaign budget: campaign %s has a lifetime budget with a daily cap, so only its lifetime amount can be changed here; change the daily cap in LinkedIn Campaign Manager: %w",
 			campaign.PlatformCampaignID, domain.ErrBudgetUnwritable)
 	case !hasDaily && !hasTotal:
-		return fmt.Errorf("write linkedin campaign budget: campaign %s reports no budget at all, so which of the two mutually exclusive amount fields to write cannot be established: %w",
+		return fmt.Errorf("write linkedin campaign budget: campaign %s reports no budget at all, so which amount field to write cannot be established: %w",
 			campaign.PlatformCampaignID, domain.ErrBudgetUnwritable)
 	}
 	upstreamType := model.BudgetDaily
@@ -161,6 +166,11 @@ func (d *LinkedInDispatcher) WriteBudget(ctx context.Context, projectID string, 
 	// so the amount validated is byte-for-byte the amount written.
 	lifetime := upstreamType == model.BudgetLifetime
 	wire, _, err := linkedin.ValidateBudgetAmount(budget.Amount, lifetime)
+	if err == nil && hasDaily && hasTotal {
+		// A lifetime total under the campaign's own daily cap (#584) is a shape the create path
+		// refuses; refuse it here too, before any write, with the same operator-safe sentence.
+		err = linkedin.ValidateTotalCoversCap(budget.Amount, *current.DailyBudget)
+	}
 	if err != nil {
 		// A refused AMOUNT is a permanent request fault, not an upstream one. LinkedIn's
 		// $10 daily / $100 lifetime minimums have no equivalent in the service layer (which

@@ -235,6 +235,13 @@ Pacing is meaningful **per campaign only**. This service performs no FX conversi
 cost is reported in each platform's native unit, so `Pct` must never be totalled or averaged
 across platforms — the same reason the brief-metrics response refuses a cross-channel cost total.
 
+LinkedIn pacing (`linkedinExpectedSpend`) handles a campaign with BOTH budgets (#584): with no
+end, the window expects min(cap × window days, total); with an end, the smaller of the lifetime
+and daily expectations. Pacing a capped, no-end campaign against its whole total over the
+flight to date would read it as badly underspending. Pinned by
+`TestLinkedinPacingPct_LifetimeWithDailyCap` and
+`TestLinkedinExpectedSpend_CappedNoEndNeverExceedsTotal`.
+
 ## The five rules
 
 | Rule | Fires when |
