@@ -235,6 +235,15 @@ type CreativeVariant struct {
 	// the Images API and used as this variant's thumbnail (images.go). It is a key into
 	// CampaignInput.Images and is MUTUALLY EXCLUSIVE with ImageURN.
 	ImageAssetID string
+	// Name optionally names this variant's creative (#589); empty keeps "<event> | variant-N".
+	// See creativeName. No two variants of one campaign may share a name (ValidateVariantFields).
+	Name string
+	// CallToAction is optionally one of CallToActionLabels, sent as the dark post's
+	// contentCallToActionLabel (#588). Empty sends none, as before.
+	CallToAction string
+	// Description is the optional article description (#588), normalized and cut to
+	// maxDescriptionLen. Empty sends "", as before.
+	Description string
 }
 
 // CampaignInput is the full campaign-creation request. Mirrors
@@ -263,6 +272,12 @@ type CampaignInput struct {
 	// MAX_CLICK; a positive value is a manual max CPC under WEBSITE_CONVERSION. The objective and
 	// the campaign name's Objective segment follow the choice. See campaignBidding.
 	ManualCPCBid float64
+	// Objective is the requested objectiveType (#582): "" lets ManualCPCBid decide, as above;
+	// ObjectiveWebsiteVisit is automatic only; ObjectiveWebsiteConversion with ManualCPCBid 0 is
+	// automatic bidding for conversions (MAX_CONVERSION, costType CPM) and requires Conversions,
+	// because LinkedIn will not activate a MAX_CONVERSION campaign without an associated
+	// conversion. See campaignBidding.
+	Objective string
 	// Images holds the stored image for every ImageAssetID a variant names, keyed by that
 	// id. Each distinct key is uploaded ONCE per CreateCampaign however many variants share it.
 	Images map[string]ImageUpload
@@ -298,6 +313,10 @@ type CampaignInput struct {
 	Format string
 	// TextAds are the Text Ad creatives of a FormatText create; refused under any other format.
 	TextAds []TextAd
+	// JobFunctions replace the default job functions (urn:li:function:8, 13 and 16) in the
+	// profile's own jobFunctions clause (#585). Nil means the default. Not read with Targeting,
+	// which brings its own. CreateCampaign runs ValidateJobFunctions on it before any request.
+	JobFunctions []string
 }
 
 // CampaignResult is the outcome of CreateCampaign. Mirrors
@@ -329,6 +348,12 @@ type CampaignResult struct {
 	// (LFXV2-2665). A campaign reused by name keeps its existing bidding, so the dispatcher records
 	// the strategy and starting bid only when this is true. Set only on the successful result.
 	BidApplied bool `json:"bidApplied,omitempty"`
+	// ObjectiveType and OptimizationTarget are the objectiveType and optimizationTargetType this run
+	// created the campaign with (#582), set beside BidApplied and omitted otherwise. The result blob
+	// is written only by the service, never by a caller's campaign update, so the settings readback
+	// takes the recorded objective from here rather than from the caller-replaceable config snapshot.
+	ObjectiveType      string `json:"objectiveType,omitempty"`
+	OptimizationTarget string `json:"optimizationTarget,omitempty"`
 	// ConversionsAssociated and ConversionsFailed split CampaignInput.Conversions (#552) by
 	// whether this run's Campaign Conversions PUT succeeded. Omitted when none were requested.
 	// A non-empty ConversionsFailed makes the dispatcher report the campaign created_degraded.
@@ -385,10 +410,10 @@ type linkedInResponse struct {
 }
 
 // linkedInMetadata carries the cursor-pagination block used by the LinkedIn
-// search APIs at LinkedIn-Version 202602: the response advertises the next
-// page via metadata.nextPageToken, which the client echoes back as the
-// `pageToken` request param. An empty nextPageToken means the result set is
-// exhausted.
+// search APIs (cursor paging since LinkedIn-Version 202401, unchanged through
+// 202611): the response advertises the next page via metadata.nextPageToken,
+// which the client echoes back as the `pageToken` request param. An empty
+// nextPageToken means the result set is exhausted.
 type linkedInMetadata struct {
 	NextPageToken string `json:"nextPageToken"`
 }
@@ -451,6 +476,9 @@ type responseElement struct {
 	// ObjectiveType is a campaign search result's objectiveType, checked by
 	// findCampaignByNameInGroup so a same-name campaign with another objective is not reused.
 	ObjectiveType string `json:"objectiveType"`
+	// OptimizationTargetType is a campaign search result's bidding target, checked by
+	// findCampaignByNameInGroup so a manual campaign is not reused for automatic bidding (#582).
+	OptimizationTargetType string `json:"optimizationTargetType"`
 	// Type, Currency, Test, ServingStatuses and Reference are only populated for
 	// ad-account search results (ListAdAccounts, accounts.go). An ad account carries two
 	// independent health axes — its lifecycle `status`, decoded above, and the
@@ -1466,10 +1494,11 @@ const maxListPages = 1000
 // Statuses in skipStatuses are ignored. Mirrors findByName() (paginated search
 // across all statuses).
 //
-// At LinkedIn-Version 202602 the search APIs use CURSOR pagination, not offset
-// pagination: each response carries metadata.nextPageToken, and the client
-// echoes that token back as the `pageToken` request param to fetch the next
-// page. Pagination stops when nextPageToken comes back empty. An offset-based
+// Since LinkedIn-Version 202401 (and still at 202611) the search APIs use
+// CURSOR pagination, not offset pagination: each response carries
+// metadata.nextPageToken, and the client echoes that token back as the
+// `pageToken` request param to fetch the next page. Pagination stops when
+// nextPageToken comes back empty. An offset-based
 // walk (start/count) or a "full page" heuristic is the wrong model for this API
 // version and can miss results or loop, so it is not used.
 //
@@ -1502,7 +1531,7 @@ func (c *Client) findByName(ctx context.Context, nestedPath, name string) (strin
 // findMatch exhaust the set and report absence, and the caller would POST a
 // DUPLICATE. So this case returns an error to abort, consistent with the
 // fail-closed handling for matched-but-id-less elements inside findMatch.
-func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, name, groupID, objectiveType, campaignType string) (string, error) {
+func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, name, groupID, objectiveType, optimizationTarget, campaignType string) (string, error) {
 	return c.findMatch(ctx, campaignsPath, name, func(el responseElement) (bool, error) {
 		if el.Name != name {
 			return false, nil
@@ -1523,6 +1552,24 @@ func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, n
 		// unreported objectiveType cannot contradict, so it does not block the reuse.
 		if objectiveType != "" && el.ObjectiveType != "" && el.ObjectiveType != objectiveType {
 			return false, fmt.Errorf("campaign %q already exists in this campaign group with objectiveType %s, not %s — it was not created for this bidding strategy; aborting rather than reuse it or create a duplicate", el.Name, el.ObjectiveType, objectiveType)
+		}
+		// Same name and objective, but the other bidding MODE (#582). Automatic and manual
+		// Website conversions campaigns share the "Conversions" name segment, so the objective no
+		// longer tells them apart: a manual campaign (NONE / ENHANCED_CONVERSION) is never reused
+		// for MAX_CONVERSION, nor the reverse. Only manual-vs-automated is compared, so a manual
+		// campaign moved between NONE and ENHANCED_CONVERSION in Campaign Manager is still reused.
+		// Under WEBSITE_CONVERSION an UNREPORTED optimizationTargetType is ambiguous for an AUTOMATIC
+		// request — the campaign could be a manual one, and reuse keeps its existing strategy — so
+		// that aborts too (PR #637 review). A manual request still reuses it: before #582 every
+		// WEBSITE_CONVERSION campaign this service created was manual, and whether LinkedIn echoes
+		// NONE in the search response is unverified, so aborting would strand a manual retry. Under
+		// WEBSITE_VISIT only automated MAX_CLICK is created, so it cannot contradict.
+		if optimizationTarget != "" && !manualBiddingTarget(optimizationTarget) && el.OptimizationTargetType == "" && objectiveType == ObjectiveWebsiteConversion {
+			return false, fmt.Errorf("campaign %q already exists in this campaign group with objectiveType %s but LinkedIn did not report its optimizationTargetType, so it cannot be confirmed to bid %s; aborting rather than reuse it or create a duplicate — check its bidding in Campaign Manager", el.Name, ObjectiveWebsiteConversion, optimizationTarget)
+		}
+		if optimizationTarget != "" && el.OptimizationTargetType != "" &&
+			manualBiddingTarget(el.OptimizationTargetType) != manualBiddingTarget(optimizationTarget) {
+			return false, fmt.Errorf("campaign %q already exists in this campaign group with optimizationTargetType %s, not %s — it was not created for this bidding strategy; aborting rather than reuse it or create a duplicate", el.Name, el.OptimizationTargetType, optimizationTarget)
 		}
 		// Same name in the same group, but a DIFFERENT campaign type (#586): a TEXT_AD campaign
 		// cannot hold single-image creatives nor a SPONSORED_UPDATES one text ads, so reusing it
@@ -1580,7 +1627,7 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 			// buildRawQuery writes this value through untouched — see
 			// preEncodedParams.
 			"search": "(name:(values:List(" + restliEncode(name) + ")))",
-			// Cursor pagination at LinkedIn-Version 202602 uses `pageSize` (paired
+			// Cursor pagination (202401 onward, incl. 202611) uses `pageSize` (paired
 			// with `pageToken`), NOT the legacy offset param `count`. Sending
 			// `count` here was ignored by the cursor contract, so the page size the
 			// caller asked for silently did not take effect. No offset param
@@ -1729,6 +1776,7 @@ var preEncodedParams = map[string]struct{}{
 	"search":    {}, // findMatch — the name filter
 	"campaigns": {}, // listCreativeURNs — the creatives finder's campaign List()
 	"accounts":  {}, // ListAdSegments — the ad segments finder's account List() (#552)
+	"query":     {}, // SearchTargetingEntities — the typeahead text, %20 not "+" (#585)
 }
 
 // buildRawQuery renders params as a query string, percent-encoding every value
@@ -1866,8 +1914,8 @@ func (c *Client) toMs(dateStr string, eod bool) (int64, error) {
 // toMs entirely and the flow would still proceed to create dark posts and
 // creatives on a broken schedule.
 //
-// The returned startMs is used ONLY for the up-front end<=start validation and is
-// otherwise DISCARDED by the caller: NEITHER create reuses it. Both
+// The returned startMs is used ONLY for up-front validation (end<=start, and the
+// fixed-schedule lifetime floor's day count, #633), and NEITHER create reuses it. Both
 // findOrCreateCampaignGroup and createSponsoredCampaign recompute their own
 // now+startTimeBuffer start immediately before their POST, because each create runs
 // after its own (worst-case ~5min) find-existing lookup, by which time a
@@ -2141,7 +2189,7 @@ func (c *Client) readCampaignGroupEnd(ctx context.Context, path, groupID string)
 // single-flight claim is PLANNED but NOT provided here (tracked separately as
 // LFXV2-2665); until it exists, callers MUST NOT rely on any dedup guarantee and
 // must serialize concurrent calls for the same name on their own.
-func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, custom *Targeting, lifetimeBudget bool, bidding campaignBiddingPlan, dailyCap, campaignType string) (id string, reused bool, err error) {
+func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, jobFns []string, custom *Targeting, lifetimeBudget bool, bidding campaignBiddingPlan, dailyCap, campaignType string) (id string, reused bool, err error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
 	// Scope the idempotency lookup to the resolved campaign group: the campaign
@@ -2150,7 +2198,7 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 	// new campaign is never created under the correct group. The lookup also refuses a
 	// same-name campaign reporting a DIFFERENT objectiveType (LFXV2-2665): reusing it would
 	// silently run the other bidding strategy.
-	existing, err := c.findCampaignByNameInGroup(ctx, campaignsPath, name, groupID, bidding.objectiveType, campaignType)
+	existing, err := c.findCampaignByNameInGroup(ctx, campaignsPath, name, groupID, bidding.objectiveType, bidding.optimizationTarget, campaignType)
 	if err != nil {
 		return "", false, err
 	}
@@ -2184,7 +2232,7 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 	if custom != nil {
 		targeting, err = c.buildCustomTargetingCriteria(custom, geoURNs)
 	} else {
-		targeting, err = c.buildTargetingCriteria(targetingProfile, geoURNs)
+		targeting, err = c.buildTargetingCriteria(targetingProfile, geoURNs, jobFns)
 	}
 	if err != nil {
 		return "", false, err
@@ -2206,6 +2254,7 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 		"type": campaignType,
 		// objectiveType, costType, optimizationTargetType and (manual only) unitCost come from
 		// campaignBidding and are merged below: WEBSITE_VISIT + MAX_CLICK for automatic,
+		// WEBSITE_CONVERSION + MAX_CONVERSION for automatic conversions (#582),
 		// WEBSITE_CONVERSION + NONE + unitCost for manual. Before LFXV2-2665 this body sent
 		// WEBSITE_CONVERSION, costType CPC and NO optimizationTargetType, which LinkedIn defaults
 		// to NONE — manual bidding — with unitCost 0, under which "the campaign does not deliver".
@@ -2277,13 +2326,17 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 // createDarkPost creates an unpublished-to-feed sponsored post
 // (feedDistribution NONE) and returns its share URN. Mirrors createDarkPost().
 //
-// The post uses an article content block. Per the TS, callToAction is NOT sent
-// for article ads. The dark-post nature comes from distribution.feedDistribution
-// = "NONE".
+// The post uses an article content block. The dark-post nature comes from
+// distribution.feedDistribution = "NONE". description is the article description
+// (empty sends "", as the TS did). callToAction, when set, is sent as
+// contentCallToActionLabel with contentLandingPage = destURL, the page the button
+// opens (#588); when empty neither field is sent, the shape the TS sent for every
+// article ad. callToAction is trusted to have passed ValidateCallToAction in
+// CreateCampaign.
 //
 // Unexported by design (see findOrCreateCampaignGroup): accountID is trusted to
 // have passed resolveAccountID in CreateCampaign.
-func (c *Client) createDarkPost(ctx context.Context, accountID, introText, headline, destURL, imageURN string) (string, error) {
+func (c *Client) createDarkPost(ctx context.Context, accountID, introText, headline, destURL, imageURN, description, callToAction string) (string, error) {
 	author, err := c.orgURN(accountID)
 	if err != nil {
 		return "", err
@@ -2306,7 +2359,7 @@ func (c *Client) createDarkPost(ctx context.Context, accountID, introText, headl
 	article := map[string]any{
 		"source":      destURL,
 		"title":       head,
-		"description": "",
+		"description": normalizeDescription(description),
 	}
 	if imageURN != "" {
 		article["thumbnail"] = imageURN
@@ -2324,6 +2377,10 @@ func (c *Client) createDarkPost(ctx context.Context, accountID, introText, headl
 		"content":        map[string]any{"article": article},
 		"lifecycleState": "PUBLISHED",
 		"adContext":      map[string]any{"dscAdAccount": accountURN(accountID)},
+	}
+	if callToAction != "" {
+		body["contentCallToActionLabel"] = callToAction
+		body["contentLandingPage"] = destURL
 	}
 
 	resp, err := c.doRequest(ctx, http.MethodPost, "posts", body, nil, nil)
@@ -2620,9 +2677,9 @@ func stripDashes(text string) string {
 // profile actually yields usable targeting — i.e. that the FINAL assembled
 // targeting criteria would be non-empty. Mirroring the TS source, an empty
 // skills/groups config is acceptable AS LONG AS the resulting include criteria
-// is non-empty: buildTargetingCriteria always adds the hardcoded jobFunctions
-// facets to the include block, so a profile with empty skills AND groups still
-// contributes real targeting (the jobFunctions) and is accepted. The rejection
+// is non-empty: buildTargetingCriteria always adds a jobFunctions clause (the
+// default three, or the caller's non-empty list), so a profile with empty skills
+// AND groups still yields real targeting (locations AND jobFunctions) and is accepted. The rejection
 // keys off the ASSEMBLED include facets being empty, not merely off skills/groups
 // being empty. Because jobFunctions is always present, a config-only-blank
 // skills/groups profile is accepted, exactly as the TS does.
@@ -2654,8 +2711,8 @@ func (c *Client) validatePrerequisites(accountID, profile string) error {
 		// non-empty. Count only NON-BLANK skill/group entries — a config-supplied
 		// slice can contain blank strings (e.g. []string{""} or {"  "}) that are not
 		// usable facets and are dropped by buildTargetingCriteria before the wire —
-		// then add the always-present hardcoded jobFunctions facets that
-		// buildTargetingCriteria injects into the SAME include `or` block. Mirroring
+		// then add the always-present default jobFunctions that buildTargetingCriteria
+		// sends as their own include clause (a caller's list is non-empty too). Mirroring
 		// the TS source, empty skills AND groups is acceptable so long as the
 		// assembled criteria is non-empty: because jobFunctions is always non-empty,
 		// the include criteria is never empty and such a profile is ACCEPTED. Only a
@@ -2821,15 +2878,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Caller targeting (#552) replaces the profile, so the profile prerequisites are not read;
 	// the org and the configured employer exclusions still are, since both still reach the wire.
 	var targeting *Targeting
+	var jobFns []string
 	if in.Targeting != nil {
+		if in.JobFunctions != nil {
+			return nil, domain.WrapPreflightRefusal(targetingInvalid("jobFunctions is not read with targeting; put them in a targeting clause instead"))
+		}
 		if targeting, err = ValidateTargeting(in.Targeting, c.cfg.EmployerExclusions); err != nil {
 			return nil, domain.WrapPreflightRefusal(err)
 		}
 		if _, err := c.orgURN(accountID); err != nil {
 			return nil, domain.WrapPreflightRefusal(err)
 		}
-	} else if err := c.validatePrerequisites(accountID, in.TargetingProfile); err != nil {
-		return nil, domain.WrapPreflightRefusal(err)
+	} else {
+		if jobFns, err = ValidateJobFunctions(in.JobFunctions); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+		if err := c.validatePrerequisites(accountID, in.TargetingProfile); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
 	}
 
 	// EventName is semantically required: it is the sole distinguishing token in
@@ -2843,7 +2909,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// then building resources from the original untrimmed field let a value like
 	// "  KubeCon  " pass validation yet produce resources with leading/trailing
 	// whitespace and an inconsistent idempotency key.
-	eventName := strings.TrimSpace(in.EventName)
+	eventName := normalizeEventName(in.EventName)
 	if eventName == "" {
 		return nil, domain.PreflightRefusalf("event name is required and must not be empty or whitespace-only")
 	}
@@ -2851,7 +2917,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// so a caller value containing "|" would inject extra fields and corrupt the
 	// naming schema / project attribution and name-based idempotency. Replace "|"
 	// with "-" before composing names, matching the other platform clients.
-	eventName = strings.ReplaceAll(eventName, "|", "-")
 
 	// Trim the registration URL ONCE up front and use the trimmed value both for
 	// validation and everywhere downstream (BuildUTMURL). Validating a trimmed
@@ -2892,9 +2957,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// The bidding fields, resolved BEFORE any POST: a manual bid that is not a whole number of cents
 	// is refused here, with nothing created, rather than after the campaign group exists. The plan
 	// also decides the objective and the campaign name's Objective segment.
-	bidding, err := campaignBidding(in.ManualCPCBid)
+	bidding, err := campaignBidding(in.ManualCPCBid, in.Objective)
 	if err != nil {
-		// ValidateBidAmount's sentences are service-authored and numeric-only (issue #208).
+		// ValidateBidAmount's sentences are service-authored and numeric-only (issue #208), and
+		// campaignBidding's objective sentences name only this package's constants.
 		return nil, domain.WrapPreflightRefusal(err)
 	}
 
@@ -2902,6 +2968,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	conversions, err := ValidateConversions(in.Conversions)
 	if err != nil {
 		return nil, domain.WrapPreflightRefusal(err)
+	}
+	// MAX_CONVERSION (#582) "must have a conversion associated with it to be activated": refused
+	// before any POST without one, so this service never creates a campaign that cannot run.
+	if bidding.optimizationTarget == OptimizationTargetMaxConversion && len(conversions) == 0 {
+		return nil, domain.WrapPreflightRefusal(ErrAutomaticConversionsNeedConversion)
 	}
 
 	// The format (#586), resolved before any POST. A text create needs a manual bid (LinkedIn
@@ -2987,6 +3058,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
+	// The optional call to action and creative name (#588, #589) are checked here too: an
+	// unknown label is refused by LinkedIn only on the dark post, after the campaign exists.
+	if err := ValidateVariantFields(in.Variants); err != nil {
+		return nil, domain.WrapPreflightRefusal(err)
+	}
+	if err := distinctCreativeNames(eventName, in.Variants); err != nil {
+		return nil, domain.WrapPreflightRefusal(err)
+	}
+
 	// Project is the campaign-name Project segment the data pipeline joins on for
 	// foundation attribution. Require the caller's canonical LFX slug rather than
 	// silently defaulting (a hardcoded default mis-attributes every non-TLF
@@ -3049,16 +3129,26 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// because toMs is non-deterministic for a today/past start (a moving
 	// now+startTimeBuffer) and the intervening find-existing lookups (each worst-case
 	// ~5min) could otherwise push a once-computed start into the past by POST time.
-	_, endMs, err := c.validateSchedule(in.StartDate, in.EndDate)
+	startMs, endMs, err := c.validateSchedule(in.StartDate, in.EndDate)
 	if err != nil {
 		return nil, domain.WrapPreflightRefusal(err)
 	}
+	// A lifetime budget on a fixed schedule must cover $10 for every day of the flight (#633),
+	// or LinkedIn creates a campaign it will not activate. Checked against the schedule just
+	// validated, before any POST. A capped lifetime budget (#584) runs on a continuous schedule
+	// and sends its own dailyBudget, so it is exempt.
+	if in.LifetimeBudget && dailyCap == "" {
+		if err := ValidateFixedScheduleLifetime(in.BudgetUSD, startMs, endMs); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+	}
 
 	groupName := fmt.Sprintf("Events | %s | %s", eventName, project)
-	// The Objective segment follows the bidding plan (LFXV2-2665): "Conversions" for a manual
-	// WEBSITE_CONVERSION campaign — the name every campaign had before — and "Traffic" for an
-	// automatic WEBSITE_VISIT one, so the two never share a name and a retry of one can never
-	// find and reuse the other (findCampaignByNameInGroup also refuses an objective mismatch).
+	// The Objective segment follows the bidding plan (LFXV2-2665): "Conversions" for a
+	// WEBSITE_CONVERSION campaign, manual — the name every campaign had before — or automatic
+	// MAX_CONVERSION (#582), and "Traffic" for an automatic WEBSITE_VISIT one. A retry of one can
+	// never reuse a campaign of another bidding: findCampaignByNameInGroup refuses an objective
+	// mismatch and a manual-vs-automated optimizationTargetType mismatch.
 	//
 	// The stage, tactic and slot tokens (multi-campaign cs-4) come from the claimed row; see
 	// buildCampaignName. The 255-character check below covers the labelled name too, before any
@@ -3161,7 +3251,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// A text campaign (#586) postdates #587, so none can carry the legacy name: skip the lookup.
 	if groupReused && format != FormatText {
 		if legacy := legacyCampaignName(eventName, bidding.nameObjective, project, in); legacy != campaignName {
-			found, err := c.findCampaignByNameInGroup(ctx, fmt.Sprintf("adAccounts/%s/adCampaigns", accountID), legacy, groupID, bidding.objectiveType, campaignTypeFor(format))
+			found, err := c.findCampaignByNameInGroup(ctx, fmt.Sprintf("adAccounts/%s/adCampaigns", accountID), legacy, groupID, bidding.objectiveType, bidding.optimizationTarget, campaignTypeFor(format))
 			if err != nil {
 				return nil, fmt.Errorf("campaign group %q: looking up a campaign under its pre-#587 name failed; nothing was created, and a retry looks again: %w", groupID, err)
 			}
@@ -3172,7 +3262,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
-	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, targeting, in.LifetimeBudget, bidding, dailyCap, campaignTypeFor(format))
+	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, jobFns, targeting, in.LifetimeBudget, bidding, dailyCap, campaignTypeFor(format))
 	unlockGroup()
 	if err != nil {
 		// findOrCreateCampaignGroup may have just created a PERMANENT campaign group
@@ -3228,19 +3318,25 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// dark posts and creatives, and returns the campaign for reconciliation — the conservative
 	// choice internal/platform/microsoft/campaign.go makes for its create-time-only targeting.
 	//
-	// A profile create (no targeting) keeps reusing the campaign as before: its criteria are
-	// derived from the service's own targeting profile rather than per-campaign caller input,
-	// and that retry path predates #552.
+	// Caller job functions (#585) are per-campaign caller input too: they reach only the
+	// profile criteria of a campaign this run creates, so a found campaign with them set stops
+	// here in the same way. A profile create with the default job functions keeps reusing the
+	// campaign as before: its criteria are derived from the service's own targeting profile
+	// rather than per-campaign caller input, and that retry path predates #552.
 	//
 	// The partial carries TargetingNotApplied so the dispatcher records it as pending rather than
 	// created_degraded: a campaign id with no creatives would otherwise read as a degraded success,
 	// which the orchestrator reuses, and a repeated request would report success for targeting that
 	// was never applied (#557 review).
-	if campaignReused && targeting != nil {
-		steps = append(steps, fmt.Sprintf("Stopped before the creatives: campaign %s was found by name (an earlier attempt or an operator made it), and linkedInConfig.targeting is applied only to a campaign this run creates; check its targeting in Campaign Manager and finish the campaign there", campaignID))
+	if campaignReused && (targeting != nil || jobFns != nil) {
+		field := "linkedInConfig.targeting"
+		if targeting == nil {
+			field = "linkedInConfig.jobFunctions"
+		}
+		steps = append(steps, fmt.Sprintf("Stopped before the creatives: campaign %s was found by name (an earlier attempt or an operator made it), and %s is applied only to a campaign this run creates; check its targeting in Campaign Manager and finish the campaign there", campaignID, field))
 		r := c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps)
 		r.TargetingNotApplied = true
-		return r, fmt.Errorf("linkedin targeting NOT applied to reused campaign %s (linkedInConfig.targeting is set only on a campaign this run creates; no conversion, image, dark post or creative was added): verify the campaign's targeting in Campaign Manager", campaignID)
+		return r, fmt.Errorf("linkedin targeting NOT applied to reused campaign %s (%s is set only on a campaign this run creates; no conversion, image, dark post or creative was added): verify the campaign's targeting in Campaign Manager", campaignID, field)
 	}
 
 	// Conversions (#552) are associated as soon as the campaign exists, on a reused campaign too
@@ -3299,7 +3395,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if variant.ImageAssetID != "" {
 			imageURN = imageURNs[variant.ImageAssetID]
 		}
-		shareURN, err := c.createDarkPost(ctx, accountID, variant.IntroText, variant.Headline, destURL, imageURN)
+		shareURN, err := c.createDarkPost(ctx, accountID, variant.IntroText, variant.Headline, destURL, imageURN, variant.Description, variant.CallToAction)
 		if err != nil {
 			// Dark posts have NO name-based reconciliation lookup and LinkedIn exposes
 			// no upsert, so an AMBIGUOUS failure (transport/timeout after send, a 5xx,
@@ -3329,7 +3425,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		steps = append(steps, fmt.Sprintf("Dark post variant-%d: %s", i+1, shareURN))
 
-		adName := fmt.Sprintf("%s | variant-%d", eventName, i+1)
+		adName := creativeName(eventName, i, variant)
 		creativeID, err := c.createCreative(ctx, accountID, campaignID, shareURN, adName)
 		if err != nil {
 			// The creative failed but this variant's dark post (shareURN) was
@@ -3370,6 +3466,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	result := withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps))
 	result.BidApplied = !campaignReused
+	if result.BidApplied {
+		result.ObjectiveType = bidding.objectiveType
+		result.OptimizationTarget = bidding.optimizationTarget
+	}
 	return result, nil
 }
 

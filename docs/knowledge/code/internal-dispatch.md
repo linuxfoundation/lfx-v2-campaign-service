@@ -374,7 +374,7 @@ guess, so it keeps nothing.
   (`microsoftSnapshotConfig`); the snapshot is a redacted record, not a verbatim one.
 - `hubspot.go` — snapshots only the provenance fields (`hubspotConfigProvenance`); subject and
   body HTML are never stored.
-- `linkedin.go` — each variant's `IntroText`/`Headline`, every `geoTargets[].label`,
+- `linkedin.go` — each variant's `IntroText`/`Headline`/`Name`/`Description`, every `geoTargets[].label`,
   `targetingProfile`, and every `targetingProfiles[].id`/`label`/`skills`/`groups` entry
   (`sanitizeSnapshotText`) —
   `linkedinSnapshotConfig`, #245. Before #245 it persisted the raw `linkedinConfig`.
@@ -1527,6 +1527,12 @@ HAS a budget whose `currencyCode` LinkedIn did not report, where writing USD ove
 the redenomination the guard exists to prevent. Placed above the pacing guard it had to permit
 empty to let the first case through; placed below it, the first case has already been refused
 ("NEITHER budget present"), so the only empty left is the second and it is REFUSED.
+
+**Every present budget's currency is checked, not the one the read collapses them to (#636).**
+`linkedin.CampaignBudget.CurrencyCode` prefers the daily budget's code, so on a lifetime budget
+with a daily cap a USD cap over a total whose currency is missing or different passed a single
+check. The guard reads `DailyBudgetCurrency` and `TotalBudgetCurrency` and requires an explicit
+USD on each field that is present.
 
 The amount then converts through `linkedin.ValidateBudgetAmount`, the same function the create
 path calls — `$10` daily and `$100` lifetime minimums — and **the WIRE STRING it returns is what
@@ -5465,8 +5471,12 @@ identity-checked, with a 404 proven absent only by a confirming ad-account read 
   and `end_date`; upstream-only `status`, `bidding_strategy_type` (`optimizationTargetType`),
   `cost_type`, `unit_cost`, `unit_cost_currency` (`unitCost.currencyCode`; `unit_cost` is absent
   whenever the currency is missing, never a bare number); `objective_type` is COMPARED (LFXV2-2665)
-  against `linkedinRecordedObjective` — automatic → `WEBSITE_VISIT`, manual → `WEBSITE_CONVERSION`,
-  `unknown` with no recorded strategy. An `account` URN naming another account →
+  against `linkedinRecordedObjective` — manual → `WEBSITE_CONVERSION`; automatic → the
+  `objectiveType` the create recorded in the row's Result blob (`linkedinResultObjective`, #582),
+  `WEBSITE_VISIT` for a blob written before #582 recorded it; an empty or undecodable blob, or a
+  value outside the two this service creates → `unknown`. The config snapshot is never read for
+  it: `UpdateCampaign` stores caller JSON there verbatim, so any marker in it can be forged (PR
+  #637 review); Result is server-written only. `unknown` with no recorded strategy. An `account` URN naming another account →
   `ErrCampaignUpstreamIdentityMismatch`; a 401 → the usual `linkedinExpiry` re-tag.
 - **Bid** (`WriteBid`): the bid is the CAMPAIGN's `unitCost`, so there is no child id to require.
   Order: provenance (fail closed), bid type CPC, adopted row → `ErrBidAdoptedCampaign` joined with `ErrBidUnwritable` (the handler
@@ -5529,7 +5539,12 @@ rounds) — and each platform's `*BidPlan` adds its own: Microsoft `microsoft.Va
 and `automatic` refuses it); Meta `meta.ManualBidSupported` (traffic/leads) and at most two
 decimals; Reddit `reddit.ManualCPCBidSupported` (traffic); LinkedIn `linkedin.ValidateBidAmount` (whole
 cents), the client choosing the objective from the strategy (automatic `WEBSITE_VISIT` +
-`MAX_CLICK`, manual `WEBSITE_CONVERSION`; decision 2026-10-13); X nothing further. Refusals wrap `domain.ErrCreateConfigInvalid` with
+`MAX_CLICK`, manual `WEBSITE_CONVERSION`; decision 2026-10-13), and `linkedinObjective` resolving
+`linkedInConfig.objective` (#582: `traffic` automatic only; `conversions` automatic is
+`WEBSITE_CONVERSION` / `MAX_CONVERSION` and requires a non-empty `conversions`, so it inherits
+`LINKEDIN_ADS_CONVERSIONS_ENABLED` and `global_marketing_ops`; `checkObjectiveShape` refuses null,
+`""` and non-strings; the settings readback reads the objectiveType recorded in the row's Result in
+`linkedinRecordedObjective`); X nothing further. Refusals wrap `domain.ErrCreateConfigInvalid` with
 `<configKey>.bidding: <reason>`, and `biddingInvalid` marks every one a `domain.PreflightRefusal`
 (issue #208): each is a pure check raised before any upstream call, its only caller-derived text is
 an amount or a config key rendered through `domain.CallerValue` (`quoteKey`), so when `Dispatch`
@@ -5728,6 +5743,21 @@ refused there with `ErrConnectionNotUsable` before any request (so it is not rec
 upstream call); a credential defect is the connection's (`linkedInLookupError`); anything else is
 the platform's.
 
+**LinkedIn targeting typeahead (#585).** `LinkedInDispatcher` implements
+`service.TargetingEntitySearcher` (`SearchTargetingEntities`). An unserved facet or unusable
+query is `domain.ErrTargetingQueryInvalid` before any credential is read. It resolves with
+`resolveLinkedInDiscoveryCredentials` (the create's `creds.resolve`, LF fallback and forced
+redirect included, but no ad account required: the finder takes none) and uses the cached client
+for the connection, so a refresh-capable credential mints one token per connection, not per
+keystroke. Successful answers are cached by facet and lower-cased query in
+`targetingEntityCache` (6 h TTL, 2048 entries, consulted after resolution, failures not cached);
+a hit reports `called` false. The key is the whole query, so the cache serves a repeated
+identical search, not the next keystroke: each new prefix is a new upstream call on the shared
+LF token. That spend is bounded by the 2-character floor (`linkedin.MinTypeaheadQueryLen`, in the
+design and in `NormalizeTypeaheadQuery`), the caller's debounce (which the API asks for), and the
+platform client sending the request once, so a 429 fails fast as a 503 instead of being retried. Dropped entries are logged as counts with the facet, never the
+query.
+
 **LinkedIn conversions (#552).** `linkedinConfig.Conversions` is gated by
 `linkedinConversionsEnabled` (`LINKEDIN_ADS_CONVERSIONS_ENABLED`, off by default) and validated by
 `linkedin.ValidateConversions` in `linkedinConversions`, which `PreflightCreate` (synchronous 400)
@@ -5759,3 +5789,15 @@ and 100x100 rules (`linkedin.ValidateImageForFormat`), and its refusals name the
 came from — `linkedInConfig.textAds reference creative asset …` on a text create, `variants`
 otherwise; the snapshot redacts text-ad copy like
 variant copy, and `linkedinCreativeCount` gives `campaignFromLinkedIn` the requested creative count.
+
+**LinkedIn variant name, call to action and description (#588, #589).** `checkVariantsShape`
+refuses a `variants[].name`, `callToAction` or `description` that is not a JSON string (null
+included), since the best-effort pre-flight decode would drop it silently; `linkedinVariants`
+refuses a `callToAction` while `linkedinCallToActionEnabled` (`LINKEDIN_ADS_CALL_TO_ACTION_ENABLED`,
+off by default) is off, then runs `linkedin.ValidateVariantFields` (label enum, repeated names)
+and, when the event name is known, `linkedin.ValidateCreativeNames` (a name equal to an unnamed
+variant's `<event> | variant-N` default; `PreflightCreate` takes the event name from
+`model.CreatePreflightBrief` through `linkedinPreflightEventName`, PR #638 review).
+`PreflightCreate` (synchronous 400) and `Dispatch` (not-created refusal) both run the two.
+`linkedinSnapshotConfig` redacts `Name` and `Description` like `IntroText`; `CallToAction` is an
+enum and kept.

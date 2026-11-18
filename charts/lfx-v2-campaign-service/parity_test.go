@@ -135,6 +135,32 @@ func TestMetaTargetingSearchIsACampaignManagerRead(t *testing.T) {
 	}
 }
 
+// TestLinkedInTargetingTypeaheadIsACampaignManagerRead pins the LinkedIn targeting typeahead
+// (#585) to project-api (campaign_manager): it answers LinkedIn's own taxonomy, identical for
+// every token, so marketing-ops-api must not take it over from the foundation campaign managers
+// who build LinkedIn campaigns.
+func TestLinkedInTargetingTypeaheadIsACampaignManagerRead(t *testing.T) {
+	ruleset := helmTemplate(t, "templates/ruleset.yaml")
+	const path = "/projects/p1/linkedin-ads/targeting-entities"
+	matched := false
+	for _, p := range rulePatterns(t, ruleset, projectAPIRuleID) {
+		if ruleMatcher(t, p).MatchString(path) {
+			matched = true
+		}
+	}
+	if !matched {
+		t.Errorf("%s rule must match %s", projectAPIRuleID, path)
+	}
+	for _, p := range rulePatterns(t, ruleset, marketingOpsRuleID) {
+		if ruleMatcher(t, p).MatchString(path) {
+			t.Errorf("%s rule pattern %s matches %s; the typeahead is a campaign_manager read", marketingOpsRuleID, p, path)
+		}
+	}
+	if !extractRouteRegex(t, helmTemplate(t, "templates/httproute.yaml")).MatchString(path) {
+		t.Errorf("the route regex does not forward %s", path)
+	}
+}
+
 // metaCustomAudiencesPath is the Meta custom-audience read (#550). It lists every foundation's
 // audiences on the shared Meta ad account, so it is ruled by marketing-ops-api only, and
 // TestMetaCustomAudiencesIsAMarketingOpsRead pins that.
@@ -858,6 +884,10 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/linkedin-ads/adoptable-campaigns/x", false},
 		{"/projects/p1/linkedin-ads/audiences/x", false},
 		{"/projects/p1/linkedin-ads/conversions/x", false},
+		// The LinkedIn targeting typeahead (#585): a campaign_manager read at the base path only.
+		{"/projects/p1/linkedin-ads/targeting-entities", true},
+		{"/projects/p1/linkedin-ads/targeting-entities/x", false},
+		{"/projects/p1/meta-ads/targeting-entities", false},
 		{"/projects/p1/meta-ads/conversions", false},
 		// The Reddit keyword performance read (LFXV2-2665).
 		{"/projects/p1/reddit-ads/keywords", true},

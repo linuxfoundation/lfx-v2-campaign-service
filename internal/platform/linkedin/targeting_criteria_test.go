@@ -107,10 +107,11 @@ func TestCreateCampaign_CustomTargetingReachesTheWire(t *testing.T) {
 // when linkedInConfig.targeting is set and the campaign is found by name, its existing criteria are
 // not the requested ones as far as this run can tell, so the create stops before any conversion,
 // dark post or creative, leaves the campaign untouched, and returns it as a partial alongside an
-// error for reconciliation. The same lookup without targeting (a profile create) still reuses the
-// campaign and attaches the creatives.
+// error for reconciliation. Caller job functions (#585) stop it the same way. The same lookup
+// without either (a profile create with the default job functions) still reuses the campaign and
+// attaches the creatives.
 func TestCreateCampaign_ReusedCampaignWithTargetingStopsBeforeCreatives(t *testing.T) {
-	newInput := func(targeting *Targeting) CampaignInput {
+	newInput := func(targeting *Targeting, jobFns []string) CampaignInput {
 		return CampaignInput{
 			EventName: "KubeCon", RegistrationURL: "https://events.example.org/kubecon",
 			BudgetUSD: 100, StartDate: "2099-01-01", EndDate: "2099-02-01",
@@ -120,19 +121,23 @@ func TestCreateCampaign_ReusedCampaignWithTargetingStopsBeforeCreatives(t *testi
 			Project:          "CNCF",
 			Conversions:      []string{"104012"},
 			Targeting:        targeting,
+			JobFunctions:     jobFns,
 		}
 	}
 	for _, tc := range []struct {
 		name      string
 		targeting *Targeting
+		jobFns    []string
 		wantStop  bool
+		wantField string
 	}{
-		{"caller targeting", eventTargeting(), true},
-		{"profile", nil, false},
+		{"caller targeting", eventTargeting(), nil, true, "linkedInConfig.targeting"},
+		{"caller job functions", nil, []string{"urn:li:function:4"}, true, "linkedInConfig.jobFunctions"},
+		{"profile", nil, nil, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			in := newInput(tc.targeting)
-			plan, err := campaignBidding(0)
+			in := newInput(tc.targeting, tc.jobFns)
+			plan, err := campaignBidding(0, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -180,8 +185,8 @@ func TestCreateCampaign_ReusedCampaignWithTargetingStopsBeforeCreatives(t *testi
 				}
 				return
 			}
-			if err == nil || !strings.Contains(err.Error(), "targeting NOT applied to reused campaign 777") {
-				t.Fatalf("want a reconciliation error for the reused campaign, got %v", err)
+			if err == nil || !strings.Contains(err.Error(), "targeting NOT applied to reused campaign 777 ("+tc.wantField+" ") {
+				t.Fatalf("want a reconciliation error naming %s for the reused campaign, got %v", tc.wantField, err)
 			}
 			if res == nil || res.CampaignID != "777" || res.CampaignGroupID != "100" || res.CampaignName != name || res.CreativeCount != 0 {
 				t.Fatalf("partial = %+v; want campaign 777 in group 100 with no creative", res)
@@ -203,7 +208,7 @@ func TestCreateCampaign_ReusedCampaignWithTargetingStopsBeforeCreatives(t *testi
 // still carries the profile clause and the hard-coded job functions and seniority exclusions.
 func TestBuildTargetingCriteria_ProfileKeepsFixedFacets(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig())
-	crit, err := c.buildTargetingCriteria("cloud-native", []string{"urn:li:geo:1"})
+	crit, err := c.buildTargetingCriteria("cloud-native", []string{"urn:li:geo:1"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,6 +289,46 @@ func TestCreateCampaign_TargetingRefusesMalformedOrgBeforeAnyRequest(t *testing.
 	}
 	if n := calls.Load(); n != 0 {
 		t.Errorf("%d LinkedIn requests before the refusal", n)
+	}
+}
+
+// TestCreateCampaign_JobFunctionsRefusedBeforeAnyRequest pins the client's own #585 guards, which
+// back up the dispatcher's: jobFunctions sent with targeting, and a malformed jobFunctions on a
+// profile create, are both pre-flight refusals raised before LinkedIn is called.
+func TestCreateCampaign_JobFunctionsRefusedBeforeAnyRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		targeting *Targeting
+		jobFns    []string
+		want      string
+	}{
+		{"with targeting", &Targeting{Include: []map[string][]string{{"skills": {"urn:li:skill:1"}}}}, []string{"urn:li:function:4"}, "not read with targeting"},
+		{"wrong namespace", nil, []string{"urn:li:skill:4"}, "not urn:li:function:<id>"},
+		{"empty", nil, []string{}, "jobFunctions is empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { calls.Add(1) }))
+			defer srv.Close()
+			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+			in := CampaignInput{
+				EventName: "KubeCon", RegistrationURL: "https://events.example.org/kubecon",
+				BudgetUSD: 100, StartDate: "2099-01-01", EndDate: "2099-02-01",
+				GeoTargets:       []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+				Variants:         []CreativeVariant{{IntroText: "Join us — it's great", Headline: "KubeCon 2099"}},
+				Project:          "CNCF",
+				TargetingProfile: "cloud-native",
+				Targeting:        tc.targeting,
+				JobFunctions:     tc.jobFns,
+			}
+			_, err := c.CreateCampaign(context.Background(), in)
+			if _, pre := domain.AsPreflightRefusal(err); !errors.Is(err, ErrTargetingInvalid) || !pre || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want a pre-flight ErrTargetingInvalid containing %q, got %v", tc.want, err)
+			}
+			if n := calls.Load(); n != 0 {
+				t.Errorf("%d LinkedIn requests before the refusal", n)
+			}
+		})
 	}
 }
 
@@ -540,7 +585,7 @@ func TestTargetingEmployerExclusions_MeetTheEmployersRule(t *testing.T) {
 	}
 
 	// The legacy profile path is unchanged: it still sends a leading-zero configured exclusion.
-	crit, err := c.buildTargetingCriteria("cloud-native", []string{"urn:li:geo:1"})
+	crit, err := c.buildTargetingCriteria("cloud-native", []string{"urn:li:geo:1"}, nil)
 	if err != nil {
 		t.Fatalf("profile build refused the legacy value: %v", err)
 	}

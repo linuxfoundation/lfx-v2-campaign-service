@@ -210,6 +210,11 @@ LinkedIn: `linkedInConfig.format: "text"` creates a TEXT_AD campaign with `textA
 shape taken from LinkedIn's documentation and not yet exercised against a live account. Only
 exactly `"true"` enables it; off, a create naming it is refused with a 400 before a job exists.
 
+`LINKEDIN_ADS_CALL_TO_ACTION_ENABLED` defaults to `"false"` (#588) and is the same kind of gate for
+`linkedInConfig.variants[].callToAction`: a call to action on an article dark post has not been
+sent to a live LinkedIn account. Only exactly `"true"` enables it; off, a create naming one is
+refused with a 400 before a job exists.
+
 `SURVEY_SEQUENCE_WORKFLOW_ID` is a plain value defaulting to `""`, which selects the in-code
 default `1841232183`: the LF Research survey-promo workflow a survey send series
 (`send-workflows`) is copied from when a request names none. That id exists only in the LF

@@ -397,10 +397,10 @@ func TestFindCampaignByNameInGroup_RefusesAnotherCampaignType(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	if _, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", "N", "100", "", campaignTypeTextAd); err == nil || !strings.Contains(err.Error(), "with type SPONSORED_UPDATES, not TEXT_AD") {
+	if _, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", "N", "100", "", "", campaignTypeTextAd); err == nil || !strings.Contains(err.Error(), "with type SPONSORED_UPDATES, not TEXT_AD") {
 		t.Fatalf("err = %v, want the type-mismatch refusal", err)
 	}
-	if id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", "N", "100", "", campaignTypeSponsoredUpdates); err != nil || id != "555" {
+	if id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", "N", "100", "", "", campaignTypeSponsoredUpdates); err != nil || id != "555" {
 		t.Fatalf("same type: id %q, err %v; want reuse of 555", id, err)
 	}
 }
