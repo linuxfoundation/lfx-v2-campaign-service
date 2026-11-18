@@ -5748,7 +5748,25 @@ type CampaignCreateInputRequestBody struct {
 	// and a create that cannot keep the shared group ending at the campaign's end
 	// is refused). Refused with a 400 before any job exists when it is set without
 	// lifetimeBudget, is not a number (null included), is not above zero, is under
-	// LinkedIn's $10 daily minimum, or is more than the lifetime budget. REDDIT
+	// LinkedIn's $10 daily minimum, or is more than the lifetime budget. LINKEDIN
+	// TEXT ADS (#586): linkedInConfig takes an optional `format`, "single_image"
+	// (the default, also when omitted: single-image/article Sponsored Content from
+	// `variants`, unchanged) or "text": a LinkedIn Text Ad campaign (type TEXT_AD,
+	// desktop right rail and top banner) whose creatives come from `textAds`, an
+	// array of 1 to 100 {"headline": string (at most 25 characters),
+	// "description": string (at most 75 characters), "imageUrn"?: urn:li:image,
+	// "imageAssetId"?: a brief creative asset id of a 100x100 PNG/JPEG of at most
+	// 2 MB}, one DRAFT textAd creative each whose landing page is the brief's
+	// registration URL with UTMs. A text create requires bidding {"strategy":
+	// "manual", "bidAmount": <max CPC>} (LinkedIn offers Text Ads only manual
+	// bidding) and is created WEBSITE_CONVERSION / CPC / NONE with a Text name
+	// segment. Refused with a 400 before any job exists: another format value or a
+	// non-string format, textAds without format text, format text with automatic
+	// or omitted bidding, with variants, with no textAds or more than 100, a
+	// textAds that is not an array of objects of those four string fields (null, a
+	// number or an unknown key included), a missing, blank or over-long headline
+	// or description, a malformed imageUrn, both image fields, and format text
+	// while the deployment has not set LINKEDIN_ADS_TEXT_ADS_ENABLED. REDDIT
 	// CONVERSION EVENT (#549): redditConfig.conversionEvent names the pixel event
 	// a conversions campaign optimizes toward, sent as the campaign's and the ad
 	// group's optimization_goal: PURCHASE, SIGN_UP, LEAD, PAGE_VISIT,

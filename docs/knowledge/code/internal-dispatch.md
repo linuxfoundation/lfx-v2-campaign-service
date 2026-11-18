@@ -5745,3 +5745,17 @@ refuses, so a repeat answers reconciliation required. It is the state Microsoft'
 (a `created` row returned with an error) is flattened to. Pinned by
 `TestLinkedIn_ReusedCampaignTargetingStopIsNotReusable` and, through two orchestrator starts,
 `TestOrchestrator_TargetingStopIsNotReusedOnRetry`.
+
+**LinkedIn Text Ads (#586).** `linkedinConfig.Format` and `TextAds` (`linkedin_text_ads.go`) are
+checked by `checkFormatShape` (a non-string `format`; a `textAds` that is not an array of objects
+of the four `TextAd` string fields, null fields and unknown keys included) and `linkedinFormat`,
+which `PreflightCreate` (synchronous 400) and `Dispatch` (not-created refusal) both run:
+`format: "text"` is gated by `linkedinTextAdsEnabled` (`LINKEDIN_ADS_TEXT_ADS_ENABLED`, off by
+default), needs a manual bid plan, no variants and `linkedin.ValidateTextAds`-valid ads; `textAds`
+under any other format is refused. `Dispatch` stores `"text"` or `""` — an explicit
+`"single_image"` is stored as the omitted default, so a default create's snapshot is unchanged.
+`resolveLinkedInImages` resolves `textAds[].imageAssetId` like a variant's, under the text ad size
+and 100x100 rules (`linkedin.ValidateImageForFormat`), and its refusals name the field the asset
+came from — `linkedInConfig.textAds reference creative asset …` on a text create, `variants`
+otherwise; the snapshot redacts text-ad copy like
+variant copy, and `linkedinCreativeCount` gives `campaignFromLinkedIn` the requested creative count.

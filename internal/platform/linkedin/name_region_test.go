@@ -205,3 +205,29 @@ func TestCreateCampaign_NewNameWhenNoLegacyCampaign(t *testing.T) {
 		})
 	}
 }
+
+// TestCreateCampaign_TextCreateSkipsTheLegacyLookup: no text campaign (#586) predates #587, so a
+// text create in an existing group never looks up the pre-#587 name. Were it to, it would find a
+// single-image campaign of that Static name (the fake reports no type, so the type guard cannot
+// refuse it) and push text ads onto it. One campaign search, and a new campaign is created.
+func TestCreateCampaign_TextCreateSkipsTheLegacyLookup(t *testing.T) {
+	const legacyConversions = "Events | KubeCon | LinkedIn | Conversions | Prospecting | Static | tlf | MoFU"
+	srv, seen := legacyFallbackServer(t, true, legacyConversions)
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	in := validCampaignInput()
+	in.Variants = nil
+	in.Format = FormatText
+	in.ManualCPCBid = 5
+	in.TextAds = []TextAd{{Headline: "KubeCon 2099", Description: "Join cloud native engineers."}}
+	res, err := c.CreateCampaign(context.Background(), in)
+	posts, searches := seen()
+	if searches != 1 {
+		t.Errorf("campaign searches = %d, want 1 (no legacy lookup for a text create)", searches)
+	}
+	if len(posts) != 1 || !strings.Contains(posts[0], `"type":"TEXT_AD"`) {
+		t.Fatalf("campaign POSTs = %v (err %v), want one TEXT_AD create", posts, err)
+	}
+	if res == nil || res.CampaignID == "777" || res.CampaignName == legacyConversions {
+		t.Errorf("result = %+v, want a new campaign under the new name", res)
+	}
+}

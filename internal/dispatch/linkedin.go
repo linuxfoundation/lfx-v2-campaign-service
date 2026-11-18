@@ -210,6 +210,13 @@ type linkedinConfig struct {
 	// Conversions are conversion rule ids associated with the campaign once it exists (#552),
 	// behind LINKEDIN_ADS_CONVERSIONS_ENABLED. See linkedin.ValidateConversions.
 	Conversions []string `json:"conversions,omitempty"`
+	// Format selects the campaign format (#586): omitted or "single_image" is the
+	// SPONSORED_UPDATES campaign built from Variants; "text", behind
+	// LINKEDIN_ADS_TEXT_ADS_ENABLED, is a TEXT_AD campaign built from TextAds. Dispatch stores
+	// "text" or nothing (the default). See linkedinFormat.
+	Format string `json:"format,omitempty"`
+	// TextAds are the Text Ad creatives of a "text" create (#586); refused with any other format.
+	TextAds []linkedin.TextAd `json:"textAds,omitempty"`
 }
 
 // linkedinConversionsEnabled reports whether this deployment opted in to
@@ -494,7 +501,8 @@ func (d *LinkedInDispatcher) PreflightCreate(ctx context.Context, projectID stri
 	// when targeting is set) and adAccountId are promised as a synchronous 400.
 	var cfg linkedinConfig
 	_ = unmarshalPlatformConfig(config, "linkedInConfig", &cfg)
-	if _, err := linkedinBidPlan(cfg); err != nil {
+	plan, err := linkedinBidPlan(cfg)
+	if err != nil {
 		return err
 	}
 	// linkedInConfig.conversions (#552) is promised as a synchronous 400 too, a wrong JSON type
@@ -534,6 +542,14 @@ func (d *LinkedInDispatcher) PreflightCreate(ctx context.Context, projectID stri
 		return err
 	}
 	if err := linkedinDailyCap(cfg); err != nil {
+		return err
+	}
+	// linkedInConfig.format and textAds (#586) are promised as a synchronous 400 too, a wrong
+	// JSON type included. The bid plan resolved above is reused: a text create needs a manual one.
+	if err := checkFormatShape(config); err != nil {
+		return err
+	}
+	if _, err := linkedinFormat(cfg, plan); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -668,6 +684,15 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if err := linkedinDailyCap(cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// The campaign format (#586), gated and validated before any upstream call. The stored
+	// value ("text", or "" for the default) replaces the request's, for the client and the
+	// snapshot.
+	if err := checkFormatShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	if cfg.Format, err = linkedinFormat(cfg, plan); err != nil {
+		return nil, notCreated(err)
+	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
 	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
 	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
@@ -682,7 +707,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	// input build + upstream round-trip and keeps the claim-release semantics obvious
 	// (a pre-create failure releases the claim). Credential/connection resolution has
 	// already happened above; this only short-circuits the create itself.
-	if len(cfg.Variants) == 0 {
+	if cfg.Format != linkedin.FormatText && len(cfg.Variants) == 0 {
 		return nil, notCreated(domain.PreflightRefusalf("linkedin campaign creation requires at least one creative variant"))
 	}
 	bf, err := decodeBriefFields(brief)
@@ -750,6 +775,8 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		ManualCPCBid:     plan.amount,
 		Conversions:      cfg.Conversions,
 		Targeting:        cfg.Targeting,
+		Format:           cfg.Format,
+		TextAds:          cfg.TextAds,
 
 		// The name labels of the CLAIMED row (multi-campaign cs-4): its stored funnel stage and
 		// tactic (model.DispatchLabels) and its slot version, never the request's. Slot 2 on gets
@@ -788,10 +815,10 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		// A non-nil result means a permanent resource exists (campaign group, and maybe
 		// the campaign). This covers BOTH an ambiguous create AND a definite campaign
 		// failure after a successful group create — either way the claim must be retained.
-		return campaignFromLinkedIn(ctx, result, len(cfg.Variants), cfg), fmt.Errorf("linkedin campaign creation incomplete (a campaign group and/or campaign may exist): %w", cerr)
+		return campaignFromLinkedIn(ctx, result, linkedinCreativeCount(cfg), cfg), fmt.Errorf("linkedin campaign creation incomplete (a campaign group and/or campaign may exist): %w", cerr)
 	}
 	bidApplied = result.BidApplied
-	return campaignFromLinkedIn(ctx, result, len(cfg.Variants), cfg), nil
+	return campaignFromLinkedIn(ctx, result, linkedinCreativeCount(cfg), cfg), nil
 }
 
 // cachedLinkedInClient returns the client for this connection, building it only when there is no
@@ -1671,6 +1698,14 @@ func linkedinSnapshotConfig(cfg linkedinConfig) linkedinConfig {
 		for i := range snapshot.Variants {
 			snapshot.Variants[i].IntroText = sanitizeSnapshotText(cfg.Variants[i].IntroText)
 			snapshot.Variants[i].Headline = sanitizeSnapshotText(cfg.Variants[i].Headline)
+		}
+	}
+	if cfg.TextAds != nil {
+		snapshot.TextAds = make([]linkedin.TextAd, len(cfg.TextAds))
+		copy(snapshot.TextAds, cfg.TextAds)
+		for i := range snapshot.TextAds {
+			snapshot.TextAds[i].Headline = sanitizeSnapshotText(cfg.TextAds[i].Headline)
+			snapshot.TextAds[i].Description = sanitizeSnapshotText(cfg.TextAds[i].Description)
 		}
 	}
 	if cfg.GeoTargets != nil {
