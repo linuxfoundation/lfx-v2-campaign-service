@@ -81,10 +81,13 @@ credential reaches several foundations' accounts through its grants (#581),
   index partial to `WHERE status <> 'deleted'`), so
   a request naming any other account is a request mismatch and answers
   `domain.ErrAccountNotManagedByConnection` (400) before any upstream call.
-  That 400 is for a project's own connection. On Google Ads, LinkedIn, Meta and
-  Reddit a project with no usable connection of its own that names an account
-  the LF system row neither is configured for nor (on LinkedIn) grants gets 404
-  (`noOwnConnection`) instead, also before any upstream call
+  That 400 is for whichever connection resolved being the project's own. On
+  Google Ads, LinkedIn, Meta and Reddit, when the project has no connection of
+  its own (absent, or disconnected) and the LF system row is usable, naming an
+  account that row neither is configured for nor (on LinkedIn) grants gets 404
+  (`noOwnConnection`) instead, also before any upstream call. A project row that
+  is present but unusable keeps its own error (400) whenever the system row does
+  not serve the account
   (`TestLinkedIn_AccountMonitor_SystemFallbackRefusesOtherAccounts` and its
   Google, Meta and Reddit siblings).
   Reddit checked this first (round-18 review); LinkedIn and Meta followed,
@@ -601,10 +604,16 @@ caller (ROOT included), at one choke point mirroring
    stored connection, so they still run after the scope: a wrong `account_id`
    there gets 200 empty or 409 before it can reach their 400. LinkedIn orders
    this differently: with a non-empty scope, `scopeAccountMonitor` resolves the
-   read's connection (`MonitorScoperForConnection`) BEFORE `MonitorScopeForAccount`,
-   so an account outside the project's own connection is its 400, and an account
-   the LF system row does not serve is 404, before any recorded-account 409. An
-   empty scope is still 200 empty on LinkedIn too.
+   read's connection (`MonitorScoperForConnection`, i.e.
+   `resolveLinkedInMonitorCredentials`) BEFORE `MonitorScopeForAccount`, so any
+   refusal of that resolution comes before a recorded-account 409. Which refusal
+   depends on the connection that resolves for `account_id`: the project's own
+   when it is configured for it, else the LF system row when that row's default
+   account or a grant is `account_id` (so a project with its own account can
+   still read a granted one), else the project's own row again, which then
+   refuses a different account with its 400; the system row resolving for an
+   account it does not serve is the 404 (`TestLinkedInMonitorScopeByConnection`).
+   An empty scope is still 200 empty on LinkedIn too.
 2. An empty scope answers 200 with an empty monitor before any upstream call
    and before the connection is resolved — so a project with no campaigns and
    no connection gets 200, not 404, as the insight reads already do. On X it

@@ -880,7 +880,8 @@ type Service interface {
 	// omitted when the LF system credential serves it, since that credential is
 	// shared between foundations. Campaigns deleted in this service stay in the
 	// monitor, because a local delete does not stop the upstream campaign, unless
-	// it does not record account_id as the account it was created under or another
+	// it records a different account than account_id, records none while the LF
+	// system credential serves the read (the same rule as a live one), or another
 	// project has since taken it over; such a campaign is omitted, never a 409.
 	// account_id is the account to read; omitted, it is the account this project's
 	// campaigns were created under, read from this service's own records: the
