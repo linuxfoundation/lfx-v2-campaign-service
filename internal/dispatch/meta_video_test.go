@@ -33,6 +33,8 @@ func TestMeta_PreflightCreate_VideoVariants(t *testing.T) {
 			runBiddingPreflight(t, &MetaDispatcher{}, model.ProviderMetaAds, []biddingPreflightCase{
 				{name: "no video", config: `{"metaConfig":{"variants":[{"headline":"K","primaryText":"J"}]}}`},
 				{name: "blank video", config: `{"metaConfig":{"variants":[{"videoAssetId":"  "}]}}`},
+				{name: "numeric video", config: `{"metaConfig":{"variants":[{},{"videoAssetId":123}]}}`,
+					want: "metaConfig.variants[1].videoAssetId must be a string"},
 				{name: "video", config: `{"metaConfig":{"variants":[{"videoAssetId":"` + metaVideoAssetID + `"}]}}`,
 					want: "metaConfig.variants[].videoAssetId is disabled on this deployment (META_VIDEO_ENABLED is not \"true\")"},
 			})

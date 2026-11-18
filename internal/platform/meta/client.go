@@ -3065,6 +3065,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if err := ValidateCarousel(in.Variants); err != nil {
 			return nil, err
 		}
+		if err := checkCarouselCardsResolved(in.Variants); err != nil {
+			return nil, err
+		}
 		if n := utf8.RuneCountInString(carouselCreativeName(in.EventName)); n > maxCreativeNameChars {
 			return nil, domain.PreflightRefusalf("carousel ad-creative name is %d characters; Meta allows at most %d (shorten the event name)", n, maxCreativeNameChars)
 		}

@@ -97,6 +97,18 @@ func CheckCarouselLeadForm(leadFormID string) error {
 	return nil
 }
 
+// checkCarouselCardsResolved is the client's own check that every card reaches the creative with
+// an image: an imageUrl, or the bytes the dispatcher resolved from its imageAssetId. It runs only
+// in CreateCampaign, after resolution (ValidateCarousel also runs before it, in PreflightCreate).
+func checkCarouselCardsResolved(variants []AdVariant) error {
+	for i, v := range variants {
+		if strings.TrimSpace(v.ImageURL) == "" && len(v.ImageBytes) == 0 {
+			return carouselInvalid(fmt.Sprintf("variants[%d].imageAssetId", i), "the card image was not resolved to stored bytes")
+		}
+	}
+	return nil
+}
+
 // carouselCreativeName is the carousel creative's name; CreateCampaign bounds it up front.
 func carouselCreativeName(eventName string) string {
 	return fmt.Sprintf("%s - Carousel", strings.TrimSpace(eventName))

@@ -376,3 +376,42 @@ func TestStepSafeErrText(t *testing.T) {
 		t.Fatalf("stepSafeErrText dropped a Graph message: %q", got)
 	}
 }
+
+// TestCreateCampaign_VideoStepsDropNonGraphErrorBodies drives the two video Step sites that render an
+// upstream error (a failed status read, a failed thumbnail read) with a non-Graph body: Steps name
+// the 502 and never carry the body text.
+func TestCreateCampaign_VideoStepsDropNonGraphErrorBodies(t *testing.T) {
+	for _, tc := range []struct {
+		name, status, fail, want string
+	}{
+		{"status read", "processing", "status", "last status read failed"},
+		{"thumbnail read", "ready", "thumbnails", "has no usable auto-generated thumbnail"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vs := newVideoServer(t, tc.status)
+			inner := vs.handler()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				isStatus := r.Method == http.MethodGet && r.URL.Query().Get("fields") == "status"
+				isThumbs := r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/thumbnails")
+				if (tc.fail == "status" && isStatus) || (tc.fail == "thumbnails" && isThumbs) {
+					w.WriteHeader(http.StatusBadGateway)
+					_, _ = io.WriteString(w, "<html>PROXY-ECHO-MARKER</html>")
+					return
+				}
+				inner.ServeHTTP(w, r)
+			}))
+			defer srv.Close()
+			var sleeps int32
+			in := metaFieldInput()
+			in.Variants = []AdVariant{videoVariant("Keynote")}
+			res, err := videoClient(srv.URL, &sleeps).CreateCampaign(context.Background(), in)
+			if err != nil {
+				t.Fatalf("CreateCampaign: %v (a video failure is a degraded success)", err)
+			}
+			steps := strings.Join(res.Steps, "\n")
+			if !strings.Contains(steps, tc.want) || !strings.Contains(steps, "(502)") || strings.Contains(steps, "PROXY-ECHO-MARKER") {
+				t.Fatalf("steps %q: want %q and the 502, without the body", steps, tc.want)
+			}
+		})
+	}
+}

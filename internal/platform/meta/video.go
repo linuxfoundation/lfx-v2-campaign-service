@@ -207,6 +207,7 @@ func (c *Client) prepareVideos(ctx context.Context, variants []AdVariant, steps 
 	// their own variants, and the image variants and the ready videos still get their ads, instead
 	// of the deadline aborting the whole create mid-wait.
 	wait := c.videoReadyWait
+	// A context deadline is wall-clock time, so the clamp reads the wall clock, not c.timeNow.
 	if dl, ok := ctx.Deadline(); ok {
 		if left := time.Until(dl) - videoDeadlineReserve; left < wait {
 			wait = max(left, 0)

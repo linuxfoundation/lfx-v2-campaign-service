@@ -192,6 +192,8 @@ func TestCreateCampaign_CarouselRefusalsSendNothing(t *testing.T) {
 	otherText.PrimaryText = "Something else"
 	noMessage := first
 	noMessage.PrimaryText = ""
+	unresolved := card("u")
+	unresolved.ImageURL, unresolved.ImageAssetID = "", "a1"
 	for _, tc := range []struct {
 		name, format string
 		variants     []AdVariant
@@ -206,6 +208,7 @@ func TestCreateCampaign_CarouselRefusalsSendNothing(t *testing.T) {
 		{"a second message", "carousel", []AdVariant{first, otherText}, "metaConfig.variants[1].primaryText: a carousel has one message", false},
 		{"no message", "carousel", []AdVariant{noMessage, card("a")}, "metaConfig.variants[0].primaryText", false},
 		{"lead form", "carousel", []AdVariant{first, card("a")}, "a carousel cannot be combined with leadFormId", true},
+		{"unresolved card asset", "carousel", []AdVariant{first, unresolved}, "metaConfig.variants[1].imageAssetId: the card image was not resolved to stored bytes", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

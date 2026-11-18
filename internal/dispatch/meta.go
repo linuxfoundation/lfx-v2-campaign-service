@@ -2137,6 +2137,22 @@ func checkMetaStringFieldShape(config json.RawMessage) error {
 			}
 			return domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig: %s must be a string", domain.ErrCreateConfigInvalid, quoteKey(k)))
 		}
+		// variants[].videoAssetId (#550 gap 9): a wrong-typed one would decode to "" here, skip the
+		// video gate and its 400, and fail the job only in Dispatch's strict decode.
+		if strings.EqualFold(k, "variants") {
+			var variants []map[string]json.RawMessage
+			if json.Unmarshal(platformCfg[k], &variants) != nil {
+				continue
+			}
+			for i, v := range variants {
+				for vk, vraw := range v {
+					var str string
+					if strings.EqualFold(vk, "videoAssetId") && !isJSONNull(vraw) && json.Unmarshal(vraw, &str) != nil {
+						return domain.WrapPreflightRefusal(fmt.Errorf("%w: metaConfig.variants[%d].videoAssetId must be a string", domain.ErrCreateConfigInvalid, i))
+					}
+				}
+			}
+		}
 	}
 	return nil
 }
