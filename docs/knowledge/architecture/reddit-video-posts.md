@@ -76,13 +76,18 @@ dangling-asset guard reads `videoAssetId` and `thumbnailAssetId`.
 
 ## Partial results and retry safety
 
-Nothing changes from the image path. The post is authored **before** the paid campaign:
+The post is authored **before** the paid campaign, as on the image path:
 
 - a definite refusal of the post (for example, Reddit rejecting the unprobed shape) degrades to a
   campaign and ad group with no ad and an `AdWarning`. That is `created_degraded`, the claim is
   retained, and the operator follows the stray-post guidance;
 - an in-flight cancellation is an UNCONFIRMED partial, recorded by name;
-- a cancellation before send is `(nil, err)`, with nothing created.
+- a cancellation before send is `(nil, err)`, with nothing created;
+- a definite refusal of the campaign AFTER the post succeeded returns a partial result whose
+  steps name the unattached post, never `(nil, err)`. The dispatcher keeps the claim and records
+  the row, so a retry does not author a second post. One ad per variant does the same for its
+  posts; the one-post IMAGE path still returns `(nil, err)` there, which this change leaves
+  alone.
 
 A retry of a degraded row short-circuits on idempotency, as it does for images.
 

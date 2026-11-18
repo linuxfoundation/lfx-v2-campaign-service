@@ -2347,6 +2347,19 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 					VariantAds:   variants.snapshot(),
 				}, err
 			}
+			// A VIDEO post (#549 gap 5) is likewise authored before the campaign: a definite
+			// refusal here leaves it unattached. Return a partial result so the caller keeps the
+			// claim and records the post, instead of authoring another one on retry.
+			if hasVideo && validatedPostID != "" {
+				steps = append(steps, fmt.Sprintf("Campaign creation was refused; the promoted video post %s above exists and is not attached to an ad", validatedPostID))
+				return &CampaignResult{
+					Platform:     "reddit-ads",
+					CampaignName: campaignName,
+					AccountID:    c.account.AccountID,
+					RedditURL:    redditAdsManagerURL,
+					Steps:        steps,
+				}, err
+			}
 			return nil, err
 		}
 		steps = append(steps, "Campaign creation is UNCONFIRMED (the create request reached Reddit but the outcome is unknown); a PAUSED campaign may exist -- verify by name in Reddit Ads Manager before retrying to avoid a duplicate")

@@ -20,7 +20,9 @@ type videoPostServer struct {
 	events   []string
 	post     map[string]any
 	postCode int
-	mutated  bool
+	// campaignCode, when set, makes the campaign create answer with that status.
+	campaignCode int
+	mutated      bool
 }
 
 func (v *videoPostServer) record(e string) {
@@ -63,6 +65,14 @@ func newVideoPostClient(t *testing.T, v *videoPostServer) *Client {
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t3_video"}})
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
 			v.record("campaign")
+			v.mu.Lock()
+			ccode := v.campaignCode
+			v.mu.Unlock()
+			if ccode != 0 {
+				w.WriteHeader(ccode)
+				_ = json.NewEncoder(w).Encode(map[string]any{"error": "refused"})
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "c_1"}})
 		case strings.HasSuffix(r.URL.Path, "/ad_groups"):
 			v.record("adgroup")
@@ -172,6 +182,31 @@ func TestCreateCampaign_VideoPostIgnoresAdPerVariant(t *testing.T) {
 	}
 	if v.post["type"] != "VIDEO" || v.post["headline"] != "First" {
 		t.Fatalf("post type %v headline %v, want a VIDEO post headlined First", v.post["type"], v.post["headline"])
+	}
+}
+
+// TestCreateCampaign_CampaignRefusalAfterVideoPostKeepsThePost: the VIDEO post is authored
+// before the campaign, so a definite refusal of the campaign leaves it unattached. The client
+// returns a partial result naming the post with the error, never (nil, err), so the dispatcher
+// keeps the claim and a retry does not author a second post.
+func TestCreateCampaign_CampaignRefusalAfterVideoPostKeepsThePost(t *testing.T) {
+	v := &videoPostServer{campaignCode: http.StatusBadRequest}
+	c := newVideoPostClient(t, v)
+	in := lateSourceInput()
+	in.VideoURLSource = func(context.Context) (string, error) { return lateVideo, nil }
+	in.ThumbnailURLSource = func(context.Context) (string, error) { return lateThumb, nil }
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("want the campaign refusal as an error")
+	}
+	if res == nil {
+		t.Fatalf("result = nil with %v; the authored video post would be forgotten and authored again on retry", err)
+	}
+	if res.CampaignID != "" {
+		t.Fatalf("CampaignID = %q, want empty: no campaign was created", res.CampaignID)
+	}
+	if joined := strings.Join(res.Steps, "\n"); !strings.Contains(joined, "promoted video post t3_video above exists and is not attached") {
+		t.Fatalf("steps do not record the unattached video post: %s", joined)
 	}
 }
 
