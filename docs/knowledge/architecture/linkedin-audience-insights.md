@@ -119,14 +119,17 @@ Sources: [Reporting](https://learn.microsoft.com/en-us/linkedin/marketing/integr
   connection serves it when bound to that account, and otherwise the LF system row, as its default
   account or a grant-scoped copy. This is the account monitor's rule; it replaced the
   own-connection-only resolution (`resolveOwned`) once the LF system row gained grants and the read
-  was already campaign-scoped. 404 only when neither the project nor the system row has a usable
-  LinkedIn connection.
+  was already campaign-scoped. 404 when neither the project nor the system row has a usable
+  LinkedIn connection, and for a project that disconnected its own connection when its campaigns
+  record no account or one the system row cannot serve (`resolveExisting` rescues a disconnected
+  project through the system row only for an account that row serves).
 - **Recorded account only.** Every scope entry's recorded creation account
   (`linkedInCreationAccountID`: the stamped `accountId`, else the `linkedInUrl` segment) must equal
   the serving connection's account; ANY mismatch, mixed scope included, is 409
-  (`ErrCampaignAccountMismatch`) before LinkedIn is contacted. That includes a project with no
-  connection of its own whose campaigns record an account the system row neither defaults to nor
-  grants: the system row's default account serves the resolution and the scope check refuses it.
+  (`ErrCampaignAccountMismatch`) before LinkedIn is contacted. That includes a project that never
+  had a connection of its own whose campaigns record an account the system row neither defaults to
+  nor grants: the system row's default account serves the resolution and the scope check refuses
+  it.
 - **Provenance.** On the project's own connection an unrecorded creation account is unknown and
   proceeds. On the LF system credential every entry must record the account
   (`linkedInSystemScopeRecorded`); an unrecorded one is 409 (`ErrCampaignProvenanceUnknown` with

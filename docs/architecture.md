@@ -594,11 +594,11 @@ Events | KubeCon NA 2025 | EMEA | Conversions | Intent | Search | cncf | MoFU | 
 The data pipeline parses campaign names to attribute them to the correct foundation/project. No manual mapping entry needed once the naming convention is followed.
 
 This service's own reads do not parse names. The project-scoped reads — the keyword and audience
-insights and the Google Ads, Meta, Reddit and X account monitors — attribute an upstream campaign to
-a project by `campaigns.project_id`, the row this service wrote when it created or adopted the
-campaign. A campaign this service neither created nor adopted is therefore not in any project's
-Google Ads, Meta, Reddit or X monitor, however it is named (the LinkedIn and Microsoft monitors stay
-account-wide).
+insights and the Google Ads, LinkedIn (since #581), Meta, Reddit and X account monitors — attribute an
+upstream campaign to a project by `campaigns.project_id`, the row this service wrote when it created
+or adopted the campaign. A campaign this service neither created nor adopted is therefore not in any
+project's Google Ads, LinkedIn, Meta, Reddit or X monitor, however it is named (the Microsoft monitor
+stays account-wide).
 
 ## Migration Path
 

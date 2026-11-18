@@ -21,10 +21,11 @@ Ports the LFX One BFF's `/api/campaigns/monitor` family (Google, LinkedIn,
 Meta, Reddit — Meta ships with a pagination fix, not a verbatim port; see
 below). `{project_id}` means "whose credential do I resolve," the same way
 it already does for the existing `connection-*-ads/accounts` discovery
-endpoints. On LinkedIn and Microsoft these are *account*-scoped reads (every
+endpoints. On Microsoft these are *account*-scoped reads (every
 campaign the credential reaches). On Google Ads, Meta, Reddit and X, whose
-one ad account every foundation shares, `{project_id}` also limits the
-response to the campaigns this service recorded for the project — see
+one ad account every foundation shares, and on LinkedIn, whose LF system
+credential reaches several foundations' accounts through its grants (#581),
+`{project_id}` also limits the response to the campaigns this service recorded for the project — see
 [Project scoping on shared accounts](#project-scoping-on-shared-accounts-lfx-self-serve-ops897).
 
 ## Shape
@@ -511,8 +512,9 @@ not the primary gate for two of them.
 
 ## Trust boundary: `{project_id}` no longer means "or the system fallback"
 
-Google Ads (since #591), Meta and Reddit (since #615) are the exceptions: see "Google Ads: read
-with the credential configured for the account" and "Meta and Reddit: the same rule" below.
+Google Ads (since #591), LinkedIn (since #581), Meta and Reddit (since #615) are the exceptions:
+see "Google Ads: read with the credential configured for the account", "Meta and Reddit: the same
+rule" and "LinkedIn: campaign-scoped, served from the system row's grants" below.
 
 Round 15 documented, without fixing, a credential-scope gap: `{project_id}`
 in these URLs meant "whose credential resolves the platform client," and
@@ -527,7 +529,8 @@ Google/LinkedIn/Meta by adding a parallel "owned discovery" resolver per
 platform (`resolveOwnedGoogleAdsDiscoveryClient`, since replaced by
 `resolveGoogleAdsMonitorClient` in #591, `resolveLinkedInOwnedDiscoveryCredentials`,
 `resolveOwnedMetaDiscovery`)
-— and Meta's monitor since by `resolveMetaMonitorClient` in #615 —
+— and Meta's monitor since by `resolveMetaMonitorClient` in #615, LinkedIn's by
+`resolveLinkedInMonitorCredentials` in #581 —
 that refuses the system fallback the way `resolveOwned`
 (`internal/dispatch/creds.go`) already does for the adoption flow. A project
 with no connection of its own now gets `domain.ErrNotFound` → 404 via the
@@ -554,7 +557,7 @@ system fallback on every platform, so a project operating entirely on the LF
 system ad account can still create campaigns and read their per-campaign
 metrics; it is only the account-wide monitor read that now refuses to serve
 that project at all, rather than scoping to what it created (except on Google
-Ads since #591 and Meta and Reddit since #615, which scope to what it created instead). This mirrors
+Ads since #591, LinkedIn since #581 and Meta and Reddit since #615, which scope to what it created instead). This mirrors
 the adoption flow's own precedent and its stated limit: a project on a
 shared credential has no "own" account to monitor, the same way it has no
 "own" account to adopt into. Google Ads carries a further, unavoidable
@@ -575,7 +578,7 @@ the BFF and on a direct call alike: the gateway check is `campaign_manager`
 on `project:{project_id}` and nothing else, and this service only verified
 identity.
 
-The four monitors are now project-scoped inside the service, for every
+The four monitors (five since LinkedIn joined with #581) are now project-scoped inside the service, for every
 caller (ROOT included), at one choke point mirroring
 `Orchestrator.ReadKeywordPerformance`:
 
@@ -586,7 +589,7 @@ caller (ROOT included), at one choke point mirroring
    Without it a disabled X monitor answered 200 empty or 409 depending on what
    the project had recorded. Then it reads the project's campaign scope from
    SQL (`projectCampaignScope` → `ListProjectPlatformCampaignIDs`, filtered on
-   `project_id`). The requested-account guards on Meta, Reddit and X need the
+   `project_id`). The requested-account guards on LinkedIn, Meta, Reddit and X need the
    stored connection, so they still run after the scope: a wrong `account_id`
    there gets 200 empty or 409 before it can reach their 400.
 2. An empty scope answers 200 with an empty monitor before any upstream call
