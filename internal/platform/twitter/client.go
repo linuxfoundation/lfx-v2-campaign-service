@@ -3443,6 +3443,13 @@ type CampaignInput struct {
 	// nothing: X applies no expansion, as before. Only a line item THIS call creates carries it; a
 	// reused one keeps its own, and a step says so.
 	AudienceExpansion string
+	// Goal and PrimaryWebEventTag (#564 gap 5; conversion_goal.go) are sent as the line item's goal
+	// (WEBSITE_CONVERSIONS) and primary_web_event_tag, checked together by NormalizeConversionGoal
+	// before any request. Both empty sends neither: X's default optimization for WEBSITE_CLICKS, as
+	// before. Only a line item THIS call creates carries them; a reused one keeps its own, and a
+	// step says so.
+	Goal               string
+	PrimaryWebEventTag string
 	// FollowerLookalikeUserIDs (#564 gap 4c) add SIMILAR_TO_FOLLOWERS_OF_USER criteria (EQ) after
 	// the platforms and before the included custom audiences. Checked by
 	// NormalizeFollowerLookalikes for shape only: X has no user lookup, so an id X refuses fails at
@@ -3841,6 +3848,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if xerr != nil {
 		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", xerr.Error())
 	}
+	// Conversion goal and web event tag (#564 gap 5), the same way.
+	goal, webEventTag, cgerr := NormalizeConversionGoal(in.Goal, in.PrimaryWebEventTag)
+	if cgerr != nil {
+		return nil, domain.PreflightRefusalf("invalid twitterConfig.%s", cgerr.Error())
+	}
 	// Platforms (#564 gap 9), the same way.
 	platforms, perr := NormalizePlatforms(in.Platforms)
 	if perr != nil {
@@ -4167,6 +4179,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if audienceExpansion != "" {
 			steps = append(steps, fmt.Sprintf("Warning: audience expansion %s NOT applied to reused line item %s; its existing audience expansion is unchanged — verify it in X Ads Manager", audienceExpansion, lineItemID))
 		}
+		if goal != "" {
+			steps = append(steps, fmt.Sprintf("Warning: goal %s with web event tag %s NOT applied to reused line item %s; its existing optimization goal is unchanged — verify it in X Ads Manager", goal, webEventTag, lineItemID))
+		}
 	} else {
 		// X Ads v12 line_items: params go on the query string; start_time and
 		// end_time are REQUIRED; bid_strategy=AUTO selects automatic bidding
@@ -4199,6 +4214,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if audienceExpansion != "" {
 			lineItemParams["audience_expansion"] = audienceExpansion
 		}
+		// Conversion optimization (#564 gap 5): goal WEBSITE_CONVERSIONS with its required
+		// primary_web_event_tag, both documented optional line-item parameters; omitted, X applies
+		// the objective's default goal.
+		if goal != "" {
+			lineItemParams["goal"] = goal
+			lineItemParams["primary_web_event_tag"] = webEventTag
+		}
 		if err := c.pace(ctx); err != nil {
 			return partialResult(), fmt.Errorf("x line item creation aborted (%s): %w", campaignStatus(), err)
 		}
@@ -4229,6 +4251,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		if audienceExpansion != "" {
 			steps = append(steps, fmt.Sprintf("Line item %s sent with audience expansion %s", lineItemID, audienceExpansion))
+		}
+		if goal != "" {
+			steps = append(steps, fmt.Sprintf("Line item %s sent with goal %s and primary web event tag %s", lineItemID, goal, webEventTag))
 		}
 	}
 
