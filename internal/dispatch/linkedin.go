@@ -201,7 +201,8 @@ type linkedinConfig struct {
 	TargetingProfiles  []linkedin.TargetingProfileConfig `json:"targetingProfiles"`
 	EmployerExclusions []string                          `json:"employerExclusions"`
 	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic:
-	// a WEBSITE_VISIT campaign bidding MAX_CLICK. Manual is WEBSITE_CONVERSION + a manual CPC.
+	// a WEBSITE_VISIT campaign bidding MAX_CLICK, or WEBSITE_CONVERSION bidding MAX_CONVERSION
+	// under objective "conversions" (#582). Manual is WEBSITE_CONVERSION + a manual CPC.
 	Bidding *biddingConfig `json:"bidding,omitempty"`
 	// Targeting is the caller's own targetingCriteria (#552), behind
 	// LINKEDIN_ADS_TARGETING_ENABLED. Set, it replaces TargetingProfile and the hard-coded
@@ -210,6 +211,11 @@ type linkedinConfig struct {
 	// Conversions are conversion rule ids associated with the campaign once it exists (#552),
 	// behind LINKEDIN_ADS_CONVERSIONS_ENABLED. See linkedin.ValidateConversions.
 	Conversions []string `json:"conversions,omitempty"`
+	// Objective is the campaign's optimisation goal (#582): "traffic" or "conversions", exactly.
+	// Omitted, the bidding strategy decides as before (automatic → WEBSITE_VISIT / MAX_CLICK,
+	// manual → WEBSITE_CONVERSION / NONE). "conversions" with automatic bidding creates
+	// WEBSITE_CONVERSION / MAX_CONVERSION and requires Conversions. See linkedinObjective.
+	Objective string `json:"objective,omitempty"`
 	// JobFunctions replace the default job functions in the profile's jobFunctions clause
 	// (#585). Not read with Targeting. See linkedin.ValidateJobFunctions.
 	JobFunctions []string `json:"jobFunctions,omitempty"`
@@ -339,6 +345,13 @@ func linkedinConversions(cfg linkedinConfig) ([]string, error) {
 	return ids, nil
 }
 
+// The linkedInConfig.objective spellings (#582), exactly — the Reddit and Meta configs' words for
+// the same two goals.
+const (
+	linkedinObjectiveTraffic     = "traffic"
+	linkedinObjectiveConversions = "conversions"
+)
+
 // linkedinTargetingEnabled reports whether this deployment opted in to linkedInConfig.targeting
 // (#552). Read per call so it flips without a rebuild. Off by default: no targeting shape has
 // been exercised against a live LinkedIn account, and a wrong guess fails after the campaign
@@ -427,10 +440,80 @@ func linkedinTargeting(cfg linkedinConfig) (*linkedin.Targeting, error) {
 	return t, nil
 }
 
-// linkedinBidPlan resolves linkedInConfig's bidding choice. The OBJECTIVE follows it (decision
-// 2026-10-13, Misha): automatic — the default — creates a WEBSITE_VISIT campaign optimising for
-// clicks (MAX_CLICK), because MAX_CONVERSION, the only automated target WEBSITE_CONVERSION allows,
-// needs a conversion association this service does not create; manual creates the WEBSITE_CONVERSION
+// checkObjectiveShape refuses a linkedInConfig.objective that is not a non-empty JSON string
+// (#582), explicit null and "" included: the best-effort pre-flight decode skips a wrong-typed field, and a
+// skipped objective would read as omitted and create a traffic campaign. The value itself is
+// checked by linkedinObjective.
+func checkObjectiveShape(config json.RawMessage) error {
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(config, &envelope) != nil {
+		return nil
+	}
+	var platformCfg map[string]json.RawMessage
+	if json.Unmarshal(envelope["linkedInConfig"], &platformCfg) != nil {
+		return nil
+	}
+	for k, raw := range platformCfg {
+		if !strings.EqualFold(k, "objective") {
+			continue
+		}
+		var str string
+		// An empty string decodes like an omitted field and is refused as null is.
+		if isJSONNull(raw) || json.Unmarshal(raw, &str) != nil || str == "" {
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.objective must be the string \"traffic\" or \"conversions\"; omit it to let the bidding strategy decide", domain.ErrCreateConfigInvalid))
+		}
+	}
+	return nil
+}
+
+// linkedinObjective resolves linkedInConfig.objective (#582) against the bidding plan and the
+// validated conversions into the objectiveType the client creates ("" lets the strategy decide).
+// Every refusal is an ErrCreateConfigInvalid pre-flight refusal: a synchronous 400 from
+// PreflightCreate, and the same sentence failing the job from Dispatch.
+//
+//   - omitted: "" — automatic is WEBSITE_VISIT / MAX_CLICK, manual WEBSITE_CONVERSION / NONE.
+//   - "traffic": WEBSITE_VISIT, automatic only. A manual bid is created under WEBSITE_CONVERSION
+//     (the setup the bid lever re-bids), so traffic with manual is refused rather than silently
+//     created as a conversions campaign.
+//   - "conversions": WEBSITE_CONVERSION. Manual is the manual create unchanged. Automatic is
+//     MAX_CONVERSION, LinkedIn's "Maximum delivery" for Website conversions, which LinkedIn will
+//     not activate until a conversion is associated ("Create and Manage Campaigns",
+//     li-lms-2026-02: "Campaigns optimizing for MAX_CONVERSION must have a conversion associated
+//     with it to be activated"). DECISION (#582): it therefore REQUIRES linkedInConfig.conversions,
+//     which this service associates right after the create. With none it is refused: a campaign
+//     that can never be activated from this service is not created. It so inherits the
+//     conversions gates — LINKEDIN_ADS_CONVERSIONS_ENABLED and global_marketing_ops — and an
+//     association that fails after the create leaves the campaign PAUSED and created_degraded with
+//     the step to associate it in Campaign Manager before activating (#552's degraded path).
+func linkedinObjective(cfg linkedinConfig, plan bidPlan) (string, error) {
+	switch cfg.Objective {
+	case "":
+		return "", nil
+	case linkedinObjectiveTraffic:
+		if plan.manual() {
+			return "", domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.objective \"traffic\" is offered with automatic bidding only; a manual bid is created under the website conversions objective, so choose objective \"conversions\" (or omit it) for manual bidding",
+				domain.ErrCreateConfigInvalid))
+		}
+		return linkedin.ObjectiveWebsiteVisit, nil
+	case linkedinObjectiveConversions:
+		if !plan.manual() && len(cfg.Conversions) == 0 {
+			gate := ""
+			if !linkedinConversionsEnabled() {
+				gate = fmt.Sprintf(" (linkedInConfig.conversions is disabled on this deployment until an operator sets %s to \"true\")", constants.EnvLinkedInAdsConversionsEnabled)
+			}
+			return "", domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.objective \"conversions\" with automatic bidding optimises for conversions (MAX_CONVERSION), which LinkedIn will not activate until a conversion is associated, so it requires linkedInConfig.conversions%s; name the conversion rule ids to associate, or choose manual bidding or objective \"traffic\"",
+				domain.ErrCreateConfigInvalid, gate))
+		}
+		return linkedin.ObjectiveWebsiteConversion, nil
+	}
+	return "", domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.objective must be \"traffic\" or \"conversions\"", domain.ErrCreateConfigInvalid))
+}
+
+// linkedinBidPlan resolves linkedInConfig's bidding choice. Unless linkedInConfig.objective names
+// one (#582, linkedinObjective), the OBJECTIVE follows it (decision 2026-10-13, Misha): automatic —
+// the default — creates a WEBSITE_VISIT campaign optimising for clicks (MAX_CLICK), because
+// MAX_CONVERSION, the only automated target WEBSITE_CONVERSION allows, needs a conversion
+// association; manual creates the WEBSITE_CONVERSION
 // campaign with costType CPC, optimizationTargetType NONE and unitCost = the bid — the setup the bid
 // lever reads as a manual max CPC. See linkedin.campaignBidding for the citations.
 //
@@ -534,7 +617,8 @@ func (d *LinkedInDispatcher) PreflightCreate(ctx context.Context, projectID stri
 	// when targeting is set) and adAccountId are promised as a synchronous 400.
 	var cfg linkedinConfig
 	_ = unmarshalPlatformConfig(config, "linkedInConfig", &cfg)
-	if _, err := linkedinBidPlan(cfg); err != nil {
+	plan, err := linkedinBidPlan(cfg)
+	if err != nil {
 		return err
 	}
 	// linkedInConfig.conversions (#552) is promised as a synchronous 400 too, a wrong JSON type
@@ -542,7 +626,17 @@ func (d *LinkedInDispatcher) PreflightCreate(ctx context.Context, projectID stri
 	if err := checkConversionsShape(config); err != nil {
 		return err
 	}
-	if _, err := linkedinConversions(cfg); err != nil {
+	conversions, err := linkedinConversions(cfg)
+	if err != nil {
+		return err
+	}
+	// linkedInConfig.objective (#582), after conversions so a disabled conversions list is named
+	// first; MAX_CONVERSION's conversion requirement is checked against the validated list.
+	if err := checkObjectiveShape(config); err != nil {
+		return err
+	}
+	cfg.Conversions = conversions
+	if _, err := linkedinObjective(cfg, plan); err != nil {
 		return err
 	}
 	// linkedInConfig.targeting (#552) is promised as a synchronous 400 too. checkTargetingShape
@@ -698,6 +792,14 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if cfg.Conversions, err = linkedinConversions(cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// The objective (#582), against the plan and the validated conversions, before any call.
+	if err := checkObjectiveShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	objective, err := linkedinObjective(cfg, plan)
+	if err != nil {
+		return nil, notCreated(err)
+	}
 	// Caller targeting (#552), gated and validated before any upstream call. The normalised copy
 	// replaces the request's, so the client and the stored snapshot both see it.
 	if err := checkTargetingShape(config); err != nil {
@@ -803,6 +905,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		AdAccountID:      adAccountID,
 		Images:           images,
 		ManualCPCBid:     plan.amount,
+		Objective:        objective,
 		Conversions:      cfg.Conversions,
 		Targeting:        cfg.Targeting,
 		JobFunctions:     cfg.JobFunctions,

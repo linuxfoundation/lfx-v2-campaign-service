@@ -2226,7 +2226,7 @@ func TestCreateCampaign_StepWordingNeutralForFoundCampaign(t *testing.T) {
 				_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | tlf","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:`+groupID+`"}],"metadata":{"nextPageToken":""}}`)
 			case strings.Contains(r.URL.Path, "adCampaigns"):
 				// An EXISTING ACTIVE campaign under the same group — found idempotently.
-				_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | LinkedIn | Conversions | Prospecting | Static | tlf | MoFU","status":"ACTIVE","id":"urn:li:sponsoredCampaign:200","campaignGroup":"urn:li:sponsoredCampaignGroup:`+groupID+`"}],"metadata":{"nextPageToken":""}}`)
+				_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | LinkedIn | Conversions | Prospecting | Static | tlf | MoFU","status":"ACTIVE","id":"urn:li:sponsoredCampaign:200","campaignGroup":"urn:li:sponsoredCampaignGroup:`+groupID+`","objectiveType":"WEBSITE_CONVERSION","optimizationTargetType":"NONE"}],"metadata":{"nextPageToken":""}}`)
 			default:
 				_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			}
@@ -2516,7 +2516,7 @@ func TestFindCampaignByNameInGroup_MissingGroupIsAmbiguousError(t *testing.T) {
 			defer srv.Close()
 
 			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-			id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", "Events | KubeCon | tlf", "555", "")
+			id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", "Events | KubeCon | tlf", "555", "", "")
 			if err == nil {
 				t.Fatalf("expected an error for a same-name campaign with an unconfirmable group, got nil (id=%q)", id)
 			}
@@ -2548,7 +2548,7 @@ func TestFindCampaignByNameInGroup_SkippedStatusNotAmbiguous(t *testing.T) {
 			defer srv.Close()
 
 			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-			id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", "Events | KubeCon | tlf", "555", "")
+			id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", "Events | KubeCon | tlf", "555", "", "")
 			if err != nil {
 				t.Fatalf("a %s same-name campaign with a missing group must be SKIPPED, not raise an error, got: %v", status, err)
 			}
