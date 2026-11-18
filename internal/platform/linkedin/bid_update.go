@@ -74,65 +74,108 @@ func (s *CampaignSettings) ManualCPC() bool {
 	return false
 }
 
-// The objectives and the automated target the create path sends (LFXV2-2665).
+// The objectives and the automated targets the create path sends (LFXV2-2665, #582).
 const (
-	ObjectiveWebsiteConversion = "WEBSITE_CONVERSION"
-	ObjectiveWebsiteVisit      = "WEBSITE_VISIT"
-	OptimizationTargetMaxClick = "MAX_CLICK"
-	costTypeCPM                = "CPM"
+	ObjectiveWebsiteConversion      = "WEBSITE_CONVERSION"
+	ObjectiveWebsiteVisit           = "WEBSITE_VISIT"
+	OptimizationTargetMaxClick      = "MAX_CLICK"
+	OptimizationTargetMaxConversion = "MAX_CONVERSION"
+	costTypeCPM                     = "CPM"
 )
 
+// ErrAutomaticConversionsNeedConversion marks a create refused because it asks for automatic
+// bidding under the Website conversions objective (MAX_CONVERSION) without naming a conversion
+// rule to associate (#582): LinkedIn will not activate such a campaign until one is associated.
+var ErrAutomaticConversionsNeedConversion = errors.New("linkedin: automatic bidding for website conversions (MAX_CONVERSION) requires at least one conversion rule to associate")
+
 // campaignBiddingPlan is what a create's bidding choice decides on LinkedIn: the campaign-body
-// fields that set the bidding, the objectiveType they require, and the Objective segment of the
-// campaign name (the naming convention's fourth segment).
+// fields that set the bidding, the objectiveType they require, the optimizationTargetType they
+// send (the name-reuse lookup checks it), and the Objective segment of the campaign name (the
+// naming convention's fourth segment).
 type campaignBiddingPlan struct {
-	fields        map[string]any
-	objectiveType string
-	nameObjective string
+	fields             map[string]any
+	objectiveType      string
+	optimizationTarget string
+	nameObjective      string
 }
 
-// campaignBidding returns the campaign-create bidding for a manual bid (> 0) or automatic (0).
+// campaignBidding returns the campaign-create bidding for a manual bid (> 0) or automatic (0),
+// under the requested objective: "" (the strategy decides, as before #582), ObjectiveWebsiteVisit
+// or ObjectiveWebsiteConversion.
 //
-// DECISION (2026-10-13, Misha): automatic LinkedIn campaigns optimise for CLICKS via
-// WEBSITE_VISIT/MAX_CLICK, because MAX_CONVERSION — the only automated target the Website
-// conversions objective allows — needs a conversion association, which this service creates only
-// when linkedInConfig.conversions is supplied (#552, flag-gated), so automatic stays on clicks.
-// The objective therefore depends on the strategy. Sources, li-lms-2026-09, consulted 2026-10-13:
+// DECISION (2026-10-13, Misha): with no objective named, automatic LinkedIn campaigns optimise for
+// CLICKS via WEBSITE_VISIT/MAX_CLICK, because MAX_CONVERSION — the only automated target the
+// Website conversions objective allows — needs a conversion association. #582 (2026-11-13) offers
+// MAX_CONVERSION as an explicit choice: objective WEBSITE_CONVERSION with automatic bidding, which
+// the dispatcher accepts only together with linkedInConfig.conversions, so the association this
+// service makes right after the create is the one LinkedIn requires before activation. Sources,
+// li-lms-2026-02 (the pinned LinkedIn-Version 202602; both pages carry the same text for every
+// version from li-lms-2025-11 to li-lms-2026-10), consulted 2026-11-13:
 //
 //   - "Ad Budget Type Allowable Combinations"
-//     (https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads-reporting/ad-budget-pricing-type-combinations),
+//     (https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads-reporting/ad-budget-pricing-type-combinations?view=li-lms-2026-02),
 //     Objective Type Descriptions: row WEBSITE_VISIT allows "NONE, MAX_CLICK, ENHANCED_CONVERSION,
 //     TARGET_COST_PER_CLICK, CAP_COST_AND_MAXIMIZE_CLICKS"; row WEBSITE_CONVERSION allows "NONE,
-//     ENHANCED_CONVERSION, MAX_CONVERSION". The auto-bidding table's MAX_CLICK row ("maximize the
-//     campaign's number of clicks and exhaust the daily budget without advertiser specifying bid")
-//     lists WEBSITE_VISIT among its objectives; the manual-bidding table lists NONE for "All".
-//   - "Create and Manage Campaigns" (Optimization of Campaigns), Website Traffic table, row
-//     STANDARD_UPDATE | AUTO | MAX_CLICK: costType CPM, Bid Type CPC, conversion tracking not
-//     required (the MAX_CONVERSION row beside it is the one marked "Required"); and "Campaigns
-//     optimizing for MAX_CONVERSION must have a conversion associated with it to be activated".
-//     The same table's STANDARD_UPDATE | CPC | NONE row is the manual shape: costType CPC.
+//     ENHANCED_CONVERSION, MAX_CONVERSION". The auto-bidding table's MAX_CONVERSION row ("maximize
+//     the campaign's number of conversions and exhaust the daily budget without advertiser
+//     specifying bid") lists WEBSITE_CONVERSION among its objectives; MAX_CLICK lists
+//     WEBSITE_VISIT, not WEBSITE_CONVERSION. "For auto-bidding campaigns ... the costType is always
+//     CPM. The unitCost defaults to 0."
+//   - "Create and Manage Campaigns" (Optimization of Campaigns)
+//     (https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads/account-structure/create-and-manage-campaigns?view=li-lms-2026-02),
+//     table rows STANDARD_UPDATE | AUTO | MAX_CLICK: costType CPM, Bid Type CPC, conversion tracking
+//     optional; STANDARD_UPDATE | AUTO | MAX_CONVERSION: costType CPM, Bid Type CPC, conversion
+//     tracking "Required"; STANDARD_UPDATE | CPC | NONE: costType CPC. And: "Campaigns optimizing
+//     for MAX_CONVERSION must have a conversion associated with it to be activated. Campaigns of
+//     this type should be created and then associated with a conversion before activating." The
+//     create sends status PAUSED and associates the conversions next, which is that order.
 //
-// AUTOMATIC: objectiveType WEBSITE_VISIT, optimizationTargetType MAX_CLICK, costType CPM (the
-// documented pairing — auto-bidding charges by impressions; the Bid Type, what is optimised, is
-// CPC), no unitCost. Name segment "Traffic".
+// AUTOMATIC, objective "" or WEBSITE_VISIT: objectiveType WEBSITE_VISIT, optimizationTargetType
+// MAX_CLICK, costType CPM, no unitCost. Name segment "Traffic".
 //
-// MANUAL: objectiveType WEBSITE_CONVERSION (unchanged from before LFXV2-2665), costType CPC,
-// optimizationTargetType NONE ("keeps a campaign in manual bidding mode") and unitCost = the bid in
-// USD at whole cents (ValidateBidAmount — refused, never rounded) — exactly what
-// CampaignSettings.ManualCPC accepts. Name segment "Conversions", as every campaign before.
+// AUTOMATIC, objective WEBSITE_CONVERSION (#582; LinkedIn's "Maximum delivery" for Website
+// conversions): objectiveType WEBSITE_CONVERSION, optimizationTargetType MAX_CONVERSION, costType
+// CPM, no unitCost. Name segment "Conversions". The caller must associate a conversion (CreateCampaign
+// refuses it without one, ErrAutomaticConversionsNeedConversion).
+//
+// MANUAL, objective "" or WEBSITE_CONVERSION: objectiveType WEBSITE_CONVERSION (unchanged from
+// before LFXV2-2665), costType CPC, optimizationTargetType NONE ("keeps a campaign in manual
+// bidding mode") and unitCost = the bid in USD at whole cents (ValidateBidAmount — refused, never
+// rounded) — exactly what CampaignSettings.ManualCPC accepts. Name segment "Conversions".
+// MANUAL with WEBSITE_VISIT is not offered and is refused.
 //
 // Before LFXV2-2665 the body sent costType CPC and NO optimizationTargetType: LinkedIn's NONE
 // default with unitCost 0, under which "the campaign does not deliver".
-func campaignBidding(manualBid float64) (campaignBiddingPlan, error) {
+func campaignBidding(manualBid float64, objective string) (campaignBiddingPlan, error) {
+	switch objective {
+	case "", ObjectiveWebsiteVisit, ObjectiveWebsiteConversion:
+	default:
+		return campaignBiddingPlan{}, fmt.Errorf("linkedin: objective %q is not one this service creates; use %s or %s", objective, ObjectiveWebsiteVisit, ObjectiveWebsiteConversion)
+	}
 	if manualBid == 0 {
+		if objective == ObjectiveWebsiteConversion {
+			return campaignBiddingPlan{
+				fields: map[string]any{
+					"costType":               costTypeCPM,
+					"optimizationTargetType": OptimizationTargetMaxConversion,
+				},
+				objectiveType:      ObjectiveWebsiteConversion,
+				optimizationTarget: OptimizationTargetMaxConversion,
+				nameObjective:      "Conversions",
+			}, nil
+		}
 		return campaignBiddingPlan{
 			fields: map[string]any{
 				"costType":               costTypeCPM,
 				"optimizationTargetType": OptimizationTargetMaxClick,
 			},
-			objectiveType: ObjectiveWebsiteVisit,
-			nameObjective: "Traffic",
+			objectiveType:      ObjectiveWebsiteVisit,
+			optimizationTarget: OptimizationTargetMaxClick,
+			nameObjective:      "Traffic",
 		}, nil
+	}
+	if objective == ObjectiveWebsiteVisit {
+		return campaignBiddingPlan{}, fmt.Errorf("linkedin: a manual max CPC bid is created under objective %s only; %s is offered with automatic bidding", ObjectiveWebsiteConversion, ObjectiveWebsiteVisit)
 	}
 	wire, err := ValidateBidAmount(manualBid)
 	if err != nil {
@@ -144,9 +187,16 @@ func campaignBidding(manualBid float64) (campaignBiddingPlan, error) {
 			"optimizationTargetType": OptimizationTargetNone,
 			"unitCost":               map[string]any{"amount": wire, "currencyCode": "USD"},
 		},
-		objectiveType: ObjectiveWebsiteConversion,
-		nameObjective: "Conversions",
+		objectiveType:      ObjectiveWebsiteConversion,
+		optimizationTarget: OptimizationTargetNone,
+		nameObjective:      "Conversions",
 	}, nil
+}
+
+// manualBiddingTarget reports whether an optimizationTargetType keeps a campaign in manual
+// bidding mode (NONE, ENHANCED_CONVERSION — "Create and Manage Campaigns").
+func manualBiddingTarget(target string) bool {
+	return target == OptimizationTargetNone || target == OptimizationTargetEnhancedConversion
 }
 
 // linkedinMaxBid is the contract's ceiling (service.maxCampaignBid). LinkedIn's own range is

@@ -5,8 +5,10 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -41,9 +43,11 @@ const (
 //     absent whenever it is not reported). The create path records none of these, so each
 //     reads `unknown`.
 //   - objective_type is COMPARED since LFXV2-2665: the create path's objective follows the
-//     bidding strategy it records (automatic → WEBSITE_VISIT, manual → WEBSITE_CONVERSION;
-//     linkedinRecordedObjective), so a row with a recorded strategy has a recorded objective. A
-//     row without one (legacy, adopted) reads `unknown`, never a guessed objective.
+//     bidding strategy it records (automatic → WEBSITE_VISIT, manual → WEBSITE_CONVERSION) unless
+//     the config snapshot records linkedInConfig.objective "conversions" (#582: automatic →
+//     WEBSITE_CONVERSION; linkedinRecordedObjective), so a row with a recorded strategy has a
+//     recorded objective. A row without one (legacy, adopted) reads `unknown`, never a guessed
+//     objective.
 //
 // BUDGET. The create path sets exactly one of dailyBudget/totalBudget in USD, so a campaign
 // reporting one is compared as that type. One reporting BOTH (LinkedIn allows a daily budget
@@ -145,7 +149,7 @@ func (d *LinkedInDispatcher) ReadSettings(ctx context.Context, projectID string,
 		model.CompareSettingsField(settingsFieldCostType, nil, settings.CostType),
 		model.CompareSettingsField(settingsFieldUnitCost, nil, unitCost),
 		model.CompareSettingsField(settingsFieldUnitCostCurrency, nil, unitCostCurrency),
-		model.CompareSettingsField(settingsFieldObjectiveType, linkedinRecordedObjective(campaign), settings.ObjectiveType),
+		model.CompareSettingsField(settingsFieldObjectiveType, linkedinRecordedObjective(ctx, campaign), settings.ObjectiveType),
 	}
 	rb.SummariseSettings()
 	return rb, nil
@@ -161,18 +165,89 @@ func linkedinAccountIDUnusable(res *resolved, projectID, op string) error {
 }
 
 // linkedinRecordedObjective is the objectiveType the create path sent for this row's recorded
-// bidding strategy (LFXV2-2665; linkedin.campaignBidding): automatic → WEBSITE_VISIT, manual →
-// WEBSITE_CONVERSION. nil when no strategy is recorded — a legacy or adopted row — so the field
-// reads `unknown` rather than comparing against a guess.
-func linkedinRecordedObjective(campaign *model.Campaign) *string {
+// bidding strategy (LFXV2-2665; linkedin.campaignBidding) and the linkedInConfig.objective its
+// config snapshot records (#582): manual → WEBSITE_CONVERSION; automatic → WEBSITE_CONVERSION
+// when the snapshot records objective "conversions" (MAX_CONVERSION), WEBSITE_VISIT when it
+// records "traffic" or no objective. nil when no strategy is recorded — a legacy or adopted row —
+// or when an automatic row's snapshot cannot be shown to record what was asked for, so the field
+// reads `unknown` rather than comparing against a guess (linkedinSnapshotObjective).
+func linkedinRecordedObjective(ctx context.Context, campaign *model.Campaign) *string {
 	if campaign == nil || campaign.BiddingStrategy == nil {
 		return nil
 	}
 	switch *campaign.BiddingStrategy {
 	case model.BiddingAutomatic:
-		return strPtr(linkedin.ObjectiveWebsiteVisit)
+		objective, ok := linkedinSnapshotObjective(ctx, campaign)
+		switch {
+		case !ok:
+			return nil
+		case objective == linkedinObjectiveConversions:
+			return strPtr(linkedin.ObjectiveWebsiteConversion)
+		case objective == "" || objective == linkedinObjectiveTraffic:
+			return strPtr(linkedin.ObjectiveWebsiteVisit)
+		}
+		// A value outside the closed set this service creates: uninterpretable, not a divergence.
+		return nil
 	case model.BiddingManual:
 		return strPtr(linkedin.ObjectiveWebsiteConversion)
 	}
 	return nil
+}
+
+// linkedinSnapshotAuthorshipKey is a linkedinConfig member without `omitempty`, present since the
+// adapter's first version (LFXV2-2638): applyCampaignConfig marshals linkedinSnapshotConfig(cfg)
+// — a linkedinConfig STRUCT VALUE — whole, so every snapshot this adapter wrote carries it, false
+// or not. Its presence is how linkedinSnapshotObjective tells an adapter-written snapshot from a
+// config blob a caller persisted through UpdateCampaign.
+const linkedinSnapshotAuthorshipKey = "lifetimeBudget"
+
+// linkedinSnapshotObjective reads the linkedInConfig.objective this adapter recorded in the row's
+// ConfigSnapshot. ok is false — nothing trustworthy was recorded — for an empty snapshot, one that
+// is not a JSON object, one lacking linkedinSnapshotAuthorshipKey, or an `objective` that is
+// present but not a JSON string (including an explicit null).
+//
+// The absent-objective default (WEBSITE_VISIT: every row before #582, and every traffic row since,
+// because Objective is `omitempty`) is applied ONLY to a snapshot this adapter provably wrote.
+// `omitempty` means key absence alone cannot prove that: UpdateCampaign replaces config_snapshot
+// with whatever JSON the caller sends (the `{"linkedInConfig":{…}}` envelope, a partial object,
+// anything), and before #582 the recorded objective came only from the caller-immutable
+// bidding_strategy column. Defaulting such a blob would report a MAX_CONVERSION campaign as
+// recorded WEBSITE_VISIT — a fabricated `diverged` a caller could provoke. This mirrors
+// googleAdsRecordedChannelType, which settles the same question for Google Ads' `channel`.
+func linkedinSnapshotObjective(ctx context.Context, campaign *model.Campaign) (string, bool) {
+	if len(campaign.ConfigSnapshot) == 0 {
+		return "", false
+	}
+	// Decoded into RawMessage first, so key presence and JSON type survive the decode.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(campaign.ConfigSnapshot, &raw); err != nil {
+		// Not an error for the caller: the readback still reports every other field.
+		slog.WarnContext(ctx, "linkedin config snapshot could not be decoded; objective_type has no recorded side",
+			"campaign_id", campaign.ID, "error", err)
+		return "", false
+	}
+	if _, written := raw[linkedinSnapshotAuthorshipKey]; !written {
+		// Not a snapshot this adapter wrote, so the absent-objective default does not apply.
+		slog.WarnContext(ctx, "linkedin config snapshot was not written by the linkedin adapter; objective_type has no recorded side",
+			"campaign_id", campaign.ID)
+		return "", false
+	}
+	v, present := raw["objective"]
+	if !present {
+		return "", true
+	}
+	// json.Unmarshal of `null` into a string succeeds and leaves "", which would take the
+	// WEBSITE_VISIT default; the adapter never writes null (omitempty drops ""), so refuse it.
+	if strings.TrimSpace(string(v)) == "null" {
+		slog.WarnContext(ctx, "linkedin config snapshot objective is explicitly null; objective_type has no recorded side",
+			"campaign_id", campaign.ID)
+		return "", false
+	}
+	var objective string
+	if err := json.Unmarshal(v, &objective); err != nil {
+		slog.WarnContext(ctx, "linkedin config snapshot objective is not a string; objective_type has no recorded side",
+			"campaign_id", campaign.ID)
+		return "", false
+	}
+	return objective, true
 }

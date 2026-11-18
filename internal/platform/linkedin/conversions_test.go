@@ -290,7 +290,7 @@ func TestCreateCampaign_FailedConversionOnAReusedCampaignSaysItMayBeServing(t *t
 // bidding, so a search can answer with an existing campaign of that name.
 func reusedCampaignName(t *testing.T) string {
 	t.Helper()
-	plan, err := campaignBidding(0)
+	plan, err := campaignBidding(0, "")
 	if err != nil {
 		t.Fatal(err)
 	}

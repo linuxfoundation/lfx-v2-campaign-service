@@ -2514,7 +2514,7 @@ func TestFindCampaignByNameInGroup_MissingGroupIsAmbiguousError(t *testing.T) {
 			defer srv.Close()
 
 			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-			id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", "Events | KubeCon | tlf", "555", "")
+			id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", "Events | KubeCon | tlf", "555", "", "")
 			if err == nil {
 				t.Fatalf("expected an error for a same-name campaign with an unconfirmable group, got nil (id=%q)", id)
 			}
@@ -2546,7 +2546,7 @@ func TestFindCampaignByNameInGroup_SkippedStatusNotAmbiguous(t *testing.T) {
 			defer srv.Close()
 
 			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-			id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", "Events | KubeCon | tlf", "555", "")
+			id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", "Events | KubeCon | tlf", "555", "", "")
 			if err != nil {
 				t.Fatalf("a %s same-name campaign with a missing group must be SKIPPED, not raise an error, got: %v", status, err)
 			}
