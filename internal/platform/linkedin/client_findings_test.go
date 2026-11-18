@@ -523,7 +523,7 @@ func TestCreateSponsoredCampaign_SameNameDifferentGroupNotMatched(t *testing.T) 
 	id, _, err := c.createSponsoredCampaign(
 		context.Background(),
 		"123456789", wantGroupID, "Same Name", "2099-01-01", endMs,
-		100, []string{"urn:li:geo:103644278"}, "cloud-native", nil,
+		100, []string{"urn:li:geo:103644278"}, "cloud-native", nil, nil,
 		false, campaignBiddingPlan{}, "",
 	)
 	if err != nil {
@@ -565,7 +565,7 @@ func TestCreateSponsoredCampaign_SameNameSameGroupMatched(t *testing.T) {
 	id, _, err := c.createSponsoredCampaign(
 		context.Background(),
 		"123456789", groupID, "Same Name", "2099-01-01", endMs,
-		100, []string{"urn:li:geo:103644278"}, "cloud-native", nil,
+		100, []string{"urn:li:geo:103644278"}, "cloud-native", nil, nil,
 		false, campaignBiddingPlan{}, "",
 	)
 	if err != nil {
@@ -1796,7 +1796,7 @@ func TestBuildTargetingCriteria_DropsBlankFacets(t *testing.T) {
 		{ID: "cloud-native", Skills: []string{"urn:li:skill:1", "", "  urn:li:skill:2  "}, Groups: []string{"  "}},
 	}
 	c := NewClient(Credentials{AccessToken: "t"}, cfg)
-	crit, err := c.buildTargetingCriteria("cloud-native", []string{"urn:li:geo:1"})
+	crit, err := c.buildTargetingCriteria("cloud-native", []string{"urn:li:geo:1"}, nil)
 	if err != nil {
 		t.Fatalf("buildTargetingCriteria: %v", err)
 	}
@@ -2019,8 +2019,10 @@ func TestDoRequest_SendsAuthAndVersionHeaders(t *testing.T) {
 	if gotAuth != "Bearer tok-abc" {
 		t.Errorf("Authorization = %q, want 'Bearer tok-abc'", gotAuth)
 	}
-	if gotVer != apiVersion {
-		t.Errorf("LinkedIn-Version = %q, want the exact required contract value %q", gotVer, apiVersion)
+	// The literal, not the constant: a version change must be a deliberate edit here too, made
+	// alongside the Recent Changes audit the apiVersion comment asks for (#580).
+	if gotVer != "202611" {
+		t.Errorf("LinkedIn-Version = %q, want the audited contract value 202611", gotVer)
 	}
 	if gotProto != "2.0.0" {
 		t.Errorf("X-RestLi-Protocol-Version = %q, want 2.0.0", gotProto)
