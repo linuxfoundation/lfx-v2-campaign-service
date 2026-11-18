@@ -151,13 +151,21 @@ func (d *LinkedInDispatcher) WriteBudget(ctx context.Context, projectID string, 
 	// currency the platform declined to state is exactly the redenomination this guard
 	// exists to prevent. Permitting it was an escape hatch aimed at a case that is no longer
 	// reachable here.
-	if !strings.EqualFold(current.CurrencyCode, "USD") {
-		reported := current.CurrencyCode
-		if reported == "" {
-			reported = "a currency LinkedIn did not report"
+	//
+	// EVERY PRESENT BUDGET IS CHECKED, not the one currency the read collapses them to (#636).
+	// A lifetime budget with a daily cap carries a currencyCode on each field, and
+	// current.CurrencyCode prefers the daily one, so a USD cap over a total whose currency is
+	// missing or different would pass a single check and let a USD totalBudget write land on
+	// an amount whose currency was never validated.
+	if hasDaily {
+		if err := requireLinkedInUSD(campaign.PlatformCampaignID, "daily budget", current.DailyBudgetCurrency); err != nil {
+			return err
 		}
-		return fmt.Errorf("write linkedin campaign budget: campaign %s holds a budget denominated in %s, but this service writes and validates LinkedIn budgets in USD only, so writing here would redenominate it; change the amount in LinkedIn Campaign Manager where its currency is applied: %w",
-			campaign.PlatformCampaignID, reported, domain.ErrBudgetUnwritable)
+	}
+	if hasTotal {
+		if err := requireLinkedInUSD(campaign.PlatformCampaignID, "lifetime budget", current.TotalBudgetCurrency); err != nil {
+			return err
+		}
 	}
 
 	// Converted and validated through the SAME helper the create path uses, so an amount
@@ -210,4 +218,20 @@ func (d *LinkedInDispatcher) WriteBudget(ctx context.Context, projectID string, 
 		return werr
 	}
 	return nil
+}
+
+// requireLinkedInUSD refuses a budget write when the named budget field of the campaign is
+// not explicitly denominated in USD: this service writes and validates LinkedIn budgets in USD
+// only, so writing over any other currency, or over one LinkedIn did not report, would
+// redenominate it.
+func requireLinkedInUSD(campaignID, field, currency string) error {
+	if strings.EqualFold(currency, "USD") {
+		return nil
+	}
+	reported := currency
+	if reported == "" {
+		reported = "a currency LinkedIn did not report"
+	}
+	return fmt.Errorf("write linkedin campaign budget: campaign %s holds a %s denominated in %s, but this service writes and validates LinkedIn budgets in USD only, so writing here would redenominate it; change the amount in LinkedIn Campaign Manager where its currency is applied: %w",
+		campaignID, field, reported, domain.ErrBudgetUnwritable)
 }

@@ -137,7 +137,7 @@ func TestCreateCampaign_ReusedCampaignWithTargetingStopsBeforeCreatives(t *testi
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			in := newInput(tc.targeting, tc.jobFns)
-			plan, err := campaignBidding(0)
+			plan, err := campaignBidding(0, "")
 			if err != nil {
 				t.Fatal(err)
 			}
