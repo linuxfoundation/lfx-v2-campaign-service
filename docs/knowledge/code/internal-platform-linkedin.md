@@ -1003,7 +1003,7 @@ An image failure returns the partial result with zero creatives. See
 carry one or none (`isVideoInput` reads the first; `CreateCampaign` refuses a mix and a video
 alongside an image). `ValidateVideo`: `video/mp4`, `MinVideoBytes` (75 KiB) to `MaxVideoBytes`
 (500 MB), an `ftyp` box. A video input sends `format: SINGLE_VIDEO` on the campaign
-(`createSponsoredCampaign`'s `format` argument) and composes the name with `Video` in the Ad
+(`createSponsoredCampaign`'s `format` argument) and composes the name with `Motion` in the Ad
 Format segment. `findCampaignByNameInGroup` also takes the format: image and video campaigns are
 both SPONSORED_UPDATES, so a same-name campaign reporting the other format (`responseElement.Format`,
 SINGLE_VIDEO or not) is refused before any upload (`TestCreateCampaign_Video_RefusesSameNameImageCampaign`);
@@ -1163,7 +1163,7 @@ never shares a name with a single-image one, and `findCampaignByNameInGroup` now
 same-name campaign of another `type`. A text or video create skips the pre-#587 legacy-name lookup (no
 text or video campaign predates #587, and the legacy name is always `Static`), pinned by
 `TestCreateCampaign_TextCreateSkipsTheLegacyLookup` and `TestCreateCampaign_VideoCreateSkipsTheLegacyLookup`.
-`adFormatNameSegment` is the one source of the Ad Format segment: `Text`, `Video` or `Static`. Stored images reuse `uploadVariantImages` — `uploadImage`
+`adFormatNameSegment` is the one source of the Ad Format segment: `Text`, `Motion` or `Static`. Stored images reuse `uploadVariantImages` — `uploadImage`
 validates by format (`ValidateImageForFormat`). `createTextAds` posts one DRAFT creative per ad to
 the same `adAccounts/{id}/creatives` endpoint, with the registration URL plus that ad's UTMs as
 `landingPage`; with no dark post there is nothing else to orphan, and a failure returns the partial

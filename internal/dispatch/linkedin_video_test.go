@@ -172,7 +172,7 @@ func decodeJSON(t *testing.T, b []byte) map[string]any {
 }
 
 // TestLinkedInVideo_DispatchEndToEnd drives Dispatch against a fake LinkedIn API and asserts the
-// whole create: a SINGLE_VIDEO campaign named "Video", ONE Videos API upload for a video two
+// whole create: a SINGLE_VIDEO campaign named "Motion", ONE Videos API upload for a video two
 // variants share (initializeUpload -> each part PUT with exactly its byte range -> finalizeUpload
 // with the ETags in instruction order -> status polled to AVAILABLE), then per variant a dark post
 // carrying the video as content.media and a creative referencing it, in that order.
@@ -208,7 +208,7 @@ func TestLinkedInVideo_DispatchEndToEnd(t *testing.T) {
 	if campaignBody["format"] != "SINGLE_VIDEO" {
 		t.Errorf("campaign format = %v, want SINGLE_VIDEO", campaignBody["format"])
 	}
-	if name, _ := campaignBody["name"].(string); !strings.Contains(name, " | Video | ") || strings.Contains(name, "Static") {
+	if name, _ := campaignBody["name"].(string); !strings.Contains(name, " | Motion | ") || strings.Contains(name, "Static") {
 		t.Errorf("campaign name = %q, want the Ad Format segment Video", name)
 	}
 

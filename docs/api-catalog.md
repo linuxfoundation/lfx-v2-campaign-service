@@ -1407,8 +1407,8 @@ variants[].videoAssetId?: string — OPTIONAL id of an MP4 creative asset upload
                                   step says "NOT uploaded", "UNCONFIRMED" or "Videos NOT used".
 ```
 
-The campaign name's Ad Format segment is `Video` instead of `Static`
-(`Events | <event> | <region> | <objective> | Prospecting | Video | <project> | MoFU`). A same-name
+The campaign name's Ad Format segment is `Motion` (LF's word for video ads) instead of `Static`
+(`Events | <event> | <region> | <objective> | Prospecting | Motion | <project> | MoFU`). A same-name
 campaign in the group that LinkedIn reports with the other format (image vs `SINGLE_VIDEO`) is
 refused rather than reused, before any video is uploaded. Objectives
 and bidding are unchanged (automatic `WEBSITE_VISIT`, manual `WEBSITE_CONVERSION`; LinkedIn allows

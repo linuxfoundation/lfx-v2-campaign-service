@@ -173,14 +173,15 @@ func campaignTypeFor(format string) string {
 // single-image campaign's, byte for byte as before; "Text" keeps a text campaign's name — and so
 // the by-name reuse lookup — apart from a single-image campaign of the same event and objective.
 //
-// "Video" is a video campaign's (#586), for the same reason: a SINGLE_VIDEO campaign cannot take
+// "Motion" is a video campaign's (#586), LF's own word for LinkedIn video (lf-dbt's
+// parse_campaign_name reads it), for the same reason: a SINGLE_VIDEO campaign cannot take
 // image creatives, nor an image campaign videos.
 func adFormatNameSegment(in CampaignInput) string {
 	if in.Format == FormatText {
 		return "Text"
 	}
 	if isVideoInput(in) {
-		return "Video"
+		return "Motion"
 	}
 	return "Static"
 }

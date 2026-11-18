@@ -196,7 +196,7 @@ func TestValidateVideo(t *testing.T) {
 }
 
 // TestCreateCampaign_Video_HappyPath pins the client-level wire shape: SINGLE_VIDEO on the
-// campaign, the Video name segment, the finalize part ids in order, and the video post body.
+// campaign, the Motion name segment, the finalize part ids in order, and the video post body.
 func TestCreateCampaign_Video_HappyPath(t *testing.T) {
 	api := newVideoAPI(t)
 	res, err := api.client().CreateCampaign(context.Background(), videoCampaignInput(videoVariant(), videoVariant()))
@@ -206,8 +206,8 @@ func TestCreateCampaign_Video_HappyPath(t *testing.T) {
 	if api.snap().campaign["format"] != "SINGLE_VIDEO" {
 		t.Errorf("campaign format = %v, want SINGLE_VIDEO", api.snap().campaign["format"])
 	}
-	if !strings.Contains(res.CampaignName, " | Video | ") {
-		t.Errorf("campaign name = %q, want the Video Ad Format segment", res.CampaignName)
+	if !strings.Contains(res.CampaignName, " | Motion | ") {
+		t.Errorf("campaign name = %q, want the Motion Ad Format segment", res.CampaignName)
 	}
 	if n := api.count("POST /videos?action=initializeUpload"); n != 1 {
 		t.Errorf("initializeUpload = %d, want 1 for one shared asset", n)

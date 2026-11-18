@@ -58,7 +58,7 @@ would strand a partial campaign.
 ## Wire sequence
 
 All after the campaign group and campaign exist (`createSponsoredCampaign` sends
-`"format": "SINGLE_VIDEO"`; the name's Ad Format segment is `Video`, so a video and an image
+`"format": "SINGLE_VIDEO"`; the name's Ad Format segment is `Motion` (LF's word for video ads, read by lf-dbt), so a video and an image
 campaign of one event never share a name and `findCampaignByNameInGroup` never binds one to the
 other). Per distinct video
 ([Videos API](https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/videos-api)):
