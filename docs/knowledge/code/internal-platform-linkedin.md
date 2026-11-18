@@ -26,6 +26,16 @@ Authentication is a Bearer access token; every request also sends the
 `LinkedIn-Version` and `X-RestLi-Protocol-Version` headers required by the
 Marketing API.
 
+**API version.** `LinkedIn-Version` is `202611` (November 2026), named once as
+`apiVersion` in `config.go` with no env override (no platform client here wires
+its version from the environment). LinkedIn supports 202611 until November 16,
+2027; the previous pin, 202602, sunsets February 15, 2027 (Marketing API
+"Migrations", API Migration Status). The 202602 → 202611 Recent Changes audit
+found no breaking change on any endpoint the package calls (#580); the header
+test pins the literal so a future bump is a deliberate, audited edit. The live
+probe of 202611 runs in dev after merge (dev follows main), and the next prod
+release is held until it passes; rolling back is a one-line constant revert.
+
 **Token refresh is OPTIONAL.** LinkedIn issues programmatic refresh tokens only
 to approved Marketing Developer Platform partners, so `Credentials` may carry an
 access token alone; `CanRefresh()` gates the whole path on `RefreshToken`,
