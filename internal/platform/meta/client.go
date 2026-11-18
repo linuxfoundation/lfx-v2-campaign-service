@@ -4722,7 +4722,8 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 	}
 	// An instant-form lead ad's button opens the form (#550, gap 8): Meta's Lead Ads guide puts
 	// lead_gen_form_id in link_data.call_to_action.value in place of the click link. A video
-	// variant never reaches here with a form: ValidateVideoVariant refuses the pair.
+	// variant never reaches here with a form: CreateCampaign's up-front variant loop refuses the
+	// pair (the variantHasVideo / LeadFormID check beside ValidateVideoVariant).
 	if in.LeadFormID != "" {
 		withLeadForm(creativeBody["object_story_spec"].(map[string]any), in.LeadFormID)
 	}
