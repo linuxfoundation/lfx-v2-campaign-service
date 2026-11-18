@@ -474,18 +474,19 @@ func (c *Client) fetchAccountCampaignAnalytics(ctx context.Context, accountID st
 	if err != nil {
 		return nil, fmt.Errorf("parse url: %w", err)
 	}
-	// The legacy SINGULAR `pivotValue` is NOT a projectable field on this schema (LinkedIn
-	// rejects it with a 400 "Projected field \"pivotValue\" not present in schema
-	// ...AdAnalyticsV8"), so it is not listed here; this read relies on pivotValues arriving with
-	// `pivot=CAMPAIGN`, the same way the BFF's fields list (linkedin-ads.service.ts:894) never
-	// requests it. The PLURAL `pivotValues` is a documented projectable field (ads-reporting,
-	// "Requesting specific metrics in the Analytics Finder"), which the audience read projects.
+	// `pivotValues` (PLURAL) MUST be projected. At LinkedIn-Version 202611 the finder returns
+	// only the fields a request names, so without it every element arrives with no pivotValues
+	// and the whole read fails to decode ("element has no pivotValues"; prod v1.0.38, 18 Nov
+	// 2026, #580). It is a documented projectable field (ads-reporting, "Requesting specific
+	// metrics in the Analytics Finder"), and the audience read projects it the same way. The
+	// legacy SINGULAR `pivotValue` is NOT projectable on this schema (LinkedIn rejects it with a
+	// 400 "Projected field \"pivotValue\" not present in schema ...AdAnalyticsV8").
 	u.RawQuery = "q=analytics" +
 		"&pivot=CAMPAIGN" +
 		"&timeGranularity=ALL" +
 		"&dateRange=(start:" + restLiDate(start) + ",end:" + restLiDate(end) + ")" +
 		"&accounts=List(" + url.QueryEscape(accountURN) + ")" +
-		"&fields=impressions,clicks,costInLocalCurrency,externalWebsiteConversions"
+		"&fields=impressions,clicks,costInLocalCurrency,externalWebsiteConversions,pivotValues"
 
 	// AdAnalyticsElement/AdAnalyticsResponse (decoded by doAdAnalyticsAttempt) carry no
 	// pivotValue field — they were built for the single-campaign path, which filters by a
@@ -547,10 +548,9 @@ func (c *Client) fetchAccountCampaignAnalyticsRaw(ctx context.Context, rawURL st
 		// (ListAccountCampaigns) would then read as "every listed campaign had zero activity"
 		// instead of "the analytics read failed" (round-24 review).
 		Elements *[]struct {
-			// PivotValues is not named in this read's `fields`; it relies on the field arriving
-			// with `pivot=CAMPAIGN`, as the BFF's does. Only the legacy SINGULAR `pivotValue` is
-			// unprojectable — the plural is a documented `fields` value (see the RawQuery comment
-			// above). Mirrors the BFF's `pivotValues?: string[]` (linkedin-ads.service.ts:907).
+			// PivotValues is projected by name in this read's `fields`: at 202611 LinkedIn returns
+			// only projected fields (see the RawQuery comment above). Only the legacy SINGULAR
+			// `pivotValue` is unprojectable.
 			PivotValues []string `json:"pivotValues"`
 			Impressions int64    `json:"impressions"`
 			Clicks      int64    `json:"clicks"`

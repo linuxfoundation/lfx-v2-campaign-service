@@ -911,7 +911,10 @@ convention this dispatcher shares with Google/Reddit/Meta's monitor reads.
 
 The monitor's Ad Analytics read asks for `costInLocalCurrency` (the account's currency, the one
 its budgets are in) — not `costInUsd` as the single-campaign metrics read does — so
-`AccountCampaignRow.Spend` and the budgets share one currency on any account.
+`AccountCampaignRow.Spend` and the budgets share one currency on any account. It also
+projects `pivotValues` by name: at LinkedIn-Version 202611 the finder returns only projected
+fields, and without it every row arrived with no campaign URN and the whole read failed to decode
+(prod v1.0.38, #580).
 `ListAccountCampaignsWithCurrency` is the same read plus that currency for the monitor's
 `currency` field, from the `currencyCode` on every `dailyBudget`/`totalBudget` in the campaign
 list (`budgetCurrencies`): the code when every budget names the same well-formed one, else `""`.
