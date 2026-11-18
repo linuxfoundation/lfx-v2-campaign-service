@@ -14,7 +14,8 @@ hand-made `postUrl`.
 ## Request
 
 `redditConfig.videoAssetId` names a creative asset of the brief stored as `video/mp4` (the
-upload path from #586: `internal/service/creative_asset_video.go`, migration `000057`).
+upload path already on main from #614 and #646: `internal/service/creative_asset_video.go`,
+migration `000057`; this change adds no migration).
 `redditConfig.thumbnailAssetId` names a stored PNG or JPEG of the same brief. The two are set
 together and never with `postUrl`, `imageUrl` or `imageAssetId`.
 
@@ -35,8 +36,10 @@ The same legacy `POST /profiles/{account}/posts` the image path uses (`createPro
 
 In the schema, `media_url` is "required for image, video and carousel posts". The destination is
 required only for image and carousel posts, but it is sent anyway: a video ad that does not link
-to registration is no use to an LF event. The headline and CTA rules are the image post's. The
-structured-post endpoint's `VideoCreative` (`video.media.url` plus `thumbnail.media.url`) is
+to registration is no use to an LF event. The headline and CTA rules are the image post's. A
+video create is always one post and one ad: one ad per variant (#549 gap 6,
+`REDDIT_AD_PER_VARIANT_ENABLED`) applies to image posts only, so the first variant's headline is
+used. The structured-post endpoint's `VideoCreative` (`video.media.url` plus `thumbnail.media.url`) is
 the other documented shape. It is **not** used, because the image path does not use it either.
 
 ## Serving the media

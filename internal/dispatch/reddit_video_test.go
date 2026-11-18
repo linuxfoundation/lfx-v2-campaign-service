@@ -97,7 +97,10 @@ func TestRedditVideo_AuthorsAVideoPostFromSignedURLs(t *testing.T) {
 // TestRedditVideo_PostRefusalDegradesAndNeverPersistsSignatures: a refused VIDEO post (the
 // outcome if the unprobed shape were wrong) keeps the image path's partial rule — the campaign
 // exists with no ad, recorded created_degraded — and an error body echoing BOTH URLs leaks
-// neither signature.
+// neither signature. As for the image post (TestRedditAsset_UpstreamEchoOfMediaURLNeverPersisted),
+// the client already records only the status of a failed post, so this holds even without the
+// dispatcher's scrub; scrubRedditOutcome is defense in depth, pinned by
+// TestScrubRedditOutcome_ScrubsEveryMintedURL.
 func TestRedditVideo_PostRefusalDegradesAndNeverPersistsSignatures(t *testing.T) {
 	t.Setenv(constants.EnvRedditVideoEnabled, "true")
 	h := &redditAssetHarness{postsFail: true}
