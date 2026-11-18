@@ -1004,7 +1004,10 @@ carry one or none (`isVideoInput` reads the first; `CreateCampaign` refuses a mi
 alongside an image). `ValidateVideo`: `video/mp4`, `MinVideoBytes` (75 KiB) to `MaxVideoBytes`
 (500 MB), an `ftyp` box. A video input sends `format: SINGLE_VIDEO` on the campaign
 (`createSponsoredCampaign`'s `format` argument) and composes the name with `Video` in the Ad
-Format segment. `uploadVariantVideos` runs right after `uploadVariantImages`: initializeUpload,
+Format segment. `findCampaignByNameInGroup` also takes the format: image and video campaigns are
+both SPONSORED_UPDATES, so a same-name campaign reporting the other format (`responseElement.Format`,
+SINGLE_VIDEO or not) is refused before any upload (`TestCreateCampaign_Video_RefusesSameNameImageCampaign`);
+an unreported format is reused. `uploadVariantVideos` runs right after `uploadVariantImages`: initializeUpload,
 the upload plan checked whole (contiguous, complete, LinkedIn hosts) before any part PUT, each
 part's `ETag` kept, finalizeUpload, then `awaitMediaAvailable` (shared with images;
 `WithVideoPolling`, default 60 s). `mediaRequest` (formerly `imageRequest`) returns the response

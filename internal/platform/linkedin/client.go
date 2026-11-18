@@ -503,7 +503,11 @@ type responseElement struct {
 	// ad-account search results (ListAdAccounts, accounts.go). An ad account carries two
 	// independent health axes — its lifecycle `status`, decoded above, and the
 	// `servingStatuses` array below — and the picker needs both.
-	Type            string   `json:"type"`
+	Type string `json:"type"`
+	// Format is a campaign search result's ad format (e.g. SINGLE_VIDEO), checked by
+	// findCampaignByNameInGroup so an image campaign is not reused for a video create, nor the
+	// reverse (#586).
+	Format          string   `json:"format"`
 	Currency        string   `json:"currency"`
 	Test            bool     `json:"test"`
 	ServingStatuses []string `json:"servingStatuses"`
@@ -1551,7 +1555,7 @@ func (c *Client) findByName(ctx context.Context, nestedPath, name string) (strin
 // findMatch exhaust the set and report absence, and the caller would POST a
 // DUPLICATE. So this case returns an error to abort, consistent with the
 // fail-closed handling for matched-but-id-less elements inside findMatch.
-func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, name, groupID, objectiveType, optimizationTarget, campaignType string) (string, error) {
+func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, name, groupID, objectiveType, optimizationTarget, campaignType, campaignFormat string) (string, error) {
 	return c.findMatch(ctx, campaignsPath, name, func(el responseElement) (bool, error) {
 		if el.Name != name {
 			return false, nil
@@ -1598,6 +1602,20 @@ func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, n
 		// cannot contradict.
 		if campaignType != "" && el.Type != "" && el.Type != campaignType {
 			return false, fmt.Errorf("campaign %q already exists in this campaign group with type %s, not %s — aborting rather than reuse it or create a duplicate", el.Name, el.Type, campaignType)
+		}
+		// Same name and type, but the other FORMAT (#586): image and video campaigns are both
+		// SPONSORED_UPDATES, so the type cannot tell them apart. A SINGLE_VIDEO campaign takes only
+		// video creatives and an image campaign none, so reusing the wrong one would upload the
+		// videos and post the dark posts before LinkedIn refused the first creative. Refused here,
+		// before any upload. An unreported format cannot contradict: a campaign with no creative
+		// yet takes its format from the first one.
+		if el.Format != "" && campaignType == campaignTypeSponsoredUpdates &&
+			(el.Format == campaignFormatSingleVideo) != (campaignFormat == campaignFormatSingleVideo) {
+			want := "an image format"
+			if campaignFormat == campaignFormatSingleVideo {
+				want = campaignFormatSingleVideo
+			}
+			return false, fmt.Errorf("campaign %q already exists in this campaign group with format %s, not %s — aborting rather than reuse it or create a duplicate", el.Name, el.Format, want)
 		}
 		return true, nil
 	})
@@ -2222,7 +2240,7 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 	// new campaign is never created under the correct group. The lookup also refuses a
 	// same-name campaign reporting a DIFFERENT objectiveType (LFXV2-2665): reusing it would
 	// silently run the other bidding strategy.
-	existing, err := c.findCampaignByNameInGroup(ctx, campaignsPath, name, groupID, bidding.objectiveType, bidding.optimizationTarget, campaignType)
+	existing, err := c.findCampaignByNameInGroup(ctx, campaignsPath, name, groupID, bidding.objectiveType, bidding.optimizationTarget, campaignType, format)
 	if err != nil {
 		return "", false, err
 	}
@@ -3319,7 +3337,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Static): skip the lookup, which could otherwise bind it to a single-image campaign.
 	if groupReused && format != FormatText && campaignFormat == "" {
 		if legacy := legacyCampaignName(eventName, bidding.nameObjective, project, in); legacy != campaignName {
-			found, err := c.findCampaignByNameInGroup(ctx, fmt.Sprintf("adAccounts/%s/adCampaigns", accountID), legacy, groupID, bidding.objectiveType, bidding.optimizationTarget, campaignTypeFor(format))
+			found, err := c.findCampaignByNameInGroup(ctx, fmt.Sprintf("adAccounts/%s/adCampaigns", accountID), legacy, groupID, bidding.objectiveType, bidding.optimizationTarget, campaignTypeFor(format), campaignFormat)
 			if err != nil {
 				return nil, fmt.Errorf("campaign group %q: looking up a campaign under its pre-#587 name failed; nothing was created, and a retry looks again: %w", groupID, err)
 			}

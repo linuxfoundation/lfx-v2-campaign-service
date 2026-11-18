@@ -1408,7 +1408,9 @@ variants[].videoAssetId?: string — OPTIONAL id of an MP4 creative asset upload
 ```
 
 The campaign name's Ad Format segment is `Video` instead of `Static`
-(`Events | <event> | <region> | <objective> | Prospecting | Video | <project> | MoFU`). Objectives
+(`Events | <event> | <region> | <objective> | Prospecting | Video | <project> | MoFU`). A same-name
+campaign in the group that LinkedIn reports with the other format (image vs `SINGLE_VIDEO`) is
+refused rather than reused, before any video is uploaded. Objectives
 and bidding are unchanged (automatic `WEBSITE_VISIT`, manual `WEBSITE_CONVERSION`; LinkedIn allows
 `SINGLE_VIDEO` under both). A video variant's `name` names its creative as for an image
 variant; its `description` is refused (a synchronous `400`), because the description is the

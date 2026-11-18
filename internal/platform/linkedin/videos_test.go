@@ -46,6 +46,8 @@ type videoAPI struct {
 	campaign     map[string]any
 	posts        []map[string]any
 	finBody      map[string]any
+	// existing, when set, is the campaign search's response (a same-name campaign in the group).
+	existing string
 }
 
 func newVideoAPI(t *testing.T) *videoAPI {
@@ -104,6 +106,8 @@ func (a *videoAPI) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		a.pollCalls++
 		_, _ = io.WriteString(w, `{"status":"`+st+`"}`)
+	case r.Method == http.MethodGet && a.existing != "" && strings.Contains(r.URL.Path, "adCampaigns") && !strings.Contains(r.URL.Path, "adCampaignGroups"):
+		_, _ = io.WriteString(w, a.existing)
 	case r.Method == http.MethodGet:
 		_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 	case strings.Contains(r.URL.Path, "adCampaignGroups"):
@@ -236,6 +240,60 @@ func TestCreateCampaign_Video_VariantCallToAction(t *testing.T) {
 	}
 	if len(api.snap().posts) != 2 || api.snap().posts[0]["contentCallToActionLabel"] != "LEARN_MORE" || api.snap().posts[1]["contentCallToActionLabel"] != "REGISTER" {
 		t.Errorf("call to action labels: %v", api.snap().posts)
+	}
+}
+
+// TestCreateCampaign_Video_RefusesSameNameImageCampaign pins the format guard at the
+// CreateCampaign call site: image and video campaigns are both SPONSORED_UPDATES, so a same-name
+// campaign reporting an image format is refused for a video create before any video is uploaded
+// or posted, and the reverse for an image create; one reporting SINGLE_VIDEO is reused (#586).
+func TestCreateCampaign_Video_RefusesSameNameImageCampaign(t *testing.T) {
+	clean := newVideoAPI(t)
+	vres, err := clean.client().CreateCampaign(context.Background(), videoCampaignInput(videoVariant()))
+	if err != nil {
+		t.Fatalf("clean video create: %v", err)
+	}
+	ires, err := newVideoAPI(t).client().CreateCampaign(context.Background(), imageCampaignInput(nil, CreativeVariant{IntroText: "Intro", Headline: "Headline"}))
+	if err != nil {
+		t.Fatalf("clean image create: %v", err)
+	}
+	existing := func(name, format string) string {
+		b, _ := json.Marshal(map[string]any{"elements": []map[string]any{{
+			"name": name, "status": "PAUSED", "id": 555, "type": "SPONSORED_UPDATES", "format": format,
+			"campaignGroup": "urn:li:sponsoredCampaignGroup:100",
+		}}, "metadata": map[string]any{}})
+		return string(b)
+	}
+	for _, tc := range []struct {
+		name     string
+		in       CampaignInput
+		existing string
+		refused  bool
+	}{
+		{"video create, image campaign", videoCampaignInput(videoVariant()), existing(vres.CampaignName, "STANDARD_UPDATE"), true},
+		{"image create, video campaign", imageCampaignInput(nil, CreativeVariant{IntroText: "Intro", Headline: "Headline"}), existing(ires.CampaignName, "SINGLE_VIDEO"), true},
+		{"video create, video campaign", videoCampaignInput(videoVariant()), existing(vres.CampaignName, "SINGLE_VIDEO"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := newVideoAPI(t)
+			api.existing = tc.existing
+			_, err := api.client().CreateCampaign(context.Background(), tc.in)
+			if tc.refused {
+				if err == nil || !strings.Contains(err.Error(), "with format") {
+					t.Fatalf("err = %v, want the format-mismatch refusal", err)
+				}
+				if n := api.count("POST /videos") + api.count("POST /posts") + api.count("POST /adAccounts/123456789/adCampaigns?"); n != 0 {
+					t.Errorf("%d upload, post or campaign POST(s) sent after the refusal", n)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("CreateCampaign: %v", err)
+			}
+			if n := api.count("POST /adAccounts/123456789/adCampaigns?"); n != 0 {
+				t.Errorf("a same-format campaign was not reused: %d campaign POST(s)", n)
+			}
+		})
 	}
 }
 
