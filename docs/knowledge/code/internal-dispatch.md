@@ -1513,8 +1513,10 @@ modified" is then the one claim that cannot be made — the cause is not lost ei
 `LinkedInDispatcher.WriteBudget` refuses, before any mutate: an unparseable current amount
 (`ErrBudgetUnwritable` — a value that failed to parse reads as "this field is unused", which is
 the answer that selects the wrong field to write); the same pacing guard Google makes, reached
-through a different fact — LinkedIn reports its pacing model by WHICH FIELD IS PRESENT, so BOTH
-present is ambiguous and NEITHER present identifies no shape to write; and then a campaign whose
+through a different fact — LinkedIn reports its pacing model by WHICH FIELD IS PRESENT, so NEITHER
+present identifies no shape to write, and BOTH present is a lifetime budget with a daily cap
+(#584): lifetime-paced, so a lifetime amount writes `totalBudget` alone (refused below the cap,
+through `linkedin.ValidateTotalCoversCap`) and a daily amount is refused; and then a campaign whose
 currency is not USD, because the minimums are USD-specific and this client only ever SENDS
 `currencyCode "USD"`, so writing over another currency would silently redenominate the campaign.
 

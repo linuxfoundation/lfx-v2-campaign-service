@@ -64,6 +64,75 @@ func TestLinkedinPacingPct_DaylightSavingDoesNotShiftTheWindow(t *testing.T) {
 	}
 }
 
+// TestLinkedinPacingPct_LifetimeWithDailyCap pins #584's pacing: a campaign carrying both a
+// totalBudget and a dailyBudget is paced against the daily cap when it has no end (LinkedIn's
+// continuous schedule for the pair), and against the smaller expectation when it has one. A
+// lifetime-only campaign is paced exactly as before.
+func TestLinkedinPacingPct_LifetimeWithDailyCap(t *testing.T) {
+	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	// days=7 → rangeStart 2026-06-09, a 6-day window up to now.
+	cases := []struct {
+		name string
+		m    model.AccountCampaignMetrics
+		want float64
+	}{
+		{
+			// Daily expectation 20*6 = 120. Paced against the total with the flight ending
+			// "today" it would be 1000/14*6 ≈ 428.6, reading 28% for a campaign at its cap.
+			name: "both budgets, no end: paced against the daily cap",
+			m:    model.AccountCampaignMetrics{TotalBudget: 1000, BudgetDay: 20, StartDate: "2026-06-01", Spend: 120},
+			want: 100,
+		},
+		{
+			// A $100 total under a $50 cap, started on the window's first day, spent its whole
+			// total inside the window and stopped. The cap alone expects 50*6 = 300 and would
+			// read 33% (underspending); the campaign can never spend more than its total, so the
+			// expectation is 100 and it reads 100%. (The total spread over the days elapsed,
+			// 100/6*6, is not what binds: with no end the cap and the total are.)
+			name: "both budgets, no end, total reached in the window: capped at the total",
+			m:    model.AccountCampaignMetrics{TotalBudget: 100, BudgetDay: 50, StartDate: "2026-06-09", Spend: 100},
+			want: 100,
+		},
+		{
+			// Total expectation 1000/30*6 = 200, daily 120: the smaller binds.
+			name: "both budgets with an end: the smaller expectation",
+			m:    model.AccountCampaignMetrics{TotalBudget: 1000, BudgetDay: 20, StartDate: "2026-06-01", EndDate: "2026-07-01", Spend: 120},
+			want: 100,
+		},
+		{
+			name: "lifetime only: unchanged",
+			m:    model.AccountCampaignMetrics{TotalBudget: 1000, StartDate: "2026-06-01", EndDate: "2026-07-01", Spend: 200},
+			want: 100,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := linkedinPacingPct(tc.m, 7, now)
+			if diff := got - tc.want; diff > 1e-9 || diff < -1e-9 {
+				t.Fatalf("pacingPct = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestLinkedinExpectedSpend_CappedNoEndNeverExceedsTotal pins the expectation itself for a
+// campaign that reached its total before the window and stopped: window spend 0, so the
+// percentage is 0 whatever the denominator, but what it is measured against must be the $100 total
+// it could still have had, not the $20 cap times the window's 6 days ($120), which it can never
+// spend. Lifetime spend is not in the metrics, so the total, not the remainder, is the cap.
+func TestLinkedinExpectedSpend_CappedNoEndNeverExceedsTotal(t *testing.T) {
+	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	m := model.AccountCampaignMetrics{TotalBudget: 100, BudgetDay: 20, StartDate: "2026-06-01", Spend: 0}
+	if got := linkedinExpectedSpend(m, 7, now); got != 100 {
+		t.Fatalf("expected spend = %v, want the total 100 (not the cap's 20*6 = 120)", got)
+	}
+	// A total larger than the cap's window still leaves the cap binding.
+	m.TotalBudget = 1000
+	if got := linkedinExpectedSpend(m, 7, now); got != 120 {
+		t.Fatalf("expected spend = %v, want the cap's 120", got)
+	}
+}
+
 // TestLinkedinActionItems_UnderspendingAndConstrained exercise the two label-driven rules and
 // the CTR/conversions/paused rules in isolation.
 func TestLinkedinActionItems_UnderspendingAndConstrained(t *testing.T) {
