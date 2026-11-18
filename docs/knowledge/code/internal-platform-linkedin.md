@@ -1010,7 +1010,8 @@ now carries `optimizationTarget`, and since automatic and manual conversions sha
 `Conversions` name, `findCampaignByNameInGroup` also aborts on a same-name, same-objective campaign
 of the other bidding MODE (`manualBiddingTarget`: NONE / ENHANCED_CONVERSION versus automated,
 `responseElement.OptimizationTargetType`); under `WEBSITE_CONVERSION` an unreported target aborts
-too, since it could be either mode (PR #637 review). `CampaignResult.ObjectiveType` and
+an automatic create too, since it could be a manual campaign (PR #637 review), while a manual
+create still reuses it (whether LinkedIn echoes `NONE` is unverified until the live probe). `CampaignResult.ObjectiveType` and
 `OptimizationTarget` record what a created campaign was sent, beside `BidApplied`. The bid
 lever already refuses MAX_CONVERSION (not a manual CPC). Sources (li-lms-2026-02, the pinned
 `202602`; the same text li-lms-2025-11..2026-10, consulted 2026-11-13): "Ad Budget Type Allowable

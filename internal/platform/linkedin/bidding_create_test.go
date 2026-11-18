@@ -389,7 +389,8 @@ func TestCampaignBidding_ObjectiveMatrix(t *testing.T) {
 // TestFindCampaignByNameInGroup_RefusesABiddingModeMismatch (#582): automatic and manual Website
 // conversions campaigns share a name, so a same-name, same-objective campaign is reused only in
 // the same bidding MODE — manual (NONE, ENHANCED_CONVERSION) or automated. An unreported
-// optimizationTargetType is ambiguous under WEBSITE_CONVERSION and aborts (PR #637 review).
+// optimizationTargetType is ambiguous for an automatic request and aborts (PR #637 review); a
+// manual request still reuses it, as before #582.
 func TestFindCampaignByNameInGroup_RefusesABiddingModeMismatch(t *testing.T) {
 	const name = "Events | KubeCon | NA | Conversions | Prospecting | Static | tlf | MoFU"
 	for label, tc := range map[string]struct {
@@ -398,7 +399,7 @@ func TestFindCampaignByNameInGroup_RefusesABiddingModeMismatch(t *testing.T) {
 	}{
 		"automatic reuses automatic":            {want: OptimizationTargetMaxConversion, reported: `,"optimizationTargetType":"MAX_CONVERSION"`},
 		"automatic refuses unreported":          {want: OptimizationTargetMaxConversion, reported: ``, wantErr: true},
-		"manual refuses unreported":             {want: OptimizationTargetNone, reported: ``, wantErr: true},
+		"manual reuses unreported":              {want: OptimizationTargetNone, reported: ``},
 		"automatic refuses manual NONE":         {want: OptimizationTargetMaxConversion, reported: `,"optimizationTargetType":"NONE"`, wantErr: true},
 		"manual refuses automatic":              {want: OptimizationTargetNone, reported: `,"optimizationTargetType":"MAX_CONVERSION"`, wantErr: true},
 		"manual reuses ENHANCED_CONVERSION":     {want: OptimizationTargetNone, reported: `,"optimizationTargetType":"ENHANCED_CONVERSION"`},

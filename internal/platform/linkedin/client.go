@@ -1538,10 +1538,13 @@ func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, n
 		// longer tells them apart: a manual campaign (NONE / ENHANCED_CONVERSION) is never reused
 		// for MAX_CONVERSION, nor the reverse. Only manual-vs-automated is compared, so a manual
 		// campaign moved between NONE and ENHANCED_CONVERSION in Campaign Manager is still reused.
-		// Under WEBSITE_CONVERSION an UNREPORTED optimizationTargetType is ambiguous — the campaign
-		// could be either mode, and reuse keeps its existing strategy — so it aborts too (PR #637
-		// review). Under WEBSITE_VISIT only automated MAX_CLICK is created, so it cannot contradict.
-		if optimizationTarget != "" && el.OptimizationTargetType == "" && objectiveType == ObjectiveWebsiteConversion {
+		// Under WEBSITE_CONVERSION an UNREPORTED optimizationTargetType is ambiguous for an AUTOMATIC
+		// request — the campaign could be a manual one, and reuse keeps its existing strategy — so
+		// that aborts too (PR #637 review). A manual request still reuses it: before #582 every
+		// WEBSITE_CONVERSION campaign this service created was manual, and whether LinkedIn echoes
+		// NONE in the search response is unverified, so aborting would strand a manual retry. Under
+		// WEBSITE_VISIT only automated MAX_CLICK is created, so it cannot contradict.
+		if optimizationTarget != "" && !manualBiddingTarget(optimizationTarget) && el.OptimizationTargetType == "" && objectiveType == ObjectiveWebsiteConversion {
 			return false, fmt.Errorf("campaign %q already exists in this campaign group with objectiveType %s but LinkedIn did not report its optimizationTargetType, so it cannot be confirmed to bid %s; aborting rather than reuse it or create a duplicate — check its bidding in Campaign Manager", el.Name, ObjectiveWebsiteConversion, optimizationTarget)
 		}
 		if optimizationTarget != "" && el.OptimizationTargetType != "" &&

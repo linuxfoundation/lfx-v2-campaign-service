@@ -1558,7 +1558,7 @@ Bid updates: an automatic `conversions` campaign has no manual bid, so `PATCH ..
 create's by-name reuse also compares the bidding mode — a same-name campaign reporting a manual
 `optimizationTargetType` (`NONE`, `ENHANCED_CONVERSION`) is never reused for `MAX_CONVERSION`, nor
 the reverse, and a same-name `WEBSITE_CONVERSION` campaign that reports no `optimizationTargetType`
-is not reused either (the create aborts). The settings readback's `objective_type` reads the
+is not reused for `MAX_CONVERSION` either (the create aborts; a manual create still reuses it). The settings readback's `objective_type` reads the
 `objectiveType` the create recorded in the campaign's result (automatic + `conversions` →
 `WEBSITE_CONVERSION`, otherwise `WEBSITE_VISIT`), never the config snapshot, which a campaign
 update can replace.

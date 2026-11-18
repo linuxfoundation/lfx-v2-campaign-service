@@ -14,8 +14,8 @@ LinkedIn campaigns use. Before, automatic bidding always created `WEBSITE_VISIT`
   flag and the `global_marketing_ops` gate. A failed association leaves the PAUSED campaign
   `created_degraded`, as #552 does.
 - The by-name reuse lookup also compares the bidding mode, since both conversions shapes share a
-  name. The bid lever answers 409 for MAX_CONVERSION. The settings readback reads `objective` from
-  the config snapshot.
+  name. The bid lever answers 409 for MAX_CONVERSION. The settings readback reads the objectiveType
+  the create recorded in the campaign's result.
 
 Built from the LinkedIn Marketing API docs (li-lms-2026-02, the pinned `202602`). Not yet probed
 live.
