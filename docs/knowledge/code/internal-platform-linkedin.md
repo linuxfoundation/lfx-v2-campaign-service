@@ -1095,8 +1095,10 @@ typeahead's caller has moved on by then, and each retry spends the shared quota 
 query goes through `restliEncode` (`%20`, not `+`; reserved characters escaped) and `query`
 joins `preEncodedParams`. Answers keep LinkedIn's relevance order, de-duplicated by URN, capped
 at 100; an element with a URN of the wrong shape or no name is dropped and counted. A transport
-error's `*url.Error` has its query string cut off in place (`scrubQuery`), so the search text
-never reaches a log line.
+error never carries the search text (`scrubQuery`): the `*url.Error`'s URL is cut back to the
+path, and because `doRequest` wraps a pre-send dial failure (DNS, connection refused) with
+`fmt.Errorf("%w")`, which has already copied the full URL into its message, the returned error's
+message is rebuilt with that URL cut too, while it still unwraps to the original chain.
 
 ## Conversion association (`conversions.go`, #552)
 

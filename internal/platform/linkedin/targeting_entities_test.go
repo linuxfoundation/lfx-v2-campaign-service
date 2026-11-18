@@ -7,10 +7,13 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -208,4 +211,36 @@ func TestSearchTargetingEntities_UpstreamFailures(t *testing.T) {
 			t.Errorf("the error quotes the search text: %v", err)
 		}
 	})
+	// A pre-send dial failure takes doRequest's fmt.Errorf("%w") branch, which copies the
+	// *url.Error's text -- full URL, query included -- into the wrapper's message before
+	// SearchTargetingEntities sees it; trimming the *url.Error alone would leave that copy.
+	for name, dialErr := range map[string]error{
+		"connection refused does not quote the query": &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)},
+		"DNS failure does not quote the query":        &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "api.linkedin.com", IsNotFound: true}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var sent atomic.Int32
+			rt := roundTripFunc(func(*http.Request) (*http.Response, error) {
+				sent.Add(1)
+				return nil, dialErr
+			})
+			c := NewClient(Credentials{AccessToken: "t"}, RuntimeConfig{}, WithHTTPClient(&http.Client{Transport: rt}))
+			_, _, err := c.SearchTargetingEntities(context.Background(), "titles", "secret-text")
+			if err == nil {
+				t.Fatal("a dial failure must fail")
+			}
+			if sent.Load() != 1 {
+				t.Fatalf("%d attempts, want 1", sent.Load())
+			}
+			if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "query=") {
+				t.Errorf("the error quotes the search text: %v", err)
+			}
+			if !strings.Contains(err.Error(), "adTargetingEntities") {
+				t.Errorf("the error lost its request path: %v", err)
+			}
+			if !isPreSendDialError(err) {
+				t.Errorf("the dial cause is no longer in the chain: %v", err)
+			}
+		})
+	}
 }

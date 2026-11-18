@@ -17,6 +17,12 @@
   would pass. Invalid UTF-8 stays a runtime-only refusal.
 - Docs: the limits are 2-100 characters on the raw value, and the trimmed value must still be at
   least 2; the earlier "1-100 characters after trimming" was wrong on both counts.
+- Query scrubbing: a pre-send dial failure (DNS, connection refused) reached
+  `SearchTargetingEntities` inside `doRequest`'s `fmt.Errorf("%w")` wrapper, whose message had
+  already copied the full URL, so trimming the `*url.Error` in place left the search text in the
+  error a caller logs. `scrubQuery` now returns an error whose message is rebuilt with the URL cut
+  back to its path and which unwraps to the original chain; `TestSearchTargetingEntities_UpstreamFailures`
+  covers connection refused and DNS failure.
 - Tests: the request-shape capture in `targeting_entities_test.go` is an `atomic.Value` (it was a
   plain string written on the server goroutine), and the hijack handler no longer calls
   `t.Fatal` off the test goroutine. `TestLinkedInTargetingTypeaheadIsACampaignManagerRead` moved

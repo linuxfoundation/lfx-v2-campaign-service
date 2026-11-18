@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -121,7 +122,8 @@ func NormalizeTypeaheadQuery(query string) (string, error) {
 // the picker's next keystroke is the retry.
 //
 // The query is never in a returned error: a transport failure's *url.Error would quote the
-// request URL, query string and all, so its URL is cut back to the path (scrubQuery).
+// request URL, query string and all, and a pre-send dial failure's wrapper has already copied
+// that text, so the returned message is rebuilt with the URL cut back to the path (scrubQuery).
 func (c *Client) SearchTargetingEntities(ctx context.Context, facet, query string) (_ []TargetingEntity, dropped int, _ error) {
 	pattern, ok := typeaheadFacets[facet]
 	if !ok {
@@ -164,16 +166,37 @@ func (c *Client) SearchTargetingEntities(ctx context.Context, facet, query strin
 	return out, dropped, nil
 }
 
-// scrubQuery cuts the query string off the *url.Error in err's chain, in place, so the caller's
-// search text cannot reach a log line or a response through the error's message. The chain
-// itself is untouched, so errors.Is and errors.As still see every sentinel. doRequest makes one
-// http.Client.Do call per attempt, so a chain holds at most one *url.Error.
+// scrubQuery cuts the query string off the *url.Error in err's chain so the caller's search text
+// cannot reach a log line or a response through the error's message. Trimming ue.URL in place is
+// not enough on its own: doRequest wraps a pre-send dial failure (DNS, connection refused) with
+// fmt.Errorf("%w"), which renders the *url.Error -- full URL included -- into the wrapper's saved
+// message at wrap time. So the returned error carries a message rebuilt with every copy of the
+// full URL replaced by its path, and unwraps to the original chain, so errors.Is and errors.As
+// still see every sentinel (the dial cause included). doRequest makes one http.Client.Do call per
+// attempt, so a chain holds at most one *url.Error.
 func scrubQuery(err error) error {
 	var ue *url.Error
-	if errors.As(err, &ue) {
-		if i := strings.IndexByte(ue.URL, '?'); i >= 0 {
-			ue.URL = ue.URL[:i]
-		}
+	if !errors.As(err, &ue) {
+		return err
 	}
-	return err
+	i := strings.IndexByte(ue.URL, '?')
+	if i < 0 {
+		return err
+	}
+	full, cut := ue.URL, ue.URL[:i]
+	ue.URL = cut
+	quoted := strconv.Quote(full)
+	msg := strings.ReplaceAll(err.Error(), full, cut)
+	msg = strings.ReplaceAll(msg, quoted[1:len(quoted)-1], cut)
+	return &queryScrubbedError{msg: msg, err: err}
 }
+
+// queryScrubbedError is an error whose message has had the request query string removed; it
+// unwraps to the untouched chain.
+type queryScrubbedError struct {
+	msg string
+	err error
+}
+
+func (e *queryScrubbedError) Error() string { return e.msg }
+func (e *queryScrubbedError) Unwrap() error { return e.err }
