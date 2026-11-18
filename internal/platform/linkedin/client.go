@@ -100,6 +100,10 @@ type Client struct {
 	// (images.go). Defaults set in NewClient; WithImagePolling overrides them.
 	imagePollInterval     time.Duration
 	imageAvailabilityWait time.Duration
+	// videoPollInterval and videoAvailabilityWait bound the Videos API availability poll
+	// (videos.go). Defaults set in NewClient; WithVideoPolling overrides them.
+	videoPollInterval     time.Duration
+	videoAvailabilityWait time.Duration
 }
 
 // Option customizes a Client.
@@ -198,6 +202,8 @@ func NewClient(creds Credentials, cfg RuntimeConfig, opts ...Option) *Client {
 
 		imagePollInterval:     defaultImagePollInterval,
 		imageAvailabilityWait: defaultImageAvailabilityWait,
+		videoPollInterval:     defaultVideoPollInterval,
+		videoAvailabilityWait: defaultVideoAvailabilityWait,
 	}
 	for _, o := range opts {
 		o(c)
@@ -235,6 +241,11 @@ type CreativeVariant struct {
 	// the Images API and used as this variant's thumbnail (images.go). It is a key into
 	// CampaignInput.Images and is MUTUALLY EXCLUSIVE with ImageURN.
 	ImageAssetID string
+	// VideoAssetID optionally names a stored MP4 creative asset (#586) uploaded through the
+	// Videos API and used as this variant's video (videos.go). It is a key into
+	// CampaignInput.Videos, is MUTUALLY EXCLUSIVE with ImageURN and ImageAssetID, and is
+	// all-or-none across a campaign's variants: a video campaign has format SINGLE_VIDEO.
+	VideoAssetID string
 }
 
 // CampaignInput is the full campaign-creation request. Mirrors
@@ -266,6 +277,9 @@ type CampaignInput struct {
 	// Images holds the stored image for every ImageAssetID a variant names, keyed by that
 	// id. Each distinct key is uploaded ONCE per CreateCampaign however many variants share it.
 	Images map[string]ImageUpload
+	// Videos holds the stored video for every VideoAssetID a variant names, keyed by that id
+	// (#586). Each distinct key is uploaded ONCE per CreateCampaign.
+	Videos map[string]VideoUpload
 	// StageToken, Tactic and SlotToken name a LABELLED or later-slot campaign (multi-campaign
 	// cs-4). The dispatcher reads all three from the CLAIMED campaign row (its stored labels and
 	// slot version), never from a request. All empty is an unlabelled slot-1 campaign
@@ -325,6 +339,10 @@ type CampaignResult struct {
 	// the Images API — including one that then failed to upload or process, so the result names
 	// every image this run created. Omitted when no variant named a stored asset.
 	ImageURNs map[string]string `json:"imageUrns,omitempty"`
+	// VideoURNs records, per stored asset id, the urn:li:video this run minted for it through the
+	// Videos API (#586) — including one that then failed to upload or process. Omitted when no
+	// variant named a stored video.
+	VideoURNs map[string]string `json:"videoUrns,omitempty"`
 	// BidApplied reports that THIS run created the campaign, which carries the bidding
 	// (LFXV2-2665). A campaign reused by name keeps its existing bidding, so the dispatcher records
 	// the strategy and starting bid only when this is true. Set only on the successful result.
@@ -2141,7 +2159,11 @@ func (c *Client) readCampaignGroupEnd(ctx context.Context, path, groupID string)
 // single-flight claim is PLANNED but NOT provided here (tracked separately as
 // LFXV2-2665); until it exists, callers MUST NOT rely on any dedup guarantee and
 // must serialize concurrent calls for the same name on their own.
-func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, custom *Targeting, lifetimeBudget bool, bidding campaignBiddingPlan, dailyCap, campaignType string) (id string, reused bool, err error) {
+//
+// format is the campaign's ad format: empty (LinkedIn sets it from the first creative, the
+// behaviour every image campaign has always had) or campaignFormatSingleVideo for a video
+// campaign, which LinkedIn requires to be set at creation (#586).
+func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, custom *Targeting, lifetimeBudget bool, bidding campaignBiddingPlan, dailyCap, campaignType, format string) (id string, reused bool, err error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
 	// Scope the idempotency lookup to the resolved campaign group: the campaign
@@ -2246,6 +2268,9 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 	if bidding.objectiveType != "" {
 		body["objectiveType"] = bidding.objectiveType
 	}
+	if format != "" {
+		body["format"] = format
+	}
 	for k, v := range targeting {
 		body[k] = v
 	}
@@ -2312,7 +2337,19 @@ func (c *Client) createDarkPost(ctx context.Context, accountID, introText, headl
 		article["thumbnail"] = imageURN
 	}
 
-	body := map[string]any{
+	body := darkPostEnvelope(author, intro, accountID)
+	body["content"] = map[string]any{"article": article}
+	return c.postDarkPost(ctx, body)
+}
+
+// campaignFormatSingleVideo is the campaign format of a video Sponsored Content campaign (#586).
+const campaignFormatSingleVideo = "SINGLE_VIDEO"
+
+// darkPostEnvelope is every dark post's body except its content: an organization author,
+// PUBLIC visibility with feedDistribution NONE (which is what makes it dark), PUBLISHED, and the
+// sponsored account as adContext. The article and video posts add their own content.
+func darkPostEnvelope(author, intro, accountID string) map[string]any {
+	return map[string]any{
 		"author":     author,
 		"commentary": intro,
 		"visibility": "PUBLIC",
@@ -2321,11 +2358,13 @@ func (c *Client) createDarkPost(ctx context.Context, accountID, introText, headl
 			"targetEntities":                 []any{},
 			"thirdPartyDistributionChannels": []any{},
 		},
-		"content":        map[string]any{"article": article},
 		"lifecycleState": "PUBLISHED",
 		"adContext":      map[string]any{"dscAdAccount": accountURN(accountID)},
 	}
+}
 
+// postDarkPost POSTs a dark post body and returns its validated post URN.
+func (c *Client) postDarkPost(ctx context.Context, body map[string]any) (string, error) {
 	resp, err := c.doRequest(ctx, http.MethodPost, "posts", body, nil, nil)
 	if err != nil {
 		return "", err
@@ -2387,7 +2426,7 @@ func buildCampaignName(eventName, nameObjective, project string, in CampaignInpu
 	if st := nameToken(in.StageToken); st != "" {
 		funnel = st
 	}
-	return fmt.Sprintf("Events | %s | %s | %s | %s | %s | %s | %s", eventName, linkedinRegion(in.GeoTargets), nameObjective, targetingSegment(in.Tactic, in.SlotToken), adFormatNameSegment(in.Format), project, funnel)
+	return fmt.Sprintf("Events | %s | %s | %s | %s | %s | %s | %s", eventName, linkedinRegion(in.GeoTargets), nameObjective, targetingSegment(in.Tactic, in.SlotToken), adFormatNameSegment(in), project, funnel)
 }
 
 // legacyCampaignName is the name buildCampaignName composed before #587, byte for byte: Region
@@ -2985,6 +3024,28 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				return nil, domain.WrapPreflightRefusal(fmt.Errorf("variant-%d image asset %s: %w", i+1, domain.CallerValue(variant.ImageAssetID), err))
 			}
 		}
+		// A stored video (#586) is validated here too. A video campaign is created with format
+		// SINGLE_VIDEO, which takes only video creatives, so every variant must carry a video or
+		// none may; the first variant decides which (isVideoInput).
+		if variant.VideoAssetID != "" {
+			if variant.ImageURN != "" || variant.ImageAssetID != "" {
+				return nil, domain.PreflightRefusalf("variant-%d names both a video and an image; a video variant carries no image", i+1)
+			}
+			vid, ok := in.Videos[variant.VideoAssetID]
+			if !ok {
+				return nil, domain.PreflightRefusalf("variant-%d names stored video asset %s, which was not supplied", i+1, domain.CallerValue(variant.VideoAssetID))
+			}
+			if err := ValidateVideo(vid); err != nil {
+				return nil, domain.WrapPreflightRefusal(fmt.Errorf("variant-%d video asset %s: %w", i+1, domain.CallerValue(variant.VideoAssetID), err))
+			}
+		}
+		if (variant.VideoAssetID != "") != isVideoInput(in) {
+			return nil, domain.PreflightRefusalf("variant-%d mixes video and non-video variants; a LinkedIn video campaign (format SINGLE_VIDEO) takes only video creatives, so give every variant a videoAssetId or none", i+1)
+		}
+	}
+	campaignFormat := ""
+	if isVideoInput(in) {
+		campaignFormat = campaignFormatSingleVideo
 	}
 
 	// Project is the campaign-name Project segment the data pipeline joins on for
@@ -3158,8 +3219,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// it, so a retry spanning the change reuses that campaign instead of creating a second one
 	// beside it. A new group cannot hold one, so it needs no lookup. A failed lookup returns
 	// (nil, err): the group existed before this call and nothing was created.
-	// A text campaign (#586) postdates #587, so none can carry the legacy name: skip the lookup.
-	if groupReused && format != FormatText {
+	// A text or video campaign (#586) postdates #587, so none can carry the legacy name (always
+	// Static): skip the lookup, which could otherwise bind it to a single-image campaign.
+	if groupReused && format != FormatText && campaignFormat == "" {
 		if legacy := legacyCampaignName(eventName, bidding.nameObjective, project, in); legacy != campaignName {
 			found, err := c.findCampaignByNameInGroup(ctx, fmt.Sprintf("adAccounts/%s/adCampaigns", accountID), legacy, groupID, bidding.objectiveType, campaignTypeFor(format))
 			if err != nil {
@@ -3172,7 +3234,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
-	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, targeting, in.LifetimeBudget, bidding, dailyCap, campaignTypeFor(format))
+	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, targeting, in.LifetimeBudget, bidding, dailyCap, campaignTypeFor(format), campaignFormat)
 	unlockGroup()
 	if err != nil {
 		// findOrCreateCampaignGroup may have just created a PERMANENT campaign group
@@ -3263,15 +3325,28 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// URNs on every result returned from here on.
 	imageURNs, imageSteps, err := c.uploadVariantImages(ctx, accountID, in)
 	steps = append(steps, imageSteps...)
+	// Stored videos (#586) follow in the same window, for the same reasons; a campaign carries
+	// images or videos, never both, so at most one of the two uploads does anything.
+	var videoURNs map[string]string
 	withImages := func(r *CampaignResult) *CampaignResult {
 		if len(imageURNs) > 0 {
 			r.ImageURNs = imageURNs
+		}
+		if len(videoURNs) > 0 {
+			r.VideoURNs = videoURNs
 		}
 		return withConversions(r)
 	}
 	if err != nil {
 		return withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps)),
 			fmt.Errorf("variant images failed after campaign %q was ensured (no dark post or creative was created): %w", campaignID, err)
+	}
+	var videoSteps []string
+	videoURNs, videoSteps, err = c.uploadVariantVideos(ctx, accountID, in)
+	steps = append(steps, videoSteps...)
+	if err != nil {
+		return withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps)),
+			fmt.Errorf("variant videos failed after campaign %q was ensured (no dark post or creative was created): %w", campaignID, err)
 	}
 
 	// NOT idempotent: dark posts and creatives have no name-based lookup and
@@ -3299,7 +3374,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if variant.ImageAssetID != "" {
 			imageURN = imageURNs[variant.ImageAssetID]
 		}
-		shareURN, err := c.createDarkPost(ctx, accountID, variant.IntroText, variant.Headline, destURL, imageURN)
+		var shareURN string
+		if variant.VideoAssetID != "" {
+			shareURN, err = c.createVideoDarkPost(ctx, accountID, variant.IntroText, variant.Headline, destURL, videoURNs[variant.VideoAssetID])
+		} else {
+			shareURN, err = c.createDarkPost(ctx, accountID, variant.IntroText, variant.Headline, destURL, imageURN)
+		}
 		if err != nil {
 			// Dark posts have NO name-based reconciliation lookup and LinkedIn exposes
 			// no upsert, so an AMBIGUOUS failure (transport/timeout after send, a 5xx,

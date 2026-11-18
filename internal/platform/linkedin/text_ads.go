@@ -172,9 +172,15 @@ func campaignTypeFor(format string) string {
 // adFormatNameSegment is the campaign name's Ad Format segment (the sixth). "Static" is every
 // single-image campaign's, byte for byte as before; "Text" keeps a text campaign's name — and so
 // the by-name reuse lookup — apart from a single-image campaign of the same event and objective.
-func adFormatNameSegment(format string) string {
-	if format == FormatText {
+//
+// "Video" is a video campaign's (#586), for the same reason: a SINGLE_VIDEO campaign cannot take
+// image creatives, nor an image campaign videos.
+func adFormatNameSegment(in CampaignInput) string {
+	if in.Format == FormatText {
 		return "Text"
+	}
+	if isVideoInput(in) {
+		return "Video"
 	}
 	return "Static"
 }

@@ -42,12 +42,14 @@ const snapshotVideoAssetIDKey = "videoassetid"
 func TestPlatformConfigsNameTheirAssetUnderOneKey(t *testing.T) {
 	const assetID = "11111111-1111-4111-8111-111111111111"
 	for name, config := range map[string]any{
-		"reddit":    redditConfig{ImageAssetID: assetID},
-		"twitter":   twitterConfig{ImageAssetID: assetID},
-		"x-video":   twitterConfig{VideoAssetID: assetID}, // #564 gap 7: the second key
-		"microsoft": microsoftConfig{ImageAssetID: assetID},
-		"meta":      metaConfig{Variants: []meta.AdVariant{{ImageAssetID: assetID}}},
-		"linkedin":  linkedinConfig{Variants: []linkedin.CreativeVariant{{ImageAssetID: assetID}}},
+		"reddit":  redditConfig{ImageAssetID: assetID},
+		"twitter": twitterConfig{ImageAssetID: assetID},
+		"x-video": twitterConfig{VideoAssetID: assetID}, // #564 gap 7: the second key
+		// The LinkedIn video variant (#586) names its asset under the same second key.
+		"linkedin-video": linkedinConfig{Variants: []linkedin.CreativeVariant{{VideoAssetID: assetID}}},
+		"microsoft":      microsoftConfig{ImageAssetID: assetID},
+		"meta":           metaConfig{Variants: []meta.AdVariant{{ImageAssetID: assetID}}},
+		"linkedin":       linkedinConfig{Variants: []linkedin.CreativeVariant{{ImageAssetID: assetID}}},
 		// EVERY Google slot, not one of them: they are separate fields on several structs,
 		// and one more slot declared as a bare []string would carry no key on its elements
 		// at all.

@@ -964,6 +964,21 @@ is sent only to https `linkedin.com` hosts. The minted URNs go to `CampaignResul
 An image failure returns the partial result with zero creatives. See
 [LinkedIn Creative Image Assets](../architecture/linkedin-creative-assets.md).
 
+## Stored creative videos (`videos.go`, #586)
+
+`CreativeVariant.VideoAssetID` names a stored MP4 supplied in `CampaignInput.Videos`; all variants
+carry one or none (`isVideoInput` reads the first; `CreateCampaign` refuses a mix and a video
+alongside an image). `ValidateVideo`: `video/mp4`, `MinVideoBytes` (75 KiB) to `MaxVideoBytes`
+(500 MB), an `ftyp` box. A video input sends `format: SINGLE_VIDEO` on the campaign
+(`createSponsoredCampaign`'s `format` argument) and composes the name with `Video` in the Ad
+Format segment. `uploadVariantVideos` runs right after `uploadVariantImages`: initializeUpload,
+the upload plan checked whole (contiguous, complete, LinkedIn hosts) before any part PUT, each
+part's `ETag` kept, finalizeUpload, then `awaitMediaAvailable` (shared with images;
+`WithVideoPolling`, default 60 s). `mediaRequest` (formerly `imageRequest`) returns the response
+headers for the ETag. `createVideoDarkPost` shares `darkPostEnvelope`/`postDarkPost` with
+`createDarkPost`. URNs go to `CampaignResult.VideoURNs`. See
+[LinkedIn Video Sponsored Content](../architecture/linkedin-video-ads.md).
+
 ## Create-time bidding (`CampaignInput.ManualCPCBid`, `campaignBidding`, LFXV2-2665)
 
 **Bug fixed**: the create body used to send `WEBSITE_CONVERSION`, `costType` `CPC` and NO
@@ -1085,9 +1100,10 @@ MIME type — with `ValidateImage`, and keeps only the exact-100x100 rule);
 text ads under another format, and variants under the text format, are refused. The campaign
 name's Ad Format segment is `Text` instead of `Static` (`adFormatNameSegment`), so a text campaign
 never shares a name with a single-image one, and `findCampaignByNameInGroup` now also refuses a
-same-name campaign of another `type`. A text create skips the pre-#587 legacy-name lookup (no text
-campaign predates #587, and the legacy name is always `Static`), pinned by
-`TestCreateCampaign_TextCreateSkipsTheLegacyLookup`. Stored images reuse `uploadVariantImages` — `uploadImage`
+same-name campaign of another `type`. A text or video create skips the pre-#587 legacy-name lookup (no
+text or video campaign predates #587, and the legacy name is always `Static`), pinned by
+`TestCreateCampaign_TextCreateSkipsTheLegacyLookup` and `TestCreateCampaign_VideoCreateSkipsTheLegacyLookup`.
+`adFormatNameSegment` is the one source of the Ad Format segment: `Text`, `Video` or `Static`. Stored images reuse `uploadVariantImages` — `uploadImage`
 validates by format (`ValidateImageForFormat`). `createTextAds` posts one DRAFT creative per ad to
 the same `adAccounts/{id}/creatives` endpoint, with the registration URL plus that ad's UTMs as
 `landingPage`; with no dark post there is nothing else to orphan, and a failure returns the partial
