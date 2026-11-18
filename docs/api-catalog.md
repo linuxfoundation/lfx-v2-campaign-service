@@ -1582,7 +1582,10 @@ dailyCapUsd?: number             — OPTIONAL daily spending cap beside a LIFETI
   NOT guarded: a create on another replica landing in that window (LFXV2-2665), and a hand
   edit of the group's end in Campaign Manager.
 - **Monitor.** The account monitor paces a capped campaign with no end against
-  min(cap × window days, total), not the total spread over the flight to date.
+  min(cap × window days, what remains of the total when the window opens), not the total
+  spread over the flight to date. What remains comes from one more analytics read of the
+  spend before the window. If that read fails, the whole total is used. A campaign whose
+  total was spent before the window has unknown pacing.
 - **Not yet verified live.** The two-field shape and the continuous schedule follow LinkedIn's
   documentation. The first live LinkedIn create (cs#579) will confirm them.
 - **Recorded:** the campaign row records the lifetime total as its budget, and the config
@@ -1593,6 +1596,7 @@ dailyCapUsd?: number             — OPTIONAL daily spending cap beside a LIFETI
 - **Editing** (`PATCH .../budget`): a `lifetime` amount change writes `totalBudget` alone and
   leaves the cap in force. It is refused (400) when the new total is below the cap. A `daily`
   change is 409: change the cap in LinkedIn Campaign Manager.
+
 #### GoogleAdsConfig (the `googleAdsConfig` object)
 
 Google Ads per-platform config. Which campaign is created depends on `channel`. The default
