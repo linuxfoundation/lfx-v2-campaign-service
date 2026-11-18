@@ -92,6 +92,13 @@ type twitterConfig struct {
 	// audience_expansion (#564 gap 11, twitter_audience_expansion.go). Behind
 	// TWITTER_AUDIENCE_EXPANSION_ENABLED; omitted, X applies no expansion, as before.
 	AudienceExpansion string `json:"audienceExpansion,omitempty"`
+	// Goal (WEBSITE_CONVERSIONS) and PrimaryWebEventTag (a web event tag id) are sent as the new
+	// line item's goal and primary_web_event_tag (#564 gap 5, twitter_conversion_goal.go). Behind
+	// TWITTER_WEBSITE_CONVERSIONS_ENABLED; omitted, X applies WEBSITE_CLICKS' default goal, as before.
+	// A non-blank PrimaryWebEventTag is global_marketing_ops only (service.TwitterMarketingOpsInputs):
+	// the tag belongs to the shared LF ad account. Goal names no account resource.
+	Goal               string `json:"goal,omitempty"`
+	PrimaryWebEventTag string `json:"primaryWebEventTag,omitempty"`
 	// FollowerLookalikeUserIDs (numeric X user ids) become SIMILAR_TO_FOLLOWERS_OF_USER criteria on
 	// the new line item (#564 gap 4c, twitter_follower_lookalikes.go). Behind
 	// TWITTER_FOLLOWER_LOOKALIKES_ENABLED; shape-checked only, since X has no user lookup.
@@ -158,6 +165,10 @@ func (d *TwitterDispatcher) PreflightCreate(ctx context.Context, _ string, _ mod
 	if err := checkTwitterAudienceExpansionShape(config); err != nil {
 		return err
 	}
+	// And a mistyped goal / primaryWebEventTag (#564 gap 5).
+	if err := checkTwitterConversionGoalShape(config); err != nil {
+		return err
+	}
 	// And a mistyped followerLookalikeUserIds (#564 gap 4c).
 	if err := checkTwitterFollowerLookalikesShape(config); err != nil {
 		return err
@@ -198,6 +209,9 @@ func (d *TwitterDispatcher) PreflightCreate(ctx context.Context, _ string, _ mod
 		return err
 	}
 	if _, err := checkTwitterAudienceExpansion(cfg); err != nil {
+		return err
+	}
+	if _, err := checkTwitterConversionGoal(cfg); err != nil {
 		return err
 	}
 	variants, err := checkTwitterTweetVariants(cfg)
@@ -376,6 +390,9 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if err := checkTwitterAudienceExpansionShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	if err := checkTwitterConversionGoalShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	if err := checkTwitterFollowerLookalikesShape(config); err != nil {
 		return nil, notCreated(err)
 	}
@@ -421,6 +438,11 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	}
 	// And the audience expansion gate and rule (#564 gap 11), for the same reason.
 	audienceExpansion, err := checkTwitterAudienceExpansion(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	// And the conversion goal gate and rules (#564 gap 5), for the same reason.
+	conversion, err := checkTwitterConversionGoal(cfg)
 	if err != nil {
 		return nil, notCreated(err)
 	}
@@ -569,6 +591,9 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		Gender:             tgt.gender,
 
 		AudienceExpansion: audienceExpansion,
+
+		Goal:               conversion.goal,
+		PrimaryWebEventTag: conversion.tag,
 
 		FollowerLookalikeUserIDs: tgt.lookalikes,
 

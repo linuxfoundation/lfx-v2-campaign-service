@@ -362,7 +362,7 @@ guess, so it keeps nothing.
 **Which fields each adapter scrubs.** Per adapter snapshot builder, as of LFXV2-2665:
 
 - `reddit.go` — `PostURL`, `ImageURL` (`sanitizeSnapshotURL`); each variant's `headline`/`body`,
-  every `keywords`, `geoTargets`, `subreddits` and `interests` entry, and `callToAction`,
+  every `keywords`, `geoTargets`, `subCountryGeoTargets`, `subreddits` and `interests` entry, and `callToAction`,
   `conversionPixelId`, `videoGoal` (`sanitizeSnapshotText`) — `redditSnapshotConfig`, #245.
 - `meta.go` — each variant's `ImageURL` (`sanitizeSnapshotURL`) and `PrimaryText`/`Headline`/
   `Description`, every `geoTargets` entry, `pixelId`, `dsaBeneficiary`, `dsaPayor`

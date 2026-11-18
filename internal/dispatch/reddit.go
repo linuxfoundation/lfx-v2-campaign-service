@@ -103,6 +103,11 @@ type redditConfig struct {
 	Gender    *string                 `json:"gender,omitempty"`
 	Languages []string                `json:"languages,omitempty"`
 	Schedule  []reddit.ScheduleWindow `json:"schedule,omitempty"`
+
+	// SubCountryGeoTargets are Reddit region, city and DMA geolocation ids (#549 gap 11), behind
+	// REDDIT_SUBCOUNTRY_GEO_ENABLED (reddit_subcountry_geo.go). omitempty keeps an omitted list
+	// ABSENT in the persisted ConfigSnapshot, so a snapshot replays through the gate.
+	SubCountryGeoTargets []string `json:"subCountryGeoTargets,omitempty"`
 }
 
 // redditBidPlan resolves redditConfig's bidding choice. Manual bidding creates campaign and ad
@@ -272,6 +277,10 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	if err := checkRedditDemographicShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	// And a mistyped subCountryGeoTargets (#549 gap 11).
+	if err := checkRedditSubCountryGeoShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg redditConfig
 	if err := unmarshalPlatformConfig(config, "redditConfig", &cfg); err != nil {
 		// A wrong-typed conversionEvent also fails this decode; report it by its own field-specific
@@ -304,6 +313,11 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	// The exclusions' deployment gate and rules, re-checked here for any path that skipped
 	// PreflightCreate (which normally refused a bad or gated one as a synchronous 400).
 	if err := checkRedditTargetingExclusions(cfg); err != nil {
+		return nil, notCreated(err)
+	}
+	// Sub-country locations (#549 gap 11): the gate and rules, for any path that skipped
+	// PreflightCreate.
+	if err := checkRedditSubCountryGeo(cfg); err != nil {
 		return nil, notCreated(err)
 	}
 	// Placements, platforms and expansion (#549 gap 7): the same, for any path that skipped
@@ -394,6 +408,17 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 			return nil, notCreated(fmt.Errorf("reddit targeting could not be confirmed (nothing was created): %w", err))
 		}
 	}
+	// Sub-country locations (#549 gap 11), confirmed the same way: fail-closed, before anything is
+	// created.
+	if needsRedditSubCountryGeoValidation(cfg) {
+		if err := validateRedditSubCountryGeo(ctx, client, cfg); err != nil {
+			var refusal *domain.PreflightRefusal
+			if errors.As(err, &refusal) {
+				return nil, notCreated(err)
+			}
+			return nil, notCreated(fmt.Errorf("reddit geolocations could not be confirmed (nothing was created): %w", err))
+		}
+	}
 
 	stageToken, tacticToken := model.DispatchLabels(ctx).NameTokens()
 	in := reddit.CampaignInput{
@@ -439,6 +464,9 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		Gender:    cfg.Gender,
 		Languages: cfg.Languages,
 		Schedule:  cfg.Schedule,
+
+		// Gated and confirmed above (checkRedditSubCountryGeo, validateRedditSubCountryGeo).
+		SubCountryGeoTargets: cfg.SubCountryGeoTargets,
 
 		// The name labels of the CLAIMED row (multi-campaign cs-3): its stored funnel stage and
 		// tactic (model.DispatchLabels) and its slot version, never the request's. A retry of
@@ -1190,7 +1218,7 @@ func redditRunStatus(status string) (string, error) {
 // reduces any link-shaped run to scheme+host and drops one carrying userinfo. The fields that
 // matter are Variants[].Headline and Body: operator-authored ad copy where a link gets pasted,
 // and a password-reset URL keeps its secret in the PATH as readily as in the query. Keywords
-// (caller-typed targeting terms, exactly as Microsoft's are), GeoTargets, Subreddits,
+// (caller-typed targeting terms, exactly as Microsoft's are), GeoTargets, SubCountryGeoTargets, Subreddits,
 // Interests, ConversionPixelID, and CallToAction and VideoGoal (each validated only when it is
 // USED — CallToAction is ignored once PostURL is set, VideoGoal unless the objective is
 // video_views — so an unused one reaches the snapshot as typed) get the same treatment; an
@@ -1210,6 +1238,7 @@ func redditSnapshotConfig(cfg redditConfig) redditConfig {
 	snapshot.PostURL = sanitizeSnapshotURL(cfg.PostURL)
 	snapshot.ImageURL = sanitizeSnapshotURL(cfg.ImageURL)
 	snapshot.GeoTargets = sanitizeSnapshotTexts(cfg.GeoTargets)
+	snapshot.SubCountryGeoTargets = sanitizeSnapshotTexts(cfg.SubCountryGeoTargets)
 	snapshot.Subreddits = sanitizeSnapshotTexts(cfg.Subreddits)
 	snapshot.Interests = sanitizeSnapshotTexts(cfg.Interests)
 	snapshot.Keywords = sanitizeSnapshotTexts(cfg.Keywords)

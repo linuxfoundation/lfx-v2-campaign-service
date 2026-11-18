@@ -456,6 +456,14 @@ type CampaignInput struct {
 	StartDate  string // YYYY-MM-DD
 	EndDate    string // YYYY-MM-DD
 	GeoTargets []string
+	// SubCountryGeoTargets are Reddit region, city and DMA geolocation ids ("US-CA",
+	// "CA:6167865", "662"; #549 gap 11), sent in targeting.geolocations after the countries.
+	// Normalized and refused by NormalizeSubCountryGeoTargets before any upstream call; when set
+	// with no GeoTargets the "US" default is dropped, so only these locations are targeted. The
+	// dispatcher admits them only behind REDDIT_SUBCOUNTRY_GEO_ENABLED, after confirming each id
+	// with ValidateSubCountryGeoTargets.
+	SubCountryGeoTargets []string
+
 	Subreddits []string
 	Interests  []string
 	Keywords   []string
@@ -1993,13 +2001,27 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		geos = append(geos, g)
 	}
-	if len(geos) == 0 {
+	// Sub-country locations (#549 gap 11), refused before any mutating call with the rule set the
+	// dispatcher's PreflightCreate applies. Set with no countries, they replace the US default.
+	subCountry, err := NormalizeSubCountryGeoTargets(geos, in.ExcludedGeoTargets, in.SubCountryGeoTargets)
+	if err != nil {
+		return nil, domain.PreflightRefusalf("%s", err.Error())
+	}
+	if len(geos) == 0 && len(subCountry) == 0 {
 		geos = []string{"US"}
 	}
+	// The campaign's Region segment comes from the first country, or, with none, from the
+	// country of the first sub-country location.
+	regionGeos := geos
+	if len(regionGeos) == 0 {
+		regionGeos = []string{subCountry[0].Country}
+	}
+	// geolocations is what the ad group targets: the countries, then the sub-country ids.
+	geolocations := append(append([]string(nil), geos...), subCountryGeoIDs(subCountry)...)
 
 	// The exclusions (#549), refused before any mutating call with the same rule set the
 	// dispatcher's PreflightCreate applies, so a value that slipped past it still creates nothing.
-	exclusions, err := NormalizeTargetingExclusions(in.Subreddits, in.GeoTargets, in.ExcludedSubreddits, in.ExcludedGeoTargets)
+	exclusions, err := NormalizeTargetingExclusions(in.Subreddits, in.GeoTargets, in.SubCountryGeoTargets, in.ExcludedSubreddits, in.ExcludedGeoTargets)
 	if err != nil {
 		return nil, domain.PreflightRefusalf("%s", err.Error())
 	}
@@ -2030,8 +2052,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	//
 	// campaignName is also the handle an ambiguous partial carries when no id exists yet, so
 	// composing it here serves both purposes.
-	campaignName := buildRedditCampaignName(in, objective, resolveRegion(geos))
-	geoLabel := strings.Join(geos, "+")
+	campaignName := buildRedditCampaignName(in, objective, resolveRegion(regionGeos))
+	geoLabel := redditGeoLabel(geos, subCountry)
 	adGroupName := fmt.Sprintf("Events | %s | %s | Intent | Communities + Keywords", replacePipes(in.EventName), geoLabel)
 	if n := utf8.RuneCountInString(campaignName); n > redditMaxNameRunes {
 		return nil, domain.PreflightRefusalf("composed campaign name is too long: %d characters (max %d)", n, redditMaxNameRunes)
@@ -2368,7 +2390,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Step 3: Create ad group with targeting.
 
 	baseTargeting := map[string]any{
-		"geolocations":     geos,
+		"geolocations":     geolocations,
 		"locations":        placement.Locations,
 		"platforms":        placement.Platforms,
 		"expand_targeting": placement.ExpandTargeting,
@@ -2554,7 +2576,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// treat it as UNCONFIRMED (partialResult carries the name for reconcile).
 		return partialResult(), fmt.Errorf("reddit ad group creation UNCONFIRMED: 2xx returned no ad group ID (campaign %s created, PAUSED; ad group %q may exist)", campaignID, adGroupName)
 	}
-	steps = append(steps, fmt.Sprintf("Ad group created: %s (PAUSED, geo: %s)", adGroupID, strings.Join(geos, ", ")))
+	steps = append(steps, fmt.Sprintf("Ad group created: %s (PAUSED, geo: %s)", adGroupID, strings.Join(geolocations, ", ")))
 	// What SURVIVED, then what was dropped and must be re-added by hand. The dropped half is
 	// the part an operator acts on, so it names each lost dimension rather than saying
 	// "some targeting was skipped" -- interests and communities are re-added in different
@@ -2571,7 +2593,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if len(in.Interests) > 0 && !droppedInterests {
 		surviving = append(surviving, fmt.Sprintf("%d interests", len(in.Interests)))
 	}
-	surviving = append(surviving, fmt.Sprintf("%d keywords", len(in.Keywords)), fmt.Sprintf("%d geos", len(geos)))
+	surviving = append(surviving, fmt.Sprintf("%d keywords", len(in.Keywords)), fmt.Sprintf("%d geos", len(geolocations)))
 	if n := len(in.CustomAudienceIDs); n > 0 {
 		surviving = append(surviving, fmt.Sprintf("%d custom audiences", n))
 	}
