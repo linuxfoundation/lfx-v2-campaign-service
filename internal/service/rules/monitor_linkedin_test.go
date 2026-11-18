@@ -119,7 +119,7 @@ func TestLinkedinPacingPct_LifetimeWithDailyCap(t *testing.T) {
 // campaign that reached its total before the window and stopped: window spend 0, so the
 // percentage is 0 whatever the denominator, but what it is measured against must be the $100 total
 // it could still have had, not the $20 cap times the window's 6 days ($120), which it can never
-// spend. Lifetime spend is not in the metrics, so the total, not the remainder, is the cap.
+// spend. With no SpendBeforeWindow read, the total, not the remainder, is the cap.
 func TestLinkedinExpectedSpend_CappedNoEndNeverExceedsTotal(t *testing.T) {
 	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
 	m := model.AccountCampaignMetrics{TotalBudget: 100, BudgetDay: 20, StartDate: "2026-06-01", Spend: 0}
@@ -130,6 +130,47 @@ func TestLinkedinExpectedSpend_CappedNoEndNeverExceedsTotal(t *testing.T) {
 	m.TotalBudget = 1000
 	if got := linkedinExpectedSpend(m, 7, now); got != 120 {
 		t.Fatalf("expected spend = %v, want the cap's 120", got)
+	}
+}
+
+// TestEvaluateLinkedInMonitor_CappedNoEndLastWindowIsNotUnderspending is #636's case: a $1,000
+// total under a $20 cap, $960 spent before its last window, which spends the remaining $40. Paced
+// against the whole total the window expects the cap's 20*6 = 120 and reads 33%, a HIGH
+// "Underspending" item on a campaign that is just finishing its budget. Paced against what
+// remains it expects $40 and reads 100%.
+func TestEvaluateLinkedInMonitor_CappedNoEndLastWindowIsNotUnderspending(t *testing.T) {
+	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	before := 960.0
+	m := model.AccountCampaignMetrics{PlatformCampaignID: "1", Name: "c", Status: "ACTIVE",
+		TotalBudget: 1000, BudgetDay: 20, StartDate: "2026-04-21", Spend: 40,
+		Impressions: 10000, Clicks: 100, SpendBeforeWindow: &before}
+	rows, items := EvaluateLinkedInMonitor([]model.AccountCampaignMetrics{m}, 7, now, "USD")
+	if len(rows) != 1 || rows[0].PacingPct != 100 || rows[0].PacingLabel == model.MonitorPacingUnderspending {
+		t.Fatalf("row = %+v, want 100%% pacing against the $40 that remained", rows)
+	}
+	for _, it := range items {
+		if strings.Contains(it.Issue, "Underspending") {
+			t.Errorf("underspending item %q raised for a campaign spending the last of its total", it.Issue)
+		}
+	}
+}
+
+// TestEvaluateLinkedInMonitor_CappedNoEndTotalSpentBeforeWindowIsUnknown: a capped campaign with
+// no end whose whole total went before the window had nothing to spend in it. There is no
+// expectation to pace against, so the row is unknown pacing rather than 0% underspending.
+func TestEvaluateLinkedInMonitor_CappedNoEndTotalSpentBeforeWindowIsUnknown(t *testing.T) {
+	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	before := 1000.0
+	m := model.AccountCampaignMetrics{PlatformCampaignID: "1", Name: "c", Status: "ACTIVE",
+		TotalBudget: 1000, BudgetDay: 20, StartDate: "2026-04-21", SpendBeforeWindow: &before}
+	rows, items := EvaluateLinkedInMonitor([]model.AccountCampaignMetrics{m}, 7, now, "USD")
+	if len(rows) != 1 || !rows[0].Metrics.PacingUnknown || rows[0].PacingLabel == model.MonitorPacingUnderspending {
+		t.Fatalf("row = %+v, want unknown pacing", rows)
+	}
+	for _, it := range items {
+		if strings.Contains(it.Issue, "Underspending") {
+			t.Errorf("underspending item %q raised for a campaign whose total was already spent", it.Issue)
+		}
 	}
 }
 

@@ -136,6 +136,26 @@ func TestGetCampaignBudget_ReadsEachFieldAndTheCurrency(t *testing.T) {
 	}
 }
 
+// TestGetCampaignBudget_CarriesEachBudgetsOwnCurrency pins the per-field currencies a capped
+// lifetime budget needs (#636). CurrencyCode collapses both fields to the daily one's, so a
+// caller that must know the TOTAL is USD cannot read it there.
+func TestGetCampaignBudget_CarriesEachBudgetsOwnCurrency(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":123456,"dailyBudget":{"amount":"20.00","currencyCode":"USD"},
+			"totalBudget":{"amount":"1000.00","currencyCode":"EUR"}}`)
+	}))
+	defer srv.Close()
+
+	got, err := budgetClient(srv.URL).GetCampaignBudget(context.Background(), "123456")
+	if err != nil {
+		t.Fatalf("GetCampaignBudget: %v", err)
+	}
+	if got.DailyBudgetCurrency != "USD" || got.TotalBudgetCurrency != "EUR" {
+		t.Errorf("per-field currencies = daily %q, total %q; want USD, EUR", got.DailyBudgetCurrency, got.TotalBudgetCurrency)
+	}
+}
+
 // TestGetCampaignBudget_UnparseableAmountIsFlaggedNotSwallowed pins the difference between "no
 // budget" and "a budget this client could not read". They are opposite facts, and only one of
 // them is safe to write against.

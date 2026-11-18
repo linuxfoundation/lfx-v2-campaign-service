@@ -211,6 +211,33 @@ func TestLinkedIn_WriteBudget_Guards(t *testing.T) {
 			wantText: "a currency LinkedIn did not report",
 		},
 		{
+			// #636: with BOTH budgets present the read collapses currency to the daily
+			// budget's, so a USD cap over a total with NO currency passed a single check
+			// and a USD totalBudget write landed on an amount nobody had validated.
+			name: "a capped lifetime budget whose total currency LinkedIn did not report is refused",
+			readJSON: `{"id":777,"dailyBudget":{"amount":"20.00","currencyCode":"USD"},
+				"totalBudget":{"amount":"1000.00"}}`,
+			change:   model.BudgetChange{Amount: 2000, Type: model.BudgetLifetime},
+			wantErr:  domain.ErrBudgetUnwritable,
+			wantText: "lifetime budget denominated in a currency LinkedIn did not report",
+		},
+		{
+			name: "a capped lifetime budget whose total currency conflicts with its USD cap is refused",
+			readJSON: `{"id":777,"dailyBudget":{"amount":"20.00","currencyCode":"USD"},
+				"totalBudget":{"amount":"1000.00","currencyCode":"EUR"}}`,
+			change:   model.BudgetChange{Amount: 2000, Type: model.BudgetLifetime},
+			wantErr:  domain.ErrBudgetUnwritable,
+			wantText: "lifetime budget denominated in EUR",
+		},
+		{
+			name: "a capped lifetime budget whose cap currency LinkedIn did not report is refused",
+			readJSON: `{"id":777,"dailyBudget":{"amount":"20.00"},
+				"totalBudget":{"amount":"1000.00","currencyCode":"USD"}}`,
+			change:   model.BudgetChange{Amount: 2000, Type: model.BudgetLifetime},
+			wantErr:  domain.ErrBudgetUnwritable,
+			wantText: "daily budget denominated in a currency LinkedIn did not report",
+		},
+		{
 			name:     "NEITHER budget present gives nothing to write",
 			readJSON: `{"id":777,"status":"ACTIVE"}`,
 			change:   model.BudgetChange{Amount: 250, Type: model.BudgetDaily},

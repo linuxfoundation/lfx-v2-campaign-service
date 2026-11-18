@@ -483,7 +483,9 @@ in Campaign Manager. Pinned by `group_capped_test.go` (including
 
 `GetCampaignBudget(ctx, campaignID)` reads the campaign under the resolved account
 (`adAccounts/{acct}/adCampaigns/{id}`, numeric ids only) and returns a `CampaignBudget` carrying
-`DailyBudget`, `TotalBudget`, `CurrencyCode` and `Status`. An **absent** field stays `nil`
+`DailyBudget`, `TotalBudget`, `CurrencyCode` and `Status`, plus each field's own currency
+(`DailyBudgetCurrency`, `TotalBudgetCurrency`): `CurrencyCode` prefers the daily one, so it says
+nothing about the total's when both are present (#636). An **absent** field stays `nil`
 rather than becoming zero — nil is what a caller reads as "this campaign does not use this
 field" — while a field that is PRESENT but unparseable sets `AmountUnparseable` instead of
 silently reading as absent; those are opposite facts and only one of them is safe to write
@@ -896,6 +898,14 @@ checked with `identityjson` and decoded element by element (`monitorCampaignElem
 that is `null` or not a string also sets that row's `PacingUnknown`; rows are never dropped for
 it. No extra request. `ListAccountCampaigns` wraps it and drops the currency. See
 [Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).
+
+**Spend before the window (#636).** When the list holds a lifetime budget with a daily cap and no
+end date that started before the window, `fillSpendBeforeWindow` makes ONE more account-level
+analytics read, from the earliest such start through the day before the window, and sets
+`AccountCampaignRow.SpendBeforeWindow` on those rows (0 for one absent from the response). The
+rules pace that campaign's window against what remains of its total, so the window that spends
+its last dollars no longer reads as underspending. The read is best-effort: a failure is logged
+and leaves the field nil, and the rules fall back to the whole total.
 
 `LinkedInDispatcher.VerifyAccountOrg(ctx, projectID, platform)` implements another optional
 capability, `OrgReferenceVerifier` (`internal/service/orchestrator.go`) — LinkedIn is the ONLY
