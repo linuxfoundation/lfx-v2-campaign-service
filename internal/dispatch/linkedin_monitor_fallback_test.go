@@ -146,8 +146,9 @@ func TestLinkedIn_AccountMonitor_TwoProjectsOnTheSharedSystemAccount(t *testing.
 		id          string
 		spend       float64
 		impressions int64
+		clicks      int64
 	}
-	for project, want := range map[string]own{"tlf": {"1001", 10, 100}, "aswf": {"1002", 20, 200}} {
+	for project, want := range map[string]own{"tlf": {"1001", 10, 100, 4}, "aswf": {"1002", 20, 200, 8}} {
 		t.Run(project, func(t *testing.T) {
 			got, err := svc.MonitorLinkedinAdsAccount(context.Background(), &conn.MonitorLinkedinAdsAccountPayload{ProjectID: project, Days: 30})
 			if err != nil {
@@ -162,11 +163,11 @@ func TestLinkedIn_AccountMonitor_TwoProjectsOnTheSharedSystemAccount(t *testing.
 					ids = append(ids, c.PlatformCampaignID)
 				}
 				t.Errorf("campaigns = %v, want only %s's own campaign %s", ids, project, want.id)
-			} else if c := got.Campaigns[0]; c.Spend != want.spend || c.Impressions != want.impressions {
-				t.Errorf("campaign %s spend=%v impressions=%d, want its own %v and %d", c.PlatformCampaignID, c.Spend, c.Impressions, want.spend, want.impressions)
+			} else if c := got.Campaigns[0]; c.Spend != want.spend || c.Impressions != want.impressions || c.Clicks != want.clicks {
+				t.Errorf("campaign %s spend=%v impressions=%d clicks=%d, want its own %v, %d and %d", c.PlatformCampaignID, c.Spend, c.Impressions, c.Clicks, want.spend, want.impressions, want.clicks)
 			}
-			if got.Totals == nil || got.Totals.Spend != want.spend || got.Totals.Impressions != want.impressions || got.Totals.CampaignCount != 1 {
-				t.Errorf("totals = %+v, want only %s's own spend %v and impressions %d", got.Totals, project, want.spend, want.impressions)
+			if got.Totals == nil || got.Totals.Spend != want.spend || got.Totals.Impressions != want.impressions || got.Totals.Clicks != want.clicks || got.Totals.CampaignCount != 1 {
+				t.Errorf("totals = %+v, want only %s's own spend %v, impressions %d and clicks %d", got.Totals, project, want.spend, want.impressions, want.clicks)
 			}
 			// Action items name campaigns too: every campaign-specific one must be this project's,
 			// and its own campaign (underspending against its 50/day budget) must have one.
