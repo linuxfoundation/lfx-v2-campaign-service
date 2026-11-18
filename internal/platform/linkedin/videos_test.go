@@ -210,6 +210,20 @@ func TestCreateCampaign_Video_HappyPath(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_Video_VariantCallToAction pins that a video variant's own call to action
+// (#588) replaces the REGISTER default on its dark post, and a variant without one keeps REGISTER.
+func TestCreateCampaign_Video_VariantCallToAction(t *testing.T) {
+	api := newVideoAPI(t)
+	learn := videoVariant()
+	learn.CallToAction = "LEARN_MORE"
+	if _, err := api.client().CreateCampaign(context.Background(), videoCampaignInput(learn, videoVariant())); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if len(api.posts) != 2 || api.posts[0]["contentCallToActionLabel"] != "LEARN_MORE" || api.posts[1]["contentCallToActionLabel"] != "REGISTER" {
+		t.Errorf("call to action labels: %v", api.posts)
+	}
+}
+
 // TestCreateCampaign_ImageCampaignUnchanged pins that a config without videos keeps its old
 // wire shape: no campaign format, the Static name segment, an article post.
 func TestCreateCampaign_ImageCampaignUnchanged(t *testing.T) {
@@ -245,12 +259,15 @@ func TestCreateCampaign_Video_RefusedBeforeAnyRequest(t *testing.T) {
 	missing.Videos = nil
 	tooSmall := videoCampaignInput(videoVariant())
 	tooSmall.Videos["vid-a"] = VideoUpload{Data: testMP4(100), MimeType: "video/mp4"}
+	withDescription := videoVariant()
+	withDescription.Description = "An article description"
 	for name, in := range map[string]CampaignInput{
-		"video then image":   mixed,
-		"image then video":   mixedFirstImage,
-		"video and image":    videoCampaignInput(both),
-		"video not supplied": missing,
-		"video too small":    tooSmall,
+		"video then image":         mixed,
+		"image then video":         mixedFirstImage,
+		"video and image":          videoCampaignInput(both),
+		"video not supplied":       missing,
+		"video too small":          tooSmall,
+		"video with a description": videoCampaignInput(withDescription),
 	} {
 		t.Run(name, func(t *testing.T) {
 			api := newVideoAPI(t)

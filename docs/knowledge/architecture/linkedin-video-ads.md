@@ -79,8 +79,8 @@ other). Per distinct video
 
 Then per variant `POST /rest/posts` — the article post's dark envelope (`feedDistribution: NONE`,
 `adContext.dscAdAccount`) with `"content":{"media":{"title":headline,"id":urn}}`,
-`"contentLandingPage": <UTM-tagged registration URL>` and `"contentCallToActionLabel":
-"REGISTER"` — and the DRAFT creative referencing the post, exactly as for images.
+`"contentLandingPage": <UTM-tagged registration URL>` and `"contentCallToActionLabel"` (the
+variant's `callToAction`, #588, else `"REGISTER"`) — and the DRAFT creative referencing the post, exactly as for images.
 
 ## Idempotency and failures
 
@@ -118,7 +118,8 @@ not to stretch the wait inside the provider call.
 - The `VIDEO_VIEW` objective (`costType` `CPV`, `optimizationTargetType` `MAX_VIDEO_VIEW`) and the
   other video objectives: video campaigns use the existing bidding plans (`WEBSITE_VISIT`
   automatic, `WEBSITE_CONVERSION` manual), both of which allow `SINGLE_VIDEO`.
-- A caller-chosen call to action (fixed `REGISTER`), captions (SRT) and a custom thumbnail.
+- Captions (SRT) and a custom thumbnail. (The call to action is the variant's `callToAction`,
+  #588, or `REGISTER` when it names none.)
 - Decoupling the Videos API upload from create (pre-upload at asset-store time or an earlier job
   phase, then reference the `AVAILABLE` URN), if the processing-time measurement above shows the
   60 s wait is routinely too short.

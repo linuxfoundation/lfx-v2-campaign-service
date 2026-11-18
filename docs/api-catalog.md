@@ -1398,8 +1398,8 @@ variants[].videoAssetId?: string — OPTIONAL id of an MP4 creative asset upload
                                   part ETags -> wait until AVAILABLE, at most 60 s). Each
                                   variant's dark post carries it as content.media (headline as
                                   title, introText as commentary) with the UTM-tagged
-                                  registration URL as contentLandingPage and the REGISTER call
-                                  to action. The minted URNs are recorded in the result as
+                                  registration URL as contentLandingPage and the variant's
+                                  callToAction (#588), or REGISTER when it names none. The minted URNs are recorded in the result as
                                   videoUrns (asset id -> URN). On a failure no dark post is
                                   created: the campaign is created_degraded with zero creatives,
                                   the claim is retained (nothing re-uploads or re-posts), and the
@@ -1409,8 +1409,10 @@ variants[].videoAssetId?: string — OPTIONAL id of an MP4 creative asset upload
 The campaign name's Ad Format segment is `Video` instead of `Static`
 (`Events | <event> | <region> | <objective> | Prospecting | Video | <project> | MoFU`). Objectives
 and bidding are unchanged (automatic `WEBSITE_VISIT`, manual `WEBSITE_CONVERSION`; LinkedIn allows
-`SINGLE_VIDEO` under both). `VIDEO_VIEW`, captions, a custom thumbnail and a caller-chosen call to
-action are not supported yet.
+`SINGLE_VIDEO` under both). A video variant's `name` names its creative as for an image
+variant; its `description` is refused (a synchronous `400`), because the description is the
+article's and a video post has no article. `VIDEO_VIEW`, captions and a custom thumbnail are not
+supported yet.
 
 #### LinkedInConfig variant name, call to action and description (`linkedInConfig.variants[]`, #588, #589)
 
