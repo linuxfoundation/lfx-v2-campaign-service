@@ -43,19 +43,21 @@ type Service interface {
 	// authored tweet's video or the website card's media) or a LinkedIn video
 	// variant (linkedInConfig.variants[].videoAssetId, #586: all variants or none,
 	// a SINGLE_VIDEO campaign, 400 unless LINKEDIN_ADS_VIDEO_ENABLED is "true";
-	// api-catalog LinkedInConfig variant videos) consumes it — every image slot
-	// refuses a video asset at dispatch. Re-uploading identical bytes to the same
-	// brief returns the existing asset (idempotent). This does not touch any ad
-	// platform; the account-scoped Meta image_hash is resolved later, at campaign
-	// dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft
-	// Advertising campaign names one by microsoftConfig.imageAssetId, and at
-	// dispatch it is uploaded to the ad account's media library (an account-scoped
-	// MediaId) and attached to the campaign as an image ad extension; Microsoft
-	// accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit
-	// campaign can also reference the asset (redditConfig.imageAssetId), served to
-	// Reddit at a short-lived signed URL when that feature is configured. An X
-	// (Twitter) campaign may also reference the asset as the image of its authored
-	// tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is
+	// api-catalog LinkedInConfig variant videos) or a Reddit video post
+	// (redditConfig.videoAssetId, #549, behind REDDIT_VIDEO_ENABLED) consumes it —
+	// every image slot refuses a video asset at dispatch. Re-uploading identical
+	// bytes to the same brief returns the existing asset (idempotent). This does
+	// not touch any ad platform; the account-scoped Meta image_hash is resolved
+	// later, at campaign dispatch. Meta and Microsoft Advertising consume stored
+	// assets: a Microsoft Advertising campaign names one by
+	// microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad
+	// account's media library (an account-scoped MediaId) and attached to the
+	// campaign as an image ad extension; Microsoft accepts at most 76,800 bytes
+	// and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the
+	// asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed
+	// URL when that feature is configured. An X (Twitter) campaign may also
+	// reference the asset as the image of its authored tweet
+	// (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is
 	// likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig
 	// variant names one by imageAssetId, and at dispatch it is uploaded once
 	// through LinkedIn's Images API (an organization-owned image URN) and used as

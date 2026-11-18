@@ -73,8 +73,21 @@ const (
 	// TestMintedURLMatchesTheRoute pins them together.
 	RoutePrefix = "/_campaigns/creative-assets/"
 
-	// macLabel is the domain-separation prefix of every signed message.
+	// macLabel is the domain-separation prefix of every signed IMAGE message. It is unchanged
+	// since LFXV2-2665, so every URL minted before video support still verifies as an image.
 	macLabel = "lfx-v2-campaign-service/creative-asset-url/v1"
+
+	// macLabelVideo is the domain-separation prefix of every signed VIDEO message (#549). A
+	// distinct label, not a flag inside the message, so an image signature can never verify as
+	// a video one or the reverse: the same (project, brief, asset, exp) signs to unrelated MACs
+	// under the two labels.
+	macLabelVideo = "lfx-v2-campaign-service/creative-asset-url/video/v1"
+
+	// KindParam is the query parameter a VIDEO URL carries (KindParam=KindVideoValue). An
+	// image URL carries none, which keeps every pre-#549 URL byte-identical.
+	KindParam = "kind"
+	// KindVideoValue is KindParam's only value: the route's Enum (design/signed_asset.go).
+	KindVideoValue = "video"
 
 	// sigLen is the base64url (no padding) length of a 32-byte MAC.
 	sigLen = 43
@@ -84,6 +97,43 @@ const (
 // route's own Pattern (design/signed_asset.go), so a URL this package mints always decodes,
 // and it admits no character that could traverse or re-root a path.
 var ProjectIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,63}$`)
+
+// Kind is the slot a signed URL is minted for, and so the only stored type the route will serve
+// at it (#549). The zero value is KindImage: the route serves PNG or JPEG and refuses a video.
+// KindVideo is minted only for a Reddit VIDEO post's media and serves only video/mp4. The kind is
+// bound into the MAC through its label, so a holder of an image URL cannot fetch a video by adding
+// kind=video, and a holder of a video URL cannot fetch it as an image by removing it.
+type Kind int
+
+const (
+	// KindImage serves PNG/JPEG only. Every URL minted before #549 is this kind.
+	KindImage Kind = iota
+	// KindVideo serves video/mp4 only.
+	KindVideo
+)
+
+// KindFromParam maps the route's optional kind parameter to a Kind: absent is KindImage,
+// KindVideoValue is KindVideo, and anything else is not a kind this package mints (false).
+func KindFromParam(p *string) (Kind, bool) {
+	if p == nil {
+		return KindImage, true
+	}
+	if *p == KindVideoValue {
+		return KindVideo, true
+	}
+	return KindImage, false
+}
+
+func (k Kind) label() (string, bool) {
+	switch k {
+	case KindImage:
+		return macLabel, true
+	case KindVideo:
+		return macLabelVideo, true
+	default:
+		return "", false
+	}
+}
 
 // macEqual is hmac.Equal, held in a variable only so a test can prove the verify path goes
 // through the constant-time comparison rather than bytes.Equal or ==.
@@ -232,18 +282,32 @@ func (s *Signer) TTL() time.Duration {
 // ProjectIDPattern. The returned URL is a bearer credential for one image until expiry:
 // callers must not log it (log the asset id and expiry instead).
 func (s *Signer) Mint(projectID, briefID, assetID string) (string, time.Time, error) {
+	return s.MintKind(KindImage, projectID, briefID, assetID)
+}
+
+// MintKind is Mint for a given slot kind (#549). KindImage yields exactly Mint's URL; KindVideo
+// signs under the video label and adds kind=video, so the route serves the asset only if it is a
+// stored video/mp4.
+func (s *Signer) MintKind(kind Kind, projectID, briefID, assetID string) (string, time.Time, error) {
 	if s == nil {
 		return "", time.Time{}, ErrDisabled
+	}
+	if _, ok := kind.label(); !ok {
+		return "", time.Time{}, errors.New("unknown signed asset URL kind")
 	}
 	if err := ValidateIDs(projectID, briefID, assetID); err != nil {
 		return "", time.Time{}, err
 	}
 	b, a := uuid.MustParse(briefID), uuid.MustParse(assetID)
 	exp := s.now().Add(s.ttl).Unix()
-	sig := base64.RawURLEncoding.EncodeToString(s.mac(projectID, b.String(), a.String(), exp))
+	sig := base64.RawURLEncoding.EncodeToString(s.mac(kind, projectID, b.String(), a.String(), exp))
 	u := *s.base
 	u.Path = RoutePrefix + projectID + "/" + b.String() + "/" + a.String()
-	u.RawQuery = "exp=" + strconv.FormatInt(exp, 10) + "&sig=" + sig
+	u.RawQuery = "exp=" + strconv.FormatInt(exp, 10)
+	if kind == KindVideo {
+		u.RawQuery += "&" + KindParam + "=" + KindVideoValue
+	}
+	u.RawQuery += "&sig=" + sig
 	return u.String(), time.Unix(exp, 0), nil
 }
 
@@ -258,7 +322,16 @@ func (s *Signer) Mint(projectID, briefID, assetID string) (string, time.Time, er
 // It returns a bare bool on purpose: the serving route answers every rejection with the same
 // 404, so there is no reason worth carrying out of here.
 func (s *Signer) Verify(projectID, briefID, assetID string, exp int64, sig string) bool {
+	return s.VerifyKind(KindImage, projectID, briefID, assetID, exp, sig)
+}
+
+// VerifyKind is Verify for a given slot kind (#549): the signature must have been minted for
+// exactly that kind. An unknown kind verifies nothing.
+func (s *Signer) VerifyKind(kind Kind, projectID, briefID, assetID string, exp int64, sig string) bool {
 	if s == nil {
+		return false
+	}
+	if _, ok := kind.label(); !ok {
 		return false
 	}
 	if len(sig) != sigLen {
@@ -268,16 +341,18 @@ func (s *Signer) Verify(projectID, briefID, assetID string, exp int64, sig strin
 	if err != nil || len(got) != sha256.Size {
 		return false
 	}
-	ok := macEqual(s.mac(projectID, briefID, assetID, exp), got)
+	ok := macEqual(s.mac(kind, projectID, briefID, assetID, exp), got)
 	now := s.now().Unix()
 	fresh := exp > now && exp-now <= int64((MaxTTL+MaxClockSkew)/time.Second)
 	return ok && fresh
 }
 
-// mac computes the HMAC over the canonical encoding described in the package doc.
-func (s *Signer) mac(projectID, briefID, assetID string, exp int64) []byte {
+// mac computes the HMAC over the canonical encoding described in the package doc, under the
+// kind's label (callers have already refused an unknown kind).
+func (s *Signer) mac(kind Kind, projectID, briefID, assetID string, exp int64) []byte {
+	label, _ := kind.label()
 	m := hmac.New(sha256.New, s.key)
-	m.Write([]byte(macLabel))
+	m.Write([]byte(label))
 	m.Write([]byte{0})
 	for _, f := range []string{projectID, briefID, assetID} {
 		var n [4]byte

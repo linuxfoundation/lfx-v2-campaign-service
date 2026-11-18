@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
@@ -16,6 +15,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/assetsign"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
 )
 
 // Reddit creatives from STORED assets (LFXV2-2665).
@@ -94,7 +94,8 @@ func (d *RedditDispatcher) checkRedditAssetChoice(cfg redditConfig) (string, err
 // expandTargeting are refused (checkRedditPlacementTargeting, #549 gap 7), or whose budgetType is
 // refused (checkRedditBudgetType, #549 gap 9), or whose variants break the one-ad-per-variant
 // rules (checkRedditAdPerVariant, #549 gap 6), or whose gender, languages or schedule are refused
-// (checkRedditDemographicTargeting, #549 gap 13). It
+// (checkRedditDemographicTargeting, #549 gap 13), or whose video post is gated off or
+// contradictory (checkRedditVideoChoice, #549 gap 5). It
 // never calls Reddit, so every other outcome is ErrPreflightNotApplicable. Whether the asset belongs to the brief cannot be checked here (the
 // pre-check is not given the brief); Dispatch checks it before any upstream call. A config that does
 // not decode is left to Dispatch, except a wrong-typed `bidding` (checkBiddingShape).
@@ -161,6 +162,11 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 	if err := checkRedditBudgetType(config); err != nil {
 		return err
 	}
+	// The video post's gate and config rules (#549) run on the best-effort decode too, so a gated
+	// or contradictory video config is the synchronous 400 even beside an unrelated broken field.
+	if _, _, err := d.checkRedditVideoChoice(cfg); err != nil {
+		return err
+	}
 	if decodeErr != nil {
 		return domain.ErrPreflightNotApplicable // Dispatch reports a malformed config as the job failure
 	}
@@ -219,17 +225,8 @@ func (d *RedditDispatcher) checkRedditAsset(ctx context.Context, brief *model.Ca
 // at most one more request timeout; assetsign.MinTTL covers it. The minted URL is also written to *minted so the caller
 // can scrub it from anything that comes back.
 func (d *RedditDispatcher) lateAssetURL(brief *model.CampaignBrief, assetID string, minted *[]string) func(context.Context) (string, error) {
-	return func(ctx context.Context) (string, error) {
-		signed, exp, err := d.assetURLs.Mint(brief.ProjectID, brief.ID, assetID)
-		if err != nil {
-			return "", fmt.Errorf("reddit: cannot mint a signed URL for creative asset %s: %w", assetID, err)
-		}
-		*minted = append(*minted, signed) // one per post on a one-ad-per-variant create (#549 gap 6)
-		// The URL is a bearer credential for the image until exp: log the id and expiry only.
-		slog.InfoContext(ctx, "minted signed creative-asset URL for a Reddit promoted post",
-			"asset_id", assetID, "brief_id", brief.ID, "exp", exp.Unix())
-		return signed, nil
-	}
+	// One URL per post on a one-ad-per-variant create (#549 gap 6), each appended to minted.
+	return d.lateAssetURLKind(assetsign.KindImage, brief, assetID, minted)
 }
 
 // scrubSignedURL removes the signature from any text that might carry it back out — an
@@ -261,4 +258,25 @@ func scrubErr(err error, signed string) error {
 		return err
 	}
 	return &scrubbedError{err: err, signed: signed}
+}
+
+// scrubRedditOutcome removes every minted signed URL (an image post's, or a video post's video
+// and thumbnail, #549) from what a create returns. Reddit may echo media_url or thumbnail_url in
+// an error body, which would carry a signature into the job error and the persisted
+// Steps/AdWarning. Classification is unaffected (scrubErr preserves errors.Is/As). Empty entries
+// (URLs never minted) are skipped.
+func scrubRedditOutcome(err error, result *reddit.CampaignResult, minted ...string) error {
+	for _, m := range minted {
+		if m == "" {
+			continue
+		}
+		err = scrubErr(err, m)
+		if result != nil {
+			result.AdWarning = scrubSignedURL(result.AdWarning, m)
+			for i := range result.Steps {
+				result.Steps[i] = scrubSignedURL(result.Steps[i], m)
+			}
+		}
+	}
+	return err
 }

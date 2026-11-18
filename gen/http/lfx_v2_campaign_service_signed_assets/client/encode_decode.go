@@ -60,6 +60,9 @@ func EncodeGetSignedCreativeAssetRequest(encoder func(*http.Request) goahttp.Enc
 		values := req.URL.Query()
 		values.Add("exp", strconv.FormatInt(p.Exp, 10))
 		values.Add("sig", p.Sig)
+		if p.Kind != nil {
+			values.Add("kind", *p.Kind)
+		}
 		req.URL.RawQuery = values.Encode()
 		return nil
 	}
@@ -90,8 +93,8 @@ func DecodeGetSignedCreativeAssetResponse(decoder func(*http.Response) goahttp.D
 				err = goa.MergeErrors(err, goa.MissingFieldError("content_type", "header"))
 			}
 			contentType = contentTypeRaw
-			if !(contentType == "image/png" || contentType == "image/jpeg") {
-				err = goa.MergeErrors(err, goa.InvalidEnumValueError("content_type", contentType, []any{"image/png", "image/jpeg"}))
+			if !(contentType == "image/png" || contentType == "image/jpeg" || contentType == "video/mp4") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("content_type", contentType, []any{"image/png", "image/jpeg", "video/mp4"}))
 			}
 			{
 				contentLengthRaw := resp.Header.Get("Content-Length")
