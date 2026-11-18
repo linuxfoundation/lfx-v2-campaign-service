@@ -18,7 +18,8 @@ import (
 const snapshotAssetIDKey = "imageassetid"
 
 // snapshotVideoAssetIDKey is postgres.snapshotVideoAssetIDKey (#586), repeated for the same
-// reason: a LinkedIn video variant names its stored MP4 under it.
+// reason: a LinkedIn video variant (#586) and a Meta video variant (#550) name their stored MP4
+// under it.
 const snapshotVideoAssetIDKey = "videoassetid"
 
 // TestPlatformConfigsNameTheirAssetUnderOneKey pins the assumption the campaign repo's
@@ -49,7 +50,9 @@ func TestPlatformConfigsNameTheirAssetUnderOneKey(t *testing.T) {
 		"linkedin-video": linkedinConfig{Variants: []linkedin.CreativeVariant{{VideoAssetID: assetID}}},
 		"microsoft":      microsoftConfig{ImageAssetID: assetID},
 		"meta":           metaConfig{Variants: []meta.AdVariant{{ImageAssetID: assetID}}},
-		"linkedin":       linkedinConfig{Variants: []linkedin.CreativeVariant{{ImageAssetID: assetID}}},
+		// The Meta video variant (#550) names its asset under the same second key.
+		"meta-video": metaConfig{Variants: []meta.AdVariant{{VideoAssetID: assetID}}},
+		"linkedin":   linkedinConfig{Variants: []linkedin.CreativeVariant{{ImageAssetID: assetID}}},
 		// EVERY Google slot, not one of them: they are separate fields on several structs,
 		// and one more slot declared as a bare []string would carry no key on its elements
 		// at all.

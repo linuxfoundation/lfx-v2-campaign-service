@@ -316,6 +316,11 @@ type Client struct {
 	// elapsed wall time, which no timing threshold could distinguish from a
 	// goroutine that simply was not scheduled.
 	sleepFn func(context.Context, time.Duration) error
+	// videoPollInterval and videoReadyWait bound the video readiness poll (#550, video.go): the
+	// interval between status reads and the total wait shared by every video of one
+	// CreateCampaign. WithVideoPolling overrides them.
+	videoPollInterval time.Duration
+	videoReadyWait    time.Duration
 }
 
 // Option customizes a Client.
@@ -422,6 +427,9 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		timeNow:        time.Now,
 		retryBaseDelay: retryBaseDelay,
 		sleepFn:        sleepCtx,
+
+		videoPollInterval: defaultVideoPollInterval,
+		videoReadyWait:    defaultVideoReadyWait,
 	}
 	for _, o := range opts {
 		o(c)
@@ -2794,6 +2802,16 @@ type AdVariant struct {
 	// the multipart part on the /adimages call. Like ImageBytes it is set by the
 	// dispatcher, not by caller JSON.
 	ImageMIME string `json:"-"`
+
+	// VideoAssetID references an MP4 uploaded against this brief (#550 gap 9): the variant
+	// becomes a VIDEO ad (object_story_spec.video_data). A config field like ImageAssetID — the
+	// dispatcher resolves it to VideoBytes/VideoMIME, and only it is snapshotted. A video
+	// variant carries no image (ValidateVideoVariant); Meta's auto-generated thumbnail is used.
+	VideoAssetID string
+	// VideoBytes and VideoMIME are the resolved video, set ONLY by the dispatcher (json:"-").
+	// VideoMIME must be video/mp4.
+	VideoBytes []byte `json:"-"`
+	VideoMIME  string `json:"-"`
 }
 
 // CampaignInput mirrors MetaCampaignCreateRequest.
@@ -2964,6 +2982,11 @@ type CampaignResult struct {
 	// persisted result (the conversions metrics read, gap 6) never filters on an event the live ad
 	// set does not optimize for. Set only on the successful result.
 	ConversionEvent string `json:",omitempty"`
+	// VideoIDs names every video this run uploaded to the ad account (#550 gap 9), keyed by the
+	// variant's video asset id (or "variant-N" without one), whether or not its ad was created —
+	// so a video left unused by a failed or not-yet-ready variant is findable. Empty without
+	// video variants.
+	VideoIDs map[string]string `json:",omitempty"`
 	// Ads carries one entry per SUCCESSFULLY-created ad (so len(Ads) == AdCount), in
 	// variant order, each with its ad/creative ids and the image_hash attached to its
 	// creative. A per-variant failure contributes a Steps line, not an Ads entry.
@@ -2986,6 +3009,9 @@ type AdResult struct {
 	AdID       string
 	CreativeID string
 	ImageHash  string
+	// VideoID is the uploaded video the ad's creative plays (#550 gap 9); empty for an image or
+	// link ad.
+	VideoID string `json:",omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -3057,6 +3083,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// exists rather than at the non-fatal per-variant creative create.
 		if err := validateVariantImage(v); err != nil {
 			return nil, domain.WrapPreflightRefusal(fmt.Errorf("variant %d: %w", i+1, err))
+		}
+		// A video variant (#550 gap 9): no image alongside, resolved MP4 bytes.
+		if err := ValidateVideoVariant(i, v); err != nil {
+			return nil, err
+		}
+		if variantHasVideo(v) && strings.TrimSpace(in.LeadFormID) != "" {
+			return nil, videoVariantInvalid(i, "a video variant cannot be combined with leadFormId; video lead ads are not supported")
 		}
 	}
 
@@ -3692,7 +3725,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Captured by reference like adCount, so a PARTIAL result returned from a failure
 	// after some ads were created still names them (and their image hashes).
 	var ads []AdResult
+	// Every video this run uploads (#550 gap 9), captured by reference like ads.
+	videoIDs := map[string]string{}
 	partialResult := func() *CampaignResult {
+		var vids map[string]string
+		if len(videoIDs) > 0 {
+			vids = videoIDs
+		}
 		return &CampaignResult{
 			Platform:     "meta-ads",
 			CampaignName: campaignName,
@@ -3704,6 +3743,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
 			Steps:        steps,
 			Ads:          ads,
+			VideoIDs:     vids,
 		}
 	}
 
@@ -3889,10 +3929,28 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// The upload cache is per-CAMPAIGN and created here, not on the Client: it must not
 	// outlive the campaign it was built for (see uploadCache's godoc).
 	uploads := newUploadCache()
+	// Videos (#550 gap 9) are uploaded and awaited once, before the first creative: each distinct
+	// video uploads once and every video shares one bounded readiness wait. The ad set already
+	// exists, so a cancelled caller returns the partial (the claim is retained, nothing re-uploads).
+	videos, perr := c.prepareVideos(ctx, validVariants, &steps, videoIDs)
+	if perr != nil {
+		return partialResult(), fmt.Errorf("meta campaign aborted while preparing videos (campaign %s created, PAUSED): %w", campaignID, perr)
+	}
 	for i, variant := range validVariants {
 		utmURL := buildUTMURL(in, i)
 
-		adID, creativeID, imageHash, verr := c.createVariantAd(ctx, in, variant, adSetID, utmURL, i, uploads)
+		video := videos[i]
+		if video.err != nil {
+			msg := fmt.Sprintf("Ad %d failed: %s, so no creative or ad was created for variant %d", i+1, video.err.Error(), i+1)
+			var vse *videoStageError
+			if errors.As(video.err, &vse) && vse.ambiguous {
+				msg += " (re-dispatching will NOT recreate this ad: the campaign persists as created_degraded and is reused as-is, so reconcile this variant in Meta Ads Manager)"
+			}
+			steps = append(steps, msg)
+			continue
+		}
+
+		adID, creativeID, imageHash, verr := c.createVariantAd(ctx, in, variant, adSetID, utmURL, i, uploads, video)
 		if verr != nil {
 			// A cancelled or deadlined CALLER context is fatal: continuing would let
 			// us report a "successful" campaign after the caller's context died. Key
@@ -3964,7 +4022,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			continue
 		}
 		adCount++
-		ads = append(ads, AdResult{Variant: i + 1, AdID: adID, CreativeID: creativeID, ImageHash: imageHash})
+		ads = append(ads, AdResult{Variant: i + 1, AdID: adID, CreativeID: creativeID, ImageHash: imageHash, VideoID: video.videoID})
 		// Show the SANITIZED display URL in the human-readable step (Steps may be
 		// persisted/logged), not the full utmURL — which preserves the caller's
 		// original query/fragment and could leak a secret like ?token=... The real
@@ -4340,11 +4398,18 @@ func (c *Client) uploadImage(ctx context.Context, image []byte, contentType stri
 // treat the part as a file upload rather than a scalar field, and Meta echoes its basename back
 // as the response key. uploadImage reads the single entry by value rather than by that key.
 func multipartFraming(contentType string) (prefix, suffix []byte, headerValue string, err error) {
+	return multipartFramingNamed(contentType, "creative")
+}
+
+// multipartFramingNamed is multipartFraming with the part's filename chosen by the caller: the
+// video upload (#550) names its part "creative.mp4", so the file's type is evident from its name
+// as well as from its Content-Type.
+func multipartFramingNamed(contentType, filename string) (prefix, suffix []byte, headerValue string, err error) {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 
 	partHeader := textproto.MIMEHeader{}
-	partHeader.Set("Content-Disposition", `form-data; name="source"; filename="creative"`)
+	partHeader.Set("Content-Disposition", `form-data; name="source"; filename="`+filename+`"`)
 	if strings.TrimSpace(contentType) != "" {
 		partHeader.Set("Content-Type", contentType)
 	}
@@ -4569,8 +4634,11 @@ func (c *Client) uploadImageAttempt(ctx context.Context, path string, prefix, im
 // per-campaign uploadCache and the throttle retry safe. It is NOT a claim that a re-dispatch
 // re-runs it: an upload shortfall persists as a terminal created_degraded campaign that the
 // orchestrator reuses as-is, so this call is not reached again.
-func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant AdVariant, adSetID, utmURL string, i int, uploads *uploadCache) (adID, creativeID, imageHash string, err error) {
-	if len(variant.ImageBytes) > 0 {
+//
+// A VIDEO variant (#550 gap 9) arrives with its video already uploaded and ready (video.videoID,
+// prepareVideos): no image upload runs, and the creative carries video_data instead of link_data.
+func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant AdVariant, adSetID, utmURL string, i int, uploads *uploadCache, video preparedVideo) (adID, creativeID, imageHash string, err error) {
+	if video.videoID == "" && len(variant.ImageBytes) > 0 {
 		if imageHash, err = uploads.upload(ctx, c, variant.ImageBytes, variant.ImageMIME); err != nil {
 			// No bytes, size, or checksum in the message — only which variant failed.
 			//
@@ -4588,8 +4656,12 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 		"name":              fmt.Sprintf("%s - Variant %d", in.EventName, i+1),
 		"object_story_spec": objectStorySpec(c.account.PageID, utmURL, variant, imageHash, in.CallToAction),
 	}
+	if video.videoID != "" {
+		creativeBody["object_story_spec"] = videoStorySpec(c.account.PageID, utmURL, variant, video.videoID, video.thumbnail, in.CallToAction)
+	}
 	// An instant-form lead ad's button opens the form (#550, gap 8): Meta's Lead Ads guide puts
-	// lead_gen_form_id in link_data.call_to_action.value in place of the click link.
+	// lead_gen_form_id in link_data.call_to_action.value in place of the click link. A video
+	// variant never reaches here with a form: ValidateVideoVariant refuses the pair.
 	if in.LeadFormID != "" {
 		withLeadForm(creativeBody["object_story_spec"].(map[string]any), in.LeadFormID)
 	}

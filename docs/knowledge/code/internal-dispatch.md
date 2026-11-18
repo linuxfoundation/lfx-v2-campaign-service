@@ -5821,3 +5821,10 @@ variant's `<event> | variant-N` default; `PreflightCreate` takes the event name 
 `PreflightCreate` (synchronous 400) and `Dispatch` (not-created refusal) both run the two.
 `linkedinSnapshotConfig` redacts `Name` and `Description` like `IntroText`; `CallToAction` is an
 enum and kept.
+
+**Meta video variants (#550 gap 9).** `checkMetaVideoVariants` (gate `META_VIDEO_ENABLED`, uuid
+shape, no image alongside) runs in `PreflightCreate` and `Dispatch`. `resolveVariantAssets` resolves
+each variant's image slot and video slot through one `resolveSlot` closure (shared dedupe cache and
+`AssetReserver` reservation); `checkMetaSlotMime` refuses a non-MP4 named as a video and an MP4 named
+as an image. `TestPlatformConfigsNameTheirAssetUnderOneKey` accepts `videoAssetId` as the second
+snapshot key. See [Meta Video Ads](../architecture/meta-video-ads.md).
