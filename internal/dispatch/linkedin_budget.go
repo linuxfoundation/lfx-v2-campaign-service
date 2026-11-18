@@ -179,6 +179,15 @@ func (d *LinkedInDispatcher) WriteBudget(ctx context.Context, projectID string, 
 		// refuses; refuse it here too, before any write, with the same operator-safe sentence.
 		err = linkedin.ValidateTotalCoversCap(budget.Amount, *current.DailyBudget)
 	}
+	if err == nil && lifetime && !hasDaily && current.RunStartMs != nil && current.RunEndMs != nil {
+		// An uncapped lifetime budget on a fixed schedule (#633): the new total must still cover
+		// $10 for every day of the campaign's flight, counted over its whole schedule exactly as
+		// the create path counts it, or LinkedIn leaves the campaign unable to deliver. Whether
+		// LinkedIn instead checks remaining budget over remaining days mid-flight is unverified;
+		// the two readings refuse different edits. A capped one (#584) runs on a continuous
+		// schedule and is covered by ValidateTotalCoversCap.
+		err = linkedin.ValidateFixedScheduleLifetime(budget.Amount, *current.RunStartMs, *current.RunEndMs)
+	}
 	if err != nil {
 		// A refused AMOUNT is a permanent request fault, not an upstream one. LinkedIn's
 		// $10 daily / $100 lifetime minimums have no equivalent in the service layer (which

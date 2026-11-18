@@ -479,6 +479,13 @@ func (d upstreamCapableDispatcher) ListRedditPixels(context.Context, string, mod
 	return &model.RedditPixels{Pixels: []model.RedditPixel{}}, true, nil
 }
 
+func (d upstreamCapableDispatcher) SearchTargetingEntities(context.Context, string, model.Provider, model.TargetingEntityQuery) ([]model.TargetingEntity, bool, error) {
+	if d.err != nil {
+		return nil, true, d.err
+	}
+	return []model.TargetingEntity{}, true, nil
+}
+
 func (d upstreamCapableDispatcher) SearchEmails(context.Context, string, model.Provider, string) ([]model.MarketingEmail, error) {
 	if d.err != nil {
 		return nil, d.err
@@ -818,6 +825,14 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opListRedditPixels,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ReadRedditPixels(ctx, "p1", platform)
+				return err
+			},
+		},
+		{
+			name: "search targeting entities",
+			op:   opSearchTargetingEntities,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadTargetingEntities(ctx, "p1", platform, model.TargetingEntityQuery{Facet: "skills", Query: "go"})
 				return err
 			},
 		},

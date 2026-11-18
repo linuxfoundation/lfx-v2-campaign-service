@@ -90,7 +90,8 @@ spec:
     # SINGLE rule covering every other routed family — connections, briefs, campaigns
     # (under a brief), jobs, the google-ads reads and create-form lookups,
     # meta-ads, reddit-ads, twitter-ads and linkedin-ads audience, the meta-ads targeting-search
-    # read (#550), reddit-ads keywords, and hubspot UTM — because they share the exact same
+    # read (#550), the linkedin-ads targeting-entities typeahead (#585), reddit-ads keywords, and
+    # hubspot UTM — because they share the exact same
     # authorization (D2:
     # campaign_manager on project:{projectId}, reads AND writes). Keeping them in one
     # rule preserves the chart↔route parity invariant (every heimdall-routed path has
@@ -280,6 +281,11 @@ spec:
           # campaign_manager like the Google geo-targets search, NOT marketing-ops-api with the
           # meta-ads/custom-audiences picker, which lists resources on the shared LF account.
           - path: /projects/:projectId/meta-ads/targeting-search
+          # LinkedIn targeting typeahead (#585): LinkedIn's own taxonomy (skills, titles, places),
+          # the same for every token and naming nothing any ad account holds, so campaign_manager
+          # like the Google geo-targets search, NOT marketing-ops-api with the account pickers
+          # linkedin-ads/audiences|conversions, which list resources on the shared LF account.
+          - path: /projects/:projectId/linkedin-ads/targeting-entities
           # HubSpot UTM (portal-wide; projectId gates permission AND selects the
           # connection, hence which portal is visible). ** covers
           # /hubspot/utm and any deeper path; the bare /hubspot is kept explicitly.

@@ -479,6 +479,11 @@ var (
 	// service layer refuses both first; this guards a caller that bypasses it.
 	ErrMetaTargetingSearchInvalid = errors.New("meta targeting search is not valid")
 
+	// ErrTargetingQueryInvalid indicates a targeting taxonomy search (#585) the dispatcher
+	// refused before any request: a facet it does not serve, or an unusable query. Maps to 400.
+	// The service layer refuses both first; this guards a caller that bypasses it.
+	ErrTargetingQueryInvalid = errors.New("targeting search is not valid")
+
 	// ErrAccountMetricsUnsupported indicates the platform has no account-scoped monitor
 	// capability wired (the AccountMetricsReader interface). The platform is never contacted.
 	//

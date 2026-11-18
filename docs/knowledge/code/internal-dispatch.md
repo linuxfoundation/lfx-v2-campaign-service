@@ -5748,6 +5748,21 @@ refused there with `ErrConnectionNotUsable` before any request (so it is not rec
 upstream call); a credential defect is the connection's (`linkedInLookupError`); anything else is
 the platform's.
 
+**LinkedIn targeting typeahead (#585).** `LinkedInDispatcher` implements
+`service.TargetingEntitySearcher` (`SearchTargetingEntities`). An unserved facet or unusable
+query is `domain.ErrTargetingQueryInvalid` before any credential is read. It resolves with
+`resolveLinkedInDiscoveryCredentials` (the create's `creds.resolve`, LF fallback and forced
+redirect included, but no ad account required: the finder takes none) and uses the cached client
+for the connection, so a refresh-capable credential mints one token per connection, not per
+keystroke. Successful answers are cached by facet and lower-cased query in
+`targetingEntityCache` (6 h TTL, 2048 entries, consulted after resolution, failures not cached);
+a hit reports `called` false. The key is the whole query, so the cache serves a repeated
+identical search, not the next keystroke: each new prefix is a new upstream call on the shared
+LF token. That spend is bounded by the 2-character floor (`linkedin.MinTypeaheadQueryLen`, in the
+design and in `NormalizeTypeaheadQuery`), the caller's debounce (which the API asks for), and the
+platform client sending the request once, so a 429 fails fast as a 503 instead of being retried. Dropped entries are logged as counts with the facet, never the
+query.
+
 **LinkedIn conversions (#552).** `linkedinConfig.Conversions` is gated by
 `linkedinConversionsEnabled` (`LINKEDIN_ADS_CONVERSIONS_ENABLED`, off by default) and validated by
 `linkedin.ValidateConversions` in `linkedinConversions`, which `PreflightCreate` (synchronous 400)
