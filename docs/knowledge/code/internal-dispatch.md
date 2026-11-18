@@ -5508,7 +5508,9 @@ Order: `linkedin.ValidateMetricsWindow` (→ `ErrMetricsWindowUnsupported`, 400)
 `resolveLinkedInCredentials(…, d.creds.existingResolver(linkedInScopeAccount(scope)))` (#581) — the
 project's own connection when bound to the account the scope records, else the LF system row as its
 default account or a grant, like the LinkedIn account monitor (no usable connection anywhere →
-`ErrNotFound`, 404; inactive / undecodable / no token / no account → `ErrConnectionNotUsable`, 400);
+`ErrNotFound`, 404; the project's own connection inactive / undecodable / no token / no account →
+`ErrConnectionNotUsable`, 400; the same defects on the LF system row are re-tagged
+`ErrSystemConnectionNotUsable` by `systemScoped` and answer 500, an operator-owned failure);
 on the system credential `linkedInSystemScopeRecorded` refuses any entry that records no account
 (`ErrCampaignProvenanceUnknown`, 409); then `linkedInAudienceScopeForAccount`: ANY
 entry whose `linkedInCreationAccountID` differs from the serving account refuses the whole read

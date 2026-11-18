@@ -14,7 +14,7 @@ through the real `LinkedInDispatcher`, `Orchestrator` and (for an omitted `accou
 - two projects with no connection of their own, both with campaigns on the shared system account
   538170226 (which also holds a campaign this service never recorded), each call the monitor
   without `account_id`; the response names 538170226, and each gets back only its own campaign
-  with its own spend, impressions and totals, read with the system credential, with both the
+  with its own spend, impressions, totals and action items, read with the system credential, with both the
   campaign list and the Ad Analytics read filtered to that account;
 - a campaign in a granted account is read on that account (list and analytics) with the system
   credential;
@@ -36,4 +36,6 @@ index description), the `api-catalog.md` account-monitor row, and the credential
 in `code/internal-dispatch.md` and `code/internal-platform-linkedin.md`. All now describe the #581
 behaviour, including the audience read's 409s on the system credential (an unrecorded creation
 account, or an account the system row neither defaults to nor grants) as distinct from the
-no-connection 404.
+no-connection 404, and the LF system row's own defects as 500 rather than the project-owned 400.
+The monitor docs also note LinkedIn's one difference from Google's optional `account_id`: when no
+live campaign records an account, naming the account recovers a read that omitting it refuses.

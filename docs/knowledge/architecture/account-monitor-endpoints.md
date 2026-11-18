@@ -708,6 +708,10 @@ read is reduced to the campaigns this service recorded for the project, and
   upstream call. Live campaigns under more than one customer, or none recording
   one, give the 409 `campaign_account_mismatch` — the same 409 naming either
   customer gives, so the remedy is re-dispatching or reconciling them onto one.
+  LinkedIn differs when no live campaign records an account: omitting `account_id`
+  is that 409, but naming the account recovers the read, because LinkedIn's scope
+  keeps unrecorded campaigns on the project's own connection and omits them on the
+  LF system credential (below).
   Soft-deleted campaigns (consulted only when there are no live ones) are judged
   one at a time, as `scopeAccountMonitor` judges them: one recording no customer
   is skipped, and with several customers the one recorded most is named (ties to

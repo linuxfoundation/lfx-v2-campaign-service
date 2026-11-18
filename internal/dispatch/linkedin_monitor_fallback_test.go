@@ -161,13 +161,32 @@ func TestLinkedIn_AccountMonitor_TwoProjectsOnTheSharedSystemAccount(t *testing.
 				for _, c := range got.Campaigns {
 					ids = append(ids, c.PlatformCampaignID)
 				}
-				t.Fatalf("campaigns = %v, want only %s's own campaign %s", ids, project, want.id)
-			}
-			if c := got.Campaigns[0]; c.Spend != want.spend || c.Impressions != want.impressions {
+				t.Errorf("campaigns = %v, want only %s's own campaign %s", ids, project, want.id)
+			} else if c := got.Campaigns[0]; c.Spend != want.spend || c.Impressions != want.impressions {
 				t.Errorf("campaign %s spend=%v impressions=%d, want its own %v and %d", c.PlatformCampaignID, c.Spend, c.Impressions, want.spend, want.impressions)
 			}
 			if got.Totals == nil || got.Totals.Spend != want.spend || got.Totals.Impressions != want.impressions || got.Totals.CampaignCount != 1 {
 				t.Errorf("totals = %+v, want only %s's own spend %v and impressions %d", got.Totals, project, want.spend, want.impressions)
+			}
+			// Action items name campaigns too: every campaign-specific one must be this project's,
+			// and its own campaign (underspending against its 50/day budget) must have one.
+			ownItem := false
+			for _, item := range got.ActionItems {
+				if item.CampaignID == nil {
+					continue
+				}
+				if *item.CampaignID != want.id {
+					name := ""
+					if item.CampaignName != nil {
+						name = *item.CampaignName
+					}
+					t.Errorf("action item for campaign %s (%q) leaked into %s's monitor: %s", *item.CampaignID, name, project, item.Issue)
+					continue
+				}
+				ownItem = true
+			}
+			if !ownItem {
+				t.Errorf("no action item for %s's own campaign %s among %d items", project, want.id, len(got.ActionItems))
 			}
 			tokens, urls := requests()
 			if len(tokens) == 0 {

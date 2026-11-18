@@ -136,9 +136,11 @@ Sources: [Reporting](https://learn.microsoft.com/en-us/linkedin/marketing/integr
   empty scope answers `buckets: []` without contacting LinkedIn. A non-canonical stored id or more
   than 10 distinct campaigns (a local bound on request count: 50 requests per read) is 409 (`ErrAudienceScopeInvalid` /
   `ErrAudienceScopeTooLarge`), checked before credentials are decrypted, as is the window.
-- **Errors.** `classifyInsightsErrorFor` with the `linkedInAdsAudienceInsights` descriptor:
-  inactive / incomplete / unselected account / expired token (401, re-tagged by `linkedinExpiry`)
-  are 400; everything unverifiable is 503 with the shared fixed text.
+- **Errors.** `classifyInsightsErrorFor` with the `linkedInAdsAudienceInsights` descriptor. On the
+  project's own connection, inactive / incomplete / unselected account / expired token (401,
+  re-tagged by `linkedinExpiry`) are 400, a remedy the project owns. The same defects on the LF
+  system row are re-tagged `ErrSystemConnectionNotUsable` (`systemScoped`) and answer 500, since
+  only an operator can repair that row. Everything unverifiable is 503 with the shared fixed text.
 - **No gate.** LinkedIn has no metrics feature flag (`LINKEDIN_*_ENABLED` does not exist; its
   metrics read and account monitor are ungated), so this read is not gated either.
 

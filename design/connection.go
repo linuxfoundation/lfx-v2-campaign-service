@@ -1319,7 +1319,7 @@ var AccountMonitorTotals = Type("account-monitor-totals", func() {
 var AccountMonitor = Type("account-monitor", func() {
 	// No example: account ids differ in format per platform (act_<digits> on Meta, t2_… on Reddit),
 	// so each monitor method's body type sets its own (design/account_monitor_examples.go).
-	Attribute("account_id", String, "The account this read covers, echoed back from the request.", func() { Meta("openapi:example", "false") })
+	Attribute("account_id", String, "The account this read covers: the request's account_id, or on Google Ads and LinkedIn, when that is omitted, the account the project's recorded campaigns name (empty when it has none).", func() { Meta("openapi:example", "false") })
 	Attribute("days", Int, "The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X's 90-day cap by an hour.", func() { Example(30) })
 	// No example on campaigns or action_items (nor on the type, below): rows and findings differ
 	// per platform, so each monitor method publishes its own whole-response example — see

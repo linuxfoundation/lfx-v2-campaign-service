@@ -7924,7 +7924,9 @@ type HubspotCampaignResponseBody struct {
 // GoogleAdsAccountMonitorResponseBody is used to define fields on response
 // body types.
 type GoogleAdsAccountMonitorResponseBody struct {
-	// The account this read covers, echoed back from the request.
+	// The account this read covers: the request's account_id, or on Google Ads and
+	// LinkedIn, when that is omitted, the account the project's recorded campaigns
+	// name (empty when it has none).
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed
@@ -8109,7 +8111,9 @@ type AccountMonitorTotalsResponseBody struct {
 // LinkedinAdsAccountMonitorResponseBody is used to define fields on response
 // body types.
 type LinkedinAdsAccountMonitorResponseBody struct {
-	// The account this read covers, echoed back from the request.
+	// The account this read covers: the request's account_id, or on Google Ads and
+	// LinkedIn, when that is omitted, the account the project's recorded campaigns
+	// name (empty when it has none).
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed
@@ -8176,7 +8180,9 @@ type LinkedinAdsAccountMonitorResponseBody struct {
 // MetaAdsAccountMonitorResponseBody is used to define fields on response body
 // types.
 type MetaAdsAccountMonitorResponseBody struct {
-	// The account this read covers, echoed back from the request.
+	// The account this read covers: the request's account_id, or on Google Ads and
+	// LinkedIn, when that is omitted, the account the project's recorded campaigns
+	// name (empty when it has none).
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed
@@ -8243,7 +8249,9 @@ type MetaAdsAccountMonitorResponseBody struct {
 // RedditAdsAccountMonitorResponseBody is used to define fields on response
 // body types.
 type RedditAdsAccountMonitorResponseBody struct {
-	// The account this read covers, echoed back from the request.
+	// The account this read covers: the request's account_id, or on Google Ads and
+	// LinkedIn, when that is omitted, the account the project's recorded campaigns
+	// name (empty when it has none).
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed
@@ -8310,7 +8318,9 @@ type RedditAdsAccountMonitorResponseBody struct {
 // MicrosoftAdsAccountMonitorResponseBody is used to define fields on response
 // body types.
 type MicrosoftAdsAccountMonitorResponseBody struct {
-	// The account this read covers, echoed back from the request.
+	// The account this read covers: the request's account_id, or on Google Ads and
+	// LinkedIn, when that is omitted, the account the project's recorded campaigns
+	// name (empty when it has none).
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed
@@ -8377,7 +8387,9 @@ type MicrosoftAdsAccountMonitorResponseBody struct {
 // TwitterAdsAccountMonitorResponseBody is used to define fields on response
 // body types.
 type TwitterAdsAccountMonitorResponseBody struct {
-	// The account this read covers, echoed back from the request.
+	// The account this read covers: the request's account_id, or on Google Ads and
+	// LinkedIn, when that is omitted, the account the project's recorded campaigns
+	// name (empty when it has none).
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed
