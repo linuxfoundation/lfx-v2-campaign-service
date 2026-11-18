@@ -275,7 +275,7 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		"creative (whitespace collapsed, trimmed, cut to LinkedIn's 255 characters, dashes kept); omitted or "+
 		"empty keeps `<event> | variant-N`. `callToAction` is the dark post's button, exactly one of APPLY, "+
 		"DOWNLOAD, VIEW_QUOTE, LEARN_MORE, SIGN_UP, SUBSCRIBE, REGISTER, JOIN, ATTEND, REQUEST_DEMO, "+
-		"SEE_MORE, BUY_NOW, SHOP_NOW (LinkedIn-Version 202602), opening the variant's registration URL; "+
+		"SEE_MORE, BUY_NOW, SHOP_NOW (LinkedIn-Version 202611), opening the variant's registration URL; "+
 		"omitted sends none. `description` is the article description, normalized like introText and cut "+
 		"to 300 characters; omitted sends an empty one. Refused with a 400 before any job exists: a value "+
 		"that is not a JSON string (null included), an unknown callToAction, two variants whose names match "+

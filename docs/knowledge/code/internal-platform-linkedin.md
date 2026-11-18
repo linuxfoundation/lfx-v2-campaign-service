@@ -26,6 +26,16 @@ Authentication is a Bearer access token; every request also sends the
 `LinkedIn-Version` and `X-RestLi-Protocol-Version` headers required by the
 Marketing API.
 
+**API version.** `LinkedIn-Version` is `202611` (November 2026), named once as
+`apiVersion` in `config.go` with no env override (no platform client here wires
+its version from the environment). LinkedIn supports 202611 until November 16,
+2027; the previous pin, 202602, sunsets February 15, 2027 (Marketing API
+"Migrations", API Migration Status). The 202602 → 202611 Recent Changes audit
+found no breaking change on any endpoint the package calls (#580); the header
+test pins the literal so a future bump is a deliberate, audited edit. The live
+probe of 202611 runs in dev after merge (dev follows main), and the next prod
+release is held until it passes; rolling back is a one-line constant revert.
+
 **Token refresh is OPTIONAL.** LinkedIn issues programmatic refresh tokens only
 to approved Marketing Developer Platform partners, so `Credentials` may carry an
 access token alone; `CanRefresh()` gates the whole path on `RefreshToken`,
@@ -1064,6 +1074,21 @@ Pinned by `TestEnsureCampaignGroupCoversEnd` (and its `_WriteFailureIsAnError`,
 `_ReWidensAfterAConcurrentShortening` and `_ConcurrentCallersKeepTheLaterEnd` siblings) and
 `TestCreateCampaign_ReusedGroupScheduleCoversCampaign`.
 
+## Profile targeting shape (`targeting.go`, #585)
+
+`buildTargetingCriteria(profile, geoURNs, jobFns)` sends `include.and` as locations, then
+`(skills OR groups)` from the profile, then `jobFunctions` in a clause of its own: Campaign
+Manager's "narrow audience" (AND) structure, which LF's own campaigns use. The TypeScript port put
+the job functions in the skills/groups `or`, which made every member in those functions eligible.
+The skills/groups clause is omitted when both are empty rather than sent empty; the
+`validatePrerequisites` non-empty check still holds because a job-function clause is always sent.
+`jobFns` is `CampaignInput.JobFunctions` (`linkedInConfig.jobFunctions`), checked by
+`ValidateJobFunctions` (the targeting facet's `urn:li:function:<id>` rule, via `cleanFacet`); nil
+means the default three in `config.go`. `CreateCampaign` refuses `JobFunctions` with `Targeting`
+as a pre-flight refusal, and the dispatcher refuses it, and a wrong JSON type
+(`checkJobFunctionsShape`), as a synchronous 400. A campaign reused by name with `JobFunctions` set
+stops before its creatives, as with `Targeting` (see Caller targeting).
+
 ## Picker lookups (`lookups.go`, #552)
 
 `ListAdSegments` and `ListConversionRules` read the ad segments and conversion rules on the
@@ -1133,7 +1158,9 @@ and name, no creative) with a `targeting NOT applied to reused campaign` error f
 the conservative choice Microsoft makes for its create-time-only targeting
 (`internal/platform/microsoft/campaign.go`). A profile create (no `Targeting`) still reuses the
 campaign and attaches creatives: its criteria derive from the service's own profile, and that
-retry path predates #552. Pinned by
+retry path predates #552. Caller `JobFunctions` (#585) are per-campaign input too and reach only
+a created campaign's criteria, so a reuse with them set stops the same way, its step and error
+naming `linkedInConfig.jobFunctions`; only the default job functions keep reusing. Pinned by
 `TestCreateCampaign_ReusedCampaignWithTargetingStopsBeforeCreatives`.
 
 That partial sets `CampaignResult.TargetingNotApplied`. A campaign id with no creative would
@@ -1180,7 +1207,7 @@ the shape sent before. `Description` is `content.article.description`, normalize
 (the Article Ads schema allows 4,085); empty sends `""` as before.
 
 `ValidateVariantFields` is the one authority: every `CallToAction` must be exactly one of
-`CallToActionLabels` (Posts API `ContentCallToActionLabel` at 202602, `BUY_NOW`/`SHOP_NOW`
+`CallToActionLabels` (Posts API `ContentCallToActionLabel` at 202611, unchanged from 202602; `BUY_NOW`/`SHOP_NOW`
 included since 202504), and no two names may match once normalized. `CreateCampaign` runs it
 before the campaign group — LinkedIn would refuse a bad label only on the dark post, after the
 group and campaign exist — and the dispatcher's `PreflightCreate` runs it for the synchronous 400.

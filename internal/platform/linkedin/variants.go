@@ -15,8 +15,9 @@ import (
 //
 // The call to action is the dark post's contentCallToActionLabel, and the description its
 // content.article.description (Posts API › Post Schema and Article Ads API › Schema,
-// li-lms-2026-02, the version apiVersion pins:
-// https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/post-api-schema?view=li-lms-2026-02
+// li-lms-2026-11, the version apiVersion pins; the label list is unchanged from li-lms-2026-02:
+// https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/post-api-schema?view=li-lms-2026-11
+// and, for the description, the Article Ads schema as read at li-lms-2026-02:
 // https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads/advertising-targeting/version/article-ads-integrations?view=li-lms-2026-02).
 // The creative name is the creative's own name field, which createCreative already caps at 255.
 
@@ -30,7 +31,8 @@ const maxCreativeNameLen = maxNameLen
 const maxDescriptionLen = 300
 
 // CallToActionLabels are the ContentCallToActionLabel values the Posts API accepts at
-// li-lms-2026-02. BUY_NOW and SHOP_NOW need 202504 or later, which apiVersion is.
+// li-lms-2026-11 (unchanged from li-lms-2026-02). BUY_NOW and SHOP_NOW need 202504 or later,
+// which apiVersion is.
 var CallToActionLabels = []string{
 	"APPLY", "DOWNLOAD", "VIEW_QUOTE", "LEARN_MORE", "SIGN_UP", "SUBSCRIBE", "REGISTER",
 	"JOIN", "ATTEND", "REQUEST_DEMO", "SEE_MORE", "BUY_NOW", "SHOP_NOW",
