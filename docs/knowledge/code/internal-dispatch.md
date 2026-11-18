@@ -5517,8 +5517,9 @@ Order: `linkedin.ValidateMetricsWindow` (→ `ErrMetricsWindowUnsupported`, 400)
 `ErrAudienceScopeTooLarge`; both 409) BEFORE any credential is decrypted; then
 `resolveLinkedInCredentials(…, d.creds.existingResolver(linkedInScopeAccount(scope)))` (#581) — the
 project's own connection when bound to the account the scope records, else the LF system row as its
-default account or a grant, like the LinkedIn account monitor (no usable connection anywhere →
-`ErrNotFound`, 404; the project's own connection inactive / undecodable / no token / no account →
+default account or a grant, like the LinkedIn account monitor (no connection of its own and no LF
+system row, or a disconnected project whose scope records no account or one the system row does
+not serve → `ErrNotFound`, 404; the project's own connection inactive / undecodable / no token / no account →
 `ErrConnectionNotUsable`, 400; the same defects on the LF system row are re-tagged
 `ErrSystemConnectionNotUsable` by `systemScoped` and answer 500, an operator-owned failure);
 on the system credential `linkedInSystemScopeRecorded` refuses any entry that records no account

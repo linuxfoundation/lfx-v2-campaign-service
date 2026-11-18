@@ -43,3 +43,9 @@ no-connection 404 (which a disconnected project also gets when its campaigns rec
 one the system row cannot serve), and the LF system row's own defects as 500 rather than the project-owned 400.
 The monitor docs also note LinkedIn's one difference from Google's optional `account_id`: when no
 live campaign records an account, naming the account recovers a read that omitting it refuses.
+
+Later review rounds also pinned three distinctions in the docs. A system-row refusal (404,
+`noOwnConnection`) is not the own-connection account mismatch (400). On LinkedIn the connection is
+resolved before the recorded-account check, so the 400 or 404 comes before the 409. An empty
+defaulted `account_id` means no account could be named, which also covers a project whose only
+campaigns are deleted ones that record no account.

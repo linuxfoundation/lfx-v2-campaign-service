@@ -852,17 +852,18 @@ type Service interface {
 	// account_id is the account to read; omitted, it is the account this project's
 	// campaigns were created under, read from this service's own records: the
 	// response's account_id names it, and an empty account_id with no campaigns
-	// means the project has none recorded on the platform (answered without any
-	// upstream call). Live campaigns created under more than one account, or none
-	// recording one, fail with 409 whether or not account_id is given, until they
-	// are re-dispatched or reconciled onto one account. account_id is read with
-	// the project's own connection when that is configured for it, or when the
-	// shared LF system credential is not; otherwise with the LF system credential,
-	// which is the account campaigns are created in when a project has no
-	// connection of its own (or has disconnected it). The LF system credential
-	// reads only the account it is configured for: a project with no usable
-	// connection of its own, naming any other account, gets a 404. A pure read:
-	// nothing is persisted.
+	// means no account could be named (answered without any upstream call): the
+	// project has no campaigns recorded on the platform, or only deleted ones that
+	// record no account, which may still be spending. Live campaigns created under
+	// more than one account, or none recording one, fail with 409 whether or not
+	// account_id is given, until they are re-dispatched or reconciled onto one
+	// account. account_id is read with the project's own connection when that is
+	// configured for it, or when the shared LF system credential is not; otherwise
+	// with the LF system credential, which is the account campaigns are created in
+	// when a project has no connection of its own (or has disconnected it). The LF
+	// system credential reads only the account it is configured for: a project
+	// with no usable connection of its own, naming any other account, gets a 404.
+	// A pure read: nothing is persisted.
 	MonitorGoogleAdsAccount(context.Context, *MonitorGoogleAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read this project's own campaigns on a LinkedIn Ads account, live from the
 	// platform, with pacing and action items derived by this service's ported rule
@@ -884,15 +885,18 @@ type Service interface {
 	// account_id is the account to read; omitted, it is the account this project's
 	// campaigns were created under, read from this service's own records: the
 	// response's account_id names it, and an empty account_id with no campaigns
-	// means the project has none recorded on the platform (answered without any
-	// upstream call). Live campaigns created under more than one account fail with
-	// 409 whether or not account_id is given, and so does omitting account_id when
-	// no live campaign records one (name the account instead). account_id is read
-	// with the project's own connection when that is configured for it (a
-	// project's own connection reads only its own account), otherwise with the LF
-	// system credential when account_id is the system row's account or one of its
-	// grants. Any other account, for a project with no usable connection of its
-	// own, is a 404. A pure read: nothing is persisted.
+	// means no account could be named (answered without any upstream call): the
+	// project has no campaigns recorded on the platform, or only deleted ones that
+	// record no account, which may still be spending and, on the project's own
+	// connection, are read by naming the account. Live campaigns created under
+	// more than one account fail with 409 whether or not account_id is given, and
+	// so does omitting account_id when no live campaign records one (name the
+	// account instead). account_id is read with the project's own connection when
+	// that is configured for it (a project's own connection reads only its own
+	// account), otherwise with the LF system credential when account_id is the
+	// system row's account or one of its grants. Any other account, for a project
+	// with no usable connection of its own, is a 404. A pure read: nothing is
+	// persisted.
 	MonitorLinkedinAdsAccount(context.Context, *MonitorLinkedinAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read this project's own campaigns on a Meta Ads account, live from the
 	// platform, with pacing and action items derived by this service's ported rule
@@ -1046,7 +1050,10 @@ type AccessibleAccount struct {
 type AccountMonitor struct {
 	// The account this read covers: the request's account_id, or on Google Ads and
 	// LinkedIn, when that is omitted, the account the project's recorded campaigns
-	// name (empty when it has none).
+	// name. Empty when no account can be named from them: the project has none on
+	// the platform, or only deleted ones that record no account (which may still
+	// be spending; on a project's own LinkedIn connection, naming the account
+	// reads them).
 	AccountID string
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed

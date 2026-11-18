@@ -81,6 +81,12 @@ credential reaches several foundations' accounts through its grants (#581),
   index partial to `WHERE status <> 'deleted'`), so
   a request naming any other account is a request mismatch and answers
   `domain.ErrAccountNotManagedByConnection` (400) before any upstream call.
+  That 400 is for a project's own connection. On Google Ads, LinkedIn, Meta and
+  Reddit a project with no usable connection of its own that names an account
+  the LF system row neither is configured for nor (on LinkedIn) grants gets 404
+  (`noOwnConnection`) instead, also before any upstream call
+  (`TestLinkedIn_AccountMonitor_SystemFallbackRefusesOtherAccounts` and its
+  Google, Meta and Reddit siblings).
   Reddit checked this first (round-18 review); LinkedIn and Meta followed,
   and Microsoft and X were built with it, since the property is the shared
   schema's and not a Reddit quirk. Google
@@ -529,13 +535,15 @@ Google/LinkedIn/Meta by adding a parallel "owned discovery" resolver per
 platform (`resolveOwnedGoogleAdsDiscoveryClient`, since replaced by
 `resolveGoogleAdsMonitorClient` in #591, `resolveLinkedInOwnedDiscoveryCredentials`,
 `resolveOwnedMetaDiscovery`)
-— and Meta's monitor since by `resolveMetaMonitorClient` in #615, LinkedIn's by
-`resolveLinkedInMonitorCredentials` in #581 —
 that refuses the system fallback the way `resolveOwned`
-(`internal/dispatch/creds.go`) already does for the adoption flow. A project
-with no connection of its own now gets `domain.ErrNotFound` → 404 via the
-existing `classifyDiscoveryError` arm, before any account id is even
-considered.
+(`internal/dispatch/creds.go`) already does for the adoption flow. At the time,
+a project with no connection of its own got `domain.ErrNotFound` → 404 via the
+existing `classifyDiscoveryError` arm, before any account id was even
+considered. That refusal is history for the monitors that became project-scoped:
+Google's (#591), LinkedIn's (`resolveLinkedInMonitorCredentials`, #581) and
+Meta's (`resolveMetaMonitorClient`, #615) now ALLOW the system fallback for the
+monitored account, and keep the 404 only for an account the system row does not
+serve (sections below).
 
 Round 17 review found the round-16 fix incomplete: Reddit's
 `resolveMonitorClient` still resolved via `d.creds.resolve` (the fallback-
@@ -589,9 +597,14 @@ caller (ROOT included), at one choke point mirroring
    Without it a disabled X monitor answered 200 empty or 409 depending on what
    the project had recorded. Then it reads the project's campaign scope from
    SQL (`projectCampaignScope` → `ListProjectPlatformCampaignIDs`, filtered on
-   `project_id`). The requested-account guards on LinkedIn, Meta, Reddit and X need the
+   `project_id`). The requested-account guards on Meta, Reddit and X need the
    stored connection, so they still run after the scope: a wrong `account_id`
-   there gets 200 empty or 409 before it can reach their 400.
+   there gets 200 empty or 409 before it can reach their 400. LinkedIn orders
+   this differently: with a non-empty scope, `scopeAccountMonitor` resolves the
+   read's connection (`MonitorScoperForConnection`) BEFORE `MonitorScopeForAccount`,
+   so an account outside the project's own connection is its 400, and an account
+   the LF system row does not serve is 404, before any recorded-account 409. An
+   empty scope is still 200 empty on LinkedIn too.
 2. An empty scope answers 200 with an empty monitor before any upstream call
    and before the connection is resolved — so a project with no campaigns and
    no connection gets 200, not 404, as the insight reads already do. On X it

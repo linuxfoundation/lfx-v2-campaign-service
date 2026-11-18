@@ -8017,7 +8017,10 @@ type HubspotCampaignResponseBody struct {
 type GoogleAdsAccountMonitorResponseBody struct {
 	// The account this read covers: the request's account_id, or on Google Ads and
 	// LinkedIn, when that is omitted, the account the project's recorded campaigns
-	// name (empty when it has none).
+	// name. Empty when no account can be named from them: the project has none on
+	// the platform, or only deleted ones that record no account (which may still
+	// be spending; on a project's own LinkedIn connection, naming the account
+	// reads them).
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed
@@ -8204,7 +8207,10 @@ type AccountMonitorTotalsResponseBody struct {
 type LinkedinAdsAccountMonitorResponseBody struct {
 	// The account this read covers: the request's account_id, or on Google Ads and
 	// LinkedIn, when that is omitted, the account the project's recorded campaigns
-	// name (empty when it has none).
+	// name. Empty when no account can be named from them: the project has none on
+	// the platform, or only deleted ones that record no account (which may still
+	// be spending; on a project's own LinkedIn connection, naming the account
+	// reads them).
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed
@@ -8273,7 +8279,10 @@ type LinkedinAdsAccountMonitorResponseBody struct {
 type MetaAdsAccountMonitorResponseBody struct {
 	// The account this read covers: the request's account_id, or on Google Ads and
 	// LinkedIn, when that is omitted, the account the project's recorded campaigns
-	// name (empty when it has none).
+	// name. Empty when no account can be named from them: the project has none on
+	// the platform, or only deleted ones that record no account (which may still
+	// be spending; on a project's own LinkedIn connection, naming the account
+	// reads them).
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed
@@ -8342,7 +8351,10 @@ type MetaAdsAccountMonitorResponseBody struct {
 type RedditAdsAccountMonitorResponseBody struct {
 	// The account this read covers: the request's account_id, or on Google Ads and
 	// LinkedIn, when that is omitted, the account the project's recorded campaigns
-	// name (empty when it has none).
+	// name. Empty when no account can be named from them: the project has none on
+	// the platform, or only deleted ones that record no account (which may still
+	// be spending; on a project's own LinkedIn connection, naming the account
+	// reads them).
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed
@@ -8411,7 +8423,10 @@ type RedditAdsAccountMonitorResponseBody struct {
 type MicrosoftAdsAccountMonitorResponseBody struct {
 	// The account this read covers: the request's account_id, or on Google Ads and
 	// LinkedIn, when that is omitted, the account the project's recorded campaigns
-	// name (empty when it has none).
+	// name. Empty when no account can be named from them: the project has none on
+	// the platform, or only deleted ones that record no account (which may still
+	// be spending; on a project's own LinkedIn connection, naming the account
+	// reads them).
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed
@@ -8480,7 +8495,10 @@ type MicrosoftAdsAccountMonitorResponseBody struct {
 type TwitterAdsAccountMonitorResponseBody struct {
 	// The account this read covers: the request's account_id, or on Google Ads and
 	// LinkedIn, when that is omitted, the account the project's recorded campaigns
-	// name (empty when it has none).
+	// name. Empty when no account can be named from them: the project has none on
+	// the platform, or only deleted ones that record no account (which may still
+	// be spending; on a project's own LinkedIn connection, naming the account
+	// reads them).
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
 	// The REQUESTED trailing-days window (today inclusive), echoed back from the
 	// request. The live-read platforms cover exactly these days. Report-backed

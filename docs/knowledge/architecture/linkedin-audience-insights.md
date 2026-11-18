@@ -119,10 +119,11 @@ Sources: [Reporting](https://learn.microsoft.com/en-us/linkedin/marketing/integr
   connection serves it when bound to that account, and otherwise the LF system row, as its default
   account or a grant-scoped copy. This is the account monitor's rule; it replaced the
   own-connection-only resolution (`resolveOwned`) once the LF system row gained grants and the read
-  was already campaign-scoped. 404 when neither the project nor the system row has a usable
-  LinkedIn connection, and for a project that disconnected its own connection when its campaigns
-  record no account or one the system row cannot serve (`resolveExisting` rescues a disconnected
-  project through the system row only for an account that row serves).
+  was already campaign-scoped. 404 when the project has no LinkedIn connection of its own and
+  there is no LF system row, and for a project that disconnected its own connection when its
+  campaigns record no account or one the system row cannot serve (`resolveExisting` rescues a
+  disconnected project through the system row only for an account that row serves). An unusable
+  row is never a 404: the project's own is 400 and the system row's is 500 (Errors, below).
 - **Recorded account only.** Every scope entry's recorded creation account
   (`linkedInCreationAccountID`: the stamped `accountId`, else the `linkedInUrl` segment) must equal
   the serving connection's account; ANY mismatch, mixed scope included, is 409
