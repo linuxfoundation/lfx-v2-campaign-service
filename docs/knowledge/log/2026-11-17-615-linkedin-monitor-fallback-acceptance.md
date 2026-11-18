@@ -31,4 +31,9 @@ each fail the matching tests. No behaviour change.
 Stale text corrected with it: `account-monitor-endpoints.md` still listed LinkedIn among the
 own-connection-only, account-wide monitors with no scope 409; the `AccountMonitor.campaigns`
 description and the LinkedIn audience method's description (and its `api-catalog.md` row) still
-said account-wide and own-connection-only. All now describe the #581 behaviour.
+said account-wide and own-connection-only. So did the LinkedIn Audience Insights concept (and its
+index description), the `api-catalog.md` account-monitor row, and the credential-resolver tables
+in `code/internal-dispatch.md` and `code/internal-platform-linkedin.md`. All now describe the #581
+behaviour, including the audience read's 409s on the system credential (an unrecorded creation
+account, or an account the system row neither defaults to nor grants) as distinct from the
+no-connection 404.

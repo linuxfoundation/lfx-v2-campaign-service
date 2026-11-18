@@ -900,8 +900,7 @@ it. No extra request. `ListAccountCampaigns` wraps it and drops the currency. Se
 `LinkedInDispatcher.VerifyAccountOrg(ctx, projectID, platform)` implements another optional
 capability, `OrgReferenceVerifier` (`internal/service/orchestrator.go`) — LinkedIn is the ONLY
 adapter that does, since it is the only platform with an upstream signal to check (see "Org/account
-reference verification" above). It is the connection-test endpoint's per-project READ, the same
-trust class as the account-monitor read above, so it resolves through
+reference verification" above). It is the connection-test endpoint's per-project READ, so it resolves through
 `resolveLinkedInOwnedDiscoveryCredentials` (`d.creds.resolveOwned`, no LF system fallback) rather
 than the way `Dispatch` resolves (`d.creds.resolve`) — the forced-system fallback is a create-time
 convenience, and honoring it here would let a connection-test on a project with no LinkedIn

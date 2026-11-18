@@ -93,7 +93,7 @@ func linkedInAdsAudienceMethod() {
 			"size and country — for this project's own campaigns, live from LinkedIn's Ad Analytics API. " +
 			"Scoped to the campaigns this service holds for the project, NOT to the connected ad account, " +
 			"and read on the one account those campaigns record: with the project's own connection when it " +
-			"is bound to that account, otherwise with the LF system credential when it is that row's account or a grant. LinkedIn serves MEMBER_* pivots only through its " +
+			"is bound to that account, otherwise with the LF system credential (its account or a grant), on which every campaign must record that account (409 otherwise). LinkedIn serves MEMBER_* pivots only through its " +
 			"single-pivot Analytics finder, so the read issues one Ad Analytics request per (pivot, " +
 			"campaign), each filtered to that one campaign and that account, and sums the answers; " +
 			"at most 10 campaigns (50 requests), because the account is shared across foundations and " +

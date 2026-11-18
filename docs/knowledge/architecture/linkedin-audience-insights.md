@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "LinkedIn Audience Insights"
-description: "The LinkedIn professional-demographic read behind the Optimize tab: job function, seniority, industry, company size and country buckets keyed by LinkedIn's verbatim URNs, read live from Ad Analytics for the project's own campaigns on its own connection, every counter flagged approximate because LinkedIn approximates and thresholds demographics."
+description: "The LinkedIn professional-demographic read behind the Optimize tab: job function, seniority, industry, company size and country buckets keyed by LinkedIn's verbatim URNs, read live from Ad Analytics for the project's own campaigns on the account they record (its own connection, else the LF system row's default or granted account), every counter flagged approximate because LinkedIn approximates and thresholds demographics."
 resource: "internal/service/connection_linkedin_audience.go"
 ---
 
@@ -114,16 +114,24 @@ Sources: [Reporting](https://learn.microsoft.com/en-us/linkedin/marketing/integr
 
 ## Trust boundary
 
-- **Own connection only.** `resolveLinkedInCredentials(..., d.creds.resolveOwned)` — no LF system
-  fallback, like the LinkedIn account monitor and the Microsoft audience read. A project with no
-  LinkedIn connection of its own is 404. (Meta's audience read resolves through
-  `resolveExisting`, which does allow the fallback; this read deliberately follows the stricter
-  monitor/Microsoft precedent because LinkedIn genuinely runs several ad accounts across
-  foundations.)
-- **Bound account only.** Every scope entry's recorded creation account
+- **Credential (#581).** `resolveLinkedInCredentials(..., d.creds.existingResolver(linkedInScopeAccount(scope)))`:
+  `resolveExisting` keyed on the one account the scope's campaigns record, so the project's own
+  connection serves it when bound to that account, and otherwise the LF system row, as its default
+  account or a grant-scoped copy. This is the account monitor's rule; it replaced the
+  own-connection-only resolution (`resolveOwned`) once the LF system row gained grants and the read
+  was already campaign-scoped. 404 only when neither the project nor the system row has a usable
+  LinkedIn connection.
+- **Recorded account only.** Every scope entry's recorded creation account
   (`linkedInCreationAccountID`: the stamped `accountId`, else the `linkedInUrl` segment) must equal
-  the connection's account; ANY mismatch, mixed scope included, is 409
-  (`ErrCampaignAccountMismatch`) before LinkedIn is contacted. Unknown provenance proceeds.
+  the serving connection's account; ANY mismatch, mixed scope included, is 409
+  (`ErrCampaignAccountMismatch`) before LinkedIn is contacted. That includes a project with no
+  connection of its own whose campaigns record an account the system row neither defaults to nor
+  grants: the system row's default account serves the resolution and the scope check refuses it.
+- **Provenance.** On the project's own connection an unrecorded creation account is unknown and
+  proceeds. On the LF system credential every entry must record the account
+  (`linkedInSystemScopeRecorded`); an unrecorded one is 409 (`ErrCampaignProvenanceUnknown` with
+  `ErrCampaignAccountMismatch`), since the shared token could otherwise read another foundation's
+  campaign.
 - **Project campaign scope.** The scope is this service's own rows (`projectCampaignScope`); an
   empty scope answers `buckets: []` without contacting LinkedIn. A non-canonical stored id or more
   than 10 distinct campaigns (a local bound on request count: 50 requests per read) is 409 (`ErrAudienceScopeInvalid` /
