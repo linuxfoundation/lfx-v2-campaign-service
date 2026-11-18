@@ -99,6 +99,47 @@ func TestListAccountCampaigns_UsesInjectedClockNotWallClock(t *testing.T) {
 	}
 }
 
+// TestListAccountCampaigns_ProjectsPivotValues pins the #580 fix: at LinkedIn-Version 202611
+// the Ad Analytics finder returns only projected fields, so the pivot=CAMPAIGN read must name
+// pivotValues in `fields` or every element arrives without its campaign URN and the read fails.
+// The legacy singular pivotValue must not be projected (LinkedIn answers 400).
+func TestListAccountCampaigns_ProjectsPivotValues(t *testing.T) {
+	srv, rec := adAccountsServer(t,
+		`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE"}],"metadata":{}}`,
+		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInLocalCurrency":"12.50"}]}`,
+	)
+	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
+
+	if _, err := c.ListAccountCampaigns(context.Background(), "512345678", 7); err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	var fields []string
+	for _, u := range rec.all() {
+		if !strings.Contains(u, "/adAnalytics") {
+			continue
+		}
+		parsed, err := url.ParseRequestURI(u)
+		if err != nil {
+			t.Fatalf("parse adAnalytics request URI %q: %v", u, err)
+		}
+		fields = strings.Split(parsed.Query().Get("fields"), ",")
+	}
+	if fields == nil {
+		t.Fatalf("no adAnalytics request recorded: %v", rec.all())
+	}
+	var hasPlural, hasSingular bool
+	for _, f := range fields {
+		hasPlural = hasPlural || f == "pivotValues"
+		hasSingular = hasSingular || f == "pivotValue"
+	}
+	if !hasPlural {
+		t.Errorf("adAnalytics fields = %v, want pivotValues projected", fields)
+	}
+	if hasSingular {
+		t.Errorf("adAnalytics fields = %v, must not project the singular pivotValue", fields)
+	}
+}
+
 // TestListAccountCampaigns_CampaignAbsentFromAnalytics_IsZeroNotFailed pins a round-19 review
 // fix: fetchAccountCampaignAnalytics is one account-wide pivot call that either returns the
 // whole metrics map or a non-nil error — LinkedIn omits a campaign with no activity in the
