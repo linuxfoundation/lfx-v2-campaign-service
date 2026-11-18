@@ -56,9 +56,13 @@ const MimeTypeVideoMP4 = "video/mp4"
 // Live-verification blocker for META_VIDEO_ENABLED: measure Meta's real encoding time for a
 // 20-30 MiB MP4 against this wait before enabling; if it is routinely slower, decouple the upload
 // from create rather than lengthening the wait.
+//
+// videoDeadlineReserve is the part of the caller's remaining deadline the readiness wait leaves for
+// what follows it: the thumbnail reads and every variant's creative and ad.
 const (
 	defaultVideoPollInterval = 3 * time.Second
 	defaultVideoReadyWait    = 60 * time.Second
+	videoDeadlineReserve     = 20 * time.Second
 )
 
 // Meta's video_status values (Video `status` field).
@@ -196,10 +200,19 @@ func (c *Client) prepareVideos(ctx context.Context, variants []AdVariant, steps 
 		*steps = append(*steps, fmt.Sprintf("Video uploaded: %s (%s)", id, variantList(p.variants)))
 	}
 
-	// 2. One shared, bounded readiness wait.
-	polls := int(c.videoReadyWait / c.videoPollInterval)
-	if polls < 1 {
-		polls = 1
+	// 2. One shared, bounded readiness wait, clamped to the caller's deadline less
+	// videoDeadlineReserve: when the provider call is short on time the not-ready videos fail
+	// their own variants, and the image variants and the ready videos still get their ads, instead
+	// of the deadline aborting the whole create mid-wait.
+	wait := c.videoReadyWait
+	if dl, ok := ctx.Deadline(); ok {
+		if left := time.Until(dl) - videoDeadlineReserve; left < wait {
+			wait = max(left, 0)
+		}
+	}
+	polls := 0
+	if wait > 0 {
+		polls = max(1, int(wait/c.videoPollInterval))
 	}
 	for round := 0; ; round++ {
 		waiting := 0
@@ -240,7 +253,7 @@ func (c *Client) prepareVideos(ctx context.Context, variants []AdVariant, steps 
 				if p.readErr != nil {
 					detail = "last status read failed: " + truncateErr(p.readErr, 200)
 				}
-				p.err = &videoStageError{msg: fmt.Sprintf("video %s was not ready within %s (%s); it is kept in the ad account library and can be attached in Meta Ads Manager once ready", p.videoID, c.videoReadyWait, detail)}
+				p.err = &videoStageError{msg: fmt.Sprintf("video %s was not ready within %s (%s); it is kept in the ad account library and can be attached in Meta Ads Manager once ready", p.videoID, wait.Truncate(time.Millisecond), detail)}
 			}
 			break
 		}

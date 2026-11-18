@@ -37,7 +37,10 @@ func TestMeta_PreflightCreate_Format(t *testing.T) {
 				{name: "single", config: `{"metaConfig":{"format":"Single"}}`},
 				{name: "carousel", config: `{"metaConfig":{"format":"carousel",` + carouselCards + `}}`,
 					want: "metaConfig.format is disabled on this deployment (META_CAROUSEL_ENABLED is not \"true\")"},
-				{name: "unknown", config: `{"metaConfig":{"format":"slideshow"}}`, want: `metaConfig.format: "slideshow" is not one of single, carousel`},
+				// While the flag is off no message may advertise carousel (PR review: docs must not
+				// advertise what the code rejects).
+				{name: "unknown", config: `{"metaConfig":{"format":"slideshow"}}`,
+					want: "metaConfig.format is disabled on this deployment (META_CAROUSEL_ENABLED is not \"true\")"},
 				{name: "numeric", config: `{"metaConfig":{"format":2}}`, want: `"format" must be a string`},
 			})
 		})
@@ -47,6 +50,7 @@ func TestMeta_PreflightCreate_Format(t *testing.T) {
 		t.Setenv(constants.EnvMetaLeadFormsEnabled, "true")
 		runBiddingPreflight(t, &MetaDispatcher{}, model.ProviderMetaAds, []biddingPreflightCase{
 			{name: "carousel", config: `{"metaConfig":{"format":"carousel",` + carouselCards + `}}`},
+			{name: "unknown", config: `{"metaConfig":{"format":"slideshow"}}`, want: `metaConfig.format: "slideshow" is not one of single, carousel`},
 			{name: "lead form", config: `{"metaConfig":{"format":"carousel","objective":"leads","leadFormId":"1234567890",` + carouselCards + `}}`,
 				want: "a carousel cannot be combined with leadFormId"},
 			{name: "one card", config: `{"metaConfig":{"format":"carousel","variants":[{"primaryText":"P","headline":"H","imageUrl":"https://cdn.example.org/k.png"}]}}`,

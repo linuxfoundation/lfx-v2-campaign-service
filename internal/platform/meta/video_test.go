@@ -286,3 +286,39 @@ func TestCreateCampaign_VideoVariantWithLeadFormIsRefused(t *testing.T) {
 		t.Fatalf("CreateCampaign = %+v, %v; want a config-invalid refusal naming leadFormId", res, err)
 	}
 }
+
+// TestCreateCampaign_VideoWaitLeavesTimeForTheOtherAds: the readiness wait is clamped to the
+// caller's deadline less videoDeadlineReserve, so a video still processing fails only its own
+// variant and the image variant's ad is still created, rather than the deadline cutting the whole
+// create short mid-wait (local review, PR for #550).
+func TestCreateCampaign_VideoWaitLeavesTimeForTheOtherAds(t *testing.T) {
+	vs := newVideoServer(t, "processing")
+	srv := httptest.NewServer(vs.handler())
+	defer srv.Close()
+	var sleeps int32
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()), WithVideoPolling(time.Second, 60*time.Second),
+		withSleepFn(func(context.Context, time.Duration) error { atomic.AddInt32(&sleeps, 1); return nil }))
+	ctx, cancel := context.WithTimeout(context.Background(), videoDeadlineReserve+5*time.Second)
+	defer cancel()
+	in := metaFieldInput()
+	in.Variants = []AdVariant{
+		{PrimaryText: "Join us", Headline: "Image", ImageURL: "https://cdn.example.org/a.png"},
+		videoVariant("Keynote"),
+	}
+	res, err := c.CreateCampaign(ctx, in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v (a not-ready video is a degraded success)", err)
+	}
+	if sleeps > 5 {
+		t.Fatalf("readiness wait slept %d times; with 5 s left after the reserve it may poll at most 5 times", sleeps)
+	}
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	if res.AdCount != 1 || vs.ads != 1 || len(res.Ads) != 1 || res.Ads[0].Variant != 1 {
+		t.Fatalf("AdCount=%d ads=%d Ads=%+v; want the image variant's ad only", res.AdCount, vs.ads, res.Ads)
+	}
+	if steps := strings.Join(res.Steps, "\n"); !strings.Contains(steps, "was not ready within") || !strings.Contains(steps, "no creative or ad was created for variant 2") {
+		t.Fatalf("steps %q do not report the not-ready video on variant 2", steps)
+	}
+}

@@ -221,17 +221,20 @@ func checkMetaVideoVariants(cfg metaConfig) error {
 	return nil
 }
 
-// checkMetaFormat refuses a metaConfig.format the create cannot build (#550 gap 10): a value other
-// than single or carousel, a carousel while META_CAROUSEL_ENABLED is not exactly "true" (read per
-// call), a carousel on a leadFormId create (meta.CheckCarouselLeadForm), and a carousel whose
+// checkMetaFormat refuses a metaConfig.format the create cannot build (#550 gap 10): any value but
+// blank or single while META_CAROUSEL_ENABLED is not exactly "true" (read per call), a value other
+// than single or carousel, a carousel on a leadFormId create (meta.CheckCarouselLeadForm), and a carousel whose
 // variants are not 2-10 image cards with one message (meta.ValidateCarousel). A blank format is single. The client re-checks all but the gate.
 func checkMetaFormat(cfg metaConfig) error {
+	// The gate comes first, so that while it is off no message advertises carousel as a valid
+	// value: any format other than blank or single is refused as the disabled option.
+	if v := strings.ToLower(strings.TrimSpace(cfg.Format)); v != "" && v != meta.FormatSingle &&
+		os.Getenv(constants.EnvMetaCarouselEnabled) != "true" {
+		return metaCreativeOptionDisabled("format", constants.EnvMetaCarouselEnabled)
+	}
 	format, err := meta.NormalizeFormat(cfg.Format)
 	if err != nil || format != meta.FormatCarousel {
 		return err
-	}
-	if os.Getenv(constants.EnvMetaCarouselEnabled) != "true" {
-		return metaCreativeOptionDisabled("format", constants.EnvMetaCarouselEnabled)
 	}
 	if err := meta.CheckCarouselLeadForm(cfg.LeadFormID); err != nil {
 		return err
@@ -1131,10 +1134,10 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	// as a distinct created_degraded status (per-variant failures are in Result.Steps)
 	// for a human/monitor to reconcile. Mirrors the reddit/twitter partial-ad handling.
 	// All requested variants are valid here (the client fails fast on a malformed
-	// variant), so len(cfg.Variants) is the requested count.
+	// variant), so metaRequestedAds(cfg) — one per variant, or one for a carousel
+	// (#550 gap 10) — is the requested count.
 	bidApplied = result.BidApplied
 	camp = campaignFromMeta(ctx, result, cfg)
-	// A carousel (#550 gap 10) asks for one ad, not one per variant.
 	if result.AdCount < metaRequestedAds(cfg) {
 		camp.Status = campaignStatusCreatedDegraded
 	}

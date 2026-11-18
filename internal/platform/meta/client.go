@@ -4117,10 +4117,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 //     by the /adimages upload the caller already performed.
 //   - neither               → the pre-image link-only creative.
 //
-// It is also the seam for further creative formats: a video or carousel creative
-// differs from this one ONLY in this spec (video_data / child_attachments in place
-// of link_data), so a new format lands as a sibling builder selected here by the
-// resolved asset's kind, leaving createVariantAd's creative/ad POST flow untouched.
+// Other creative formats (#550) are siblings, not branches of this builder: a video
+// variant's video_data comes from videoStorySpec, which createVariantAd selects once
+// prepareVideos has produced a ready video id; a carousel is its own creative and ad
+// flow (createCarouselAd in carousel.go).
 func objectStorySpec(pageID, utmURL string, variant AdVariant, imageHash, callToAction string) map[string]any {
 	if callToAction == "" {
 		callToAction = DefaultCallToAction

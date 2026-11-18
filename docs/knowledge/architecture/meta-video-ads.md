@@ -33,7 +33,9 @@ After the ad set exists and before the first creative, `prepareVideos`:
    part named `creative.mp4`. Never retried, not even on a throttle, because every upload creates
    a new video object (unlike content-addressed `/adimages`);
 2. polls `GET /{video_id}?fields=status` every 3 s until `video_status` is `ready`, within ONE 60 s
-   wait shared by all videos (it runs inside the orchestrator's two-minute provider call);
+   wait shared by all videos (it runs inside the orchestrator's two-minute provider call, so it
+   is cut short to leave `videoDeadlineReserve`, 20 s, of the caller's deadline for the thumbnails,
+   creatives and ads: a not-ready video then fails only its own variants);
 3. reads `GET /{video_id}/thumbnails?fields=uri,is_preferred` and takes the preferred https
    thumbnail (else the first).
 

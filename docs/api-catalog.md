@@ -3745,9 +3745,9 @@ format?: string                 — OPTIONAL creative format (#550 gap 10), case
                                   `single` (default — one ad per variant, as before) or
                                   `carousel` — ONE ad whose cards are the variants, in order
                                   (`object_story_spec.link_data.child_attachments`). Anything
-                                  else is a synchronous 400; a non-string is a 400. `carousel`
-                                  is refused with a 400 unless META_CAROUSEL_ENABLED is exactly
-                                  "true". See "Meta carousel" below the AdVariant block.
+                                  else is a synchronous 400; a non-string is a 400. While
+                                  META_CAROUSEL_ENABLED is not exactly "true", every value but
+                                  `single` is refused with a 400 naming the flag. See "Meta carousel" below the AdVariant block.
 targeting?: object              — OPTIONAL audience targeting on the ad set (#550). Refused
                                   with a 400 before any job exists unless the deployment sets
                                   META_AUDIENCE_TARGETING_ENABLED to exactly "true" (not yet
@@ -3917,7 +3917,9 @@ videoAssetId?: string            — OPTIONAL id of an MP4 creative asset upload
                                   `/act_<id>/advideos` (multipart `source`, never retried —
                                   every upload creates a new video), then `GET /{video_id}
                                   ?fields=status` is polled every 3 s until `video_status` is
-                                  `ready`, within ONE 60 s wait shared by every video, and the
+                                  `ready`, within ONE 60 s wait shared by every video (cut
+                                  short so 20 s of the provider call's deadline remain for the
+                                  creatives and ads), and the
                                   preferred auto-generated thumbnail (`GET /{video_id}/thumbnails`)
                                   becomes the creative's image. The creative carries
                                   `object_story_spec.video_data` {video_id, image_url, message =
