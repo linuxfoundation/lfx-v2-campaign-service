@@ -45,17 +45,21 @@ const (
 //     linkedinRecordedObjective), so a row with a recorded strategy has a recorded objective. A
 //     row without one (legacy, adopted) reads `unknown`, never a guessed objective.
 //
-// BUDGET. The create path sets exactly one of dailyBudget/totalBudget in USD, so a campaign
-// reporting one is compared as that type. One reporting BOTH (LinkedIn allows a daily budget
-// with a lifetime cap) or NEITHER (e.g. under a campaign group's DYNAMIC budget optimization,
-// where the group's budget is shared) leaves both budget fields `unknown`; so does a non-USD or
+// BUDGET. The create path sets dailyBudget or totalBudget in USD, or totalBudget plus a
+// dailyBudget cap when linkedInConfig.dailyCapUsd is set (#584). A campaign reporting one is
+// compared as that type. One reporting BOTH (a lifetime budget with a daily cap, which the
+// row's single recorded amount cannot describe) or NEITHER (e.g. under a campaign group's DYNAMIC
+// budget optimization, where the group's budget is shared) leaves both budget fields `unknown`;
+// so does a non-USD or
 // unreadable amount. Amounts are read EXACTLY as micro-units — never through a float — and
 // rendered by the same function as every other reader, so a sub-cent amount cannot round into
 // equality with the recorded one.
 //
 // DATES. The create path sends runSchedule.start as the start day at 00:00 UTC, nudged to
 // "now + buffer" when that day has begun (toMs), and runSchedule.end as 23:59:59.999 UTC of the
-// end day. Both are compared as UTC dates; the start goes through compareNudgedStart.
+// end day — except on a two-budget campaign (#584), sent with no end, whose end_date therefore
+// reads `unknown`; its campaign group carries the end. Both are compared as UTC dates; the start
+// goes through compareNudgedStart.
 //
 // PROVENANCE. Unknown provenance fails closed before any credential is resolved (409); a
 // recorded account other than the connection's is a mismatch (409). The read is account-scoped
