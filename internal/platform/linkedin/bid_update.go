@@ -109,8 +109,8 @@ type campaignBiddingPlan struct {
 // MAX_CONVERSION as an explicit choice: objective WEBSITE_CONVERSION with automatic bidding, which
 // the dispatcher accepts only together with linkedInConfig.conversions, so the association this
 // service makes right after the create is the one LinkedIn requires before activation. Sources,
-// li-lms-2026-02 (the pinned LinkedIn-Version 202602; both pages carry the same text for every
-// version from li-lms-2025-11 to li-lms-2026-10), consulted 2026-11-13:
+// li-lms-2026-02 (pinned when written; the client pins 202611 since #639; both pages carry the
+// same text for every version from li-lms-2025-11 to li-lms-2026-10), consulted 2026-11-13:
 //
 //   - "Ad Budget Type Allowable Combinations"
 //     (https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads-reporting/ad-budget-pricing-type-combinations?view=li-lms-2026-02),
