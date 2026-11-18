@@ -1079,6 +1079,25 @@ BUSINESS_OBJECTIVE_BASED_AUDIENCE → `audienceMatchingSegments`; anything else 
 EXPIRED and FAILED segments are dropped; ARCHIVED stays, since LinkedIn documents it as usable
 until it expires. The offset parameters are LinkedIn's documented ones but not verified live.
 
+## Targeting typeahead (`targeting_entities.go`, #585)
+
+`SearchTargetingEntities` runs LinkedIn's typeahead finder, `GET adTargetingEntities?q=typeahead&facet=urn%3Ali%3AadTargetingFacet%3A<key>&query=<text>&queryVersion=QUERY_USES_URNS`
+(Ad Targeting › Find Entities by Typeahead; locale left at LinkedIn's en_US default), for the
+`GET .../linkedin-ads/targeting-entities` picker. `typeaheadFacets` serves `skills`, `groups`,
+`titles`, `interests`, `industries` and `employers`, each with its pattern taken from
+`targetingFacets` (so a URN offered is one `ValidateTargeting` accepts), plus `locations` with
+`geoURNRE` for `geoTargets`. `NormalizeTypeaheadQuery` (trim, then `MinTypeaheadQueryLen` = 2
+to `MaxTypeaheadQueryLen` = 100 runes, valid UTF-8, no control characters) is the one query check,
+shared with the service; the Goa design mirrors the bounds and the control-character ban on the
+raw parameter, leaving only invalid UTF-8 and the post-trim floor to runtime. The request is sent
+with `withSendOnce`, so a 429 comes back at once rather than after `doRequest`'s backoff: a
+typeahead's caller has moved on by then, and each retry spends the shared quota again. The
+query goes through `restliEncode` (`%20`, not `+`; reserved characters escaped) and `query`
+joins `preEncodedParams`. Answers keep LinkedIn's relevance order, de-duplicated by URN, capped
+at 100; an element with a URN of the wrong shape or no name is dropped and counted. A transport
+error's `*url.Error` has its query string cut off in place (`scrubQuery`), so the search text
+never reaches a log line.
+
 ## Conversion association (`conversions.go`, #552)
 
 `CampaignInput.Conversions` carries `linkedInConfig.conversions`, conversion rule ids.
