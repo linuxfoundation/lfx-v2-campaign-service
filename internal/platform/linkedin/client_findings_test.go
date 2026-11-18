@@ -602,7 +602,7 @@ func TestCreateDarkPost_TruncatesIntroTextTo600Runes(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	if _, err := c.createDarkPost(context.Background(), "123456789", longIntro, "Headline", "https://events.example.org/reg", ""); err != nil {
+	if _, err := c.createDarkPost(context.Background(), "123456789", longIntro, "Headline", "https://events.example.org/reg", "", "", ""); err != nil {
 		t.Fatalf("createDarkPost: %v", err)
 	}
 
@@ -1148,7 +1148,7 @@ func TestCreateDarkPost_TrimsWhitespaceInCreativeText(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	if _, err := c.createDarkPost(context.Background(), "123456789", "  Intro with spaces  ", "  Headline  ", "https://events.example.org/reg", ""); err != nil {
+	if _, err := c.createDarkPost(context.Background(), "123456789", "  Intro with spaces  ", "  Headline  ", "https://events.example.org/reg", "", "", ""); err != nil {
 		t.Fatalf("createDarkPost: %v", err)
 	}
 	mu.Lock()
@@ -2580,7 +2580,7 @@ func TestCreateDarkPost_InvalidPostURNIsAmbiguous(t *testing.T) {
 			defer srv.Close()
 
 			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-			id, err := c.createDarkPost(context.Background(), "123456789", "Intro", "Headline", "https://events.example.org/reg", "")
+			id, err := c.createDarkPost(context.Background(), "123456789", "Intro", "Headline", "https://events.example.org/reg", "", "", "")
 			if err == nil {
 				t.Fatalf("expected an error for an invalid post URN %s, got nil (id=%q)", tc.id, id)
 			}
@@ -2602,7 +2602,7 @@ func TestCreateDarkPost_InvalidPostURNIsAmbiguous(t *testing.T) {
 		}))
 		defer srv.Close()
 		c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-		got, err := c.createDarkPost(context.Background(), "123456789", "Intro", "Headline", "https://events.example.org/reg", "")
+		got, err := c.createDarkPost(context.Background(), "123456789", "Intro", "Headline", "https://events.example.org/reg", "", "", "")
 		if err != nil {
 			t.Fatalf("a valid ugcPost URN should be accepted, got err: %v", err)
 		}

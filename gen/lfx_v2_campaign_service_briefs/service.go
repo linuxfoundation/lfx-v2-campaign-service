@@ -1427,13 +1427,27 @@ type CampaignCreateInput struct {
 	// character, a non-numeric instagramUserId, and any of the three with a
 	// non-string JSON type (null counts as absent) are refused here with a 400,
 	// before any job exists. An absent instagramUserId is not refused, but Meta
-	// will not publish an Instagram placement without it. LINKEDIN TARGETING
-	// (#552): linkedInConfig takes an optional `targeting` object, {"include":
-	// [{<facet>: [urn, ...], ...}, ...], "exclude": {<facet>: [urn, ...]}}, sent
-	// as the campaign's targetingCriteria: each include entry (1 to 10) is one
-	// ANDed clause whose facets are ORed, after the geoTargets clause, and exclude
-	// is ORed. Facets: skills, groups, industries, titles, seniorities,
-	// jobFunctions, employers, staffCountRanges, interfaceLocales, interests,
+	// will not publish an Instagram placement without it. LINKEDIN VARIANT NAME,
+	// CALL TO ACTION AND DESCRIPTION (#588, #589): each linkedInConfig.variants
+	// entry takes optional strings `name`, `callToAction` and `description`.
+	// `name` names the variant's creative (whitespace collapsed, trimmed, cut to
+	// LinkedIn's 255 characters, dashes kept); omitted or empty keeps `<event> |
+	// variant-N`. `callToAction` is the dark post's button, exactly one of APPLY,
+	// DOWNLOAD, VIEW_QUOTE, LEARN_MORE, SIGN_UP, SUBSCRIBE, REGISTER, JOIN,
+	// ATTEND, REQUEST_DEMO, SEE_MORE, BUY_NOW, SHOP_NOW (LinkedIn-Version 202602),
+	// opening the variant's registration URL; omitted sends none. `description` is
+	// the article description, normalized like introText and cut to 300
+	// characters; omitted sends an empty one. Refused with a 400 before any job
+	// exists: a value that is not a JSON string (null included), an unknown
+	// callToAction, two variants whose names match once normalized, and any
+	// callToAction while the deployment has not set
+	// LINKEDIN_ADS_CALL_TO_ACTION_ENABLED. LINKEDIN TARGETING (#552):
+	// linkedInConfig takes an optional `targeting` object, {"include": [{<facet>:
+	// [urn, ...], ...}, ...], "exclude": {<facet>: [urn, ...]}}, sent as the
+	// campaign's targetingCriteria: each include entry (1 to 10) is one ANDed
+	// clause whose facets are ORed, after the geoTargets clause, and exclude is
+	// ORed. Facets: skills, groups, industries, titles, seniorities, jobFunctions,
+	// employers, staffCountRanges, interfaceLocales, interests,
 	// audienceMatchingSegments and dynamicSegments, with LinkedIn's URN values
 	// (urn:li:skill:<id>, urn:li:interest:<id>, urn:li:adSegment:<id>, ...);
 	// groups and interfaceLocales only under include. Set, it replaces
