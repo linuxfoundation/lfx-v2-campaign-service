@@ -1687,6 +1687,7 @@ dailyCapUsd?: number             — OPTIONAL daily spending cap beside a LIFETI
 - **Editing** (`PATCH .../budget`): a `lifetime` amount change writes `totalBudget` alone and
   leaves the cap in force. It is refused (400) when the new total is below the cap. A `daily`
   change is 409: change the cap in LinkedIn Campaign Manager.
+
 #### LinkedInConfig text ads (`linkedInConfig.format: "text"`, #586)
 
 An opt-in TEXT_AD campaign — LinkedIn Text Ads, the headline-plus-description ads on the right
@@ -1738,9 +1739,10 @@ a `format` other than `"single_image"` or `"text"` (or not a string); `textAds` 
 `textAds` or more than 100; a `textAds` that is not an array of objects whose fields are the four
 strings above (`null`, a number, an unknown key such as a misspelled `description`); a headline or
 description missing, blank or dash-only after normalisation, or over 25 / 75 characters; a
-malformed `imageUrn`; both image fields. A stored image that is not a 100x100 PNG/JPEG of at most
+malformed `imageUrn`; both image fields; `objective: "traffic"` (a text create is manual, and a
+manual bid is created only under Website conversions, so `objective` is omitted or
+`"conversions"`). A stored image that is not a 100x100 PNG/JPEG of at most
 2 MB fails the job before anything is created.
-
 
 #### LinkedIn lifetime budget on a fixed schedule (#633)
 

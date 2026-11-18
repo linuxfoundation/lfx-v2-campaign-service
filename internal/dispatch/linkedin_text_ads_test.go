@@ -54,6 +54,8 @@ func TestLinkedIn_TextAdsPreflight(t *testing.T) {
 		{"valid", linkedInTextConfig(validTextAds), ""},
 		{"explicit single_image, no text ads", linkedInTextConfig(`"format":"single_image"`), ""},
 		{"no format, no text ads", linkedInTextConfig(``), ""},
+		{"objective conversions", linkedInTextConfig(validTextAds + `,"objective":"conversions"`), ""},
+		{"objective traffic", linkedInTextConfig(validTextAds + `,"objective":"traffic"`), "offered with automatic bidding only"},
 		{"automatic bidding", auto, "requires bidding"},
 		{"omitted bidding is automatic", noBid, "requires bidding"},
 		{"unknown format", linkedInTextConfig(`"format":"video"`), "format must be"},

@@ -208,6 +208,9 @@ func TestCreateCampaign_TextAdWireBodies(t *testing.T) {
 	if res.CreativeCount != 2 || !res.BidApplied {
 		t.Errorf("CreativeCount = %d, BidApplied = %v; want 2, true", res.CreativeCount, res.BidApplied)
 	}
+	if res.ObjectiveType != ObjectiveWebsiteConversion || res.OptimizationTarget != OptimizationTargetNone {
+		t.Errorf("ObjectiveType = %q, OptimizationTarget = %q; want %q, %q", res.ObjectiveType, res.OptimizationTarget, ObjectiveWebsiteConversion, OptimizationTargetNone)
+	}
 	wantName := "Events | KubeCon | NA | Conversions | Prospecting | Text | CNCF | MoFU"
 	if res.CampaignName != wantName {
 		t.Errorf("campaign name = %q, want %q", res.CampaignName, wantName)

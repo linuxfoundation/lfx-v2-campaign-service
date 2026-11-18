@@ -479,7 +479,9 @@ type responseElement struct {
 	// OptimizationTargetType is a campaign search result's bidding target, checked by
 	// findCampaignByNameInGroup so a manual campaign is not reused for automatic bidding (#582).
 	OptimizationTargetType string `json:"optimizationTargetType"`
-	// Type, Currency, Test, ServingStatuses and Reference are only populated for
+	// Type is also a campaign search result's campaign type (SPONSORED_UPDATES, TEXT_AD),
+	// checked by findCampaignByNameInGroup so a same-name campaign of another type is not
+	// reused (#586). Currency, Test, ServingStatuses and Reference are only populated for
 	// ad-account search results (ListAdAccounts, accounts.go). An ad account carries two
 	// independent health axes — its lifecycle `status`, decoded above, and the
 	// `servingStatuses` array below — and the picker needs both.
@@ -3376,6 +3378,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// per-(brief, platform) claim, LFXV2-2665) is intended to prevent re-runs, but
 	// it is NOT implemented yet — this loop provides no dedup itself; see the
 	// CreateCampaign godoc.
+	// finish is the success result of either creative path: one copy, so the text path cannot
+	// drift from the single-image one (the objective and optimization target are stamped beside
+	// BidApplied on both, #582).
+	finish := func(count int) *CampaignResult {
+		result := withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, count, steps))
+		result.BidApplied = !campaignReused
+		if result.BidApplied {
+			result.ObjectiveType = bidding.objectiveType
+			result.OptimizationTarget = bidding.optimizationTarget
+		}
+		return result
+	}
 	if format == FormatText {
 		count, textSteps, terr := c.createTextAds(ctx, accountID, campaignID, campaignName, eventName, reg, in, imageURNs)
 		steps = append(steps, textSteps...)
@@ -3383,9 +3397,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, count, steps)),
 				fmt.Errorf("%w — group %q and campaign %q already exist", terr, groupID, campaignID)
 		}
-		result := withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, count, steps))
-		result.BidApplied = !campaignReused
-		return result, nil
+		return finish(count), nil
 	}
 
 	creativeCount := 0
@@ -3464,13 +3476,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		creativeCount++
 	}
 
-	result := withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps))
-	result.BidApplied = !campaignReused
-	if result.BidApplied {
-		result.ObjectiveType = bidding.objectiveType
-		result.OptimizationTarget = bidding.optimizationTarget
-	}
-	return result, nil
+	return finish(creativeCount), nil
 }
 
 // campaignManagerURL returns the Campaign Manager deep link. When no campaign was
