@@ -186,7 +186,7 @@ type validatedGeolocation struct {
 // POST /targeting/geolocations_validations. An id Reddit answers with an error_message is a
 // domain.PreflightRefusal naming the entry's position in the caller's list (Reddit's own text is
 // not quoted). Anything else that leaves an id unconfirmed — a failed read, an answer that cannot
-// be believed, an id the answer does not mention, an error Reddit did not attribute to an id, or
+// be believed, an id answered twice, an id the answer does not mention, an error Reddit did not attribute to an id, or
 // a country other than the one the id names — is a plain error. Either way the caller creates
 // nothing.
 //
@@ -214,11 +214,20 @@ func (c *Client) ValidateSubCountryGeoTargets(ctx context.Context, entries []Sub
 	}
 	valid := map[string]string{} // id -> country
 	refused := map[string]struct{}{}
+	listed := map[string]struct{}{}
 	unattributed := 0
 	for _, it := range items {
 		id := ""
 		if it.Geolocation != nil {
 			id = strings.ToUpper(strings.TrimSpace(it.Geolocation.ID))
+		}
+		// A repeated id makes the answer unreadable: two rows could disagree on its country or on
+		// whether it is targetable, and keeping either one would be a guess.
+		if id != "" {
+			if _, dup := listed[id]; dup {
+				return fmt.Errorf("reddit geolocation validation: %s was answered twice", id)
+			}
+			listed[id] = struct{}{}
 		}
 		if strings.TrimSpace(it.ErrorMessage) != "" {
 			if id == "" {

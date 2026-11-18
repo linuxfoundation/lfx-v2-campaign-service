@@ -250,14 +250,17 @@ func TestValidateSubCountryGeoTargets_UnconfirmedIsAnError(t *testing.T) {
 		status int
 		body   string
 	}{
-		"server error":              {500, `{}`},
-		"no list":                   {200, `{"data":null}`},
-		"not a list":                {200, `{"data":{"id":"US-CA"}}`},
-		"duplicated key":            {200, `{"data":[{"geolocation":{"id":"US-NY","id":"US-CA","country":"US"}}]}`},
-		"row with no id":            {200, `{"data":[{"geolocation":{"id":"US-CA","country":"US"}},{"geolocation":{"country":"US"}}]}`},
-		"id not mentioned":          {200, `{"data":[{"geolocation":{"id":"US-NY","country":"US"}}]}`},
-		"unattributed error":        {200, `{"data":[{"error_message":"invalid geolocation"}]}`},
-		"different country than id": {200, `{"data":[{"geolocation":{"id":"US-CA","country":"CA"}}]}`},
+		"server error":                           {500, `{}`},
+		"no list":                                {200, `{"data":null}`},
+		"not a list":                             {200, `{"data":{"id":"US-CA"}}`},
+		"duplicated key":                         {200, `{"data":[{"geolocation":{"id":"US-NY","id":"US-CA","country":"US"}}]}`},
+		"row with no id":                         {200, `{"data":[{"geolocation":{"id":"US-CA","country":"US"}},{"geolocation":{"country":"US"}}]}`},
+		"id not mentioned":                       {200, `{"data":[{"geolocation":{"id":"US-NY","country":"US"}}]}`},
+		"unattributed error":                     {200, `{"data":[{"error_message":"invalid geolocation"}]}`},
+		"different country than id":              {200, `{"data":[{"geolocation":{"id":"US-CA","country":"CA"}}]}`},
+		"repeated id, conflicting country last":  {200, `{"data":[{"geolocation":{"id":"US-CA","country":"US"}},{"geolocation":{"id":"US-CA","country":"CA"}}]}`},
+		"repeated id, conflicting country first": {200, `{"data":[{"geolocation":{"id":"US-CA","country":"CA"}},{"geolocation":{"id":"us-ca","country":"US"}}]}`},
+		"repeated id, refused then valid":        {200, `{"data":[{"geolocation":{"id":"US-CA"},"error_message":"no"},{"geolocation":{"id":"US-CA","country":"US"}}]}`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c, _ := geoValidationServer(t, tc.status, tc.body)

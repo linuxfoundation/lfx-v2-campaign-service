@@ -2017,7 +2017,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		regionGeos = []string{subCountry[0].Country}
 	}
 	// geolocations is what the ad group targets: the countries, then the sub-country ids.
-	geolocations := append(append(make([]string, 0, len(geos)+len(subCountry)), geos...), subCountryGeoIDs(subCountry)...)
+	geolocations := append(append([]string(nil), geos...), subCountryGeoIDs(subCountry)...)
 
 	// The exclusions (#549), refused before any mutating call with the same rule set the
 	// dispatcher's PreflightCreate applies, so a value that slipped past it still creates nothing.

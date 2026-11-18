@@ -987,7 +987,7 @@ effective targeting, so excluding the US beside sub-country ids alone is not an 
 `ValidateSubCountryGeoTargets` confirms the ids with one `POST /targeting/geolocations_validations`.
 An id Reddit answers with an `error_message` is a `domain.PreflightRefusal` naming the entry, and
 Reddit's text is not quoted. Anything else that leaves an id unconfirmed is a plain error: a failed
-read, a body identityjson rejects, a row with no id, an id the answer omits, an unattributed error,
+read, a body identityjson rejects, a row with no id, an id answered twice, an id the answer omits, an unattributed error,
 or a country other than the id's. The dispatcher (`reddit_subcountry_geo.go`) gates the field on
 `REDDIT_SUBCOUNTRY_GEO_ENABLED`. It runs the read like the targeting resolution: fail-open in
 `PreflightCreate` and fail-closed in `Dispatch`, before anything is created.
