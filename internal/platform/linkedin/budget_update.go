@@ -144,6 +144,58 @@ func ValidateBudgetAmount(budgetUSD float64, lifetime bool) (wire string, rounde
 	return wire, rounded, nil
 }
 
+// ValidateDailyCap checks the optional daily spending cap a LIFETIME-budget campaign may carry
+// beside its total (#584): LF often runs an ad set with, say, a $1,000 lifetime budget and a $20
+// daily cap, and LinkedIn takes both on one campaign (`totalBudget` and `dailyBudget`). It
+// returns the cap's exact wire string, or a refusal BudgetAmountReason can surface.
+//
+// The rules, each checked against the ROUNDED wire value like ValidateBudgetAmount's:
+//   - a cap exists only beside a lifetime budget: on a daily budget, budgetUsd already IS the
+//     daily amount, and a second daily figure would be ambiguous;
+//   - the cap is a daily budget in its own right, so it obeys every daily rule (finite,
+//     positive, at least LinkedIn's $10 daily minimum);
+//   - the cap may not exceed the lifetime total, which would make it no cap at all.
+//
+// The cap is compared with any finite, positive totalUSD at wire precision, even one under
+// LinkedIn's lifetime minimum: whether the total is itself acceptable is ValidateBudgetAmount's
+// refusal to make, with its own sentence, but a cap above it is refused here either way, so a
+// caller learns about it synchronously rather than from a failed job.
+func ValidateDailyCap(capUSD, totalUSD float64, lifetime bool) (wire string, err error) {
+	if !lifetime {
+		return "", invalidBudgetAmount("a daily cap applies only to a lifetime budget; with a daily budget, the budget amount is already the daily amount")
+	}
+	wire, rounded, err := ValidateBudgetAmount(capUSD, false)
+	if err != nil {
+		var amountErr *budgetAmountError
+		if errors.As(err, &amountErr) {
+			return "", invalidBudgetAmount("daily cap: %s", amountErr.msg)
+		}
+		return "", err
+	}
+	if !math.IsNaN(totalUSD) && !math.IsInf(totalUSD, 0) && totalUSD > 0 {
+		totalWire := strconv.FormatFloat(totalUSD, 'f', budgetWireDecimals, 64)
+		if total, perr := strconv.ParseFloat(totalWire, 64); perr == nil && rounded > total {
+			return "", invalidBudgetAmount("daily cap %s is more than the lifetime budget %s, so it would never apply", wire, totalWire)
+		}
+	}
+	return wire, nil
+}
+
+// ValidateTotalCoversCap refuses a lifetime total below a campaign's existing daily cap (#584),
+// for the budget WRITE path: create refuses a cap above the total (ValidateDailyCap), and an
+// edit must not reach that shape from the other side. The total is compared at wire precision.
+// Call it only after ValidateBudgetAmount accepted totalUSD as a lifetime amount.
+func ValidateTotalCoversCap(totalUSD, capUSD float64) error {
+	wire, total, err := ValidateBudgetAmount(totalUSD, true)
+	if err != nil {
+		return err
+	}
+	if total < capUSD {
+		return invalidBudgetAmount("lifetime budget %s is less than this campaign's daily cap %s; lower the daily cap in LinkedIn Campaign Manager first", wire, strconv.FormatFloat(capUSD, 'f', budgetWireDecimals, 64))
+	}
+	return nil
+}
+
 // GetCampaignBudget reads one campaign's live budget state. It is a PURE READ and mutates
 // nothing, so its failure is always definite — a caller must not classify it as an unconfirmed
 // write outcome, because no write was built.
@@ -226,7 +278,8 @@ func (c *Client) GetCampaignBudget(ctx context.Context, campaignID string) (*Cam
 }
 
 // UpdateCampaignBudget sets a campaign's budget amount on the platform. lifetime selects which
-// of the two mutually exclusive fields is written (totalBudget vs dailyBudget); the caller is
+// amount field is written (totalBudget vs dailyBudget). A $set of one leaves the other in force,
+// which is what keeps a lifetime campaign's daily cap (#584). The caller is
 // responsible for having established that this matches the campaign's CURRENT pacing model —
 // this function writes what it is told.
 //

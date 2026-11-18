@@ -16,6 +16,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 func testConfig() RuntimeConfig {
@@ -666,6 +668,106 @@ func TestCreateCampaign_LifetimeBudgetUsesTotalBudget(t *testing.T) {
 	}
 	if total["amount"] != "5000.00" {
 		t.Errorf("totalBudget amount: want 5000.00, got %v", total["amount"])
+	}
+}
+
+// TestCreateCampaign_LifetimeBudgetWithDailyCap pins #584 at the wire: a lifetime budget with a
+// cap sends BOTH totalBudget and dailyBudget on LinkedIn's continuous schedule (a start and NO
+// end; the campaign group carries the end), and a refused cap sends nothing at all, so no
+// campaign group is left behind.
+func TestCreateCampaign_LifetimeBudgetWithDailyCap(t *testing.T) {
+	var mu sync.Mutex
+	var campaignBody map[string]any
+	var posts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
+			return
+		}
+		posts++
+		b, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(b, &body)
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			_, _ = io.WriteString(w, `{"id":"100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			campaignBody = body
+			_, _ = io.WriteString(w, `{"id":"200"}`)
+		case strings.Contains(r.URL.Path, "posts"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			_, _ = io.WriteString(w, `{"id":"400"}`)
+		}
+	}))
+	defer srv.Close()
+
+	input := func(capUSD float64, lifetime bool) CampaignInput {
+		return CampaignInput{
+			EventName: "E", Project: "tlf", RegistrationURL: "https://x.org",
+			BudgetUSD: 1000, LifetimeBudget: lifetime, DailyCapUSD: capUSD,
+			StartDate: "2099-01-01", EndDate: "2099-02-01", TargetingProfile: "cloud-native",
+			GeoTargets: []GeoTarget{{Label: "United States", URN: "urn:li:geo:103644278"}},
+			Variants:   []CreativeVariant{{IntroText: "a", Headline: "b"}},
+		}
+	}
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	if _, err := c.CreateCampaign(context.Background(), input(20, true)); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	mu.Lock()
+	total, _ := campaignBody["totalBudget"].(map[string]any)
+	daily, _ := campaignBody["dailyBudget"].(map[string]any)
+	schedule, _ := campaignBody["runSchedule"].(map[string]any)
+	mu.Unlock()
+	if _, hasEnd := schedule["end"]; hasEnd || schedule["start"] == nil {
+		t.Errorf("runSchedule = %v, want a start and no end: LinkedIn pairs both budgets with a continuous schedule", schedule)
+	}
+	if total["amount"] != "1000.00" || total["currencyCode"] != "USD" {
+		t.Errorf("totalBudget = %v, want 1000.00 USD", total)
+	}
+	if daily["amount"] != "20.00" || daily["currencyCode"] != "USD" {
+		t.Errorf("dailyBudget = %v, want the 20.00 USD cap", daily)
+	}
+
+	// Without a cap a lifetime campaign keeps its own end, as before #584.
+	if _, err := c.CreateCampaign(context.Background(), input(0, true)); err != nil {
+		t.Fatalf("CreateCampaign without a cap: %v", err)
+	}
+	mu.Lock()
+	uncapped, _ := campaignBody["runSchedule"].(map[string]any)
+	_, uncappedDaily := campaignBody["dailyBudget"]
+	mu.Unlock()
+	if uncapped["end"] == nil || uncappedDaily {
+		t.Errorf("uncapped lifetime body runSchedule = %v, dailyBudget present = %v; want an end and no dailyBudget", uncapped, uncappedDaily)
+	}
+
+	for _, tc := range []struct {
+		name     string
+		in       CampaignInput
+		wantText string
+	}{
+		{"a cap above the total", input(1500, true), "is more than the lifetime budget"},
+		{"a cap beside a daily budget", input(20, false), "applies only to a lifetime budget"},
+		{"a cap under the daily minimum", input(5, true), "below LinkedIn's minimum"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mu.Lock()
+			posts = 0
+			mu.Unlock()
+			_, err := c.CreateCampaign(context.Background(), tc.in)
+			if msg, ok := domain.AsPreflightRefusal(err); !ok || !strings.Contains(msg, tc.wantText) {
+				t.Fatalf("CreateCampaign err = %v, want a pre-flight refusal containing %q", err, tc.wantText)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if posts != 0 {
+				t.Errorf("%d POSTs for a refused cap; nothing may be created", posts)
+			}
+		})
 	}
 }
 
