@@ -200,6 +200,17 @@ const (
 	// been exercised against a live account; the issue asks for a probe of the interests shape.
 	EnvRedditTargetingResolutionEnabled = "REDDIT_TARGETING_RESOLUTION_ENABLED"
 
+	// EnvRedditSubCountryGeoEnabled opts a deployment IN to redditConfig.subCountryGeoTargets
+	// (#549 gap 11): Reddit region, city and DMA geolocation ids ("US-CA", "CA:6167865", "662"),
+	// confirmed with POST /targeting/geolocations_validations and sent in the ad group's
+	// targeting.geolocations beside the countries. Only the exact value "true" enables it; unset
+	// or any other value fails closed, and a create naming the field is refused with a 400 before
+	// any job exists (and again at dispatch, before anything upstream). It names no account
+	// resource, so it is not role-gated. Default off because neither the validations read nor a
+	// create with a sub-country id has been exercised against a live account. Turn it on per
+	// environment, in lfx-v2-argocd.
+	EnvRedditSubCountryGeoEnabled = "REDDIT_SUBCOUNTRY_GEO_ENABLED"
+
 	// EnvRedditPlacementTargetingEnabled opts a deployment IN to redditConfig.placements,
 	// redditConfig.platforms and redditConfig.expandTargeting (#549 gap 7), sent at create time as
 	// the ad group's targeting.locations, targeting.platforms and targeting.expand_targeting in

@@ -276,6 +276,15 @@ openssl rand -base64 32
   off the shared ad account. The chart sets it to `"false"`
   (`app.environment.REDDIT_TARGETING_EXCLUSIONS_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once a live create confirms it.
+- `REDDIT_SUBCOUNTRY_GEO_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `redditConfig.subCountryGeoTargets` (#549 gap 11): Reddit
+  region, city and DMA geolocation ids (`US-CA`, `CA:6167865`, `662`), each
+  confirmed with `POST /targeting/geolocations_validations` before anything is
+  created and sent in the ad group's `targeting.geolocations` after the
+  countries. Only the exact value `true` enables it; anything else fails
+  closed, and a create naming the field is refused with a 400 before any job
+  exists. Not role-gated. Neither the read nor a sub-country create has been
+  exercised live. The chart sets it to `"false"`.
 - `REDDIT_PLACEMENT_TARGETING_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `redditConfig.placements`, `platforms` and
   `expandTargeting` (#549 gap 7), sent at create time as the ad group's

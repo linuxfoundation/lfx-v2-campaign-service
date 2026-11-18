@@ -54,7 +54,7 @@ func checkRedditTargetingExclusions(cfg redditConfig) error {
 			"%w: redditConfig: %s disabled on this deployment (%s is not \"true\"); omit %s, or ask an operator to set %s to \"true\"",
 			domain.ErrCreateConfigInvalid, fields, env, fields, env))
 	}
-	if _, err := reddit.NormalizeTargetingExclusions(cfg.Subreddits, cfg.GeoTargets, cfg.ExcludedSubreddits, cfg.ExcludedGeoTargets); err != nil {
+	if _, err := reddit.NormalizeTargetingExclusions(cfg.Subreddits, cfg.GeoTargets, cfg.SubCountryGeoTargets, cfg.ExcludedSubreddits, cfg.ExcludedGeoTargets); err != nil {
 		var exErr *reddit.ExclusionError
 		if errors.As(err, &exErr) {
 			return domain.WrapPreflightRefusal(fmt.Errorf("%w: redditConfig.%s: %s", domain.ErrCreateConfigInvalid, exErr.Field, exErr.Msg))
@@ -71,6 +71,12 @@ func checkRedditTargetingExclusions(cfg redditConfig) error {
 // so a case variant cannot slip a wrong type past this check; they are visited in sorted order so
 // the refusal is deterministic.
 func checkRedditExclusionsShape(config json.RawMessage) error {
+	return checkRedditStringListsShape(config, redditExclusionFields)
+}
+
+// checkRedditStringListsShape refuses any of fields (redditConfig keys, matched as
+// checkRedditExclusionsShape describes) that is present, not null and not a JSON array of strings.
+func checkRedditStringListsShape(config json.RawMessage, fields []string) error {
 	if len(config) == 0 {
 		return nil
 	}
@@ -89,7 +95,7 @@ func checkRedditExclusionsShape(config json.RawMessage) error {
 	sort.Strings(keys)
 	for _, k := range keys {
 		raw := platformCfg[k]
-		for _, field := range redditExclusionFields {
+		for _, field := range fields {
 			if !strings.EqualFold(k, field) || isJSONNull(raw) {
 				continue
 			}

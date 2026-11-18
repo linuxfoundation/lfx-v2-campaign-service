@@ -52,6 +52,8 @@ var redditUngatedFields = map[string]bool{
 	// Gender, languages and dayparting (#549 gap 13) are Reddit's fixed targeting enums and a
 	// weekly schedule.
 	"gender": true, "languages": true, "schedule": true,
+	// Sub-country geolocation ids (#549 gap 11) are Reddit's public geolocation taxonomy.
+	"subCountryGeoTargets": true,
 }
 
 // TestEveryRedditConfigFieldIsClassifiedForTheMarketingOpsGate fails when a redditConfig field is
