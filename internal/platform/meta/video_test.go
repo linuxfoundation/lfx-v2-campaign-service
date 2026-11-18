@@ -172,6 +172,7 @@ func TestCreateCampaign_VideoFailuresCreateNoAdAndNeverReupload(t *testing.T) {
 		{name: "a definite 4xx is not uploaded", status: "ready", uploadStatus: http.StatusBadRequest,
 			uploadBody: `{"error":{"message":"bad video","code":100}}`, want: "video NOT uploaded"},
 		{name: "a 2xx with no id is unconfirmed", status: "ready", uploadBody: `{}`, want: "video upload outcome UNCONFIRMED"},
+		{name: "duplicate id keys are unconfirmed", status: "ready", uploadBody: `{"id":"9100000000001","ID":"9100000000002"}`, want: "video upload outcome UNCONFIRMED"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			vs := newVideoServer(t, tc.status)
@@ -298,9 +299,9 @@ func TestCreateCampaign_VideoWaitLeavesTimeForTheOtherAds(t *testing.T) {
 	defer srv.Close()
 	var sleeps int32
 	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
-		WithBaseURL(srv.URL), WithClock(fixedMetaClock()), WithVideoPolling(time.Second, 60*time.Second),
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()), WithVideoPolling(10*time.Second, 60*time.Second),
 		withSleepFn(func(context.Context, time.Duration) error { atomic.AddInt32(&sleeps, 1); return nil }))
-	ctx, cancel := context.WithTimeout(context.Background(), videoDeadlineReserve+5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), videoDeadlineReserve+DefaultRequestTimeout+time.Second)
 	defer cancel()
 	in := metaFieldInput()
 	in.Variants = []AdVariant{
@@ -311,8 +312,10 @@ func TestCreateCampaign_VideoWaitLeavesTimeForTheOtherAds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCampaign: %v (a not-ready video is a degraded success)", err)
 	}
-	if sleeps > 5 {
-		t.Fatalf("readiness wait slept %d times; with 5 s left after the reserve it may poll at most 5 times", sleeps)
+	// The upload gate needs a request timeout (30 s) beyond the reserve, so about 31 s of wait is
+	// left: at most 3 polls of 10 s, where the unclamped 60 s wait would take 6.
+	if sleeps > 3 {
+		t.Fatalf("readiness wait slept %d times; with about 31 s left after the reserve it may poll at most 3 times", sleeps)
 	}
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
@@ -413,5 +416,115 @@ func TestCreateCampaign_VideoStepsDropNonGraphErrorBodies(t *testing.T) {
 				t.Fatalf("steps %q: want %q and the 502, without the body", steps, tc.want)
 			}
 		})
+	}
+}
+
+// TestCreateCampaign_VideoReadsStopWhenTheSharedWaitEnds: with several distinct videos and slow
+// status reads, only a round's first read gets the minimum read time; once the shared wait has
+// passed no further read starts, so the videos cannot each spend a fresh floor (PR #653 review).
+func TestCreateCampaign_VideoReadsStopWhenTheSharedWaitEnds(t *testing.T) {
+	vs := newVideoServer(t, "processing")
+	inner := vs.handler()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Query().Get("fields") == "status" {
+			time.Sleep(1500 * time.Millisecond)
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	base, start := fixedMetaClock()(), time.Now()
+	clock := func() time.Time { return base.Add(time.Since(start)) }
+	var sleeps int32
+	c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srv.URL), WithClock(clock), WithVideoPolling(time.Second, time.Second),
+		withSleepFn(func(context.Context, time.Duration) error { atomic.AddInt32(&sleeps, 1); return nil }))
+	in := metaFieldInput()
+	in.Variants = nil
+	for _, name := range []string{"A", "B", "C"} {
+		v := videoVariant(name)
+		v.VideoAssetID = ""
+		v.VideoBytes = append(append([]byte{}, testVideo...), name...)
+		in.Variants = append(in.Variants, v)
+	}
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v (not-ready videos are a degraded success)", err)
+	}
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	if vs.uploads != 3 || vs.statusReads != 1 {
+		t.Fatalf("uploads=%d statusReads=%d; want 3 uploads and ONE status read inside a 1 s wait of 1.5 s reads", vs.uploads, vs.statusReads)
+	}
+	if steps := strings.Join(res.Steps, "\n"); !strings.Contains(steps, "its status was not read before the wait ended") {
+		t.Fatalf("steps %q do not report the unread videos", steps)
+	}
+}
+
+// TestCreateCampaign_VideoCreativeFailureStepIsSafe: a video creative refused with a non-Graph
+// body that echoes the request reaches Steps without the body and without Meta's signed thumbnail
+// URL (PR #653 review).
+func TestCreateCampaign_VideoCreativeFailureStepIsSafe(t *testing.T) {
+	vs := newVideoServer(t, "ready")
+	vs.thumbs = `{"data":[{"uri":"https://scontent.example/t2.jpg?oh=THUMB-SIG","is_preferred":true}]}`
+	inner := vs.handler()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adcreatives") {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, "<html>PROXY-ECHO-MARKER image_url=https://scontent.example/t2.jpg?oh=THUMB-SIG</html>")
+			return
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	var sleeps int32
+	in := metaFieldInput()
+	in.Variants = []AdVariant{videoVariant("Keynote")}
+	res, err := videoClient(srv.URL, &sleeps).CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	steps := strings.Join(res.Steps, "\n")
+	if res.AdCount != 0 || !strings.Contains(steps, "Ad 1 failed") || strings.Contains(steps, "PROXY-ECHO-MARKER") || strings.Contains(steps, "THUMB-SIG") {
+		t.Fatalf("AdCount=%d steps %q: want the failure without the body or the thumbnail signature", res.AdCount, steps)
+	}
+}
+
+// TestCreateCampaign_VideoUploadsStopBeforeTheDeadlineReserve: an upload starts only while the
+// caller's deadline holds a full request timeout beyond videoDeadlineReserve. With a deadline that
+// fits one slow upload, the second video is not sent and fails only its variant; the image and the
+// first video still get their ads (PR #653 review).
+func TestCreateCampaign_VideoUploadsStopBeforeTheDeadlineReserve(t *testing.T) {
+	vs := newVideoServer(t, "ready")
+	inner := vs.handler()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/advideos") {
+			time.Sleep(time.Second)
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	var sleeps int32
+	ctx, cancel := context.WithTimeout(context.Background(), videoDeadlineReserve+DefaultRequestTimeout+500*time.Millisecond)
+	defer cancel()
+	second := videoVariant("Second")
+	second.VideoAssetID = ""
+	second.VideoBytes = append(append([]byte{}, testVideo...), "second"...)
+	in := metaFieldInput()
+	in.Variants = []AdVariant{
+		{PrimaryText: "Join us", Headline: "Image", ImageURL: "https://cdn.example.org/a.png"},
+		videoVariant("Keynote"),
+		second,
+	}
+	res, err := videoClient(srv.URL, &sleeps).CreateCampaign(ctx, in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v (a skipped upload is a degraded success)", err)
+	}
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	if vs.uploads != 1 || res.AdCount != 2 {
+		t.Fatalf("uploads=%d AdCount=%d; want one upload and the image and first video ads", vs.uploads, res.AdCount)
+	}
+	if steps := strings.Join(res.Steps, "\n"); !strings.Contains(steps, "too little of the provider call's deadline was left") || !strings.Contains(steps, "no creative or ad was created for variant 3") {
+		t.Fatalf("steps %q do not report the skipped upload on variant 3", steps)
 	}
 }

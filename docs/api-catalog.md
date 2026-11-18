@@ -3915,7 +3915,9 @@ videoAssetId?: string            — OPTIONAL id of an MP4 creative asset upload
                                   created. After the ad set exists and before the first
                                   creative, each DISTINCT video is uploaded ONCE to
                                   `/act_<id>/advideos` (multipart `source`, never retried —
-                                  every upload creates a new video), then `GET /{video_id}
+                                  every upload creates a new video; an upload starts only while
+                                  the provider deadline holds a request timeout beyond the 20 s
+                                  reserve, else that video fails its variants), then `GET /{video_id}
                                   ?fields=status` is polled every 3 s until `video_status` is
                                   `ready`, within ONE 60 s wait shared by every video (cut
                                   short so 20 s of the provider call's deadline remain for the

@@ -31,13 +31,16 @@ After the ad set exists and before the first creative, `prepareVideos`:
 
 1. uploads each DISTINCT video (by content) once: `POST /act_<id>/advideos`, multipart `source`
    part named `creative.mp4`. Never retried, not even on a throttle, because every upload creates
-   a new video object (unlike content-addressed `/adimages`);
+   a new video object (unlike content-addressed `/adimages`). An upload starts only while the
+   caller's deadline holds a full request timeout beyond `videoDeadlineReserve`; otherwise the
+   video is not sent and fails only its variants. The 2xx body passes `identityjson.Check` before
+   its `id` is read (duplicate or case-folded keys make the upload UNCONFIRMED);
 2. polls `GET /{video_id}?fields=status` every 3 s until `video_status` is `ready`, within ONE 60 s
    wait shared by all videos (it runs inside the orchestrator's two-minute provider call, so it
    is cut short to leave `videoDeadlineReserve`, 20 s, of the caller's deadline for the thumbnails,
    creatives and ads: a not-ready video then fails only its own variants). The wait is bounded by
-   the client clock as well as the poll count, and each status read runs under the time left (at
-   least 2 s), so slow or throttled reads cannot overrun it;
+   the client clock as well as the poll count. No status read starts once the wait has passed, and
+   only a round's first read is given at least 2 s, so slow or throttled reads cannot overrun it;
 3. reads `GET /{video_id}/thumbnails?fields=uri,is_preferred` and takes the preferred https
    thumbnail (else the first).
 
@@ -53,7 +56,9 @@ uploads or the wait returns the partial result, so the claim is retained. Every 
 `CampaignResult.VideoIDs` (asset id -> video id) and each ad's `AdResult.VideoID`.
 
 Steps never carry a raw non-Graph error body: `stepSafeErrText` keeps method, path, status and
-the parsed diagnostic fields only (the carousel's `scrubCarouselErr` uses it too).
+the parsed diagnostic fields only. The carousel's `scrubCarouselErr` uses it, and so does a video
+variant's creative/ad failure, which also scrubs Meta's thumbnail URL (`scrubURLFromErr` withholds
+the text when that URL carries a signature).
 
 ## Not live-verified (blockers for the flag)
 

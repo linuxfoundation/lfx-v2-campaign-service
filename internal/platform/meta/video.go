@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 // Meta video ads (#550 gap 9).
@@ -59,7 +60,8 @@ const MimeTypeVideoMP4 = "video/mp4"
 //
 // videoDeadlineReserve is the part of the caller's remaining deadline the readiness wait leaves for
 // what follows it: the thumbnail reads and every variant's creative and ad. minVideoStatusRead is
-// the least time one readiness status read is given, however little of the wait is left.
+// the least time the first status read of a poll round is given, however little of the wait is
+// left; later reads in the round start only while the wait has time left.
 const (
 	defaultVideoPollInterval = 3 * time.Second
 	defaultVideoReadyWait    = 60 * time.Second
@@ -183,8 +185,15 @@ func (c *Client) prepareVideos(ctx context.Context, variants []AdVariant, steps 
 		return out, nil
 	}
 
-	// 1. One upload per distinct video, never retried.
+	// 1. One upload per distinct video, never retried. An upload starts only while the caller's
+	// deadline still holds a full request timeout beyond videoDeadlineReserve; otherwise that
+	// video is not sent and fails only its own variants, so the rest still get their ads instead
+	// of the deadline cutting the whole create short mid-upload (PR #653 review).
 	for _, p := range order {
+		if dl, ok := ctx.Deadline(); ok && c.httpClient.Timeout > 0 && time.Until(dl) < videoDeadlineReserve+c.httpClient.Timeout {
+			p.err = &videoStageError{msg: "video NOT uploaded: too little of the provider call's deadline was left for its upload"}
+			continue
+		}
 		id, err := c.uploadVideo(ctx, p.data, p.mime)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -224,11 +233,25 @@ func (c *Client) prepareVideos(ctx context.Context, variants []AdVariant, steps 
 	end := c.timeNow().Add(wait)
 	for round := 0; ; round++ {
 		waiting := 0
+		firstRead := true
 		for _, p := range order {
 			if p.err != nil || p.status == videoStatusReady {
 				continue
 			}
-			readCtx, cancelRead := context.WithTimeout(ctx, max(end.Sub(c.timeNow()), minVideoStatusRead))
+			// No read starts once the shared wait has passed (the not-ready handling below marks
+			// the video), and only a round's first read is given minVideoStatusRead, so many videos
+			// cannot each spend a fresh floor past the wait (PR #653 review).
+			left := end.Sub(c.timeNow())
+			if left <= 0 {
+				waiting++
+				continue
+			}
+			timeout := left
+			if firstRead {
+				timeout = max(left, minVideoStatusRead)
+			}
+			firstRead = false
+			readCtx, cancelRead := context.WithTimeout(ctx, timeout)
 			status, err := c.videoStatus(readCtx, p.videoID)
 			cancelRead()
 			if err != nil {
@@ -260,6 +283,9 @@ func (c *Client) prepareVideos(ctx context.Context, variants []AdVariant, steps 
 					continue
 				}
 				detail := "status " + domain.CallerValue(p.status)
+				if p.status == "" && p.readErr == nil {
+					detail = "its status was not read before the wait ended"
+				}
 				if p.readErr != nil {
 					detail = "last status read failed: " + stepSafeErrText(p.readErr, 200)
 				}
@@ -463,6 +489,12 @@ func (c *Client) uploadVideo(ctx context.Context, video []byte, contentType stri
 	}
 	if int64(len(raw)) > maxResponseBody {
 		return "", &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBody)}
+	}
+	// The 2xx body is checked as RAW BYTES first: duplicate or case-folded "id" keys decode
+	// last-wins, so an untrusted body could name the wrong video. It confirms nothing, so the
+	// upload is UNCONFIRMED (PR #653 review).
+	if err := identityjson.Check(raw); err != nil {
+		return "", &transportError{Method: http.MethodPost, Path: path, Err: err}
 	}
 	var out createResponse
 	if err := json.Unmarshal(raw, &out); err != nil {

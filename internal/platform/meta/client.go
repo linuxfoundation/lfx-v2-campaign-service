@@ -4029,6 +4029,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				}
 				return partialResult(), fmt.Errorf("meta campaign aborted while creating ad %d (campaign %s created, PAUSED): %w", i+1, campaignID, ctx.Err())
 			}
+			// What a Step may say about verr (#550 gap 9). A video variant has no ImageURL; its
+			// creative carries Meta's thumbnail URL instead, so that is the URL to protect, and a
+			// non-Graph body (a proxy page that may echo the request) is dropped first.
+			stepURL, stepErr := variant.ImageURL, verr
+			if video.videoID != "" {
+				stepURL, stepErr = video.thumbnail, errors.New(stepSafeErrText(verr, len(verr.Error())))
+			}
 			// An AMBIGUOUS ad/creative error (transport/timeout, 5xx, or a 2xx with no
 			// id — all surfaced by createVariantAd) means Meta MAY already have created
 			// the object, so a definite "create it manually" instruction could
@@ -4043,7 +4050,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			var upErr *uploadStageError
 			if errors.As(verr, &upErr) {
 				msg := fmt.Sprintf("Ad %d failed: image upload did not complete, so no creative or ad was created for variant %d: %s",
-					i+1, i+1, scrubURLFromErr(verr, variant.ImageURL, 300))
+					i+1, i+1, scrubURLFromErr(stepErr, stepURL, 300))
 				if createOutcomeAmbiguous(upErr.err) {
 					// Only the IMAGE is in doubt, and it is content-addressed, so a landed
 					// image needs no cleanup: it is deduplicated by content and costs nothing
@@ -4066,9 +4073,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			}
 			if createOutcomeAmbiguous(verr) {
 				if creativeID != "" {
-					steps = append(steps, fmt.Sprintf("Ad/creative creation outcome UNCONFIRMED for variant %d; it may have been created — verify in Meta Ads Manager before recreating (orphaned creative: %s): %s", i+1, creativeID, scrubURLFromErr(verr, variant.ImageURL, 300)))
+					steps = append(steps, fmt.Sprintf("Ad/creative creation outcome UNCONFIRMED for variant %d; it may have been created — verify in Meta Ads Manager before recreating (orphaned creative: %s): %s", i+1, creativeID, scrubURLFromErr(stepErr, stepURL, 300)))
 				} else {
-					steps = append(steps, fmt.Sprintf("Ad/creative creation outcome UNCONFIRMED for variant %d; it may have been created — verify in Meta Ads Manager before recreating: %s", i+1, scrubURLFromErr(verr, variant.ImageURL, 300)))
+					steps = append(steps, fmt.Sprintf("Ad/creative creation outcome UNCONFIRMED for variant %d; it may have been created — verify in Meta Ads Manager before recreating: %s", i+1, scrubURLFromErr(stepErr, stepURL, 300)))
 				}
 				continue
 			}
@@ -4076,9 +4083,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// orphaned creative is visible (can be cleaned up / reused) rather than
 			// silently discarded.
 			if creativeID != "" {
-				steps = append(steps, fmt.Sprintf("Ad %d failed: %s (orphaned creative: %s)", i+1, scrubURLFromErr(verr, variant.ImageURL, 300), creativeID))
+				steps = append(steps, fmt.Sprintf("Ad %d failed: %s (orphaned creative: %s)", i+1, scrubURLFromErr(stepErr, stepURL, 300), creativeID))
 			} else {
-				steps = append(steps, fmt.Sprintf("Ad %d failed: %s", i+1, scrubURLFromErr(verr, variant.ImageURL, 300)))
+				steps = append(steps, fmt.Sprintf("Ad %d failed: %s", i+1, scrubURLFromErr(stepErr, stepURL, 300)))
 			}
 			continue
 		}
