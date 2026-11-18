@@ -40,7 +40,8 @@ func systemLinkedInRow() *model.Connection {
 
 // linkedInMonitorFallbackDispatcher wires a LinkedIn dispatcher whose API records the bearer
 // token and path of every request, and answers the same three campaigns on whichever account is
-// read: 1001 (tlf's), 1002 (aswf's) and 1003 (a campaign this service never recorded).
+// read: 1001 (tlf's), 1002 (aswf's) and 1003, which no project records unless a test records
+// it.
 func linkedInMonitorFallbackDispatcher(t *testing.T, reader *scopedConnReader) (*LinkedInDispatcher, func() (tokens, paths []string)) {
 	t.Helper()
 	var mu sync.Mutex
@@ -223,9 +224,9 @@ func TestLinkedIn_AccountMonitor_DisconnectedProjectReadsItsSystemAccount(t *tes
 	if got := monitorRowIDs(read); len(got) != 1 || got[0] != "1001" {
 		t.Errorf("rows = %v, want only tlf's campaign 1001", got)
 	}
-	tokens, _ := requests()
-	if len(tokens) == 0 {
-		t.Fatal("LinkedIn was never called")
+	tokens, paths := requests()
+	if len(tokens) == 0 || !strings.Contains(paths[0], "538170226") {
+		t.Fatalf("requests %v, want a read of the system account 538170226", paths)
 	}
 	for _, tok := range tokens {
 		if tok != "system-tok" {
