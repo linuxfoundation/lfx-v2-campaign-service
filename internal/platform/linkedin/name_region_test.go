@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // TestLinkedinRegion pins the Region segment (#587): the first geo target's region in the
@@ -228,6 +229,31 @@ func TestCreateCampaign_TextCreateSkipsTheLegacyLookup(t *testing.T) {
 		t.Fatalf("campaign POSTs = %v (err %v), want one TEXT_AD create", posts, err)
 	}
 	if res == nil || res.CampaignID == "777" || res.CampaignName == legacyConversions {
+		t.Errorf("result = %+v, want a new campaign under the new name", res)
+	}
+}
+
+// TestCreateCampaign_VideoCreateSkipsTheLegacyLookup: like a text create, a video create (#586)
+// never looks up the pre-#587 name, which is always Static: both are SPONSORED_UPDATES, so the type
+// guard could not refuse a single-image campaign of that name, and the video would be bound to it.
+// The fake serves no Videos API, so the create stops after the campaign; only the campaign search
+// count and the campaign POST matter here.
+func TestCreateCampaign_VideoCreateSkipsTheLegacyLookup(t *testing.T) {
+	srv, seen := legacyFallbackServer(t, true, legacyKubeConName)
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()),
+		WithVideoPolling(time.Millisecond, 10*time.Millisecond))
+	in := validCampaignInput()
+	in.Variants[0].VideoAssetID = "vid-a"
+	in.Videos = map[string]VideoUpload{"vid-a": {Data: testMP4(MinVideoBytes + 10), MimeType: "video/mp4"}}
+	res, _ := c.CreateCampaign(context.Background(), in)
+	posts, searches := seen()
+	if searches != 1 {
+		t.Errorf("campaign searches = %d, want 1 (no legacy lookup for a video create)", searches)
+	}
+	if len(posts) != 1 || !strings.Contains(posts[0], `"format":"SINGLE_VIDEO"`) {
+		t.Fatalf("campaign POSTs = %v, want one SINGLE_VIDEO create", posts)
+	}
+	if res != nil && (res.CampaignID == "777" || res.CampaignName == legacyKubeConName) {
 		t.Errorf("result = %+v, want a new campaign under the new name", res)
 	}
 }

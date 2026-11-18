@@ -932,6 +932,19 @@ app:
     LINKEDIN_ADS_TEXT_ADS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to LinkedIn video Sponsored Content (#586):
+    # linkedInConfig.variants[].videoAssetId names a stored MP4 that is uploaded
+    # through LinkedIn's Videos API and posted as the dark post of a SINGLE_VIDEO
+    # campaign. The upload and the video post have not been exercised against a
+    # live LinkedIn account. Set it to exactly "true" in lfx-v2-argocd once the
+    # probe in the PR passes. While off, a create naming a videoAssetId is
+    # refused before a job exists. Any value other than "true" is treated as
+    # off, so a typo fails closed. Blocker before enabling: measure LinkedIn's
+    # real processing time for a 20-30 MiB MP4 against the 60 s availability
+    # wait inside the two-minute provider call (see linkedin-video-ads.md).
+    LINKEDIN_ADS_VIDEO_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to linkedInConfig.variants[].callToAction (#588):
     # the dark post's contentCallToActionLabel, sent with contentLandingPage. No
     # call to action on an article dark post has been sent to a live LinkedIn

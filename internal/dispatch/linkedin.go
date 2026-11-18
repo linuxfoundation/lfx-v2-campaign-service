@@ -456,7 +456,9 @@ func linkedinCallToActionEnabled() bool {
 }
 
 // variantStringFields are the optional per-variant strings checkVariantsShape type-checks.
-var variantStringFields = []string{"name", "callToAction", "description"}
+// videoAssetId (#586) is one too: a wrong-typed one would decode to "" in the best-effort
+// pre-flight decode, skip the video gate and its 400, and fail the job in Dispatch's strict decode.
+var variantStringFields = []string{"name", "callToAction", "description", "videoAssetId"}
 
 // checkVariantsShape refuses a linkedInConfig.variants entry whose name, callToAction or description
 // (#588, #589) is not a JSON string, explicit null included. encoding/json skips a wrong-typed field
@@ -800,6 +802,10 @@ func (d *LinkedInDispatcher) PreflightCreate(ctx context.Context, projectID stri
 	if _, err := linkedinFormat(cfg, plan); err != nil {
 		return err
 	}
+	// Video variants (#586): the feature gate and the request shape are a synchronous 400 too.
+	if err := checkLinkedInVideoVariants(cfg); err != nil {
+		return err
+	}
 	// The fixed-schedule lifetime floor (#633), so the caller gets the 400 before a job exists.
 	if err := linkedinLifetimeFloor(cfg, time.Now()); err != nil {
 		return err
@@ -845,7 +851,7 @@ type LinkedInDispatcher struct {
 	// rely on, verified against this client rather than inherited from them.
 	clients *clientCache
 	opts    []linkedin.Option
-	// creatives and assets resolve variants[].imageAssetId (linkedin_creative.go). Bound by
+	// creatives and assets resolve variants[].imageAssetId and videoAssetId (linkedin_creative.go). Bound by
 	// registerDispatchers; nil in direct-construction tests, where an asset-backed variant
 	// fails pre-create and the reserver reserves nothing.
 	creatives creativeAssetReader
@@ -998,13 +1004,16 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if cfg.Format != linkedin.FormatText && len(cfg.Variants) == 0 {
 		return nil, notCreated(domain.PreflightRefusalf("linkedin campaign creation requires at least one creative variant"))
 	}
+	if err := checkLinkedInVideoVariants(cfg); err != nil {
+		return nil, notCreated(err)
+	}
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
 	}
 	// Stored variant images are resolved and validated BEFORE anything is created; the
 	// reservation is held until the upload inside CreateCampaign is done.
-	images, releaseImages, err := d.resolveLinkedInImages(ctx, brief, &cfg)
+	images, videos, releaseImages, err := d.resolveLinkedInImages(ctx, brief, &cfg)
 	if err != nil {
 		return nil, notCreated(err)
 	}
@@ -1060,6 +1069,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		Variants:         cfg.Variants,
 		AdAccountID:      adAccountID,
 		Images:           images,
+		Videos:           videos,
 		ManualCPCBid:     plan.amount,
 		Objective:        objective,
 		Conversions:      cfg.Conversions,
@@ -1973,7 +1983,8 @@ func linkedinRunStatus(status string) (string, error) {
 // (and so a snapshot) exists: Variants[].ImageURN (urn:li:image:<id> only), EmployerExclusions
 // (validFacets: facet URNs only, and creation is refused when no profile matches), and
 // AdAccountID (refused unless it equals the connection's account). GeoTargets[].URN,
-// Variants[].ImageAssetID (a stored asset key), Variants[].CallToAction (one of
+// Variants[].ImageAssetID and Variants[].VideoAssetID (stored asset keys, canonical uuids),
+// Variants[].CallToAction (one of
 // linkedin.CallToActionLabels), numbers, flags and dates are kept too.
 // Bidding is kept verbatim too: resolveBidding refuses a strategy other than automatic or
 // manual before anything is sent, and bidAmount is a number

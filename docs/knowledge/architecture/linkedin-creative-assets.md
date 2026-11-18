@@ -25,7 +25,8 @@ upload thumbnail image and use the ImageUrn on thumbnail field."
 ## Config
 
 `linkedInConfig.variants[].imageAssetId` (optional, per variant), mutually exclusive with
-`imageUrn`. Variants naming the same asset share one upload. See `docs/api-catalog.md` §
+`imageUrn`. A stored MP4 named here is refused before anything is created; videos go in
+`videoAssetId` ([LinkedIn Video Sponsored Content](linkedin-video-ads.md)). Variants naming the same asset share one upload. See `docs/api-catalog.md` §
 LinkedInConfig variant images.
 
 ## Before anything is created
