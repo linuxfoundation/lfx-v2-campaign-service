@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -96,8 +97,8 @@ func TestCreateCampaign_SendsSubCountryGeolocations(t *testing.T) {
 	if name, _ := campaign["name"].(string); !strings.Contains(name, " | NA | ") {
 		t.Errorf("campaign name %q: the region must come from the first country", name)
 	}
-	if name, _ := adGroup["name"].(string); !strings.Contains(name, "| CA+US-CA+662 |") {
-		t.Errorf("ad group name %q must list every location", name)
+	if name, _ := adGroup["name"].(string); !strings.Contains(name, "| CA+US-CA+1 more |") {
+		t.Errorf("ad group name %q must list the countries, the first location and a count of the rest", name)
 	}
 	if joined := strings.Join(res.Steps, " | "); !strings.Contains(joined, "geo: CA, US-CA, 662") || !strings.Contains(joined, "3 geos") {
 		t.Errorf("steps must name every location; steps: %s", joined)
@@ -273,5 +274,49 @@ func TestValidateSubCountryGeoTargets_EmptyMakesNoCall(t *testing.T) {
 	c, seen := geoValidationServer(t, 500, `{}`)
 	if err := c.ValidateSubCountryGeoTargets(context.Background(), nil); err != nil || len(seen()) != 0 {
 		t.Fatalf("err = %v, calls = %d", err, len(seen()))
+	}
+}
+
+// The ad group name summarizes the sub-country ids, so the largest allowed list (with the longest
+// city ids) still fits Reddit's name limit and is created rather than refused inside the job.
+func TestCreateCampaign_MaxSubCountryListFitsTheNames(t *testing.T) {
+	c, bodies, cleanup := newBodyCaptureServers(t)
+	defer cleanup()
+
+	in := validRedditInput()
+	in.GeoTargets = nil
+	in.EventName = strings.Repeat("E", 60)
+	in.SubCountryGeoTargets = make([]string, MaxSubCountryGeoTargets)
+	for i := range in.SubCountryGeoTargets {
+		in.SubCountryGeoTargets[i] = fmt.Sprintf("CA:%d", 1000000000+i)
+	}
+	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("CreateCampaign with %d ids: %v", MaxSubCountryGeoTargets, err)
+	}
+	_, adGroup := bodies()
+	targeting, _ := adGroup["targeting"].(map[string]any)
+	if got, _ := targeting["geolocations"].([]any); len(got) != MaxSubCountryGeoTargets {
+		t.Errorf("geolocations carries %d ids, want %d", len(got), MaxSubCountryGeoTargets)
+	}
+	if name, _ := adGroup["name"].(string); !strings.Contains(name, "| CA:1000000000+49 more |") {
+		t.Errorf("ad group name = %q", name)
+	}
+}
+
+func TestRedditGeoLabel(t *testing.T) {
+	one := []SubCountryGeo{{ID: "US-CA"}}
+	for _, tc := range []struct {
+		countries []string
+		sub       []SubCountryGeo
+		want      string
+	}{
+		{[]string{"US", "CA"}, nil, "US+CA"},
+		{nil, one, "US-CA"},
+		{[]string{"GB"}, one, "GB+US-CA"},
+		{nil, []SubCountryGeo{{ID: "US-CA"}, {ID: "662"}, {ID: "US-NY"}}, "US-CA+2 more"},
+	} {
+		if got := redditGeoLabel(tc.countries, tc.sub); got != tc.want {
+			t.Errorf("redditGeoLabel(%v, %v) = %q, want %q", tc.countries, tc.sub, got, tc.want)
+		}
 	}
 }

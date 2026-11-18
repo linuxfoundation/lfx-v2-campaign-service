@@ -641,7 +641,9 @@ subCountryGeoTargets?: string[] — OPTIONAL Reddit geolocation ids below countr
                                   `targeting.geolocations` after the countries. With no
                                   `geoTargets` the 'US' default is dropped, so only these locations
                                   are targeted, and the campaign's Region segment comes from the
-                                  first one's country. Refused: a blank entry, a bare country
+                                  first one's country. The ad group name lists the countries, then
+                                  the first id and a count of the rest ('US-CA+2 more'), so any
+                                  allowed list fits Reddit's 200-character name. Refused: a blank entry, a bare country
                                   (put it in `geoTargets`), a postal code or any other shape, an
                                   unassigned country, more than 50 entries, an id inside a country
                                   `geoTargets` targets (the country already covers it), and an id

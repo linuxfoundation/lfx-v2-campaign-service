@@ -146,6 +146,22 @@ func NormalizeSubCountryGeoTargets(geoTargets, excludedGeoTargets, subCountry []
 	return out, nil
 }
 
+// redditGeoLabel is the ad group name's geo segment: the countries "+"-joined, as before, then at
+// most the first sub-country id and a count of the rest ("US-CA+49 more"). Listing every id would
+// let a list well under MaxSubCountryGeoTargets push the name past redditMaxNameRunes, a refusal
+// only CreateCampaign can make; the summary keeps every allowed list nameable. The full list is in
+// targeting.geolocations and the step log.
+func redditGeoLabel(countries []string, subCountry []SubCountryGeo) string {
+	parts := append([]string(nil), countries...)
+	switch n := len(subCountry); {
+	case n == 1:
+		parts = append(parts, subCountry[0].ID)
+	case n > 1:
+		parts = append(parts, fmt.Sprintf("%s+%d more", subCountry[0].ID, n-1))
+	}
+	return strings.Join(parts, "+")
+}
+
 // upperSet is the set of trimmed, uppercased, non-blank values.
 func upperSet(values []string) map[string]struct{} {
 	set := make(map[string]struct{}, len(values))

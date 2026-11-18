@@ -72,6 +72,13 @@ func (f *geoValidatingRedditAPI) seen() []string {
 	return append([]string(nil), f.paths...)
 }
 
+// adGroups copies the captured ad-group bodies under the lock the handler writes them under.
+func (f *geoValidatingRedditAPI) adGroups() []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]map[string]any(nil), f.adGroupBodies...)
+}
+
 // requireNoRedditWrite fails when any request other than the validations read was a POST.
 func requireNoRedditWrite(t *testing.T, paths []string) {
 	t.Helper()
@@ -182,7 +189,7 @@ func TestReddit_SubCountryGeo_ExcludingUSWithSubCountryOnly(t *testing.T) {
 	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderRedditAds, cfg); err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
-	tg := targetingOf(t, f.adGroupBodies[0])
+	tg := targetingOf(t, f.adGroups()[0])
 	if !reflect.DeepEqual(tg["geolocations"], []any{"GB:2641599"}) || !reflect.DeepEqual(tg["excluded_geolocations"], []any{"US"}) {
 		t.Errorf("targeting = %v", tg)
 	}
@@ -200,7 +207,7 @@ func TestReddit_SubCountryGeo_ConfirmedAndSent(t *testing.T) {
 	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderRedditAds, redditAudienceCfg(subCountryExtra)); err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
-	tg := targetingOf(t, f.adGroupBodies[0])
+	tg := targetingOf(t, f.adGroups()[0])
 	if !reflect.DeepEqual(tg["geolocations"], []any{"CA", "US-CA", "662"}) {
 		t.Errorf("geolocations = %v", tg["geolocations"])
 	}

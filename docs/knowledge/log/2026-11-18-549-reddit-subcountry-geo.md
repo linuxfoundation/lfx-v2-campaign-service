@@ -7,7 +7,9 @@
 - `reddit.NormalizeSubCountryGeoTargets` holds the rules. It refuses a malformed id, a bare
   country, more than 50 ids, and an id inside a country `geoTargets` targets or
   `excludedGeoTargets` excludes. With no countries the `US` default is dropped, and the campaign is
-  named after the first id's country. The exclusion rule now reads the same effective targeting.
+  named after the first id's country. The ad group name lists the countries, then the first id
+  and a count of the rest, so a full list fits the name limit. The exclusion rule now reads the
+  same effective targeting.
 - `reddit.ValidateSubCountryGeoTargets` confirms every id with one
   `POST /targeting/geolocations_validations` before anything is created. `PreflightCreate` refuses
   an id Reddit rejects with a synchronous 400 and fails open when the read cannot run. `Dispatch`

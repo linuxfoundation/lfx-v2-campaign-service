@@ -979,7 +979,9 @@ code or any other shape, and an unassigned country. It also refuses an id inside
 `geoTargets` targets (the country already covers it, the same overlap rule as Meta's #612 regions)
 or that `excludedGeoTargets` excludes. `CreateCampaign` appends the ids to
 `targeting.geolocations` after the countries. With no countries it drops the `US` default and names
-the campaign's Region after the first id's country. `NormalizeTargetingExclusions` reads the same
+the campaign's Region after the first id's country. The ad group name lists the countries, then
+only the first id and a count of the rest (`redditGeoLabel`, `US-CA+2 more`), so a full list of 50
+still fits the 200-rune name limit that only `CreateCampaign` checks. `NormalizeTargetingExclusions` reads the same
 effective targeting, so excluding the US beside sub-country ids alone is not an overlap.
 
 `ValidateSubCountryGeoTargets` confirms the ids with one `POST /targeting/geolocations_validations`.

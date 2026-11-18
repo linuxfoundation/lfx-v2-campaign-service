@@ -2053,7 +2053,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// campaignName is also the handle an ambiguous partial carries when no id exists yet, so
 	// composing it here serves both purposes.
 	campaignName := buildRedditCampaignName(in, objective, resolveRegion(regionGeos))
-	geoLabel := strings.Join(geolocations, "+")
+	geoLabel := redditGeoLabel(geos, subCountry)
 	adGroupName := fmt.Sprintf("Events | %s | %s | Intent | Communities + Keywords", replacePipes(in.EventName), geoLabel)
 	if n := utf8.RuneCountInString(campaignName); n > redditMaxNameRunes {
 		return nil, domain.PreflightRefusalf("composed campaign name is too long: %d characters (max %d)", n, redditMaxNameRunes)
