@@ -100,6 +100,12 @@ func TestValidateFixedScheduleLifetimeDates(t *testing.T) {
 	if err := ValidateFixedScheduleLifetimeDates(310, "2026-11-01", "2026-12-18", now); err != nil {
 		t.Errorf("a past start must count from today: %v", err)
 	}
+	// Just before UTC midnight the nudged start (now+startTimeBuffer) lands tomorrow, so the
+	// flight is 19 Nov–18 Dec, 30 days, and $300 covers it.
+	late := time.Date(2026, 11, 18, 23, 55, 0, 0, time.UTC)
+	if err := ValidateFixedScheduleLifetimeDates(300, "2026-11-18", "2026-12-18", late); err != nil {
+		t.Errorf("a start nudged past midnight must count from tomorrow: %v", err)
+	}
 	for _, bad := range [][2]string{{"nope", "2026-12-18"}, {"2026-11-18", "2026-13-40"}, {"2026-11-18", "2026-11-01"}} {
 		if err := ValidateFixedScheduleLifetimeDates(1, bad[0], bad[1], now); err != nil {
 			t.Errorf("dates %v are validateSchedule's to refuse, got %v", bad, err)

@@ -487,7 +487,7 @@ endMs)` (`budget_flight.go`) refuses a total under max($100, $10 × days) at wir
 are UTC calendar days from start through end inclusive (`flightDaysUTC`), which are the
 campaign's own day boundaries because `toMs` sends UTC midnights. `CreateCampaign` calls it after
 `validateSchedule` when there is no cap. `ValidateFixedScheduleLifetimeDates` is the
-YYYY-MM-DD form the dispatch preflight uses, counting a begun start from now. `GetCampaignBudget`
+YYYY-MM-DD form the dispatch preflight uses, counting a begun start from now+startTimeBuffer, as `toMs` sends it. `GetCampaignBudget`
 also returns `RunStartMs`/`RunEndMs`, so the budget write applies the floor to a campaign whose
 schedule has an end. Pinned by `budget_flight_test.go`.
 

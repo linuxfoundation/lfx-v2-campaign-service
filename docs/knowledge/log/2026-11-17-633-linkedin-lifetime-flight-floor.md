@@ -17,5 +17,6 @@ activated. The client checked only the flat $100 lifetime minimum.
   a 10-day flight.
 - Tests: `budget_flight_test.go` and `linkedin_lifetime_floor_test.go`. Disabling the rule fails
   all seven new tests.
-- Not verified live: whether LinkedIn counts a mid-flight edit over the whole schedule or the days
-  remaining. This uses the whole schedule, which is the stricter reading.
+- Not verified live: whether LinkedIn checks a mid-flight edit over the whole schedule or as
+  remaining budget over remaining days. This uses the whole schedule; the two readings refuse
+  different edits, so it stays open until a live check.

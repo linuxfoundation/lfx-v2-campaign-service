@@ -174,8 +174,10 @@ func (d *LinkedInDispatcher) WriteBudget(ctx context.Context, projectID string, 
 	if err == nil && lifetime && !hasDaily && current.RunStartMs != nil && current.RunEndMs != nil {
 		// An uncapped lifetime budget on a fixed schedule (#633): the new total must still cover
 		// $10 for every day of the campaign's flight, counted over its whole schedule exactly as
-		// the create path counts it, or LinkedIn leaves the campaign unable to deliver. A capped
-		// one (#584) runs on a continuous schedule and is covered by ValidateTotalCoversCap.
+		// the create path counts it, or LinkedIn leaves the campaign unable to deliver. Whether
+		// LinkedIn instead checks remaining budget over remaining days mid-flight is unverified;
+		// the two readings refuse different edits. A capped one (#584) runs on a continuous
+		// schedule and is covered by ValidateTotalCoversCap.
 		err = linkedin.ValidateFixedScheduleLifetime(budget.Amount, *current.RunStartMs, *current.RunEndMs)
 	}
 	if err != nil {

@@ -87,8 +87,10 @@ func ValidateFixedScheduleLifetime(totalUSD float64, startMs, endMs int64) error
 
 // ValidateFixedScheduleLifetimeDates is ValidateFixedScheduleLifetime for a create request's
 // YYYY-MM-DD dates, for a caller (the dispatch preflight) that checks before any client exists.
-// It derives the instants the way toMs will send them: the start day's 00:00 UTC, or now once
-// that has passed, and 23:59:59.999 UTC of the end day. Dates that do not parse, or an end
+// It derives the instants the way toMs will send them: the start day's 00:00 UTC, or
+// now+startTimeBuffer once that has passed (so a same-day start requested just before UTC
+// midnight counts from tomorrow, as LinkedIn will receive it), and 23:59:59.999 UTC of the end
+// day. Dates that do not parse, or an end
 // already past, are left to validateSchedule.
 func ValidateFixedScheduleLifetimeDates(totalUSD float64, startDate, endDate string, now time.Time) error {
 	if !dateRE.MatchString(startDate) || !dateRE.MatchString(endDate) {
@@ -105,7 +107,7 @@ func ValidateFixedScheduleLifetimeDates(totalUSD float64, startDate, endDate str
 	nowMs := now.UTC().UnixMilli()
 	startMs := start.UnixMilli()
 	if startMs <= nowMs {
-		startMs = nowMs
+		startMs = nowMs + startTimeBuffer.Milliseconds()
 	}
 	endMs := end.Add(24*time.Hour - time.Millisecond).UnixMilli()
 	if endMs <= startMs {
