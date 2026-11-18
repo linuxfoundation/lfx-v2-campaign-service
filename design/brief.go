@@ -204,7 +204,8 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		"LinkedIn automatic creates an objectiveType WEBSITE_VISIT campaign bidding MAX_CLICK with costType "+
 		"CPM (decision 2026-10-13: automatic LinkedIn campaigns optimise for clicks because MAX_CONVERSION, "+
 		"the only automated target of WEBSITE_CONVERSION, needs a conversion association, which this service "+
-		"creates only when linkedInConfig.conversions is supplied (#552); automatic still targets MAX_CLICK); "+
+		"creates only when linkedInConfig.conversions is supplied (#552); automatic targets MAX_CLICK unless "+
+		"linkedInConfig.objective is \"conversions\", see LINKEDIN OBJECTIVE); "+
 		"LinkedIn manual keeps objectiveType WEBSITE_CONVERSION. `manual` requires `bidAmount`, the starting "+
 		"max cost-per-click bid in the ad account's own currency (LinkedIn: "+
 		"USD), greater than zero, at most 1,000,000 and a whole number of micro-units; it creates the "+
@@ -319,6 +320,24 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		"Conversion rules belong to the ad account, so conversions also require global_marketing_ops on the "+
 		"project (403; "+
 		"503 when the check cannot be made). "+
+		"LINKEDIN OBJECTIVE (#582): linkedInConfig takes an optional `objective`, \"traffic\" or "+
+		"\"conversions\" (exact, lowercase). Omitted, the bidding strategy decides as before (automatic: "+
+		"objectiveType WEBSITE_VISIT, optimizationTargetType MAX_CLICK; manual: WEBSITE_CONVERSION with a "+
+		"manual CPC). \"traffic\" is WEBSITE_VISIT / MAX_CLICK / costType CPM and is offered with automatic "+
+		"bidding only. \"conversions\" is objectiveType WEBSITE_CONVERSION: with manual bidding it is the "+
+		"manual create unchanged (optimizationTargetType NONE, costType CPC, unitCost = bidAmount); with "+
+		"automatic bidding (LinkedIn's Maximum delivery) it is optimizationTargetType MAX_CONVERSION with "+
+		"costType CPM and no unitCost, and REQUIRES a non-empty linkedInConfig.conversions, because LinkedIn "+
+		"will not activate a MAX_CONVERSION campaign until a conversion is associated with it: the campaign "+
+		"is created PAUSED and the conversions associated right after it, so it inherits the conversions "+
+		"gates (LINKEDIN_ADS_CONVERSIONS_ENABLED and global_marketing_ops). If an association then fails the "+
+		"campaign is created_degraded with the step to associate the conversion in Campaign Manager before "+
+		"activating. Both conversions shapes have the Conversions name segment; a same-name campaign of the "+
+		"other bidding mode (manual NONE / ENHANCED_CONVERSION versus automated) is never reused. "+
+		"update-campaign-bid answers 409 for an automatic conversions campaign, as for MAX_CLICK: it has no "+
+		"manual bid. Refused with a 400 before any job exists: an objective that is not one of the two "+
+		"strings (an explicit null, \"\", a number, another word or casing), \"traffic\" with manual "+
+		"bidding, and \"conversions\" with automatic bidding and no conversions. "+
 		"LINKEDIN DAILY CAP (#584): with lifetimeBudget true, linkedInConfig takes an optional `dailyCapUsd` "+
 		"(USD), sent as the campaign's dailyBudget beside its totalBudget, on LinkedIn's continuous schedule "+
 		"(no campaign end; the event's campaign group carries it, and a create that cannot keep the shared "+
