@@ -190,6 +190,11 @@ func (c *Client) prepareVideos(ctx context.Context, variants []AdVariant, steps 
 	// video is not sent and fails only its own variants, so the rest still get their ads instead
 	// of the deadline cutting the whole create short mid-upload (PR #653 review).
 	for _, p := range order {
+		// A caller that is already gone aborts the create with the partial, exactly as an upload
+		// cut short does; the deadline clamp below is only for a caller with too little time left.
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("meta video upload cut short (caller context done): %w", ctx.Err())
+		}
 		if dl, ok := ctx.Deadline(); ok && c.httpClient.Timeout > 0 && time.Until(dl) < videoDeadlineReserve+c.httpClient.Timeout {
 			p.err = &videoStageError{msg: "video NOT uploaded: too little of the provider call's deadline was left for its upload"}
 			continue

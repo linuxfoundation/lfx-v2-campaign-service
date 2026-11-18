@@ -528,3 +528,25 @@ func TestCreateCampaign_VideoUploadsStopBeforeTheDeadlineReserve(t *testing.T) {
 		t.Fatalf("steps %q do not report the skipped upload on variant 3", steps)
 	}
 }
+
+// TestPrepareVideos_DeadCallerAbortsBeforeTheUploadClamp: a caller whose deadline has already passed
+// by the upload stage gets the abort (CreateCampaign then returns the partial with the error), not a
+// clamp skip that would turn an all-video create into a created_degraded success (PR #653 review).
+func TestPrepareVideos_DeadCallerAbortsBeforeTheUploadClamp(t *testing.T) {
+	vs := newVideoServer(t, "ready")
+	srv := httptest.NewServer(vs.handler())
+	defer srv.Close()
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	var sleeps int32
+	var steps []string
+	out, err := videoClient(srv.URL, &sleeps).prepareVideos(ctx, []AdVariant{videoVariant("Keynote")}, &steps, map[string]string{})
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) || out != nil {
+		t.Fatalf("prepareVideos = %v, %v; want an abort carrying the expired deadline", out, err)
+	}
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	if vs.uploads != 0 {
+		t.Fatalf("uploads=%d; want none for a caller already gone", vs.uploads)
+	}
+}
