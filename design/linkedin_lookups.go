@@ -64,6 +64,45 @@ var LinkedInAdsConversionRules = Type("linkedin-ads-conversion-rules", func() {
 	Required("account_id", "conversions", "conversion_count")
 })
 
+// linkedInTypeaheadFacets are the facets search-linkedin-ads-targeting-entities serves: the
+// linkedInConfig.targeting facets LinkedIn's typeahead finder supports, plus locations for
+// linkedInConfig.geoTargets. Mirrors linkedin.TypeaheadFacetKeys, which a service test pins.
+var linkedInTypeaheadFacets = []any{"employers", "groups", "industries", "interests", "locations", "skills", "titles"}
+
+// linkedInTypeaheadQueryMax mirrors linkedin.MaxTypeaheadQueryLen, and linkedInTypeaheadQueryMin
+// linkedin.MinTypeaheadQueryLen. Goa applies both to the raw parameter; the service applies them
+// again after trimming.
+const (
+	linkedInTypeaheadQueryMax = 100
+	linkedInTypeaheadQueryMin = 2
+)
+
+// linkedInTypeaheadQueryPattern requires a non-space character and refuses any control character
+// (Unicode category Cc), so the decoder refuses what linkedin.NormalizeTypeaheadQuery would.
+const linkedInTypeaheadQueryPattern = `^\P{Cc}*[^\s\p{Cc}]\P{Cc}*$`
+
+// LinkedInAdsTargetingEntity is one entity of the targeting typeahead read.
+var LinkedInAdsTargetingEntity = Type("linkedin-ads-targeting-entity", func() {
+	Attribute("urn", String, "The entity's URN, in exactly the form the facet takes: a value of linkedInConfig.targeting.<facet>, or for locations the urn of a linkedInConfig.geoTargets entry", func() {
+		Example("urn:li:skill:17")
+	})
+	Attribute("name", String, "LinkedIn's display name for the entity (en_US). Not an identifier; for locations, the label of the geoTargets entry.", func() {
+		Example("Kubernetes")
+	})
+	Required("urn", "name")
+})
+
+// LinkedInAdsTargetingEntities is the targeting typeahead read.
+var LinkedInAdsTargetingEntities = Type("linkedin-ads-targeting-entities", func() {
+	Attribute("facet", String, "The facet searched, as requested", func() {
+		Enum(linkedInTypeaheadFacets...)
+		Example("skills")
+	})
+	Attribute("entities", ArrayOf(LinkedInAdsTargetingEntity), "The matches, in LinkedIn's relevance order, de-duplicated by urn. Empty when nothing matches.")
+	Attribute("entity_count", Int, "How many entities are in `entities`", func() { Example(1) })
+	Required("facet", "entities", "entity_count")
+})
+
 const linkedInLookupCommon = "Credentials resolve as for a LinkedIn create: the project's own connection, or the shared LF " +
 	"system account when it has none (or when the deployment forces the LF account), so the ids are on the account the " +
 	"create sends them to. The LF system account is the fallback of every project without its own connection, so " +
@@ -248,6 +287,54 @@ func linkedInAdsLookupMethods() {
 			GET("/projects/{project_id}/linkedin-ads/create-account")
 			Header("bearer_token:Authorization")
 			connectionAuthErrorResponses()
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("search-linkedin-ads-targeting-entities", func() {
+		Description("Search LinkedIn's targeting taxonomy by name, live from LinkedIn's Ad Targeting Entities " +
+			"typeahead finder (GET /rest/adTargetingEntities?q=typeahead), for picking linkedInConfig.targeting " +
+			"values (skills, groups, titles, interests, industries, employers) and linkedInConfig.geoTargets " +
+			"(locations) by name instead of by URN (#585). Only URNs of the shape a create accepts for the facet " +
+			"are returned. The answer is LinkedIn's own taxonomy, the same for every token, and names nothing any " +
+			"ad account holds, so it is gated on campaign_manager of {project_id} like every other project read, " +
+			"and a project with no LinkedIn connection of its own reads through the shared LF system credential, " +
+			"as a create would. No ad account need be selected. Answers are cached for up to six hours by facet " +
+			"and query, which serves a repeated identical search, not a new prefix. A 429 from LinkedIn is not " +
+			"retried and answers 503. A pure read: nothing is persisted.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("facet", String, "The targeting facet to search. locations answers linkedInConfig.geoTargets; the rest are linkedInConfig.targeting keys.", func() {
+				Enum(linkedInTypeaheadFacets...)
+				Example("skills")
+			})
+			Attribute("query", String, "Text to match against entity names: 2 to 100 characters, no control "+
+				"characters. The limits apply to the value as sent, and surrounding space is then trimmed, so the "+
+				"trimmed text must still be at least 2 characters. Every distinct query is a LinkedIn call on a "+
+				"shared rate limit (only a repeated identical search is served from cache), so callers should "+
+				"debounce keystrokes rather than search on each one.", func() {
+				MinLength(linkedInTypeaheadQueryMin)
+				MaxLength(linkedInTypeaheadQueryMax)
+				Pattern(linkedInTypeaheadQueryPattern)
+				Example("kubernetes")
+			})
+			Required("project_id", "facet", "query")
+		})
+		Result(LinkedInAdsTargetingEntities)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/linkedin-ads/targeting-entities")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("facet")
+			Param("query")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
