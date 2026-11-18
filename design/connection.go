@@ -1324,7 +1324,7 @@ var AccountMonitor = Type("account-monitor", func() {
 	// No example on campaigns or action_items (nor on the type, below): rows and findings differ
 	// per platform, so each monitor method publishes its own whole-response example — see
 	// design/account_monitor_examples.go.
-	Attribute("campaigns", ArrayOf(AccountMonitorCampaign), "The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only those this service recorded for the project, on LinkedIn and Microsoft Ads every campaign visible on the account — with the rule engine's per-row pacing output attached.", func() {
+	Attribute("campaigns", ArrayOf(AccountMonitorCampaign), "The campaigns this monitor covers — on Google Ads, LinkedIn, Meta, Reddit and X only those this service recorded for the project, on Microsoft Ads every campaign visible on the account — with the rule engine's per-row pacing output attached.", func() {
 		Meta("openapi:example", "false")
 	})
 	Attribute("action_items", ArrayOf(AccountMonitorActionItem), "The rule engine's findings across the returned campaigns.", func() {

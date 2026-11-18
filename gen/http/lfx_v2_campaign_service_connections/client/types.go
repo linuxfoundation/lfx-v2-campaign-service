@@ -7933,8 +7933,8 @@ type GoogleAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
-	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// The campaigns this monitor covers — on Google Ads, LinkedIn, Meta, Reddit
+	// and X only those this service recorded for the project, on Microsoft Ads
 	// every campaign visible on the account — with the rule engine's per-row
 	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
@@ -8118,8 +8118,8 @@ type LinkedinAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
-	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// The campaigns this monitor covers — on Google Ads, LinkedIn, Meta, Reddit
+	// and X only those this service recorded for the project, on Microsoft Ads
 	// every campaign visible on the account — with the rule engine's per-row
 	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
@@ -8185,8 +8185,8 @@ type MetaAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
-	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// The campaigns this monitor covers — on Google Ads, LinkedIn, Meta, Reddit
+	// and X only those this service recorded for the project, on Microsoft Ads
 	// every campaign visible on the account — with the rule engine's per-row
 	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
@@ -8252,8 +8252,8 @@ type RedditAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
-	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// The campaigns this monitor covers — on Google Ads, LinkedIn, Meta, Reddit
+	// and X only those this service recorded for the project, on Microsoft Ads
 	// every campaign visible on the account — with the rule engine's per-row
 	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
@@ -8319,8 +8319,8 @@ type MicrosoftAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
-	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// The campaigns this monitor covers — on Google Ads, LinkedIn, Meta, Reddit
+	// and X only those this service recorded for the project, on Microsoft Ads
 	// every campaign visible on the account — with the rule engine's per-row
 	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
@@ -8386,8 +8386,8 @@ type TwitterAdsAccountMonitorResponseBody struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
-	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// The campaigns this monitor covers — on Google Ads, LinkedIn, Meta, Reddit
+	// and X only those this service recorded for the project, on Microsoft Ads
 	// every campaign visible on the account — with the rule engine's per-row
 	// pacing output attached.
 	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`

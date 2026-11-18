@@ -8,19 +8,27 @@ orchestrator reduces the read to the project's recorded campaigns. Its tests pin
 its own, with fake dispatchers at the service layer.
 
 `internal/dispatch/linkedin_monitor_fallback_test.go` now pins #615's acceptance end to end,
-through the real `LinkedInDispatcher` and `Orchestrator`, as the Meta and Reddit fallback tests
-do:
+through the real `LinkedInDispatcher`, `Orchestrator` and (for an omitted `account_id`)
+`ConnectionService.MonitorLinkedinAdsAccount`, as the Meta and Reddit fallback tests do:
 
 - two projects with no connection of their own, both with campaigns on the shared system account
-  538170226 (which also holds a campaign this service never recorded), each name the account
-  through `DefaultMonitorAccount` without an upstream call and each get back only their own
-  campaign, read with the system credential;
-- a campaign in a granted account is read on that account with the system credential;
-- nothing recorded is an empty monitor with no upstream call;
+  538170226 (which also holds a campaign this service never recorded), each call the monitor
+  without `account_id`; the response names 538170226, and each gets back only its own campaign
+  with its own spend, impressions and totals, read with the system credential, with both the
+  campaign list and the Ad Analytics read filtered to that account;
+- a campaign in a granted account is read on that account (list and analytics) with the system
+  credential;
+- nothing recorded is an empty monitor naming no account, with no upstream call;
 - an account the system row neither defaults to nor grants is a 404 with nothing sent, with
   forced-system mode off and on;
 - a disconnected project still reads its system-account campaigns.
 
 Mutation-checked: own-only monitor resolution (the pre-#628 rule), keeping every upstream row,
-dropping the empty-scope early return, and dropping the system-account guard each fail the
-matching tests. No behaviour change.
+dropping the empty-scope early return, dropping the system-account guard, reading analytics on
+another account, attributing one campaign's metrics to another, and ignoring the defaulted account
+each fail the matching tests. No behaviour change.
+
+Stale text corrected with it: `account-monitor-endpoints.md` still listed LinkedIn among the
+own-connection-only, account-wide monitors with no scope 409; the `AccountMonitor.campaigns`
+description and the LinkedIn audience method's description (and its `api-catalog.md` row) still
+said account-wide and own-connection-only. All now describe the #581 behaviour.

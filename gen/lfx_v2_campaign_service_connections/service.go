@@ -414,13 +414,14 @@ type Service interface {
 	// Read LinkedIn professional demographics — job function, seniority, industry,
 	// company size and country — for this project's own campaigns, live from
 	// LinkedIn's Ad Analytics API. Scoped to the campaigns this service holds for
-	// the project, NOT to the connected ad account, and read from the project's
-	// OWN connection only (never the LF system account) and only the account that
-	// connection is bound to. LinkedIn serves MEMBER_* pivots only through its
+	// the project, NOT to the connected ad account, and read on the one account
+	// those campaigns record: with the project's own connection when it is bound
+	// to that account, otherwise with the LF system credential when it is that
+	// row's account or a grant. LinkedIn serves MEMBER_* pivots only through its
 	// single-pivot Analytics finder, so the read issues one Ad Analytics request
-	// per (pivot, campaign), each filtered to that one campaign and the bound
-	// account, and sums the answers; at most 10 campaigns (50 requests), because
-	// the account is shared across foundations and the read must fit one request
+	// per (pivot, campaign), each filtered to that one campaign and that account,
+	// and sums the answers; at most 10 campaigns (50 requests), because the
+	// account is shared across foundations and the read must fit one request
 	// budget. A pure read-through; nothing is persisted. A project with no
 	// LinkedIn campaigns of its own receives an empty `buckets` array and LinkedIn
 	// is not contacted. All five pivots must load or the request fails (503).
@@ -1035,8 +1036,8 @@ type AccountMonitor struct {
 	// window that crosses a DST fall-back covers 89 days, because 90 such days
 	// exceed X's 90-day cap by an hour.
 	Days int
-	// The campaigns this monitor covers — on Google Ads, Meta, Reddit and X only
-	// those this service recorded for the project, on LinkedIn and Microsoft Ads
+	// The campaigns this monitor covers — on Google Ads, LinkedIn, Meta, Reddit
+	// and X only those this service recorded for the project, on Microsoft Ads
 	// every campaign visible on the account — with the rule engine's per-row
 	// pacing output attached.
 	Campaigns []*AccountMonitorCampaign

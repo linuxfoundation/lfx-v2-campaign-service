@@ -9,19 +9,21 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
 
+	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 )
 
-// #615 acceptance for LinkedIn, end to end through the real LinkedInDispatcher and the
-// orchestrator: a project with no LinkedIn connection of its own monitors the campaigns it
+// #615 acceptance for LinkedIn, end to end through the real LinkedInDispatcher, the orchestrator
+// and (for the omitted account_id) the ConnectionService handler: a project with no LinkedIn connection of its own monitors the campaigns it
 // recorded on the LF system row's accounts (the default 538170226 or a grant), through the system
 // credential, and sees only those. The unit tests in account_monitor_scope_test.go pin each rule
 // on its own; these pin what a caller of the monitor actually gets back when two foundations share
@@ -39,7 +41,7 @@ func systemLinkedInRow() *model.Connection {
 }
 
 // linkedInMonitorFallbackDispatcher wires a LinkedIn dispatcher whose API records the bearer
-// token and path of every request, and answers the same three campaigns on whichever account is
+// token and URL (path and unescaped query) of every request, and answers the same three campaigns on whichever account is
 // read: 1001 (tlf's), 1002 (aswf's) and 1003, which no project records unless a test records
 // it.
 func linkedInMonitorFallbackDispatcher(t *testing.T, reader *scopedConnReader) (*LinkedInDispatcher, func() (tokens, paths []string)) {
@@ -49,7 +51,8 @@ func linkedInMonitorFallbackDispatcher(t *testing.T, reader *scopedConnReader) (
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		tokens = append(tokens, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-		paths = append(paths, r.URL.Path)
+		query, _ := url.QueryUnescape(r.URL.RawQuery)
+		paths = append(paths, r.URL.Path+"?"+query)
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(r.URL.Path, "adAnalytics") {
@@ -80,6 +83,37 @@ func linkedInMonitorOrchestrator(d *LinkedInDispatcher, live map[string][]model.
 		map[model.Provider]service.PlatformDispatcher{model.ProviderLinkedInAds: d})
 }
 
+// linkedInMonitorService is the ConnectionService serving monitor-linkedin-ads-account over o. The
+// monitor reads no connection row of its own (the dispatcher resolves credentials), so the
+// repository is a nil-embedded stub: any call to it panics, which keeps the test honest about that.
+func linkedInMonitorService(o *service.Orchestrator) *service.ConnectionService {
+	svc := service.NewConnectionService(struct{ domain.ConnectionRepository }{}, identityEncryptor{})
+	svc.SetOrchestrator(o)
+	return svc
+}
+
+// assertLinkedInReadOf fails unless every recorded request read account and an Ad Analytics read
+// was among them: the campaign list on adAccounts/{account}, the analytics filtered to that
+// account's URN, so neither half of the monitor can read another account unnoticed.
+func assertLinkedInReadOf(t *testing.T, urls []string, account string) {
+	t.Helper()
+	analytics := 0
+	for _, u := range urls {
+		switch {
+		case strings.Contains(u, "adAnalytics"):
+			analytics++
+			if !strings.Contains(u, "accounts=List(urn:li:sponsoredAccount:"+account+")") {
+				t.Errorf("analytics read %s, want it filtered to account %s", u, account)
+			}
+		case !strings.Contains(u, "adAccounts/"+account+"/"):
+			t.Errorf("request %s, want a read of account %s", u, account)
+		}
+	}
+	if analytics == 0 {
+		t.Errorf("requests %v include no Ad Analytics read", urls)
+	}
+}
+
 func liRecorded(id, account string) model.ProjectCampaignScope {
 	return model.ProjectCampaignScope{PlatformCampaignID: id, Result: []byte(`{"accountId":"` + account + `"}`)}
 }
@@ -95,46 +129,56 @@ func monitorRowIDs(read *model.AccountMonitorRead) []string {
 
 // Two foundations with no LinkedIn connection of their own, tlf and aswf, both created campaigns
 // on the LF system account 538170226, which also holds a campaign this service never recorded.
-// Each monitors it without naming the account (DefaultMonitorAccount names 538170226, as the
-// response's account_id then reports it), through the system credential, and each gets back only
-// its own campaign: neither sees the other's, nor the unrecorded one.
+// Each calls monitor-linkedin-ads-account WITHOUT account_id: the response names 538170226 as the
+// account read (how the monitor reports where the account came from, as Google's does), the read
+// uses the system credential on that account for both the campaign list and the analytics, and
+// each gets back only its own campaign with its own metrics: neither sees the other's campaign or
+// spend, nor the unrecorded one.
 func TestLinkedIn_AccountMonitor_TwoProjectsOnTheSharedSystemAccount(t *testing.T) {
 	d, requests := linkedInMonitorFallbackDispatcher(t, &scopedConnReader{
 		rows: map[string]*model.Connection{model.SystemProjectID: systemLinkedInRow()},
 	})
-	o := linkedInMonitorOrchestrator(d, map[string][]model.ProjectCampaignScope{
+	svc := linkedInMonitorService(linkedInMonitorOrchestrator(d, map[string][]model.ProjectCampaignScope{
 		"tlf":  {liRecorded("1001", "538170226")},
 		"aswf": {liRecorded("1002", "538170226")},
-	})
-	for project, want := range map[string]string{"tlf": "1001", "aswf": "1002"} {
+	}))
+	type own struct {
+		id          string
+		spend       float64
+		impressions int64
+	}
+	for project, want := range map[string]own{"tlf": {"1001", 10, 100}, "aswf": {"1002", 20, 200}} {
 		t.Run(project, func(t *testing.T) {
-			ctx := context.Background()
-			account, err := o.DefaultMonitorAccount(ctx, project, model.ProviderLinkedInAds)
-			if err != nil || account != "538170226" {
-				t.Fatalf("DefaultMonitorAccount = %q, %v; want the system account 538170226 its campaign records", account, err)
-			}
-			if tokens, _ := requests(); len(tokens) != 0 {
-				t.Fatalf("naming the account contacted LinkedIn: %v", tokens)
-			}
-			read, err := o.ReadAccountCampaignMetrics(ctx, project, model.ProviderLinkedInAds, account, 30)
+			got, err := svc.MonitorLinkedinAdsAccount(context.Background(), &conn.MonitorLinkedinAdsAccountPayload{ProjectID: project, Days: 30})
 			if err != nil {
-				t.Fatalf("ReadAccountCampaignMetrics through the LF system row: %v", err)
+				t.Fatalf("MonitorLinkedinAdsAccount without account_id through the LF system row: %v", err)
 			}
-			if got := monitorRowIDs(read); len(got) != 1 || got[0] != want {
-				t.Errorf("rows = %v, want only %s's own campaign %s", got, project, want)
+			if got.AccountID != "538170226" {
+				t.Errorf("account_id = %q, want the system account 538170226 its campaign records", got.AccountID)
 			}
-			tokens, paths := requests()
+			if len(got.Campaigns) != 1 || got.Campaigns[0].PlatformCampaignID != want.id {
+				ids := make([]string, 0, len(got.Campaigns))
+				for _, c := range got.Campaigns {
+					ids = append(ids, c.PlatformCampaignID)
+				}
+				t.Fatalf("campaigns = %v, want only %s's own campaign %s", ids, project, want.id)
+			}
+			if c := got.Campaigns[0]; c.Spend != want.spend || c.Impressions != want.impressions {
+				t.Errorf("campaign %s spend=%v impressions=%d, want its own %v and %d", c.PlatformCampaignID, c.Spend, c.Impressions, want.spend, want.impressions)
+			}
+			if got.Totals == nil || got.Totals.Spend != want.spend || got.Totals.Impressions != want.impressions || got.Totals.CampaignCount != 1 {
+				t.Errorf("totals = %+v, want only %s's own spend %v and impressions %d", got.Totals, project, want.spend, want.impressions)
+			}
+			tokens, urls := requests()
 			if len(tokens) == 0 {
 				t.Fatal("LinkedIn was never called")
 			}
 			for i, tok := range tokens {
 				if tok != "system-tok" {
-					t.Errorf("request %s used token %q, want the LF system credential", paths[i], tok)
+					t.Errorf("request %s used token %q, want the LF system credential", urls[i], tok)
 				}
 			}
-			if !strings.Contains(paths[0], "538170226") {
-				t.Errorf("first request %s, want a read of the system account 538170226", paths[0])
-			}
+			assertLinkedInReadOf(t, urls, "538170226")
 		})
 	}
 }
@@ -153,10 +197,11 @@ func TestLinkedIn_AccountMonitor_GrantedAccountReadsThroughTheSystemRow(t *testi
 	if got := monitorRowIDs(read); len(got) != 1 || got[0] != "1003" {
 		t.Errorf("rows = %v, want only cncf's campaign 1003", got)
 	}
-	tokens, paths := requests()
-	if len(tokens) == 0 || !strings.Contains(paths[0], "500928401") {
-		t.Fatalf("requests %v, want a read of the granted account 500928401", paths)
+	tokens, urls := requests()
+	if len(tokens) == 0 {
+		t.Fatal("LinkedIn was never called")
 	}
+	assertLinkedInReadOf(t, urls, "500928401")
 	for _, tok := range tokens {
 		if tok != "system-tok" {
 			t.Errorf("request used token %q, want the LF system credential", tok)
@@ -165,25 +210,29 @@ func TestLinkedIn_AccountMonitor_GrantedAccountReadsThroughTheSystemRow(t *testi
 }
 
 // With nothing recorded on LinkedIn the monitor is an empty 200 and LinkedIn is never asked, on
-// the system fallback, whether or not the caller names the account.
+// the system fallback, whether or not the caller names the account. Without account_id the
+// response names none.
 func TestLinkedIn_AccountMonitor_NoRecordedCampaignsIsEmptyWithoutUpstreamCall(t *testing.T) {
 	d, requests := linkedInMonitorFallbackDispatcher(t, &scopedConnReader{
 		rows: map[string]*model.Connection{model.SystemProjectID: systemLinkedInRow()},
 	})
 	o := linkedInMonitorOrchestrator(d, nil)
-	account, err := o.DefaultMonitorAccount(context.Background(), "tlf", model.ProviderLinkedInAds)
-	if err != nil || account != "" {
-		t.Fatalf("DefaultMonitorAccount = %q, %v; want no account to name", account, err)
+	got, err := linkedInMonitorService(o).MonitorLinkedinAdsAccount(context.Background(), &conn.MonitorLinkedinAdsAccountPayload{ProjectID: "tlf", Days: 30})
+	if err != nil {
+		t.Fatalf("MonitorLinkedinAdsAccount without account_id: %v", err)
+	}
+	if got.AccountID != "" || len(got.Campaigns) != 0 {
+		t.Errorf("account_id = %q, campaigns = %d; want an empty monitor naming no account", got.AccountID, len(got.Campaigns))
 	}
 	read, err := o.ReadAccountCampaignMetrics(context.Background(), "tlf", model.ProviderLinkedInAds, "538170226", 30)
 	if err != nil {
-		t.Fatalf("ReadAccountCampaignMetrics: %v", err)
+		t.Fatalf("ReadAccountCampaignMetrics naming the system account: %v", err)
 	}
 	if read.Rows == nil || len(read.Rows) != 0 {
 		t.Errorf("rows = %#v, want a non-nil empty slice", read.Rows)
 	}
-	if tokens, paths := requests(); len(tokens) != 0 {
-		t.Errorf("requests %v, want none", paths)
+	if tokens, urls := requests(); len(tokens) != 0 {
+		t.Errorf("requests %v, want none", urls)
 	}
 }
 
@@ -202,8 +251,8 @@ func TestLinkedIn_AccountMonitor_SystemFallbackRefusesOtherAccounts(t *testing.T
 			if !errors.Is(err, domain.ErrNotFound) {
 				t.Fatalf("err = %v, want domain.ErrNotFound for an account the LF system row does not serve", err)
 			}
-			if tokens, paths := requests(); len(tokens) != 0 {
-				t.Errorf("requests %v, want none: the refusal must come before any upstream call", paths)
+			if tokens, urls := requests(); len(tokens) != 0 {
+				t.Errorf("requests %v, want none: the refusal must come before any upstream call", urls)
 			}
 		})
 	}
@@ -224,10 +273,11 @@ func TestLinkedIn_AccountMonitor_DisconnectedProjectReadsItsSystemAccount(t *tes
 	if got := monitorRowIDs(read); len(got) != 1 || got[0] != "1001" {
 		t.Errorf("rows = %v, want only tlf's campaign 1001", got)
 	}
-	tokens, paths := requests()
-	if len(tokens) == 0 || !strings.Contains(paths[0], "538170226") {
-		t.Fatalf("requests %v, want a read of the system account 538170226", paths)
+	tokens, urls := requests()
+	if len(tokens) == 0 {
+		t.Fatal("LinkedIn was never called")
 	}
+	assertLinkedInReadOf(t, urls, "538170226")
 	for _, tok := range tokens {
 		if tok != "system-tok" {
 			t.Errorf("request used token %q, want the LF system credential", tok)
