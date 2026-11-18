@@ -550,3 +550,110 @@ func TestPrepareVideos_DeadCallerAbortsBeforeTheUploadClamp(t *testing.T) {
 		t.Fatalf("uploads=%d; want none for a caller already gone", vs.uploads)
 	}
 }
+
+// TestCreateCampaign_VideoThumbnailReadsLeaveTimeForTheAds: the thumbnail reads share a budget that
+// ends videoAdReserve before the caller's deadline. A thumbnail read that stalls fails only its own
+// video's variant, and the image variant still gets its ad, rather than the read running into the
+// caller's deadline and aborting the create (PR #653 review).
+func TestCreateCampaign_VideoThumbnailReadsLeaveTimeForTheAds(t *testing.T) {
+	vs := newVideoServer(t, "ready")
+	inner := vs.handler()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/thumbnails") {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+			}
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	var sleeps int32
+	c := videoClient(srv.URL, &sleeps)
+	c.videoWaitReserve, c.videoAdReserve = 2*time.Second, time.Second
+	c.httpClient.Timeout = 0 // no upload gate: the deadline here is far below a request timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	in := metaFieldInput()
+	in.Variants = []AdVariant{
+		{PrimaryText: "Join us", Headline: "Image", ImageURL: "https://cdn.example.org/a.png"},
+		videoVariant("Keynote"),
+	}
+	res, err := c.CreateCampaign(ctx, in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v (a stalled thumbnail is a degraded success)", err)
+	}
+	if res.AdCount != 1 || len(res.Ads) != 1 || res.Ads[0].Variant != 1 {
+		t.Fatalf("AdCount=%d Ads=%+v; want the image variant's ad", res.AdCount, res.Ads)
+	}
+	if steps := strings.Join(res.Steps, "\n"); !strings.Contains(steps, "ran out of the time left before the ads") || !strings.Contains(steps, "no creative or ad was created for variant 2") {
+		t.Fatalf("steps %q do not report the thumbnail budget on variant 2", steps)
+	}
+}
+
+// TestCreateCampaign_VideoReadsRefuseUncheckedBodies: the status and thumbnail reads decide a paid
+// creative, so a 2xx body with duplicate or case-folded keys is refused, never read last-wins: a
+// "Status" ready behind a "status" processing does not make the video ready, and a second "Data"
+// list does not supply a thumbnail (PR #653 review).
+func TestCreateCampaign_VideoReadsRefuseUncheckedBodies(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, body, want string
+	}{
+		{"status", "status", `{"id":"9100000000001","status":{"video_status":"processing"},"Status":{"video_status":"ready"}}`, "was not ready within"},
+		{"thumbnails", "thumbnails", `{"data":[],"Data":[{"uri":"https://scontent.example/t.jpg","is_preferred":true}]}`, "has no usable auto-generated thumbnail"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vs := newVideoServer(t, "ready")
+			inner := vs.handler()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				isStatus := r.Method == http.MethodGet && r.URL.Query().Get("fields") == "status"
+				isThumbs := r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/thumbnails")
+				if (tc.path == "status" && isStatus) || (tc.path == "thumbnails" && isThumbs) {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, tc.body)
+					return
+				}
+				inner.ServeHTTP(w, r)
+			}))
+			defer srv.Close()
+			var sleeps int32
+			in := metaFieldInput()
+			in.Variants = []AdVariant{videoVariant("Keynote")}
+			res, err := videoClient(srv.URL, &sleeps).CreateCampaign(context.Background(), in)
+			if err != nil {
+				t.Fatalf("CreateCampaign: %v", err)
+			}
+			vs.mu.Lock()
+			defer vs.mu.Unlock()
+			if res.AdCount != 0 || len(vs.creatives) != 0 {
+				t.Fatalf("AdCount=%d creatives=%d; want no creative from an unchecked body", res.AdCount, len(vs.creatives))
+			}
+			if steps := strings.Join(res.Steps, "\n"); !strings.Contains(steps, tc.want) {
+				t.Fatalf("steps %q do not contain %q", steps, tc.want)
+			}
+		})
+	}
+}
+
+// TestCreateCampaign_VideoUploadErrorReadsOnlyACheckedEnvelope: a refused upload whose body carries
+// two error objects has no envelope read, so neither message reaches Steps (PR #653 review).
+func TestCreateCampaign_VideoUploadErrorReadsOnlyACheckedEnvelope(t *testing.T) {
+	vs := newVideoServer(t, "ready")
+	vs.uploadStatus = http.StatusBadRequest
+	vs.uploadBody = `{"error":{"message":"bad video","code":100},"Error":{"message":"PRIVATE-ECHO-MARKER","code":100}}`
+	srv := httptest.NewServer(vs.handler())
+	defer srv.Close()
+	var sleeps int32
+	in := metaFieldInput()
+	in.Variants = []AdVariant{videoVariant("Keynote")}
+	res, err := videoClient(srv.URL, &sleeps).CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	steps := strings.Join(res.Steps, "\n")
+	if strings.Contains(steps, "PRIVATE-ECHO-MARKER") || strings.Contains(steps, "bad video") || !strings.Contains(steps, "no creative or ad was created for variant 1") {
+		t.Fatalf("steps %q: want the failure without either envelope message", steps)
+	}
+}

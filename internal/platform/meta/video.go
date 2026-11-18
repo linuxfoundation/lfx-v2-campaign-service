@@ -58,14 +58,16 @@ const MimeTypeVideoMP4 = "video/mp4"
 // 20-30 MiB MP4 against this wait before enabling; if it is routinely slower, decouple the upload
 // from create rather than lengthening the wait.
 //
-// videoDeadlineReserve is the part of the caller's remaining deadline the readiness wait leaves for
-// what follows it: the thumbnail reads and every variant's creative and ad. minVideoStatusRead is
+// videoDeadlineReserve is the part of the caller's remaining deadline the uploads and the readiness
+// wait leave for what follows them: the thumbnail reads and every variant's creative and ad.
+// videoAdReserve is the part the thumbnail reads leave for the creatives and ads. minVideoStatusRead is
 // the least time the first status read of a poll round is given, however little of the wait is
 // left; later reads in the round start only while the wait has time left.
 const (
 	defaultVideoPollInterval = 3 * time.Second
 	defaultVideoReadyWait    = 60 * time.Second
 	videoDeadlineReserve     = 20 * time.Second
+	videoAdReserve           = 15 * time.Second
 	minVideoStatusRead       = 2 * time.Second
 )
 
@@ -195,7 +197,7 @@ func (c *Client) prepareVideos(ctx context.Context, variants []AdVariant, steps 
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("meta video upload cut short (caller context done): %w", ctx.Err())
 		}
-		if dl, ok := ctx.Deadline(); ok && c.httpClient.Timeout > 0 && time.Until(dl) < videoDeadlineReserve+c.httpClient.Timeout {
+		if dl, ok := ctx.Deadline(); ok && c.httpClient.Timeout > 0 && time.Until(dl) < c.videoWaitReserve+c.httpClient.Timeout {
 			p.err = &videoStageError{msg: "video NOT uploaded: too little of the provider call's deadline was left for its upload"}
 			continue
 		}
@@ -223,7 +225,7 @@ func (c *Client) prepareVideos(ctx context.Context, variants []AdVariant, steps 
 	wait := c.videoReadyWait
 	// A context deadline is wall-clock time, so the clamp reads the wall clock, not c.timeNow.
 	if dl, ok := ctx.Deadline(); ok {
-		if left := time.Until(dl) - videoDeadlineReserve; left < wait {
+		if left := time.Until(dl) - c.videoWaitReserve; left < wait {
 			wait = max(left, 0)
 		}
 	}
@@ -303,13 +305,27 @@ func (c *Client) prepareVideos(ctx context.Context, variants []AdVariant, steps 
 		}
 	}
 
-	// 3. The auto-generated thumbnail of each ready video.
+	// 3. The auto-generated thumbnail of each ready video. The reads share one budget that ends
+	// videoAdReserve before the caller's deadline, so a slow or throttled read (a 429 with a long
+	// Retry-After) fails only its own video's variants and leaves time for every variant's
+	// creative and ad, instead of running into the caller's deadline (PR #653 review).
+	thumbCtx, cancelThumbs := ctx, context.CancelFunc(func() {})
+	if dl, ok := ctx.Deadline(); ok {
+		thumbCtx, cancelThumbs = context.WithDeadline(ctx, dl.Add(-c.videoAdReserve))
+	}
+	defer cancelThumbs()
 	for _, p := range order {
+		if p.err == nil && thumbCtx.Err() != nil && ctx.Err() == nil {
+			p.err = &videoStageError{msg: fmt.Sprintf("video %s has no usable auto-generated thumbnail: the thumbnail reads ran out of the time left before the ads", p.videoID)}
+		}
 		if p.err == nil {
-			thumb, err := c.videoThumbnail(ctx, p.videoID)
+			thumb, err := c.videoThumbnail(thumbCtx, p.videoID)
 			if err != nil {
 				if ctx.Err() != nil {
 					return nil, fmt.Errorf("meta video thumbnail read cut short (caller context done): %w", ctx.Err())
+				}
+				if thumbCtx.Err() != nil {
+					err = errors.New("the thumbnail reads ran out of the time left before the ads")
 				}
 				p.err = &videoStageError{msg: fmt.Sprintf("video %s has no usable auto-generated thumbnail: %s", p.videoID, stepSafeErrText(err, 300))}
 			} else {
@@ -365,7 +381,7 @@ type videoStatusResponse struct {
 // videoStatus reads a video's processing status (ready, processing or error).
 func (c *Client) videoStatus(ctx context.Context, videoID string) (string, error) {
 	var out videoStatusResponse
-	if err := c.doRequest(ctx, http.MethodGet, "/"+videoID+"?fields=status", nil, &out); err != nil {
+	if err := c.getIdentityChecked(ctx, "/"+videoID+"?fields=status", &out); err != nil {
 		return "", err
 	}
 	s := strings.ToLower(strings.TrimSpace(out.Status.VideoStatus))
@@ -373,6 +389,24 @@ func (c *Client) videoStatus(ctx context.Context, videoID string) (string, error
 		return "", fmt.Errorf("video %s status read named no video_status", videoID)
 	}
 	return s, nil
+}
+
+// getIdentityChecked is one GET whose 2xx body must pass identityjson.Check as RAW BYTES before it
+// is decoded into out: duplicate or case-folded keys decode last-wins, so an unchecked body could
+// look "ready" or name a thumbnail this process did not read, and both decide a paid creative
+// (PR #653 review). A refused body is an error, never a value.
+func (c *Client) getIdentityChecked(ctx context.Context, path string, out any) error {
+	var raw json.RawMessage
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &raw); err != nil {
+		return err
+	}
+	if err := identityjson.Check(raw); err != nil {
+		return &transportError{Method: http.MethodGet, Path: path, Err: err}
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return &transportError{Method: http.MethodGet, Path: path, Err: fmt.Errorf("decode response: %w", err)}
+	}
+	return nil
 }
 
 // videoThumbnailsResponse mirrors GET /{video_id}/thumbnails?fields=uri,is_preferred.
@@ -387,7 +421,7 @@ type videoThumbnailsResponse struct {
 // one. No usable thumbnail is an error: Meta refuses a video creative without one.
 func (c *Client) videoThumbnail(ctx context.Context, videoID string) (string, error) {
 	var out videoThumbnailsResponse
-	if err := c.doRequest(ctx, http.MethodGet, "/"+videoID+"/thumbnails?fields=uri,is_preferred", nil, &out); err != nil {
+	if err := c.getIdentityChecked(ctx, "/"+videoID+"/thumbnails?fields=uri,is_preferred", &out); err != nil {
 		return "", err
 	}
 	usable := make([]string, 0, len(out.Data))
@@ -475,7 +509,10 @@ func (c *Client) uploadVideo(ctx context.Context, video []byte, contentType stri
 	if status < 200 || status >= 300 {
 		apiErr := &APIError{StatusCode: status, Method: http.MethodPost, Path: path}
 		var env graphErrorEnvelope
-		if json.Unmarshal(raw, &env) == nil && env.Error != nil {
+		// Only an envelope from a body identityjson accepts is read (PR #653 review): with two
+		// "error" objects the last would win, and its text reaches Steps.
+		if json.Unmarshal(raw, &env) == nil && env.Error != nil && identityjson.Check(raw) == nil {
+			env.Error.trusted = true
 			apiErr.copyEnvelope(env.Error)
 			apiErr.Message = env.Error.Message
 			if readErr != nil {

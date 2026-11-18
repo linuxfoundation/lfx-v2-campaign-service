@@ -42,7 +42,8 @@ After the ad set exists and before the first creative, `prepareVideos`:
    the client clock as well as the poll count. No status read starts once the wait has passed, and
    only a round's first read is given at least 2 s, so slow or throttled reads cannot overrun it;
 3. reads `GET /{video_id}/thumbnails?fields=uri,is_preferred` and takes the preferred https
-   thumbnail (else the first).
+   thumbnail (else the first). The thumbnail reads share one budget that ends `videoAdReserve`
+   (15 s) before the caller's deadline; a read that outlasts it fails only its video's variants.
 
 Each variant's creative carries `object_story_spec.video_data` {`video_id`, `image_url`,
 `message`, `title`, `link_description`, `call_to_action` {`type`, `value.link` = the UTM URL}}.
@@ -54,6 +55,10 @@ usable thumbnail fails only its variants: a Steps line, no creative or ad reques
 persists `created_degraded` (reused as-is, never re-dispatched). A cancelled caller during the
 uploads or the wait returns the partial result, so the claim is retained. Every minted id is on
 `CampaignResult.VideoIDs` (asset id -> video id) and each ad's `AdResult.VideoID`.
+
+The status and thumbnail reads decide a paid creative, so each 2xx body passes
+`identityjson.Check` before it is decoded (`getIdentityChecked`); a refused body is a failed read.
+A refused upload's error envelope is read only from a body the check accepts.
 
 Steps never carry a raw non-Graph error body: `stepSafeErrText` keeps method, path, status and
 the parsed diagnostic fields only. The carousel's `scrubCarouselErr` uses it, and so does a video

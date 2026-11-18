@@ -261,3 +261,31 @@ func TestCreateCampaign_CarouselStepDropsANonGraphErrorBody(t *testing.T) {
 		t.Fatalf("steps %q must name the 502 and drop the non-Graph body", steps)
 	}
 }
+
+// TestCreateCampaign_CarouselAmbiguousFailureSaysVerifyNotCreate: after a 5xx on the carousel
+// creative Meta may have accepted it, so Steps say to verify, without the manual-create line that a
+// definite failure carries (PR #653 review).
+func TestCreateCampaign_CarouselAmbiguousFailureSaysVerifyNotCreate(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		status     int
+		wantCreate bool
+	}{
+		{"5xx is ambiguous", http.StatusInternalServerError, false},
+		{"4xx is definite", http.StatusBadRequest, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cs := &carouselServer{t: t, creativeStatus: tc.status}
+			srv := httptest.NewServer(cs.handler())
+			defer srv.Close()
+			res, err := biddingClient(srv.URL, 100).CreateCampaign(context.Background(), carouselInput())
+			if err != nil {
+				t.Fatalf("CreateCampaign: %v", err)
+			}
+			steps := strings.Join(res.Steps, "\n")
+			if got := strings.Contains(steps, "create them manually"); got != tc.wantCreate {
+				t.Fatalf("steps %q: manual-create line present=%v, want %v", steps, got, tc.wantCreate)
+			}
+		})
+	}
+}

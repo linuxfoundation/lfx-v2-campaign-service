@@ -321,6 +321,10 @@ type Client struct {
 	// CreateCampaign. WithVideoPolling overrides them.
 	videoPollInterval time.Duration
 	videoReadyWait    time.Duration
+	// videoWaitReserve and videoAdReserve are videoDeadlineReserve and videoAdReserve (video.go);
+	// fields only so a test can shrink them.
+	videoWaitReserve time.Duration
+	videoAdReserve   time.Duration
 }
 
 // Option customizes a Client.
@@ -430,6 +434,8 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 
 		videoPollInterval: defaultVideoPollInterval,
 		videoReadyWait:    defaultVideoReadyWait,
+		videoWaitReserve:  videoDeadlineReserve,
+		videoAdReserve:    videoAdReserve,
 	}
 	for _, o := range opts {
 		o(c)
@@ -910,8 +916,8 @@ func (e *APIError) copyEnvelope(g *graphError) {
 	e.ErrorSubcode = g.ErrorSubcode
 	e.blameFields = g.blameFieldSpecs()
 	e.IsTransient = g.IsTransient
-	// Only an envelope the identity check accepted counts as read (see do()); the /adimages
-	// upload path never sets trusted, and nothing there consults this field.
+	// Only an envelope the identity check accepted counts as read (see do() and uploadVideo); the
+	// /adimages upload path never sets trusted, and nothing there consults this field.
 	e.EnvelopeParsed = g.trusted
 }
 
@@ -3977,7 +3983,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return partialResult(), fmt.Errorf("meta campaign aborted while creating the carousel ad (campaign %s created, PAUSED): %w", campaignID, ctx.Err())
 		case cerr != nil:
 			steps = append(steps, carouselFailureStep(cerr, creativeID, in.Variants))
-			steps = append(steps, "No ads could be created — create them manually in Meta Ads Manager")
+			// The manual-create instruction only when no ad can exist: after an ambiguous creative
+			// or ad error Meta may have accepted it, and carouselFailureStep says to verify first
+			// (PR #653 review). A card upload failure sent no creative or ad request at all.
+			var upErr *uploadStageError
+			if errors.As(cerr, &upErr) || !createOutcomeAmbiguous(cerr) {
+				steps = append(steps, "No ads could be created — create them manually in Meta Ads Manager")
+			}
 		default:
 			adCount = 1
 			ads = append(ads, AdResult{Variant: 1, AdID: adID, CreativeID: creativeID, CardImageHashes: hashes})

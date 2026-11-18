@@ -43,7 +43,9 @@ default).
 
 `AdCount` 1, `Format` `"carousel"`, `Ads[0].CardImageHashes`. `Dispatch` counts one ad as the full
 request (`metaRequestedAds`), so a created carousel is `created`, not `created_degraded`. A card
-upload failure (no creative sent) or a creative/ad failure is a Steps line and a degraded success;
+upload failure (no creative sent) or a creative/ad failure is a Steps line and a degraded success
+(the "create them manually" line is added only when no ad can exist, never after an ambiguous
+outcome);
 a cancelled caller returns the partial.
 
 ## Not live-verified (blocker for the flag)
