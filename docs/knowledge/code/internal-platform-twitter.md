@@ -1770,6 +1770,23 @@ is a refusal before any request. The dispatcher gates it on its own default-off 
 synchronous 400 for the flag, a bad value or a non-string. X's echo is not checked for the value:
 the line-item POST is confirmed by its id, as before. Not verified live.
 
+## Create-time conversion goal (`CampaignInput.Goal` / `PrimaryWebEventTag`, #564 gap 5)
+
+`twitterConfig.goal` and `twitterConfig.primaryWebEventTag` (`conversion_goal.go`,
+`NormalizeConversionGoal`) are sent as `goal` (`WEBSITE_CONVERSIONS`, the only value accepted) and
+`primary_web_event_tag` on the line-item POST, both documented optional v12 parameters; X requires
+the tag with that goal. The objective stays `WEBSITE_CLICKS` (X's objective list has no conversions
+objective). The goal needs the tag and the tag needs the goal; the tag is trimmed, lower-cased and
+must be 1-32 letters or digits (the `web_event_tags` id, not the Events Manager `tw-…-…` id). It is
+checked for shape only, so a tag X does not know fails at the line-item POST, after the PAUSED
+campaign exists (a partial, as for any line-item failure). Both empty sends neither. Only a line
+item this call creates carries them; a reused one keeps its goal, and a warning step says so. The
+dispatcher gates both on the default-off flag `TWITTER_WEBSITE_CONVERSIONS_ENABLED`
+(`internal/dispatch/twitter_conversion_goal.go`), with a synchronous 400 for the flag, a bad pair or
+a non-string. A non-blank tag needs `global_marketing_ops` (`service.TwitterMarketingOpsInputs`):
+a web event tag is a resource of the shared LF ad account, as Microsoft conversion goals are. Not
+verified live; no web-event-tag list read is built yet.
+
 ## Create-time follower look-alikes (`CampaignInput.FollowerLookalikeUserIDs`, #564 gap 4c)
 
 `twitterConfig.followerLookalikeUserIds` (`follower_lookalikes.go`): each numeric X user id

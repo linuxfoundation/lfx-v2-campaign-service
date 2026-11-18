@@ -175,6 +175,10 @@ func TestTwitterMarketingOpsInputs(t *testing.T) {
 		{"inputs around a type error", `{"twitterConfig":{"budgetAmount":"x","customAudienceIds":["1"]}}`, []string{"customAudienceIds"}},
 		{"envelope key is exact", `{"TwitterConfig":{"customAudienceIds":["1"]}}`, nil},
 		{"malformed envelope", `{`, nil},
+		{"web event tag (#564 gap 5)", `{"twitterConfig":{"goal":"WEBSITE_CONVERSIONS","primaryWebEventTag":"o3bk1"}}`, []string{"primaryWebEventTag"}},
+		{"web event tag after the audiences", `{"twitterConfig":{"primaryWebEventTag":"o3bk1","customAudienceIds":["1"]}}`, []string{"customAudienceIds", "primaryWebEventTag"}},
+		{"case variant web event tag key", `{"twitterConfig":{"PRIMARYWEBEVENTTAG":"o3bk1"}}`, []string{"primaryWebEventTag"}},
+		{"blank web event tag and goal alone do not count", `{"twitterConfig":{"goal":"WEBSITE_CONVERSIONS","primaryWebEventTag":" "}}`, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := TwitterMarketingOpsInputs(json.RawMessage(tc.config)); !slices.Equal(got, tc.want) {

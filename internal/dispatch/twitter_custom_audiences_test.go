@@ -29,6 +29,9 @@ import (
 var twitterGatedFields = map[string]bool{
 	"customAudienceIds":         true,
 	"excludedCustomAudienceIds": true,
+	// #564 gap 5: a web event tag is an existing resource of the shared account, as Microsoft's
+	// conversionGoalIds and Google's conversionActions are.
+	"primaryWebEventTag": true,
 }
 
 // twitterUngatedFields are every other twitterConfig key, each deliberately outside the check:
@@ -56,6 +59,8 @@ var twitterUngatedFields = map[string]bool{
 	"card": true,
 	// #564 gap 7: a stored asset of this brief names no account resource.
 	"videoAssetId": true,
+	// #564 gap 5: an optimization goal from X's closed set names no account resource.
+	"goal": true,
 }
 
 // TestEveryTwitterConfigFieldIsClassifiedForTheMarketingOpsGate fails when a twitterConfig field
@@ -89,6 +94,9 @@ func TestTwitterSharedAccountInputDetectionAgreesWithTheCreateGate(t *testing.T)
 		`{"twitterConfig":{"customAudienceIds":["1"],"budgetAmount":"x"}}`,
 		`{"TwitterConfig":{"customAudienceIds":["1"]}}`,
 		`{"redditConfig":{"customAudienceIds":["x"]}}`,
+		`{"twitterConfig":{"goal":"WEBSITE_CONVERSIONS","primaryWebEventTag":"o3bk1"}}`,
+		`{"twitterConfig":{"PrimaryWebEventTag":"o3bk1","customAudienceIds":["1"]}}`,
+		`{"twitterConfig":{"goal":"WEBSITE_CONVERSIONS","primaryWebEventTag":"  "}}`,
 	} {
 		var cfg twitterConfig
 		_ = unmarshalPlatformConfig([]byte(raw), "twitterConfig", &cfg)
@@ -98,6 +106,10 @@ func TestTwitterSharedAccountInputDetectionAgreesWithTheCreateGate(t *testing.T)
 		}
 		if len(cfg.ExcludedCustomAudienceIDs) > 0 {
 			sent = append(sent, "excludedCustomAudienceIds")
+		}
+		// The dispatcher sends a web event tag exactly when its trimmed value is not blank.
+		if strings.TrimSpace(cfg.PrimaryWebEventTag) != "" {
+			sent = append(sent, "primaryWebEventTag")
 		}
 		gate := service.TwitterMarketingOpsInputs(json.RawMessage(raw))
 		if !slices.Equal(gate, sent) {
