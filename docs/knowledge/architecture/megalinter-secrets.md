@@ -9,7 +9,7 @@ resource: ".mega-linter.yml"
 
 CI runs MegaLinter on pull requests and merge-queue entries via
 [`.github/workflows/mega-linter.yaml`](../../../.github/workflows/mega-linter.yaml)
-(Go flavor `v9.1.0`). Repo config is
+(Go flavor `v10.2.0`). Repo config is
 [`.mega-linter.yml`](../../../.mega-linter.yml).
 
 ## Local run

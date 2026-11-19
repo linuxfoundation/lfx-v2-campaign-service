@@ -266,8 +266,7 @@ Boundaries the table implies, stated so they are not inferred the other way:
   scans committed content subject to its own `.gitleaks.toml` allowlists (test
   files, `go.mod`/`go.sum`, `CLAUDE.md`; `megalinter-secrets.md` § "Gitleaks") and
   `.gitleaksignore` fingerprints; treat any other `REPOSITORY_*` linter the same way
-  only after checking its own lint mode in MegaLinter's docs. KICS carries its
-  own `--exclude-paths="gen/*"` (`.mega-linter.yml` `REPOSITORY_KICS_ARGUMENTS`) and a
+  only after checking its own lint mode in MegaLinter's docs. A
   `.gitleaksignore` fingerprint covers a real hit inside `gen/`. Each scanner's coverage is set by its own
   configuration, not by this table — gitleaks by `.gitleaks.toml` allowlists and
   `.gitleaksignore`, secretlint by the `.gitignore` fallback

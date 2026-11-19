@@ -80,6 +80,15 @@ version from `go.mod` (`go-version-file: go.mod`), and `make lint` runs
 golangci-lint at the `Makefile`'s `GOLANGCI_LINT_VERSION`, which must be a
 release that handles Go 1.27 (v2.15.0 or newer).
 
+MegaLinter (v10.2.0) runs Go 1.26.10 in its image, so
+`.github/workflows/mega-linter.yaml` sets `GOTOOLCHAIN: auto` to let its Go
+linters download the `go.mod` toolchain. golangci-lint is disabled in
+MegaLinter because `make lint` already runs it in the build workflow.
+osv-scanner's govulncheck call analysis is built with Go 1.26 and cannot load
+this module, so osv-scanner falls back to matching vulnerabilities by version:
+any known vulnerability in a dependency version fails the check, reachable or
+not.
+
 ## Pre-PR review
 
 > **IMPORTANT — follow this exactly.** When the implementation is complete
