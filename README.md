@@ -1294,10 +1294,11 @@ docker run --rm \
 Reports are written under `megalinter-reports/` (gitignored). The first
 pull is large; a full run often takes several minutes.
 
-For a faster secrets-only check matching the CI gitleaks step:
+For a faster secrets-only check matching the CI betterleaks step, which
+reads the gitleaks-format config:
 
 ```sh
-gitleaks detect --source . --config .gitleaks.toml
+betterleaks dir -c .gitleaks.toml --redact .
 ```
 
 Note: if this checkout is a git worktree, the containerized `git_diff`
