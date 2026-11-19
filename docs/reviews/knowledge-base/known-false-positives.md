@@ -219,8 +219,8 @@ deliberate, which must not be raised:
   layout section describes a `cmd/campaign-api/` tree that does not exist (the
   binary is `cmd/campaign-service`). Do not cite it for layout, middleware or
   structure.
-- **The Makefile's `GO_VERSION := 1.24.2` is an unused duplicate pin.** Nothing in
-  the Makefile reads it; `go.mod` (`go 1.25.0`) and the workflows'
+- **The Makefile's `GO_VERSION := 1.27.4` is an unused duplicate pin.** Nothing in
+  the Makefile reads it; `go.mod` (`go 1.27.4`) and the workflows'
   `go-version-file: go.mod` resolve the toolchain. A go.mod bump that leaves it
   behind is not a finding.
 

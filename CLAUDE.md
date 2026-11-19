@@ -69,6 +69,17 @@ review finding (2026-09-29): a license-header, `gofmt -s` or MegaLinter
 file-linter finding in a path those settings exclude; see
 `docs/reviews/knowledge-base/known-false-positives.md` § 10.
 
+## Go version
+
+This repo targets Go 1.27.x (currently 1.27.4, the latest patch). This
+supersedes the Go version policy in the `lfx-megalinter` skill, which targets
+the latest stable minor minus one: don't move `go.mod` back to Go 1.26. Take
+every 1.27.x patch release, and update the `go` directive in `go.mod` and
+`GO_VERSION` in the `Makefile` together. CI and release builds read the
+version from `go.mod` (`go-version-file: go.mod`), and `make lint` runs
+golangci-lint at the `Makefile`'s `GOLANGCI_LINT_VERSION`, which must be a
+release that handles Go 1.27 (v2.15.0 or newer).
+
 ## Pre-PR review
 
 > **IMPORTANT — follow this exactly.** When the implementation is complete

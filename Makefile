@@ -18,14 +18,14 @@ HELM_NAMESPACE=lfx
 HELM_VALUES_FILE=$(HELM_CHART_PATH)/values.local.yaml
 
 # Go
-GO_VERSION := 1.24.2
+GO_VERSION := 1.27.4
 GOOS := linux
 GOARCH := amd64
 # Go source files, excluding generated code under gen/.
 GO_FILES := $(shell find . -type f -name '*.go' -not -path './gen/*')
 
 # Linting
-GOLANGCI_LINT_VERSION := v2.2.2
+GOLANGCI_LINT_VERSION := v2.15.0
 LINT_TIMEOUT := 10m
 LINT_TOOL=$(shell go env GOPATH)/bin/golangci-lint
 
