@@ -60,14 +60,34 @@ formatting and license-header checks cover is defined by `GO_FILES` in the
 `Makefile` and `exclude_pattern` in
 `.github/workflows/license-header-check.yml`; `FILTER_REGEX_EXCLUDE` in
 `.mega-linter.yml` scopes MegaLinter's file-based linters only — project-mode
-scanners such as gitleaks and secretlint ignore it, and each one's coverage is
-set by its own configuration — gitleaks by `.gitleaks.toml` allowlists and
+scanners such as betterleaks and secretlint ignore it, and each one's coverage is
+set by its own configuration — betterleaks by `.gitleaks.toml` allowlists and
 `.gitleaksignore`, secretlint by its `.gitignore` fallback — so neither the
 filter nor this sentence promises full coverage; see
 `docs/knowledge/architecture/megalinter-secrets.md`. Not a
 review finding (2026-09-29): a license-header, `gofmt -s` or MegaLinter
 file-linter finding in a path those settings exclude; see
 `docs/reviews/knowledge-base/known-false-positives.md` § 10.
+
+## Go version
+
+This repo targets Go 1.27.x (currently 1.27.4, the latest patch). This
+supersedes the Go version policy in the `lfx-megalinter` skill, which targets
+the latest stable minor minus one: don't move `go.mod` back to Go 1.26. Take
+every 1.27.x patch release, and update the `go` directive in `go.mod` and
+`GO_VERSION` in the `Makefile` together. CI and release builds read the
+version from `go.mod` (`go-version-file: go.mod`), and `make lint` runs
+golangci-lint at the `Makefile`'s `GOLANGCI_LINT_VERSION`, which must be a
+release that handles Go 1.27 (v2.15.0 or newer).
+
+MegaLinter (v10.2.0) runs Go 1.26.10 in its image, so
+`.github/workflows/mega-linter.yaml` sets `GOTOOLCHAIN: auto` to let its Go
+linters download the `go.mod` toolchain. golangci-lint is disabled in
+MegaLinter because `make lint` already runs it in the build workflow.
+osv-scanner's govulncheck call analysis is built with Go 1.26 and cannot load
+this module, so osv-scanner falls back to matching vulnerabilities by version:
+any known vulnerability in a dependency version fails the check, reachable or
+not.
 
 ## Pre-PR review
 

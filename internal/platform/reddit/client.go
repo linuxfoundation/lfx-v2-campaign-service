@@ -2264,13 +2264,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			case PromoAuthorCanceledInFlight:
 				steps = append(steps, row.step(status, hasStatus))
 				return &CampaignResult{
-						Platform:     "reddit-ads",
-						CampaignName: campaignName,
-						AccountID:    c.account.AccountID,
-						RedditURL:    redditAdsManagerURL,
-						Steps:        steps,
-					}, fmt.Errorf("reddit promoted-post authoring UNCONFIRMED (a post for campaign %q may exist): %w",
-						campaignName, err)
+					Platform:     "reddit-ads",
+					CampaignName: campaignName,
+					AccountID:    c.account.AccountID,
+					RedditURL:    redditAdsManagerURL,
+					Steps:        steps,
+				}, fmt.Errorf("reddit promoted-post authoring UNCONFIRMED (a post for campaign %q may exist): %w",
+					campaignName, err)
 			case PromoAuthorCanceledBeforeSend:
 				// Landed cleanly before any authoring bytes went out, so no post exists:
 				// abort with a nil result and release the claim.

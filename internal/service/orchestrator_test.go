@@ -1792,8 +1792,8 @@ func TestOrchestrator_ShutdownDrainsInFlight(t *testing.T) {
 
 	// Shutdown must NOT return while the dispatch is blocked.
 	select {
-	case <-shutdownReturned:
-		t.Fatal("Shutdown returned before in-flight dispatch finished")
+	case err := <-shutdownReturned:
+		t.Fatalf("Shutdown returned (err=%v) before in-flight dispatch finished", err)
 	case <-time.After(50 * time.Millisecond):
 	}
 
@@ -1834,7 +1834,7 @@ func TestOrchestrator_ShutdownGraceHonorsContextCancel(t *testing.T) {
 	start := time.Now()
 	cancel()
 	select {
-	case <-done:
+	case <-done: //nolint:errcheck // only the timing after cancel is under test, not the returned error
 	case <-time.After(2 * time.Second):
 		t.Fatal("Shutdown did not return after ctx cancel during grace")
 	}

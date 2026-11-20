@@ -18,13 +18,15 @@ import (
 	"testing"
 )
 
-// testPNG returns a w x h PNG.
+// testPNG returns a w x h PNG. Best compression keeps the largest fixtures
+// (2592x2048) under MaxImageBytes: Go 1.27's default PNG level encodes them
+// at about 150 KB.
 func testPNG(t *testing.T, w, h int) []byte {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	img.Set(0, 0, color.RGBA{R: 255, A: 255})
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
+	if err := (&png.Encoder{CompressionLevel: png.BestCompression}).Encode(&buf, img); err != nil {
 		t.Fatalf("encode png: %v", err)
 	}
 	return buf.Bytes()
