@@ -126,11 +126,6 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	return &metrics, nil
 }
 
-// reportDecodeError wraps a report-decoding failure as a transportError, the
-// classification this client uses for a 2xx whose body could not be believed.
-//
-// The path is the literal "reports" rather than the real request path: the account id is
-// interpolated into that path, and transportError.Err reaches the service's error log.
 // campaignReportBody is the one single-campaign report request this repository has verified
 // against Reddit, shared by GetCampaignMetrics and the account monitor
 // (fetchMonitorCampaignReport) so the two reads cannot drift apart. It follows the spec's
@@ -163,6 +158,11 @@ func campaignReportBody(campaignID, startsAt, endsAt string) map[string]any {
 	}
 }
 
+// reportDecodeError wraps a report-decoding failure as a transportError, the
+// classification this client uses for a 2xx whose body could not be believed.
+//
+// The path is the literal "reports" rather than the real request path: the account id is
+// interpolated into that path, and transportError.Err reaches the service's error log.
 func reportDecodeError(err error) error {
 	return &transportError{
 		Method: http.MethodPost,
