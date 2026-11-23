@@ -2241,7 +2241,10 @@ See [internal/service](../../../internal/service).
 `AccountMonitorReader` (`orchestrator.go`) is `AccountMetricsReader`'s read plus the account's
 currency (`model.AccountMonitorRead`); `Orchestrator.ReadAccountCampaignMetrics` now returns that
 type, preferring `AccountMonitorReader` and falling back to `AccountMetricsReader` with no
-currency, and normalizes the code (`model.NormalizeCurrencyCode`). `AccountCurrencyReader`
+currency, and normalizes the code (`model.NormalizeCurrencyCode`). When the read is scoped and the
+dispatcher also implements `ScopedAccountMonitorReader` (Reddit, #659), it calls
+`ReadAccountMonitorIn` with the project's campaign ids instead, so the platform is asked only about
+those campaigns; the rows are still filtered by the revalidated scope afterwards. `AccountCurrencyReader`
 (`account_report.go`) is the report-backed counterpart: `ReadReportedAccountCampaigns` calls it
 LAST, on what remains of the shared budget and capped at `accountCurrencyReadTimeout` (3s), through
 `readAccountCurrency`, which records the

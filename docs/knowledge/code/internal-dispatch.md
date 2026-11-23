@@ -5282,8 +5282,10 @@ The account monitor's `currency` field reaches the service two ways
   `service.AccountMonitorReader` (`ReadAccountMonitor` → `model.AccountMonitorRead`), carrying
   the currency their client's `ListAccountCampaignsWithCurrency` returns. Their
   `ListAccountCampaignMetrics` returns the same read's rows, so every guard is in one body;
-  Reddit's skips the currency (`readAccountMonitor(..., withCurrency=false)` calls the client's
-  plain `ListAccountCampaigns`), so the rows-only path pays no extra ad-account read. LinkedIn
+  Reddit's skips the currency (`readAccountMonitor(..., withCurrency=false)`), so the rows-only
+  path pays no extra ad-account read. Reddit also implements `service.ScopedAccountMonitorReader`
+  (`ReadAccountMonitorIn`, #659): the same read through the client's `ListAccountCampaignsIn`, so
+  only the project's campaigns on the shared system account get a report. LinkedIn
   also maps `AccountCampaignRow.PacingUnknown` (budgets disagreeing about the currency).
   `GoogleAdsDispatcher` implements it too since #454: its currency is `customer.currency_code`
   from the same GAQL rows, published only when every row carries the same well-formed code

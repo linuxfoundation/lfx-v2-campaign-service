@@ -21,7 +21,9 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5  # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5  # v5.5.0
         with:
           go-version-file: go.mod
       - uses: ko-build/setup-ko@d006021bd0c28d1ce33a07e7943d48b079944c8d  # v0.9
@@ -48,6 +50,6 @@ jobs:
           ko build github.com/linuxfoundation/lfx-v2-campaign-service/cmd/campaign-service \
             -B \
             --platform linux/amd64,linux/arm64 \
-            -t ${{ github.sha }} \
-            -t ${{ steps.container_tag.outputs.tag }} \
+            -t "${GITHUB_SHA}" \
+            -t "${VERSION}" \
             --sbom spdx

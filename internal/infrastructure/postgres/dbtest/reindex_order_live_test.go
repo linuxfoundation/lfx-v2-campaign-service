@@ -218,7 +218,7 @@ func TestLiveReindexWriteWaitsForBatch(t *testing.T) {
 			select {
 			case err := <-writeDone:
 				close(release)
-				<-done
+				<-done //nolint:errcheck // the test is already failing; this only waits for the batch goroutine
 				t.Fatalf("write finished (%v) while the batch held FOR SHARE; FOR SHARE is missing", err)
 			case <-time.After(blockWait):
 			}

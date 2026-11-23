@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "MegaLinter and secret scanning"
-description: "How MegaLinter, gitleaks, secretlint, and grype are configured for this repo, including local Docker runs."
+description: "How MegaLinter, betterleaks (with the gitleaks config), secretlint, and grype are configured for this repo, including local Docker runs."
 resource: ".mega-linter.yml"
 ---
 
@@ -9,7 +9,7 @@ resource: ".mega-linter.yml"
 
 CI runs MegaLinter on pull requests and merge-queue entries via
 [`.github/workflows/mega-linter.yaml`](../../../.github/workflows/mega-linter.yaml)
-(Go flavor `v9.1.0`). Repo config is
+(Go flavor `v10.2.0`). Repo config is
 [`.mega-linter.yml`](../../../.mega-linter.yml).
 
 ## Local run
@@ -18,6 +18,9 @@ See the **MegaLinter (local)** section in [`README.md`](../../../README.md).
 Reports land under `megalinter-reports/` (gitignored).
 
 ## Gitleaks
+
+MegaLinter v10 replaced gitleaks with betterleaks, which reads the repo's
+gitleaks-format `.gitleaks.toml` and `.gitleaksignore` unchanged.
 
 [`.gitleaks.toml`](../../../.gitleaks.toml) extends the default ruleset with
 scoped allowlists:
@@ -30,10 +33,10 @@ Goa CLI `twitter-api-secret` false positive in
 `gen/http/cli/lfx_v2_campaign_service/cli.go` is suppressed via fingerprint
 in [`.gitleaksignore`](../../../.gitleaksignore) (not a path allowlist).
 
-Faster secrets-only check:
+Faster secrets-only check, as CI's betterleaks step runs it:
 
 ```sh
-gitleaks detect --source . --config .gitleaks.toml
+betterleaks dir -c .gitleaks.toml --redact .
 ```
 
 ## Secretlint

@@ -408,7 +408,7 @@ of other classes in `internal/platform/reddit/monitor.go` and
    `POST /ad_accounts/{a}/campaigns/{c}/reports`, which nothing in this repo
    verifies. It now uses the one spec-verified operation,
    `POST /ad_accounts/{a}/reports`, with `GetCampaignMetrics`' own body
-   (`CAMPAIGN_ID` as a field, `filter: campaign:id==<id>`, no breakdowns),
+   (`CAMPAIGN_ID` as a field and a breakdown (#167), `filter: campaign:id==<id>`),
    one call per campaign at the existing concurrency limit of 5. One account
    report broken down by `CAMPAIGN_ID` was considered and not taken: it
    would depend on report pagination for completeness, and this repo has not

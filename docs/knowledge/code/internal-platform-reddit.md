@@ -482,17 +482,21 @@ decoded at all. Note "microcurrency" means the **ad account's own billing curren
 this client does not read — `CostMicros` is therefore micros of an unspecified currency, as it
 is for X, and must not be summed across platforms.
 
-`CAMPAIGN_ID` is requested as a **field**, not merely a breakdown, so every row carries the id
-the provenance check verifies against. `breakdowns` is omitted so Reddit aggregates over the
-whole window; the accumulation loop still sums correctly if that is wrong. `time_zone_id` is
-omitted because the spec documents it as defaulting to UTC, which is the zone
-`dateRangeForWindow` renders in.
+`CAMPAIGN_ID` is requested as a **field and as a breakdown** (`campaignReportBody`, shared with
+the account monitor). The spec alone suggested the field was enough. But a live read on 23 Nov
+2026 (#167) showed that, with the `filter` and no breakdown, Reddit aggregates the window into
+one row **without** `campaign_id`, so every row failed the provenance check. `time_zone_id` is
+omitted. The spec says it defaults to UTC, but the live read matched Fivetran's
+account-time (America/New_York) daily totals exactly, so Reddit appears to apply the ad
+account's time zone.
 
-**What remains unverified**: no request has been made against a live Reddit ad account (this
-repository holds no Reddit credentials), which is why the gate stays on. A schema cannot
-express whether a campaign with no activity yields an empty `metrics` array or a row of
-explicit zeros, nor whether `ends_at` is inclusive of its final hour. Both readings are handled
-without a wrong answer, and both are recorded at their site rather than assumed away.
+**Verified live (#167):** `cmd/verify-metrics`, run in the dev cluster against the LF system
+account, read campaign 2577406841688564185 over `last_30_days` as 505,751 impressions, 1,365
+clicks and 8,190,455,770 micros ($8,190.46). Reddit's reporting via Fivetran gave $8,190.45 for
+the same days; the cent comes from Fivetran rounding each day. A campaign with no activity in
+the window returns an empty `metrics` array, which reads as zero. Still unverified: whether
+`ends_at` includes its final hour, and whether the account's attribution window shifts the
+numbers.
 
 ### Refusing rather than reporting a plausible number
 
@@ -587,6 +591,24 @@ An absent, null or malformed `currency` is `""`; any error is dropped and the cu
 a live account, like discovery's use of the same field. See
 [Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).
 
+`ListAccountCampaignsIn` (#659) is the same read limited to a set of campaign ids, applied to the
+campaign list BEFORE the report fan-out: a campaign outside the set gets no report. The LF system
+account is shared across foundations, and the unscoped read sent a report for every foundation's
+campaign only for `Orchestrator.ReadAccountCampaignMetrics` to discard the rows afterwards — in prod
+that was about 15 reports (up to 4 attempts each) for tlf's 7 rows, and every one ended in a 429.
+A nil set reads every campaign; an empty one sends no report. The campaign list itself is still read
+whole (one paginated call).
+
+Every throttled report in one read is tallied by cause (`monitorThrottleTally`): a 429 from Reddit
+after the bounded retry, or this service's ledger refusing the attempt (`ErrReportBudgetExhausted`).
+A call that Reddit answered 429 and whose retry the ledger then refused counts as Reddit's 429
+(`throttledThenRefusedError` carries that 429's headers through the ledger error); a 429 whose
+`Retry-After` exceeds `maxRetryWait` is a `transportError`, classed `other`, and is in neither count.
+Both counted causes class as `throttle` on the row; the read writes one warning, `reddit monitor: campaign reports
+were throttled`, with `reddit_429`, `budget_refused` and the first 429's `rate_limit_headers`. Those
+are `Retry-After` and `X-Ratelimit-*` only, numeric values only (`rateLimitHeaders`, kept on
+`apiError.RateLimit` for a 429). The response body is still never logged.
+
 **Scope audit (2026-10-05, LFXV2-2665 Track M3).** The read's only scope filter
 (`configured_status` ACTIVE/PAUSED) matches the BFF, so there is no Google-class scope
 defect; five other defects were fixed:
@@ -594,7 +616,7 @@ defect; five other defects were fixed:
 - **Verified operation.** Each campaign's numbers come from `POST /ad_accounts/{id}/reports`
   — the operation LFXV2-3282 verified against the published spec — with
   `GetCampaignMetrics`' own body (`CAMPAIGN_ID`, `IMPRESSIONS`, `CLICKS`, `SPEND` as fields,
-  `filter: campaign:id==<id>`, no `breakdowns`), not the BFF's unverified nested
+  `CAMPAIGN_ID` also as the breakdown (#167), `filter: campaign:id==<id>`), not the BFF's unverified nested
   `/campaigns/{id}/reports`. Rows pass through `sumReportRows`, shared with
   `GetCampaignMetrics`: a row attributed to another campaign, or missing a field, fails that
   campaign (`FetchFailed`), and all rows are summed (it used to read `metrics[0]` only). One
@@ -822,7 +844,7 @@ status rather than as absent.
 `Client.GetAudienceInsights(ctx, window, campaignIDs)` serves `get-reddit-ads-audience` (see
 [Reddit Audience Insights](../architecture/audience-insights-reddit.md)). Per (campaign, breakdown)
 it POSTs the verified reports operation on the client's bound account with
-`filter: campaign:id==<id>`, `breakdowns: [GENDER|COUNTRY|COMMUNITY]` and
+`filter: campaign:id==<id>`, `breakdowns: [CAMPAIGN_ID, GENDER|COUNTRY|COMMUNITY]` (#167) and
 `fields: [CAMPAIGN_ID, IMPRESSIONS, CLICKS, SPEND, <DIM>]`, walking pagination with
 `walkPagesCapped` (10 pages, `errBreakdownPageCap`), at most `reportBreakdownConcurrency` (3) in
 flight, failing fast. Refused before any request: an unmapped window (`dateRangeForWindow`), an

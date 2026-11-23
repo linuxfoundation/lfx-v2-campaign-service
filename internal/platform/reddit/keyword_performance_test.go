@@ -54,7 +54,7 @@ func TestGetKeywordPerformance_OneReportPerCampaignRowsPerCampaignKeyword(t *tes
 		t.Fatalf("requests = %d, want one per distinct campaign", len(reqs))
 	}
 	for _, r := range reqs {
-		if strings.Join(r.Data.Breakdowns, ",") != "KEYWORD" || strings.Join(r.Data.Fields, ",") != "CAMPAIGN_ID,IMPRESSIONS,CLICKS,SPEND,KEYWORD" {
+		if strings.Join(r.Data.Breakdowns, ",") != "CAMPAIGN_ID,KEYWORD" || strings.Join(r.Data.Fields, ",") != "CAMPAIGN_ID,IMPRESSIONS,CLICKS,SPEND,KEYWORD" {
 			t.Errorf("breakdowns/fields = %v / %v", r.Data.Breakdowns, r.Data.Fields)
 		}
 	}

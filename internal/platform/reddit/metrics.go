@@ -34,12 +34,13 @@ import (
 // Reading the spec falsified five of the six guesses; see the notes at each site below
 // and docs/knowledge/log/2026-08-18-LFXV2-3282-reddit-reporting-contract.md.
 //
-// STILL NOT VERIFIED: no request has been made against a live Reddit ad account, because
-// this repository has no Reddit credentials. The shapes match Reddit's published schema,
-// but behaviour that a schema cannot express — whether a campaign with no activity is
-// omitted or returned as an explicit zero row, and whether the account's configured
-// attribution window shifts the numbers — remains unconfirmed. Guards below that depend
-// on such behaviour say so at their site.
+// VERIFIED LIVE on 23 Nov 2026 (#167): cmd/verify-metrics read campaign 2577406841688564185
+// on the LF system account over last_30_days and matched Reddit's own reporting (via
+// Fivetran) exactly: 505,751 impressions, 1,365 clicks, $8,190.45 spend. The same run found
+// that the spec-only body was missing `breakdowns` (see campaignReportBody), and that a
+// campaign with no activity comes back as an empty metrics array. Still unconfirmed:
+// whether the account's configured attribution window shifts the numbers, and whether
+// ends_at's last hour is inclusive.
 func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, window model.MetricsWindow) (*model.CampaignMetrics, error) {
 	id := strings.TrimSpace(campaignID)
 	if id == "" {
@@ -72,38 +73,9 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		return nil, fmt.Errorf("get campaign metrics: reddit account ID is not a valid identifier")
 	}
 
-	// Request body per the spec's GetReportRequestBody schema: {"data": {...}} with
-	// starts_at, ends_at, and fields required.
-	//
-	// CORRECTED against the spec (LFXV2-3282). The previous guessed body was wrong in
-	// three ways, each of which would have failed the request or silently changed its
-	// meaning:
-	//   - `fields` and `breakdowns` are UPPERCASE enum members (IMPRESSIONS, CLICKS,
-	//     SPEND, CAMPAIGN_ID), not the lowercase snake_case names guessed here before.
-	//   - the campaign is scoped by `filter`, a comma-separated STRING DSL of the form
-	//     "{entity}:{field}{op}{value}" — NOT a `campaign_ids` array, which the schema
-	//     does not define at all (it sets additionalProperties:false, so the guessed key
-	//     would have been rejected outright).
-	//   - CAMPAIGN_ID must be requested as a FIELD to appear on each row. Requesting it
-	//     only as a breakdown would group by campaign without returning the id, leaving
-	//     the provenance check below nothing to verify against.
-	//
-	// `breakdowns` is deliberately omitted rather than set to CAMPAIGN_ID. The filter
-	// already restricts the report to one campaign, so the only effect of a breakdown
-	// would be to split the result into more rows; with none, Reddit aggregates over the
-	// whole window, which is what CampaignMetrics represents. The accumulation loop below
-	// still sums correctly if that assumption is wrong.
-	//
-	// `time_zone_id` is omitted: the spec documents it as defaulting to UTC, which is the
-	// zone dateRangeForWindow renders its bounds in.
-	reqBody := map[string]any{
-		"data": map[string]any{
-			"starts_at": startsAt,
-			"ends_at":   endsAt,
-			"fields":    []string{"CAMPAIGN_ID", "IMPRESSIONS", "CLICKS", "SPEND"},
-			"filter":    "campaign:id==" + id,
-		},
-	}
+	// The request body is corrected against the spec (LFXV2-3282) and the live API (#167);
+	// see campaignReportBody.
+	reqBody := campaignReportBody(id, startsAt, endsAt)
 
 	resp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/reports", reqBody)
 	if err != nil {
@@ -152,6 +124,38 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	metrics.CampaignID = id
 	metrics.Window = window
 	return &metrics, nil
+}
+
+// campaignReportBody is the one single-campaign report request this repository has verified
+// against Reddit, shared by GetCampaignMetrics and the account monitor
+// (fetchMonitorCampaignReport) so the two reads cannot drift apart. It follows the spec's
+// GetReportRequestBody schema, {"data": {...}} with starts_at, ends_at and fields required:
+//   - `fields` and `breakdowns` are UPPERCASE enum members (IMPRESSIONS, CLICKS, SPEND,
+//     CAMPAIGN_ID) (LFXV2-3282).
+//   - the campaign is scoped by `filter`, a comma-separated STRING DSL of the form
+//     "{entity}:{field}{op}{value}". There is no `campaign_ids` array: the schema sets
+//     additionalProperties:false and would reject one.
+//   - CAMPAIGN_ID is sent as a FIELD and as a BREAKDOWN. A live read on 23 Nov 2026 (#167)
+//     showed that with the filter and no breakdown, Reddit aggregates the window into one row
+//     WITHOUT campaign_id, even though CAMPAIGN_ID is in fields, so every row failed the
+//     provenance check in sumReportRows. With the breakdown, each row carries the id. A
+//     campaign with no activity in the window then comes back as an empty metrics array,
+//     which sumReportRows reads as zero.
+//
+// `time_zone_id` is omitted. The spec documents UTC as the default, but the same live read
+// matched Fivetran's account-time (America/New_York) daily totals exactly from the start
+// day, so Reddit appears to apply the ad account's time zone instead. Windows are therefore
+// day-aligned in account time, not UTC.
+func campaignReportBody(campaignID, startsAt, endsAt string) map[string]any {
+	return map[string]any{
+		"data": map[string]any{
+			"starts_at":  startsAt,
+			"ends_at":    endsAt,
+			"fields":     []string{"CAMPAIGN_ID", "IMPRESSIONS", "CLICKS", "SPEND"},
+			"breakdowns": []string{"CAMPAIGN_ID"},
+			"filter":     "campaign:id==" + campaignID,
+		},
+	}
 }
 
 // reportDecodeError wraps a report-decoding failure as a transportError, the

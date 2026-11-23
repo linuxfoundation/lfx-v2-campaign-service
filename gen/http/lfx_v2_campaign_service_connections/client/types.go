@@ -27643,7 +27643,10 @@ func ValidateRedditAdsAudienceBucketResponseBody(body *RedditAdsAudienceBucketRe
 		}
 	}
 	if body.Value != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.value", *body.Value, "^[A-Za-z0-9][A-Za-z0-9_\\-]{0,63}$"))
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.value", *body.Value, "^[A-Za-z0-9][A-Za-z0-9_&\\-]*( [A-Za-z0-9_&\\-]+)*$"))
+		if utf8.RuneCountInString(*body.Value) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.value", *body.Value, utf8.RuneCountInString(*body.Value), 64, false))
+		}
 	}
 	return
 }
@@ -27673,7 +27676,10 @@ func validateRedditAdsAudienceBucketResponseBody(body *RedditAdsAudienceBucketRe
 		}
 	}
 	if body.Value != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern(path+".value", *body.Value, "^[A-Za-z0-9][A-Za-z0-9_\\-]{0,63}$"))
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".value", *body.Value, "^[A-Za-z0-9][A-Za-z0-9_&\\-]*( [A-Za-z0-9_&\\-]+)*$"))
+		if utf8.RuneCountInString(*body.Value) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".value", *body.Value, utf8.RuneCountInString(*body.Value), 64, false))
+		}
 	}
 	return
 }

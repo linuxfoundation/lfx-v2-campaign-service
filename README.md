@@ -1277,27 +1277,28 @@ redacts every secret. `google-ads` is refused. See
 ### MegaLinter (local)
 
 CI runs MegaLinter on pull requests and merge-queue entries
-(`.github/workflows/mega-linter.yaml`, Go flavor `v9.1.0`). Config lives in
+(`.github/workflows/mega-linter.yaml`, Go flavor `v10.2.0`). Config lives in
 `.mega-linter.yml`. To reproduce
 locally with Docker or OrbStack:
 
 ```sh
-docker pull oxsecurity/megalinter-go:v9.1.0
+docker pull ghcr.io/oxsecurity/megalinter-go:v10.2.0
 docker run --rm \
   -e DEFAULT_WORKSPACE=/tmp/lint \
   -e GOTOOLCHAIN=auto \
   -e MEGALINTER_CONFIG=.mega-linter.yml \
   -v "$PWD:/tmp/lint:rw" \
-  oxsecurity/megalinter-go:v9.1.0
+  ghcr.io/oxsecurity/megalinter-go:v10.2.0
 ```
 
 Reports are written under `megalinter-reports/` (gitignored). The first
 pull is large; a full run often takes several minutes.
 
-For a faster secrets-only check matching the CI gitleaks step:
+For a faster secrets-only check matching the CI betterleaks step, which
+reads the gitleaks-format config:
 
 ```sh
-gitleaks detect --source . --config .gitleaks.toml
+betterleaks dir -c .gitleaks.toml --redact .
 ```
 
 Note: if this checkout is a git worktree, the containerized `git_diff`

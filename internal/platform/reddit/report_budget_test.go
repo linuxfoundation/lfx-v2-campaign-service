@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -99,7 +100,7 @@ func pagedThrottledServer(t *testing.T, sent *atomic.Int32) *httptest.Server {
 		var req reportRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		w.Header().Set("Content-Type", "application/json")
-		if len(req.Data.Breakdowns) == 1 && req.Data.Breakdowns[0] == "GENDER" {
+		if strings.Join(req.Data.Breakdowns, ",") == "CAMPAIGN_ID,GENDER" {
 			switch genderCalls.Add(1) {
 			case 1:
 				w.WriteHeader(http.StatusTooManyRequests)

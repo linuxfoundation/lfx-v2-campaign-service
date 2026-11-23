@@ -53,8 +53,8 @@ func TestMicrosoftCreateTargeting_PreflightRefusesBadInput(t *testing.T) {
 		`,"geoTargets":["US"],"excludedGeoTargets":["us"]`: "microsoftConfig.excludedGeoTargets: entry 1 (US) is also in geoTargets",
 		`,"excludedGeoTargets":["ZZ"]`:                     "microsoftConfig.excludedGeoTargets: geo target",
 		`,"proximityTargets":[{"latitude":1,"longitude":1,"radius":501,"unit":"Miles"}]`: "microsoftConfig.proximityTargets: entry 1 radius must be a whole number from 1 to 500 miles",
-		`,"languages":["English","All"]`:                                                 "microsoftConfig.languages: All targets every language",
-		`,"budget":"x","languages":["Klingon"]`:                                          "microsoftConfig.languages: entry 1 is not",
+		`,"languages":["English","All"]`:        "microsoftConfig.languages: All targets every language",
+		`,"budget":"x","languages":["Klingon"]`: "microsoftConfig.languages: entry 1 is not",
 	} {
 		err := d.PreflightCreate(context.Background(), "cncf", model.ProviderMicrosoftAds, msNegConfig(extra))
 		requireConfigInvalid(t, err, want)

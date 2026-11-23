@@ -45,7 +45,8 @@ suppressions are ignored. Raised three times on PR #24.
 
 **Why it is wrong:** since gitleaks **v8.25.0** the global key is `[[allowlists]]`
 (an array of tables); the singular form now fails config load with
-`'AllowList' expected a map, got 'slice'`. MegaLinter runs gitleaks **v8.28.0**.
+`'AllowList' expected a map, got 'slice'`. MegaLinter ran gitleaks **v8.28.0**;
+since v10 it runs betterleaks, which reads the same `.gitleaks.toml`.
 
 **Threads:** [PR #24 `r3562071612`](https://github.com/linuxfoundation/lfx-v2-campaign-service/pull/24#discussion_r3562071612)
 and two siblings; the developer replied "No change needed: MegaLinter CI runs
@@ -219,8 +220,8 @@ deliberate, which must not be raised:
   layout section describes a `cmd/campaign-api/` tree that does not exist (the
   binary is `cmd/campaign-service`). Do not cite it for layout, middleware or
   structure.
-- **The Makefile's `GO_VERSION := 1.24.2` is an unused duplicate pin.** Nothing in
-  the Makefile reads it; `go.mod` (`go 1.25.0`) and the workflows'
+- **The Makefile's `GO_VERSION := 1.27.4` is an unused duplicate pin.** Nothing in
+  the Makefile reads it; `go.mod` (`go 1.27.4`) and the workflows'
   `go-version-file: go.mod` resolve the toolchain. A go.mod bump that leaves it
   behind is not a finding.
 
@@ -262,14 +263,13 @@ Boundaries the table implies, stated so they are not inferred the other way:
   hand-edited, which is why the gate leaves it alone.
 - **Project-mode scanners ignore `FILTER_REGEX_EXCLUDE`.** secretlint runs in
   MegaLinter's `project` CLI lint mode, where the filter-regex variables do not
-  apply (`docs/knowledge/architecture/megalinter-secrets.md` § "Secretlint"), and gitleaks
-  scans committed content subject to its own `.gitleaks.toml` allowlists (test
+  apply (`docs/knowledge/architecture/megalinter-secrets.md` § "Secretlint"), and betterleaks
+  scans the checkout subject to its own `.gitleaks.toml` allowlists (test
   files, `go.mod`/`go.sum`, `CLAUDE.md`; `megalinter-secrets.md` § "Gitleaks") and
   `.gitleaksignore` fingerprints; treat any other `REPOSITORY_*` linter the same way
-  only after checking its own lint mode in MegaLinter's docs. KICS carries its
-  own `--exclude-paths="gen/*"` (`.mega-linter.yml` `REPOSITORY_KICS_ARGUMENTS`) and a
+  only after checking its own lint mode in MegaLinter's docs. A
   `.gitleaksignore` fingerprint covers a real hit inside `gen/`. Each scanner's coverage is set by its own
-  configuration, not by this table — gitleaks by `.gitleaks.toml` allowlists and
+  configuration, not by this table — betterleaks by `.gitleaks.toml` allowlists and
   `.gitleaksignore`, secretlint by the `.gitignore` fallback
   (`megalinter-secrets.md` § "Secretlint") — so check that
   configuration before treating a path as scanned or unscanned. A secret-scanner

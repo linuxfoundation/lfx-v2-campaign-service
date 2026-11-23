@@ -30,8 +30,9 @@ RUN go build -o /go/bin/lfx-v2-campaign-service -trimpath -ldflags="-w -s" githu
 # Run our go binary standalone
 FROM cgr.dev/chainguard/static:latest
 
-# Implicit with base image; setting explicitly for linters.
-USER nonroot
+# Implicit with base image; setting explicitly for linters. 65532 is the
+# numeric UID of the Chainguard static image's nonroot user (hadolint DL3066).
+USER 65532
 
 COPY --from=builder /go/bin/lfx-v2-campaign-service /cmd/lfx-v2-campaign-service
 
