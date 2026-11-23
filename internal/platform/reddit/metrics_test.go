@@ -143,8 +143,9 @@ func TestGetCampaignMetrics_HappyPath(t *testing.T) {
 		t.Errorf("expected ends_at 2026-07-01T23:00:00Z, got %v", got)
 	}
 	// Fields are UPPERCASE enum members per the spec. CAMPAIGN_ID must be requested as a
-	// FIELD, not merely a breakdown, or no row would carry the id the provenance check
-	// below verifies against.
+	// FIELD and as a BREAKDOWN: a live read (#167) showed that with the filter alone, Reddit
+	// aggregates the window into one row WITHOUT campaign_id, so no row would carry the id the
+	// provenance check verifies against.
 	fields, _ := data["fields"].([]any)
 	wantFields := []string{"CAMPAIGN_ID", "IMPRESSIONS", "CLICKS", "SPEND"}
 	if len(fields) != len(wantFields) {
@@ -154,6 +155,10 @@ func TestGetCampaignMetrics_HappyPath(t *testing.T) {
 		if fields[i] != want {
 			t.Errorf("fields[%d]: expected %q, got %v", i, want, fields[i])
 		}
+	}
+	breakdowns, _ := data["breakdowns"].([]any)
+	if len(breakdowns) != 1 || breakdowns[0] != "CAMPAIGN_ID" {
+		t.Errorf("expected breakdowns [CAMPAIGN_ID], got %v", data["breakdowns"])
 	}
 }
 
@@ -621,7 +626,7 @@ func TestGetCampaignMetrics_RowGuardsAreRefusals(t *testing.T) {
 }
 
 // TestGetCampaignMetrics_MultipleRowsAccumulate exercises the decode loop with more than
-// one row. Without a breakdown the report should aggregate over the whole window, but the
+// one row. With the CAMPAIGN_ID breakdown the report should be one row per campaign, but the
 // client does not depend on that: it sums whatever rows arrive, so a multi-row response
 // still totals correctly.
 func TestGetCampaignMetrics_MultipleRowsAccumulate(t *testing.T) {

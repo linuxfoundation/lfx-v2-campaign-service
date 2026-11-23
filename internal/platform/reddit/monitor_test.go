@@ -227,7 +227,8 @@ func TestListAccountCampaigns_ReportWindowIncludesToday(t *testing.T) {
 // TestListAccountCampaigns_UsesVerifiedReportOperation pins that the monitor reads through the
 // ONE reporting operation this repository has verified against Reddit's published spec — POST
 // /ad_accounts/{id}/reports — with GetCampaignMetrics' own body: UPPERCASE fields with
-// CAMPAIGN_ID requested as a field, the campaign scoped by the filter DSL, and no breakdowns.
+// CAMPAIGN_ID requested as a field and as a breakdown (#167), and the campaign scoped by the
+// filter DSL.
 // The nested /campaigns/{id}/reports path it used to call is unverified and must not be reached.
 func TestListAccountCampaigns_UsesVerifiedReportOperation(t *testing.T) {
 	stub := &monitorStub{t: t, listBody: `{"data":` + manyActiveCampaignsBody(2) + `}`, report: healthyReport}
@@ -257,8 +258,10 @@ func TestListAccountCampaigns_UsesVerifiedReportOperation(t *testing.T) {
 		if got := strings.Join(r.Data.Fields, ","); got != "CAMPAIGN_ID,IMPRESSIONS,CLICKS,SPEND" {
 			t.Errorf("fields = %q, want CAMPAIGN_ID,IMPRESSIONS,CLICKS,SPEND", got)
 		}
-		if r.Data.Breakdowns != nil {
-			t.Errorf("breakdowns = %v, want omitted", r.Data.Breakdowns)
+		// Without the breakdown, Reddit returns the filtered campaign as one aggregated row
+		// with no campaign_id, and every row fails the provenance check (#167, live read).
+		if got := strings.Join(r.Data.Breakdowns, ","); got != "CAMPAIGN_ID" {
+			t.Errorf("breakdowns = %q, want CAMPAIGN_ID", got)
 		}
 	}
 	if !filters["campaign:id==camp0"] || !filters["campaign:id==camp1"] {
