@@ -1178,6 +1178,9 @@ type apiError struct {
 	Path       string
 	StatusCode int
 	Body       string
+	// RateLimit is set on a 429 only: the response's rate-limit headers, numeric values only
+	// (rateLimitHeaders). Unlike Body it is safe to log, and the account monitor does (#659).
+	RateLimit map[string]string
 }
 
 // UpstreamStatus implements domain.UpstreamStatusCarrier: the HTTP status the platform
@@ -1444,6 +1447,9 @@ func (c *Client) requestWithThrottleRetryCounted(ctx context.Context, method, pa
 		}
 	}
 
+	// last429 holds the rate-limit headers of this call's most recent 429, non-nil once one has
+	// been answered: a ledger refusal on a later retry is then reported as Reddit's 429 (#659).
+	var last429 map[string]string
 	for attempt := 0; attempt <= retryMax; attempt++ {
 		// Refresh (cached/coalesced) each attempt so a token that expired between
 		// retries is renewed. The reader is rebuilt every attempt because the
@@ -1475,6 +1481,9 @@ func (c *Client) requestWithThrottleRetryCounted(ctx context.Context, method, pa
 		// a slot does not eat into the attempt's own timeout.
 		releaseSlot, err := c.acquireReportSlot(ctx, rawPath)
 		if err != nil {
+			if last429 != nil {
+				err = &throttledThenRefusedError{err: err, rateLimit: last429}
+			}
 			return nil, fmt.Errorf("reddit API %s %s: %w", method, path, err)
 		}
 		// Bound EACH attempt with a per-attempt context deadline, not just the
@@ -1525,6 +1534,10 @@ func (c *Client) requestWithThrottleRetryCounted(ctx context.Context, method, pa
 		// attempt we fall through and surface the 429 as an ordinary non-2xx error
 		// below rather than looping forever.
 		if resp.StatusCode == http.StatusTooManyRequests && retryThrottle && attempt < retryMax {
+			last429 = rateLimitHeaders(resp.Header)
+			if last429 == nil {
+				last429 = map[string]string{} // a 429 with no usable headers is still a 429
+			}
 			retryAfter, ok := c.parseRetryAfter(resp)
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBody))
 			_ = resp.Body.Close()
@@ -1598,7 +1611,11 @@ func (c *Client) requestWithThrottleRetryCounted(ctx context.Context, method, pa
 			if readErr != nil {
 				body = fmt.Sprintf("%s (body read error: %v)", body, readErr)
 			}
-			return nil, &apiError{Method: method, Path: path, StatusCode: resp.StatusCode, Body: body}
+			ae := &apiError{Method: method, Path: path, StatusCode: resp.StatusCode, Body: body}
+			if resp.StatusCode == http.StatusTooManyRequests {
+				ae.RateLimit = rateLimitHeaders(resp.Header)
+			}
+			return nil, ae
 		}
 		// A 2xx whose body can't be read or decoded means the mutation SUCCEEDED but
 		// we can't parse the result — wrap as transportError so callers classify it
@@ -3666,4 +3683,47 @@ func truncate(s string, n int) string {
 	}
 	// Fewer than (or exactly) n runes: return the whole string unchanged.
 	return s
+}
+
+// throttledThenRefusedError is a reporting attempt this service's ledger refused AFTER Reddit had
+// answered an earlier attempt of the same call with 429 (#659). It unwraps to the ledger's error,
+// so its class and every errors.Is match are unchanged; it exists so the account monitor's
+// throttle tally counts the call as Reddit's 429, the cause that started it, with that 429's
+// rate-limit headers, rather than as a plain ledger refusal.
+type throttledThenRefusedError struct {
+	err       error
+	rateLimit map[string]string
+}
+
+func (e *throttledThenRefusedError) Error() string { return e.err.Error() }
+func (e *throttledThenRefusedError) Unwrap() error { return e.err }
+
+// rateLimitHeaderValueRE admits a plain non-negative number, the only shape a rate-limit header
+// value is logged in: anything else is dropped rather than risk logging reflected text.
+var rateLimitHeaderValueRE = regexp.MustCompile(`^[0-9]{1,15}(\.[0-9]{1,6})?$`)
+
+// rateLimitHeaderMax bounds how many headers rateLimitHeaders keeps.
+const rateLimitHeaderMax = 8
+
+// rateLimitHeaders picks a 429's rate-limit headers out of h: Retry-After and every
+// X-Ratelimit-* header, keyed by canonical name, each kept only when its value is a plain number.
+// Nil when there are none, so a log line shows their absence plainly.
+func rateLimitHeaders(h http.Header) map[string]string {
+	var out map[string]string
+	for name, vals := range h {
+		if len(out) >= rateLimitHeaderMax {
+			break
+		}
+		if name != "Retry-After" && !strings.HasPrefix(name, "X-Ratelimit-") {
+			continue
+		}
+		if len(vals) == 0 || !rateLimitHeaderValueRE.MatchString(vals[0]) {
+			continue
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[name] = vals[0]
+	}
+	return out
 }

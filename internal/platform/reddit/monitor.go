@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -422,7 +424,7 @@ func ValidateAccountID(accountID string) error {
 // this service sums the rows it returns, on every platform — see
 // service.monitorTotals and model.AccountMonitorTotals' doc comment.
 func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, error) {
-	rows, _, err := c.listAccountCampaigns(ctx, accountID, days, false)
+	rows, _, err := c.listAccountCampaigns(ctx, accountID, days, false, nil)
 	return rows, err
 }
 
@@ -434,11 +436,27 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 // slow, throttled or failing account read cannot delay or fail the rows, which are returned as
 // ListAccountCampaigns would return them; the currency is then "".
 func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, string, error) {
-	return c.listAccountCampaigns(ctx, accountID, days, true)
+	return c.listAccountCampaigns(ctx, accountID, days, true, nil)
 }
 
-// listAccountCampaigns is the body of both public reads; withCurrency adds the account read.
-func (c *Client) listAccountCampaigns(ctx context.Context, accountID string, days int, withCurrency bool) ([]AccountCampaignRow, string, error) {
+// ListAccountCampaignsIn is the account read limited to the campaigns whose ids are in only,
+// with the currency when withCurrency is set. A nil only reads every campaign, as
+// ListAccountCampaigns does; a non-nil only that holds none of the account's campaigns sends no
+// report at all.
+//
+// The limit is applied to the campaign list BEFORE the report fan-out (#659). The LF system
+// account is shared across foundations, so an unscoped read sends a report for every
+// foundation's campaign — each one spending the account's reporting budget and exposed to
+// Reddit's 429 — only for the caller to discard every row that is not its project's. The
+// campaign list itself is still read whole: it is one paginated call whatever the scope.
+func (c *Client) ListAccountCampaignsIn(ctx context.Context, accountID string, days int, withCurrency bool, only map[string]bool) ([]AccountCampaignRow, string, error) {
+	return c.listAccountCampaigns(ctx, accountID, days, withCurrency, only)
+}
+
+// listAccountCampaigns is the body of the three public reads: withCurrency adds the account
+// read, and a non-nil only limits the report fan-out to those campaign ids (nil reads every
+// campaign) — see ListAccountCampaignsIn.
+func (c *Client) listAccountCampaigns(ctx context.Context, accountID string, days int, withCurrency bool, only map[string]bool) ([]AccountCampaignRow, string, error) {
 	if err := ValidateAccountID(accountID); err != nil {
 		return nil, "", fmt.Errorf("list account campaigns: %w", err)
 	}
@@ -476,6 +494,9 @@ func (c *Client) listAccountCampaigns(ctx context.Context, accountID string, day
 	// the scope audit (LFXV2-2665, Track M3) found it matches the BFF.
 	active := make([]campaignElement, 0, len(elements))
 	for _, e := range elements {
+		if only != nil && !only[e.ID] {
+			continue // another foundation's campaign on a shared account: no report (#659)
+		}
 		if e.ConfiguredStatus == StatusActive || e.ConfiguredStatus == StatusPaused {
 			active = append(active, e)
 		}
@@ -485,6 +506,7 @@ func (c *Client) listAccountCampaigns(ctx context.Context, accountID string, day
 	// ctxFailed[i] is true when row i's report failed with a context error, so the check after
 	// Wait can tell a row the request's own deadline killed from one that failed on its own.
 	ctxFailed := make([]bool, len(active))
+	var throttled monitorThrottleTally
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(monitorReportConcurrency)
 	for i, e := range active {
@@ -543,6 +565,9 @@ func (c *Client) listAccountCampaigns(ctx context.Context, accountID string, day
 				row.FetchFailed = true
 				row.FailureClass = monitorFailureClass(ferr)
 				ctxFailed[i] = errors.Is(ferr, context.DeadlineExceeded) || errors.Is(ferr, context.Canceled)
+				if row.FailureClass == model.MonitorFailureThrottle {
+					throttled.add(ferr)
+				}
 			} else {
 				row.Impressions = impressions
 				row.Clicks = clicks
@@ -563,6 +588,7 @@ func (c *Client) listAccountCampaigns(ctx context.Context, accountID string, day
 	if werr := g.Wait(); werr != nil {
 		return nil, "", fmt.Errorf("list account campaigns: %w", werr)
 	}
+	throttled.log(ctx)
 	// The caller's deadline or cancellation fails every report still in flight, and each of
 	// those rows would read as one campaign's failure. When the caller's context is done and a
 	// row failed on a context error, the account was not read — say so, rather than answer with
@@ -646,4 +672,55 @@ func (c *Client) readMonitorAccountCurrency(ctx context.Context, accountID strin
 		return "", fmt.Errorf("%w: it does not describe the requested account", errMonitorAccountUntrusted)
 	}
 	return monitorAccountCurrencyField(acct.Currency), nil
+}
+
+// monitorThrottleTally counts one account read's throttled reports by cause, so the one log line
+// it writes says which limit refused them (#659). monitorFailureClass folds both causes into
+// MonitorFailureThrottle — the closed class set has no room for the split, and the row needs
+// none — so without this a Reddit 429 and this service's own ledger refusing the attempt
+// (ErrReportBudgetExhausted) are indistinguishable in prod. Safe for concurrent add.
+type monitorThrottleTally struct {
+	mu sync.Mutex
+	// reddit429 counts reports Reddit refused with a 429 — after the bounded retry, or with
+	// the ledger refusing a retry of it; budgetRefused, reports the ledger refused before Reddit
+	// had answered any attempt. A 429 whose Retry-After exceeds maxRetryWait is a transportError,
+	// classed other, and is in neither count.
+	reddit429, budgetRefused int
+	// headers are the rate-limit headers of the FIRST 429 counted (see rateLimitHeaders).
+	headers map[string]string
+}
+
+func (t *monitorThrottleTally) add(err error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var after429 *throttledThenRefusedError
+	var ae *apiError
+	switch {
+	case errors.As(err, &after429):
+		// Reddit's 429 came first; the ledger only refused the retry.
+		t.reddit429++
+		if t.headers == nil {
+			t.headers = after429.rateLimit
+		}
+	case errors.Is(err, ErrReportBudgetExhausted):
+		t.budgetRefused++
+	default:
+		t.reddit429++
+		if t.headers == nil && errors.As(err, &ae) {
+			t.headers = ae.RateLimit
+		}
+	}
+}
+
+// log writes one warning for the read when any report was throttled, and nothing otherwise.
+// It names counts and Reddit's numeric rate-limit headers only — never the response body, which
+// apiError keeps unlogged on purpose (see apiError.Error).
+func (t *monitorThrottleTally) log(ctx context.Context) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.reddit429 == 0 && t.budgetRefused == 0 {
+		return
+	}
+	slog.WarnContext(ctx, "reddit monitor: campaign reports were throttled",
+		"reddit_429", t.reddit429, "budget_refused", t.budgetRefused, "rate_limit_headers", t.headers)
 }
