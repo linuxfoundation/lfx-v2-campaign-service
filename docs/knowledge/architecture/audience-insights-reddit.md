@@ -36,8 +36,14 @@ blocks are Reddit's own.
 ## Choices
 
 - **Dimensions: GENDER, COUNTRY, COMMUNITY.** Each is in both the `breakdowns` and `fields` enums,
-  so it is requested as both — grouping by it and echoing it onto the row, as `CAMPAIGN_ID` is
-  requested as a field for provenance. Community (the subreddit) is Reddit's own audience
+  so it is requested as both, grouping by it and echoing it onto the row. `CAMPAIGN_ID` is also
+  sent as **both**, `breakdowns: [CAMPAIGN_ID, <DIM>]`. A live read (#167) showed that rows broken
+  down by the dimension alone carry no `campaign_id`, so every row failed provenance; with both
+  breakdowns each row carries the id, and Reddit accepts the pair for all three dimensions.
+  **COMMUNITY buckets overlap:** in the same live read, one campaign's community rows summed to
+  775,204 impressions against a campaign total of 505,751, because one impression can count
+  toward several communities. Never present community buckets as a share of a total. GENDER
+  and COUNTRY rows summed exactly to the campaign total. Community (the subreddit) is Reddit's own audience
   dimension; gender is the one demographic Reddit breaks reports down by. PLACEMENT, OS_TYPE,
   INTEREST, REGION, DMA are documented too and left for later: each extra dimension costs one more
   report per campaign against the reporting budget below.

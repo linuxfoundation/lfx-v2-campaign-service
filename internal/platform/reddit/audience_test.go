@@ -59,8 +59,8 @@ func (s *audienceStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.inFlight.Add(-1)
 	breakdown := ""
-	if len(req.Data.Breakdowns) == 1 {
-		breakdown = req.Data.Breakdowns[0]
+	if len(req.Data.Breakdowns) == 2 && req.Data.Breakdowns[0] == "CAMPAIGN_ID" {
+		breakdown = req.Data.Breakdowns[1]
 	}
 	status, body := s.answer(campaignIDFromFilter(req.Data.Filter), breakdown)
 	w.Header().Set("Content-Type", "application/json")
@@ -142,10 +142,12 @@ func TestGetAudienceInsights_RequestsOneReportPerCampaignPerBreakdownAndSums(t *
 	}
 	seen := map[string]bool{}
 	for _, r := range reqs {
-		if len(r.Data.Breakdowns) != 1 {
-			t.Fatalf("breakdowns = %v, want exactly one", r.Data.Breakdowns)
+		// CAMPAIGN_ID leads the breakdowns: without it, Reddit's rows carry no campaign_id and
+		// every row fails the provenance check (#167, live read).
+		if len(r.Data.Breakdowns) != 2 || r.Data.Breakdowns[0] != "CAMPAIGN_ID" {
+			t.Fatalf("breakdowns = %v, want [CAMPAIGN_ID <dimension>]", r.Data.Breakdowns)
 		}
-		b := r.Data.Breakdowns[0]
+		b := r.Data.Breakdowns[1]
 		wantFields := []string{"CAMPAIGN_ID", "IMPRESSIONS", "CLICKS", "SPEND", b}
 		if strings.Join(r.Data.Fields, ",") != strings.Join(wantFields, ",") {
 			t.Errorf("fields = %v, want %v", r.Data.Fields, wantFields)

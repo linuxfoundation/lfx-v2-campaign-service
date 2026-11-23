@@ -840,7 +840,7 @@ status rather than as absent.
 `Client.GetAudienceInsights(ctx, window, campaignIDs)` serves `get-reddit-ads-audience` (see
 [Reddit Audience Insights](../architecture/audience-insights-reddit.md)). Per (campaign, breakdown)
 it POSTs the verified reports operation on the client's bound account with
-`filter: campaign:id==<id>`, `breakdowns: [GENDER|COUNTRY|COMMUNITY]` and
+`filter: campaign:id==<id>`, `breakdowns: [CAMPAIGN_ID, GENDER|COUNTRY|COMMUNITY]` (#167) and
 `fields: [CAMPAIGN_ID, IMPRESSIONS, CLICKS, SPEND, <DIM>]`, walking pagination with
 `walkPagesCapped` (10 pages, `errBreakdownPageCap`), at most `reportBreakdownConcurrency` (3) in
 flight, failing fast. Refused before any request: an unmapped window (`dateRangeForWindow`), an

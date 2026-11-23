@@ -17,7 +17,10 @@ From Reddit's published Ads API v3 OpenAPI document (read as described in
 [Reddit Audience Insights](audience-insights-reddit.md)), operation
 `POST /ad_accounts/{ad_account_id}/reports`:
 
-- `KEYWORD` is in both the `breakdowns` and the `fields` enums.
+- `KEYWORD` is in both the `breakdowns` and the `fields` enums. The request sends
+  `breakdowns: [CAMPAIGN_ID, KEYWORD]`: a live read (#167) showed that rows broken down by one
+  dimension alone carry no `campaign_id` and fail provenance. In the same read, keyword rows
+  covered only keyword-matched delivery: 257,183 of the campaign's 505,751 impressions.
 - The response row's `keyword` is typed `["string","null"]`, described as "The keyword for the
   ad.", example `internet` — **the keyword TEXT**.
 - The `Metric` schema carries no keyword id, match type or status (its only keyword-related

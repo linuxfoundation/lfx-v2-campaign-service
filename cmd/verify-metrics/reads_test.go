@@ -400,7 +400,11 @@ func fakeRedditBreakdowns(t *testing.T) (*httptest.Server, *atomic.Int32, *atomi
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		id := strings.TrimPrefix(req.Data.Filter, "campaign:id==")
-		key := strings.ToLower(strings.Join(req.Data.Breakdowns, ""))
+		// The client leads every breakdown report with CAMPAIGN_ID (#167); the dimension follows it.
+		key := ""
+		if len(req.Data.Breakdowns) == 2 && req.Data.Breakdowns[0] == "CAMPAIGN_ID" {
+			key = strings.ToLower(req.Data.Breakdowns[1])
+		}
 		val := map[string]string{"gender": `"female"`, "country": `"US"`, "community": `"` + fakeClientSecret + `"`, "keyword": `"service mesh"`}[key]
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"data":{"metrics":[{"campaign_id":"`+id+`","impressions":1000,"clicks":40,"spend":2500000,"`+key+`":`+val+`}]},"pagination":{}}`)
