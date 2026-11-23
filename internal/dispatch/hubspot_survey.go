@@ -38,7 +38,9 @@ var (
 	surveyClaimCount   = regexp.MustCompile(`(?i)\b\d{1,3}[\s-]+(?:questions?|minutes?)\b`)
 	surveyClaimDate    = regexp.MustCompile(`(?i)\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b`)
 	htmlTagPattern     = regexp.MustCompile(`<[^>]*>`)
-	spacePattern       = regexp.MustCompile(`\s+`)
+	// digitRangeHyphen is a hyphen between two numbers: a range ("10-15 minutes", "3-5%").
+	digitRangeHyphen = regexp.MustCompile(`(\d)\s*-\s*(\d)`)
+	spacePattern     = regexp.MustCompile(`\s+`)
 )
 
 // maxSurveyCopyWarnings caps the list, so a body that is wrong everywhere does not bury the one
@@ -106,10 +108,19 @@ func visibleText(s string) string {
 }
 
 // compactClaims lower-cases and removes spaces (including a non-breaking one, which visibleText
-// leaves in place) and hyphens, so "35 %" and "35%", or "9 questions" and "9-questions", compare
-// equal.
+// leaves in place) and the hyphens that join a number to a word, so "35 %" and "35%", or "9
+// questions" and "9-questions", compare equal. A hyphen between two numbers is a range and is kept
+// as a separator instead (see below).
 func compactClaims(s string) string {
 	s = strings.ToLower(s)
+	// A hyphen between two numbers is a range, not a joiner. Deleting it fuses "10-15" into "1015",
+	// which hides the "15" the copy states behind a leading "10" (a false warning on the most common
+	// survey-length phrasing), or lets an invented "35%" pass as the source's "3-5%". Turn it into a
+	// separator that is not a digit so each end stays whole. Looped because a chain ("1-2-3") shares
+	// its middle number between two matches, which one pass cannot rewrite.
+	for digitRangeHyphen.MatchString(s) {
+		s = digitRangeHyphen.ReplaceAllString(s, "$1~$2")
+	}
 	return strings.NewReplacer(" ", "", "-", "", "\u00a0", "").Replace(s)
 }
 

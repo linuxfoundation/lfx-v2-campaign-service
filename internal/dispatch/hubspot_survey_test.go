@@ -4,6 +4,7 @@
 package dispatch
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -72,6 +73,20 @@ func TestSurveyCopyWarnings(t *testing.T) {
 		}
 	})
 
+	t.Run("a range in the source keeps both of its numbers whole", func(t *testing.T) {
+		body := `<p>It takes about 10-15 minutes.</p>`
+		if got := surveyCopyWarnings(surveyBrief("The survey takes 10-15 minutes."), body); len(got) != 0 {
+			t.Errorf("a range the source states was reported: %v", got)
+		}
+	})
+
+	t.Run("a range does not back a figure made of its ends", func(t *testing.T) {
+		got := strings.Join(surveyCopyWarnings(surveyBrief("A 3-5% discount."), `<p>A 35% discount.</p>`), "\n")
+		if !strings.Contains(got, `"35%"`) {
+			t.Errorf("an invented 35%% passed as the source's 3-5%%: %q", got)
+		}
+	})
+
 	t.Run("a style percentage is not a claim", func(t *testing.T) {
 		body := `<p style="line-height:160%;width:100%">Hello</p>`
 		if got := surveyCopyWarnings(surveyBrief(source), body); len(got) != 0 {
@@ -112,4 +127,106 @@ func TestSurveyCopyWarnings(t *testing.T) {
 			t.Errorf("empty body produced warnings: %v", got)
 		}
 	})
+}
+
+// The tests above call emailLayoutFor and surveyCopyWarnings directly, so they stay green if
+// Dispatch stops calling either. These drive the real dispatcher against the recording fake and pin
+// the calls themselves, including that the A/B variant is built in the same layout as its parent.
+
+// stagedSurveyBrief is testBrief() turned into a survey brief with the given source text.
+func stagedSurveyBrief(sourceText string) *model.CampaignBrief {
+	b := testBrief()
+	b.DeliveryType = model.DeliverySurvey
+	details, _ := json.Marshal(map[string]any{
+		"eventName": "State of Neocloud Survey", "registrationUrl": "https://www.research.net/r/859TSRR", "sourceText": sourceText,
+	})
+	b.EventDetails = details
+	return b
+}
+
+// stageThroughDispatch stages the brief and returns the fake and the warnings the persisted
+// result carries.
+func stageThroughDispatch(t *testing.T, brief *model.CampaignBrief, hubspotConfig string) (*hubspotRec, []string) {
+	t.Helper()
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+	camp, err := d.Dispatch(context.Background(), brief, model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":`+hubspotConfig+`}`))
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	var blob struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(camp.Result, &blob); err != nil {
+		t.Fatalf("decode result blob: %v", err)
+	}
+	return rec, blob.Warnings
+}
+
+// placedWidgets is the widget ids the parent draft and the variant draft ended up placing.
+func placedWidgets(rec *hubspotRec) (parent, variant []string) {
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	return append([]string(nil), rec.layout...), append([]string(nil), rec.variantLayout...)
+}
+
+func hasWidget(ids []string, want string) bool {
+	for _, id := range ids {
+		if id == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestHubSpot_SurveyBriefIsStagedInTheSurveyLayout(t *testing.T) {
+	brief := stagedSurveyBrief("The survey has 9 questions and a 35% discount.")
+	rec, warnings := stageThroughDispatch(t, brief, `{"sourceEmailId":"555","bodyHtml":"<p>Take 9 questions, get 50% off.</p>"}`)
+
+	parent, _ := placedWidgets(rec)
+	for _, want := range []string{"staging_survey_preheader", "staging_survey_logo", "staging_survey_footer"} {
+		if !hasWidget(parent, want) {
+			t.Errorf("survey draft does not place %s; placed %v", want, parent)
+		}
+	}
+	for _, banned := range []string{"staging_footer_hs", "staging_footer_body"} {
+		if hasWidget(parent, banned) {
+			t.Errorf("survey draft carries the event chrome %s; placed %v", banned, parent)
+		}
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], `"50%"`) {
+		t.Errorf("warnings = %v, want exactly the unsupported 50%% figure", warnings)
+	}
+}
+
+func TestHubSpot_SurveyVariantBGetsTheSameLayoutAndIsCheckedToo(t *testing.T) {
+	brief := stagedSurveyBrief("A 3-minute survey with 9 questions.")
+	rec, warnings := stageThroughDispatch(t, brief,
+		`{"sourceEmailId":"555","bodyHtml":"<p>9 questions.</p>","abTestEnabled":true,"subjectB":"B","bodyHtmlB":"<p>Only 7 questions, 25% off.</p>"}`)
+
+	parent, variant := placedWidgets(rec)
+	for name, ids := range map[string][]string{"parent": parent, "variant": variant} {
+		if !hasWidget(ids, "staging_survey_logo") || hasWidget(ids, "staging_footer_hs") {
+			t.Errorf("%s draft is not in the survey layout; placed %v", name, ids)
+		}
+	}
+	got := strings.Join(warnings, "\n")
+	for _, claim := range []string{`"7 questions"`, `"25%"`} {
+		if !strings.Contains(got, claim) {
+			t.Errorf("no warning for %s, which appears only in Variant B:\n%s", claim, got)
+		}
+	}
+}
+
+func TestHubSpot_EventBriefKeepsTheEventLayoutAndIsNotChecked(t *testing.T) {
+	rec, warnings := stageThroughDispatch(t, testBrief(), `{"sourceEmailId":"555","bodyHtml":"<p>50% off</p>"}`)
+
+	parent, _ := placedWidgets(rec)
+	if !hasWidget(parent, "staging_footer_hs") || hasWidget(parent, "staging_survey_logo") {
+		t.Errorf("event draft is not in the event layout; placed %v", parent)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("an event brief was copy-checked: %v", warnings)
+	}
 }

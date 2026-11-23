@@ -17,8 +17,8 @@ draft still shows the clone source's content and made the two look alike.
 - **`surveyCopyWarnings`.** Advisory: a percentage, calendar date or question or minute count in the
   generated body that the brief's source text does not contain becomes a dispatch warning, the
   research team's "never invent" rule checked rather than only asked for in the prompt. A figure
-  counts as stated only as a whole number ("5%" is not backed by "35%"), and Variant B's body is
-  checked with A's.
+  counts as stated only as a whole number ("5%" is not backed by "35%"), a hyphen between two
+  numbers is read as a range ("3-5%" does not back "35%"), and Variant B's body is checked with A's.
 - **`nativeFooterWidget`.** The native footer is built in one place for both layouts, pinned by
   `TestRebuildEmailContent_EventLayoutIsUnchanged`.
 

@@ -647,7 +647,8 @@ one portal and would break a draft in a project's own portal; and the button and
 `nativeFooterWidget` builds the footer for both layouts, so only its colours can differ between
 them. The layout was read from a sent email's `/draft` content, not from the live view: a cloned
 draft's live view still shows the clone source's content, so reading it there hides what the
-rebuild wrote.
+rebuild wrote. The logo and the GitHub icon are not re-hosted per project: they are served from portal 8112310's
+public file CDN, so deleting either file there breaks that artwork in every project's survey drafts.
 
 `verifyContentSaved` re-reads the draft afterwards, because HubSpot has in practice accepted a
 content PATCH with a 2xx and silently reverted it. It requires EVERY widget it wrote to be
