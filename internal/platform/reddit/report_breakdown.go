@@ -166,17 +166,20 @@ func (c *Client) readBreakdownReports(ctx context.Context, r *breakdownRead, bre
 }
 
 // readBreakdownReport walks one (campaign, breakdown) report's pages and totals its rows by
-// breakdown value. The request asks for `breakdowns: [<DIM>]` AND `fields: [CAMPAIGN_ID,
-// IMPRESSIONS, CLICKS, SPEND, <DIM>]` — grouped by the dimension and echoing it, as CAMPAIGN_ID is
-// requested as a field for provenance. An explicit empty `metrics` array is real zero delivery (no
-// values); a missing or null one is an error.
+// breakdown value. The request asks for `breakdowns: [CAMPAIGN_ID, <DIM>]` AND `fields:
+// [CAMPAIGN_ID, IMPRESSIONS, CLICKS, SPEND, <DIM>]`, grouped by the dimension and echoing it.
+// CAMPAIGN_ID must be a breakdown as well as a field: a live read (#167) showed that rows broken
+// down by GENDER alone come back without campaign_id, so every row would fail the provenance check.
+// With both breakdowns, each row carries the campaign id. The same read confirmed that Reddit
+// accepts two breakdowns for GENDER, COUNTRY, COMMUNITY and KEYWORD. An explicit empty `metrics`
+// array is real zero delivery (no values); a missing or null one is an error.
 func (c *Client) readBreakdownReport(ctx context.Context, r *breakdownRead, campaignID string, b reportBreakdown) (map[string]breakdownTotals, error) {
 	reqBody := map[string]any{
 		"data": map[string]any{
 			"starts_at":  r.startsAt,
 			"ends_at":    r.endsAt,
 			"fields":     []string{"CAMPAIGN_ID", "IMPRESSIONS", "CLICKS", "SPEND", b.breakdown},
-			"breakdowns": []string{b.breakdown},
+			"breakdowns": []string{"CAMPAIGN_ID", b.breakdown},
 			"filter":     "campaign:id==" + campaignID,
 		},
 	}

@@ -1521,7 +1521,8 @@ func redditAudienceWindowEnum() {
 var RedditAdsAudienceBucket = Type("reddit-ads-audience-bucket", func() {
 	Attribute("dimension", String, "Which Reddit report breakdown this bucket belongs to: gender (GENDER), country (COUNTRY) or community (COMMUNITY, the subreddit)", func() { Enum("gender", "country", "community") })
 	Attribute("value", String, "Reddit's breakdown value, verbatim (a gender, a country code or a subreddit name). ABSENT when Reddit reported an explicit null for this dimension: traffic Reddit did not attribute to any value, kept so the dimension's buckets still total its traffic. A value outside a conservative charset fails the read rather than being returned.", func() {
-		Pattern(`^[A-Za-z0-9][A-Za-z0-9_\-]{0,63}$`)
+		Pattern(`^[A-Za-z0-9][A-Za-z0-9_&\-]*( [A-Za-z0-9_&\-]+)*$`)
+		MaxLength(64)
 		Example("US")
 	})
 	Attribute("impressions", Int64, "Impressions over the window", func() { Example(12840) })
@@ -1539,7 +1540,7 @@ var RedditAdsAudienceBucket = Type("reddit-ads-audience-bucket", func() {
 // envelope's so the two cannot disagree. Each dimension totals the same traffic.
 var (
 	redditAudienceGenderExample = map[string]any{
-		"dimension": "gender", "value": "female",
+		"dimension": "gender", "value": "Women",
 		"impressions": 9000, "clicks": 270, "cost_micros": 2700000, "ctr": 0.03,
 	}
 	redditAudienceCountryExample = map[string]any{

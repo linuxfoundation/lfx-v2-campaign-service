@@ -36,8 +36,14 @@ blocks are Reddit's own.
 ## Choices
 
 - **Dimensions: GENDER, COUNTRY, COMMUNITY.** Each is in both the `breakdowns` and `fields` enums,
-  so it is requested as both — grouping by it and echoing it onto the row, as `CAMPAIGN_ID` is
-  requested as a field for provenance. Community (the subreddit) is Reddit's own audience
+  so it is requested as both, grouping by it and echoing it onto the row. `CAMPAIGN_ID` is also
+  sent as **both**, `breakdowns: [CAMPAIGN_ID, <DIM>]`. A live read (#167) showed that rows broken
+  down by the dimension alone carry no `campaign_id`, so every row failed provenance; with both
+  breakdowns each row carries the id, and Reddit accepts the pair for all three dimensions.
+  **COMMUNITY buckets overlap:** in the same live read, one campaign's community rows summed to
+  775,204 impressions against a campaign total of 505,751, because one impression can count
+  toward several communities. Never present community buckets as a share of a total. GENDER
+  and COUNTRY rows summed exactly to the campaign total. Community (the subreddit) is Reddit's own audience
   dimension; gender is the one demographic Reddit breaks reports down by. PLACEMENT, OS_TYPE,
   INTEREST, REGION, DMA are documented too and left for later: each extra dimension costs one more
   report per campaign against the reporting budget below.
@@ -98,8 +104,9 @@ blocks are Reddit's own.
   returned with no `value`, so each dimension still totals its traffic. An ABSENT key is different
   (the report was not grouped by the breakdown) and fails the read.
 - **Gated by `REDDIT_METRICS_ENABLED`**, default off, like the metrics read on the same operation:
-  matched to the published schema, never exercised against a live ad account. Checked before the
-  scope lookup, so a disabled read is 400 even for a project with no Reddit campaigns.
+  matched to the published schema, and its request shape confirmed by one live read (#167, see
+  Verified live). Checked before the scope lookup, so a disabled read is 400 even for a project
+  with no Reddit campaigns.
 
 ## Layers
 
@@ -111,9 +118,22 @@ blocks are Reddit's own.
 | Platform | `internal/platform/reddit/audience.go` (`GetAudienceInsights`) on the shared broken-down reader `report_breakdown.go`, which the [keyword performance read](keyword-performance-reddit.md) also uses |
 | Chart | `httproute.yaml` `(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience` (the whole routed audience family; this read is the `reddit-ads` member); `ruleset.yaml` entry; `parity_test.go` rows |
 
+## Verified live
+
+One live read (#167, 23 Nov 2026), done in the dev cluster against the LF system account with
+`cmd/verify-metrics` on campaign 2577406841688564185 over `last_30_days`, confirmed:
+
+- the `breakdowns: [CAMPAIGN_ID, <DIM>]` request is accepted for GENDER, COUNTRY and COMMUNITY,
+  and every row carries `campaign_id` (with the dimension alone, no row does);
+- GENDER and COUNTRY rows sum exactly to the campaign total (505,751 impressions, 1,365 clicks);
+  COMMUNITY rows sum to 775,204 impressions because the buckets overlap;
+- the gender values seen were `Men`, `Women`, `Non-binary & custom` and `UNKNOWN`. Gender
+  therefore has its own value check (`genderValueRE`: single inner spaces and `&` allowed, at most
+  64 bytes), and the API's `value` pattern matches it. Country and community keep the strict
+  `audienceValueRE`, and markup or control bytes still fail the read.
+
 ## Not verified
 
-No request has been made against a live Reddit ad account. Unknown until one is: whether a
-breakdown value is ever actually `null`, the exact gender vocabulary, whether a campaign with no
-delivery yields an empty `metrics` array or zero rows per value, and whether `ends_at` includes its
-final hour (the metrics read records the same caveat).
+Still unknown: whether a breakdown value is ever actually `null` (none was seen), whether a
+campaign with no delivery yields an empty `metrics` array or zero rows per value for a broken-down
+report, and whether `ends_at` includes its final hour (the metrics read records the same caveat).
