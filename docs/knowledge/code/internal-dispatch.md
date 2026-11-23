@@ -3278,12 +3278,17 @@ The dispatcher chooses the draft's layout from the brief: `emailLayoutFor` retur
 and the one choice is carried to the A/B variant so the two halves of a test cannot differ. For a
 survey brief it also runs `surveyCopyWarnings`, an ADVISORY check that the generated body states no
 percentage, calendar date, or question or minute count that the brief's `event_details.sourceText`
-does not contain. Tags are stripped first, so a `line-height:160%` is not a claim; month spelling
-and the year are not compared. A percentage or count is supported only as a whole figure: a "5%" is
-not backed by a source that says "35%" or "3.5%", and a hyphen or en dash between two numbers is read as a range ("3-5%" does not back "35%"). A claim
-includes a range's lower end, so "5-15 minutes" is not backed by a source that says "10-15 minutes";
-"10–15", "10 - 15" and "3%-5%" compare equal to "10-15" and "3-5%". The unit is compared in the
-singular, so a source's "3-minute questionnaire" backs copy saying "3 minutes". Variant B's body is checked in the same pass as
+does not contain. Tags are stripped first, so a `line-height:160%` is not a claim, and a
+non-breaking space reads as a space; month spelling and the year are not compared. The source is
+read with the SAME patterns as the body and the two are compared as claim keys (`claimKeys`), never
+as raw text, so the patterns decide where a figure starts and ends: a full stop or a neighbouring
+number ("open. 9 questions", "2026 9 questions") is not read as part of a figure, and a decimal is
+read whole ("8.5 minutes" is not "5 minutes"). A key is the figure, spelled one way ("3.50" is
+"3.5"), or `lower~upper` for a range, plus the unit in the singular. So a "5%" is not backed by
+"35%" or "3.5%", "35%" is not backed by the range "3-5%", "5-15 minutes" is not backed by "10-15
+minutes", while "10–15", "10 - 15" and "3%-5%" equal "10-15" and "3-5%", and a "3-minute
+questionnaire" backs "3 minutes". A source range also backs each of its ends ("10-15 minutes"
+backs "15 minutes"); a copy's range is backed only by the same range. Variant B's body is checked in the same pass as
 A's, so one list covers both halves of an A/B test. Findings join the dispatch warnings that reach the job-poll
 response, never a failure, capped at five, and built only from what the patterns match so no model
 free text enters a persisted field.

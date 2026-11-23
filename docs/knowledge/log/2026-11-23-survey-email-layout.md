@@ -16,11 +16,12 @@ draft still shows the clone source's content and made the two look alike.
   the clone and its A/B variant.
 - **`surveyCopyWarnings`.** Advisory: a percentage, calendar date or question or minute count in the
   generated body that the brief's source text does not contain becomes a dispatch warning, the
-  research team's "never invent" rule checked rather than only asked for in the prompt. A figure
-  counts as stated only as a whole number ("5%" is not backed by "35%"), a hyphen between two
-  numbers is read as a range ("3-5%" does not back "35%"), a range is checked with its lower end
-  ("5-15 minutes" is not backed by "10-15 minutes"), the unit is compared in the singular ("a
-  3-minute questionnaire" backs "3 minutes"), and Variant B's body is checked with A's.
+  research team's "never invent" rule checked rather than only asked for in the prompt. The source
+  is read with the same patterns as the body and compared as claim keys, not raw text: a figure
+  counts as stated only whole ("5%" is not backed by "35%", "8.5 minutes" is not "5 minutes"), a
+  hyphen or en dash between numbers is a range checked with both ends ("3-5%" does not back "35%",
+  "10-15 minutes" does not back "5-15 minutes"), the unit is compared in the singular ("a 3-minute
+  questionnaire" backs "3 minutes"), and Variant B's body is checked with A's.
 - **`nativeFooterWidget`.** The native footer is built in one place for both layouts, pinned by
   `TestRebuildEmailContent_EventLayoutIsUnchanged`.
 

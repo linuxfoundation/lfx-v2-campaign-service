@@ -118,13 +118,14 @@ func TestSurveyCopyWarnings(t *testing.T) {
 	})
 
 	t.Run("a singular or plural unit backs the same figure in either direction", func(t *testing.T) {
-		// The word after the unit must not start with "s": "a 3-minute survey" compacts to
-		// "3minutesurvey", which contains "3minutes" by accident and would hide the bug.
+		// "questionnaire" and "form" as well as "survey": the earlier text match passed "a 3-minute
+		// survey" only because "3minutesurvey" contains "3minutes".
 		cases := []struct{ source, body string }{
 			{"Take our 3-minute questionnaire.", `<p>It takes 3 minutes.</p>`},
 			{"It takes 3 minutes.", `<p>Take our 3-minute questionnaire.</p>`},
 			{"A 9-question form.", `<p>Only 9 questions.</p>`},
 			{"Only 9 questions.", `<p>A 9-question form.</p>`},
+			{"Take our 3-minute survey.", `<p>It takes 3 minutes.</p>`},
 		}
 		for _, tc := range cases {
 			if got := surveyCopyWarnings(surveyBrief(tc.source), tc.body); len(got) != 0 {
@@ -135,6 +136,58 @@ func TestSurveyCopyWarnings(t *testing.T) {
 		got := strings.Join(surveyCopyWarnings(surveyBrief("Take our 3-minute questionnaire."), `<p>It takes 5 minutes.</p>`), "\n")
 		if !strings.Contains(got, `"5 minutes"`) {
 			t.Errorf("an invented 5 minutes passed against a 3-minute source: %q", got)
+		}
+	})
+
+	t.Run("a decimal figure is read whole", func(t *testing.T) {
+		reported := []struct{ source, body, claim string }{
+			{"It takes 5 minutes.", `<p>It takes 8.5 minutes.</p>`, `"8.5 minutes"`},
+			{"It takes 2.5-3.5 minutes.", `<p>It takes 1.5-3.5 minutes.</p>`, `"1.5-3.5 minutes"`},
+		}
+		for _, tc := range reported {
+			got := strings.Join(surveyCopyWarnings(surveyBrief(tc.source), tc.body), "\n")
+			if !strings.Contains(got, tc.claim) {
+				t.Errorf("source %q, copy %q: no warning for %s in:\n%s", tc.source, tc.body, tc.claim, got)
+			}
+		}
+		silent := []struct{ source, body string }{
+			{"It takes 3.5 minutes.", `<p>Just 3.5 minutes.</p>`},
+			{"It takes 2.5-3.5 minutes.", `<p>It takes 2.5–3.5 minutes.</p>`},
+		}
+		for _, tc := range silent {
+			if got := surveyCopyWarnings(surveyBrief(tc.source), tc.body); len(got) != 0 {
+				t.Errorf("source %q, copy %q: a stated decimal was reported: %v", tc.source, tc.body, got)
+			}
+		}
+	})
+
+	t.Run("a figure after a full stop or another number is still stated", func(t *testing.T) {
+		for _, source := range []string{
+			"The survey is open. 9 questions take 3 minutes.",
+			"In 2026 9 questions take 3 minutes.",
+			"Round 2 9 questions, 3 minutes.",
+		} {
+			if got := surveyCopyWarnings(surveyBrief(source), `<p>9 questions in 3 minutes.</p>`); len(got) != 0 {
+				t.Errorf("source %q: a stated figure was reported: %v", source, got)
+			}
+		}
+	})
+
+	t.Run("a non-breaking space or a different spelling of a figure does not matter", func(t *testing.T) {
+		cases := []struct{ source, body string }{
+			{"The survey has 9\u00a0questions and a 35\u00a0% discount.", `<p>9 questions, 35% off.</p>`},
+			{"The survey has 9 questions.", `<p>Only 9&nbsp;questions.</p>`},
+			{"A 3.50% discount.", `<p>A 3.5% discount.</p>`},
+		}
+		for _, tc := range cases {
+			if got := surveyCopyWarnings(surveyBrief(tc.source), tc.body); len(got) != 0 {
+				t.Errorf("source %q, copy %q: a stated figure was reported: %v", tc.source, tc.body, got)
+			}
+		}
+		// The non-breaking space does not hide an invented figure either.
+		got := strings.Join(surveyCopyWarnings(surveyBrief("The survey has 9 questions."), `<p>Only 12&nbsp;questions.</p>`), "\n")
+		if !strings.Contains(got, "12") {
+			t.Errorf("an invented 12 questions behind &nbsp; was not reported: %q", got)
 		}
 	})
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -34,17 +35,17 @@ func emailLayoutFor(brief *model.CampaignBrief) hubspot.EmailLayout {
 // on, and because a wider net would warn on every ordinary number in a body and teach operators to
 // ignore the warning.
 var (
-	// A claim includes a range's lower end ("5-15 minutes", "3–5%", "3%-5%"), so a copy that changes
-	// only the lower end is checked as a whole rather than as its upper end alone.
+	// A figure is a whole number or a decimal ("3", "8.5"). A claim includes a range's lower end
+	// ("5-15 minutes", "3–5%", "3%-5%"), so a copy that changes only the lower end is checked as a
+	// whole rather than as its upper end alone. Matching is leftmost, so "8.5 minutes" is read from
+	// its "8", never as the "5 minutes" after the decimal point.
 	surveyClaimPercent = regexp.MustCompile(`\b(?:\d{1,3}(?:\.\d+)?\s?%?\s*[-–]\s*)?\d{1,3}(?:\.\d+)?\s?%`)
-	surveyClaimCount   = regexp.MustCompile(`(?i)\b(?:\d{1,3}\s*[-–]\s*)?\d{1,3}[\s-]+(?:questions?|minutes?)\b`)
+	surveyClaimCount   = regexp.MustCompile(`(?i)\b(?:\d{1,3}(?:\.\d+)?\s*[-–]\s*)?\d{1,3}(?:\.\d+)?[\s-]+(?:questions?|minutes?)\b`)
 	surveyClaimDate    = regexp.MustCompile(`(?i)\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b`)
 	htmlTagPattern     = regexp.MustCompile(`<[^>]*>`)
-	// digitRangeHyphen is a hyphen or en dash between two numbers: a range ("10-15 minutes",
-	// "3–5%"). A "%" on the lower end ("3%-5%") is dropped with it, so that spelling compares equal
-	// to "3-5%".
-	digitRangeHyphen = regexp.MustCompile(`(\d)\s*%?\s*[-–]\s*(\d)`)
-	spacePattern     = regexp.MustCompile(`\s+`)
+	spacePattern       = regexp.MustCompile(`\s+`)
+	// claimParts splits a matched claim into its optional lower end, its figure and its unit.
+	claimParts = regexp.MustCompile(`^(?:(\d+(?:\.\d+)?)\s*%?\s*[-–]\s*)?(\d+(?:\.\d+)?)[\s-]*(%|question|minute)`)
 )
 
 // maxSurveyCopyWarnings caps the list, so a body that is wrong everywhere does not bury the one
@@ -54,6 +55,11 @@ const maxSurveyCopyWarnings = 5
 // surveyCopyWarnings reports figures and dates the generated body states that the brief's source
 // text does not contain. ADVISORY: it never blocks staging, because the draft is a human-reviewed
 // draft and the source text may say the same thing in words this check does not read.
+//
+// The source is read with the same patterns as the body, and the two are compared as claim keys
+// (see claimKeys), never as raw text: the patterns decide where a figure starts and ends, so a
+// sentence's full stop, a neighbouring number or a longer figure cannot be mistaken for part of
+// one.
 //
 // The returned strings are built only from what the three patterns above can match (digits, a
 // month name, a unit word), so they carry no free text from the model into a persisted,
@@ -73,7 +79,6 @@ func surveyCopyWarnings(brief *model.CampaignBrief, bodyHTML string) []string {
 
 	body := visibleText(bodyHTML)
 	source := visibleText(details.SourceText)
-	compactSource := compactClaims(source)
 
 	var out []string
 	seen := map[string]bool{}
@@ -84,14 +89,17 @@ func surveyCopyWarnings(brief *model.CampaignBrief, bodyHTML string) []string {
 		}
 	}
 
-	for _, claim := range surveyClaimPercent.FindAllString(body, -1) {
-		if !claimStated(compactSource, claim) {
-			add(strings.TrimSpace(claim))
+	for _, pattern := range []*regexp.Regexp{surveyClaimPercent, surveyClaimCount} {
+		stated := map[string]bool{}
+		for _, claim := range pattern.FindAllString(source, -1) {
+			for _, key := range claimKeys(claim, true) {
+				stated[key] = true
+			}
 		}
-	}
-	for _, claim := range surveyClaimCount.FindAllString(body, -1) {
-		if !claimStated(compactSource, claim) {
-			add(strings.TrimSpace(claim))
+		for _, claim := range pattern.FindAllString(body, -1) {
+			if keys := claimKeys(claim, false); len(keys) == 0 || !stated[keys[0]] {
+				add(strings.TrimSpace(claim))
+			}
 		}
 	}
 	sourceDates := dateKeys(source)
@@ -105,57 +113,45 @@ func surveyCopyWarnings(brief *model.CampaignBrief, bodyHTML string) []string {
 
 // visibleText is the text a recipient reads: tags dropped, entities decoded, whitespace collapsed.
 // Dropping the tags first is what keeps `line-height:160%` in a style attribute from reading as a
-// percentage the copy states.
+// percentage the copy states. A non-breaking space (what "&nbsp;" decodes to) becomes a plain one,
+// because RE2's \s does not match it and "9&nbsp;questions" would otherwise not read as a claim.
 func visibleText(s string) string {
 	s = htmlTagPattern.ReplaceAllString(s, " ")
-	return strings.TrimSpace(spacePattern.ReplaceAllString(html.UnescapeString(s), " "))
+	s = strings.ReplaceAll(html.UnescapeString(s), "\u00a0", " ")
+	return strings.TrimSpace(spacePattern.ReplaceAllString(s, " "))
 }
 
-// compactClaims lower-cases and removes spaces (including a non-breaking one, which visibleText
-// leaves in place) and the hyphens that join a number to a word, so "35 %" and "35%", or "9
-// questions" and "9-questions", compare equal. A hyphen or en dash between two numbers is a range
-// and is kept as a separator instead (see below), so "10–15" and "10-15" compare equal too. The
-// unit is compared in the singular, so "a 3-minute survey" and "3 minutes" compare equal.
-func compactClaims(s string) string {
-	s = strings.ToLower(s)
-	// A hyphen between two numbers is a range, not a joiner. Deleting it fuses "10-15" into "1015",
-	// which hides the "15" the copy states behind a leading "10" (a false warning on the most common
-	// survey-length phrasing), or lets an invented "35%" pass as the source's "3-5%". Turn it into a
-	// separator that is not a digit so each end stays whole. Looped because a chain ("1-2-3") shares
-	// its middle number between two matches, which one pass cannot rewrite.
-	for digitRangeHyphen.MatchString(s) {
-		s = digitRangeHyphen.ReplaceAllString(s, "$1~$2")
+// claimKeys turns a matched percentage or count into the key it is compared by: the figure (or
+// "lower~upper" for a range) and the unit in the singular, so "35 %" and "35%", "9-questions" and
+// "9 questions", "a 3-minute survey" and "3 minutes", and "10–15", "10 - 15" or "3%-5%" and
+// "10-15" or "3-5%" compare equal. The figure is compared whole, so "5%" is not "35%" or "3.5%",
+// and "35%" is not the "3-5%" range.
+//
+// With asSource, a range also yields a key for each of its ends: a source that says "10-15
+// minutes" backs copy saying "15 minutes", but a copy's range is backed only by the same range.
+func claimKeys(claim string, asSource bool) []string {
+	m := claimParts.FindStringSubmatch(strings.ToLower(strings.TrimSpace(claim)))
+	if m == nil {
+		return nil
 	}
-	s = strings.NewReplacer(" ", "", "-", "", "\u00a0", "").Replace(s)
-	// The unit is compared in the singular, so "a 3-minute survey" backs "3 minutes" and "1
-	// question" backs "1 questions"-style plurals in either direction. The figure is what is checked.
-	return strings.NewReplacer("minutes", "minute", "questions", "question").Replace(s)
-}
-
-// claimStated reports whether the compacted source states the claim as a whole figure. A bare
-// substring test would let an invented "5%" pass because the source says "35%", or "3 minutes"
-// because it says "13 minutes": the match must not continue a longer number on its left. The right
-// edge needs no such rule, because every claim ends in a unit ("%", "questions", "minutes").
-func claimStated(compactSource, claim string) bool {
-	want := compactClaims(claim)
-	for from := 0; from <= len(compactSource); {
-		i := strings.Index(compactSource[from:], want)
-		if i < 0 {
-			return false
-		}
-		at := from + i
-		if at == 0 || !isNumberByte(compactSource[at-1]) {
-			return true
-		}
-		from = at + 1
+	lower, figure, unit := canonicalFigure(m[1]), canonicalFigure(m[2]), m[3]
+	if lower == "" {
+		return []string{figure + unit}
 	}
-	return false
+	keys := []string{lower + "~" + figure + unit}
+	if asSource {
+		keys = append(keys, lower+unit, figure+unit)
+	}
+	return keys
 }
 
-// isNumberByte is a digit or the decimal point: what, directly left of a figure, means the figure
-// is the tail of a longer one ("35%" in "135%", "5%" in "3.5%").
-func isNumberByte(b byte) bool {
-	return (b >= '0' && b <= '9') || b == '.'
+// canonicalFigure spells a figure one way, so "3.50" and "3.5", or "05" and "5", compare equal.
+func canonicalFigure(figure string) string {
+	f, err := strconv.ParseFloat(figure, 64)
+	if err != nil {
+		return figure
+	}
+	return strconv.FormatFloat(f, 'f', -1, 64)
 }
 
 // dateKey is month-abbreviation plus day, so "February 28" in the copy matches "Feb 28, 2027" in
