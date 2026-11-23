@@ -301,9 +301,10 @@ type Service interface {
 	// workflow will send) and must belong to a send surface; a paid brief is
 	// refused. The source workflow (source_workflow_url, else the deployment's
 	// SURVEY_SEQUENCE_WORKFLOW_ID, else the in-code default) is only ever read:
-	// its definition is fetched, its send steps -- walked from its start action,
-	// which must be one straight sequence -- are pointed at this campaign's drafts
-	// in the order brief_ids gives, each wait-until-date step is re-dated from
+	// its definition is fetched, its send steps -- walked from its start action
+	// through every branch, and refused when two of them sit on parallel branches
+	// so that no order exists -- are pointed at this campaign's drafts in the
+	// order brief_ids gives, each wait-until-date step is re-dated from
 	// send_dates, its enrollment is replaced by the series' audience, the
 	// audience's suppression lists are added to its own, and the result is created
 	// as a NEW workflow. 400 when the source URL names no workflow (or names one
@@ -311,23 +312,24 @@ type Service interface {
 	// the paid surface or appears twice, when there are fewer than two briefs, or
 	// when a date is not YYYY-MM-DD, not after today or not after the date before
 	// it. 409 when the source workflow's send-step count does not equal the number
-	// of briefs or its dated-step count the number of send_dates, when it
-	// branches, has steps off its main path, does not enroll by list membership or
-	// still refers to its own emails elsewhere; when a draft is not fully staged
-	// or was staged in another portal; when a brief has no BUILT HubSpot audience,
-	// when the briefs were built against different audiences (a workflow enrolls
-	// ONE audience, so every brief must carry the same send lists, suppressions
-	// and portal), or that audience was built in a different HubSpot portal than
-	// this project's credential reaches; when a list the series sends to is also
-	// suppressed, or the project's standing standard suppression list now covers
-	// it (the same send-time check staging applies); when the project has no
-	// usable HubSpot connection, the credential lacks the automation scope, or the
-	// default workflow does not exist in the project's portal. 404 when a brief
-	// does not exist in this project. 500 when HubSpot's answer to the create
-	// could not be read, so a workflow may exist. 503 when the audience store or
-	// HubSpot is unavailable. The workflow is always created disabled -- enabling
-	// it is left to the human who reviews the drafts, and is the only irreversible
-	// step on this path.
+	// of briefs or its dated-step count the number of send_dates, when two sends
+	// or two dated steps sit on parallel branches so no order exists, when it
+	// loops, has a send or dated step its start action cannot reach, does not
+	// enroll by list membership or still refers to its own emails elsewhere; when
+	// a draft is not fully staged or was staged in another portal; when a brief
+	// has no BUILT HubSpot audience, when the briefs were built against different
+	// audiences (a workflow enrolls ONE audience, so every brief must carry the
+	// same send lists, suppressions and portal), or that audience was built in a
+	// different HubSpot portal than this project's credential reaches; when a list
+	// the series sends to is also suppressed, or the project's standing standard
+	// suppression list now covers it (the same send-time check staging applies);
+	// when the project has no usable HubSpot connection, the credential lacks the
+	// automation scope, or the default workflow does not exist in the project's
+	// portal. 404 when a brief does not exist in this project. 500 when HubSpot's
+	// answer to the create could not be read, so a workflow may exist. 503 when
+	// the audience store or HubSpot is unavailable. The workflow is always created
+	// disabled -- enabling it is left to the human who reviews the drafts, and is
+	// the only irreversible step on this path.
 	CreateSendWorkflow(context.Context, *CreateSendWorkflowPayload) (res *SendWorkflowResult, err error)
 	// Bind a campaign that ALREADY exists on the ad platform to this brief. The
 	// platform is read, never written: the campaign must already exist under the

@@ -3273,6 +3273,18 @@ survey send workflow sends drafts without a reviewer opening each one, so it ref
 without the flag rather than send the template's copy
 (`TestHubSpot_AFailedSubjectIsNotRecordedAsStagedCopy`).
 
+The dispatcher chooses the draft's layout from the brief: `emailLayoutFor` returns
+`hubspot.LayoutSurvey` for a brief whose delivery type is `survey` and the event layout otherwise,
+and the one choice is carried to the A/B variant so the two halves of a test cannot differ. For a
+survey brief it also runs `surveyCopyWarnings`, an ADVISORY check that the generated body states no
+percentage, calendar date, or question or minute count that the brief's `event_details.sourceText`
+does not contain. Tags are stripped first, so a `line-height:160%` is not a claim; month spelling
+and the year are not compared. A percentage or count is supported only as a whole figure: a "5%" is
+not backed by a source that says "35%" or "3.5%". Variant B's body is checked in the same pass as
+A's, so one list covers both halves of an A/B test. Findings join the dispatch warnings that reach the job-poll
+response, never a failure, capped at five, and built only from what the patterns match so no model
+free text enters a persisted field.
+
 The body write targets the **first rich-text block in the draft's LAYOUT READING ORDER**, and
 refuses when the draft has no rich-text block at all — or when it has no LAYOUT. "First" comes
 from `content.flexAreas`, the drag-and-drop layout tree — the only place a draft records the order

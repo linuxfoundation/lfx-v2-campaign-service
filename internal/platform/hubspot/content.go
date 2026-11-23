@@ -84,12 +84,19 @@ type RebuildEmailContentInput struct {
 	// preview_text widget the clone source already had, since that's usually more
 	// useful than showing no preheader at all.
 	PreviewText string
+	// Layout selects the chrome built around the body: the event layout (the zero value, and what
+	// every caller before the survey surface got) or the LF Research survey layout. Sponsors are
+	// ignored by the survey layout, which has no sponsor tiers.
+	Layout EmailLayout
 }
 
 // RebuildEmailContent replaces an email draft's entire widget/section tree: hero
-// image first (if provided), then the body, then sponsor tiers, then a fixed
-// footer chain (divider, follow-us header, social icons, sent-by line, native
-// HubSpot footer). MUTATING, non-idempotent.
+// image first (if provided), then the body, the button, and a fixed chrome chosen by
+// in.Layout. The event layout (the zero value) adds sponsor tiers and then a footer chain
+// (divider, follow-us header, social icons, sent-by line, native HubSpot footer); the survey
+// layout puts a view-in-browser strip and the LF Research logo above the hero and its own
+// divider / social / sent-by / native footer chain below (content_survey.go). MUTATING,
+// non-idempotent.
 //
 // This targets the /draft sub-route via patchEmail, consistent with this package's
 // existing SetEmailHTMLWidgets convention, rather than the base /{id} route the
@@ -126,8 +133,19 @@ func (c *Client) RebuildEmailContent(ctx context.Context, id string, in RebuildE
 	widgets := map[string]any{}
 	var sections []map[string]any
 
+	survey := in.Layout == LayoutSurvey
+	if survey {
+		// Above the hero, as in every sent survey email: the view-in-browser strip, then the logo.
+		addSurveyHeader(widgets, &sections)
+	}
+
 	if strings.TrimSpace(in.HeroImageURL) != "" {
-		addHeroSection(widgets, &sections, in.HeroImageURL, in.HeroLinkURL, in.HeroImageAlt)
+		heroAlt := in.HeroImageAlt
+		if survey && strings.TrimSpace(heroAlt) == "" {
+			// "Event banner" (addHeroSection's fallback) would describe the wrong thing.
+			heroAlt = "Survey banner"
+		}
+		addHeroSection(widgets, &sections, in.HeroImageURL, in.HeroLinkURL, heroAlt)
 	}
 
 	// Conditional, and the clone's body is NOT carried forward — it is dropped from the tree.
@@ -156,9 +174,12 @@ func (c *Client) RebuildEmailContent(ctx context.Context, id string, in RebuildE
 		addButtonSection(widgets, &sections, in.ButtonText, in.ButtonURL)
 	}
 
-	addSponsorSections(widgets, &sections, in.Sponsors)
-
-	addFooterSections(widgets, &sections, in.SentByOrg)
+	if survey {
+		addSurveyFooterSections(widgets, &sections, in.SentByOrg)
+	} else {
+		addSponsorSections(widgets, &sections, in.Sponsors)
+		addFooterSections(widgets, &sections, in.SentByOrg)
+	}
 
 	if text := strings.TrimSpace(in.PreviewText); text != "" {
 		widgets["preview_text"] = map[string]any{"body": map[string]any{"value": text}}
@@ -724,13 +745,34 @@ func addFooterSections(widgets map[string]any, sections *[]map[string]any, sentB
 	}
 
 	const nativeFooterKey = "staging_footer_hs"
-	widgets[nativeFooterKey] = map[string]any{
+	widgets[nativeFooterKey] = nativeFooterWidget("#000000", footerLinkColor)
+
+	*sections = append(*sections,
+		makeSection("section-footer-divider", []widgetColumn{{id: "col-footer-divider-0", widgets: []string{dividerKey}, width: 12}}, defaultSectionStyle),
+		makeSection("section-footer-follow-header", []widgetColumn{{id: "col-footer-follow-header-0", widgets: []string{followHeaderKey}, width: 12}}, defaultSectionStyle),
+		makeSection("section-footer-social", []widgetColumn{{id: "col-footer-social-0", widgets: []string{socialKey}, width: 12}}, defaultSectionStyle),
+		makeSection("section-footer-body", []widgetColumn{{id: "col-footer-body-0", widgets: []string{sentByKey}, width: 12}}, defaultSectionStyle),
+		makeSection("section-footer-hs", []widgetColumn{{id: "col-footer-hs-0", widgets: []string{nativeFooterKey}, width: 12}}, defaultSectionStyle),
+	)
+}
+
+// footerLinkColor is the native footer's link colour in both layouts: #2563eb, not the prior
+// #0094ff -- see addButtonSection's contrast note; the same failing ~3.14:1-against-white ratio
+// applied to this footer link. The sent survey emails use #00a4bd (about the same ratio), which
+// the survey layout deliberately does not copy.
+const footerLinkColor = "#2563eb"
+
+// nativeFooterWidget is HubSpot's own footer module (postal address and subscription link), shared
+// by the event and survey layouts so the two cannot drift on what it carries. Only the colours
+// differ between them.
+func nativeFooterWidget(fontColor, linkColor string) map[string]any {
+	return map[string]any{
 		"type": "module",
 		"body": map[string]any{
 			"path":      "@hubspot/email_footer",
 			"module_id": moduleIDEmailFooter,
 			"font": map[string]any{
-				"color": "#000000",
+				"color": fontColor,
 				"font":  "Arial, sans-serif",
 				"size":  map[string]any{"units": "px", "value": 12},
 				"styles": map[string]any{
@@ -740,9 +782,7 @@ func addFooterSections(widgets map[string]any, sections *[]map[string]any, sentB
 				},
 			},
 			"link_font": map[string]any{
-				// #2563eb, not the prior #0094ff — see addButtonSection's contrast note;
-				// the same failing ~3.14:1-against-white ratio applied to this footer link.
-				"color":    "#2563eb",
+				"color":    linkColor,
 				"font":     "Arial, sans-serif",
 				"font_set": "DEFAULT",
 				"size":     map[string]any{"units": "px", "value": 12},
@@ -756,12 +796,4 @@ func addFooterSections(widgets map[string]any, sections *[]map[string]any, sentB
 			"hs_wrapper_css":           map[string]any{},
 		},
 	}
-
-	*sections = append(*sections,
-		makeSection("section-footer-divider", []widgetColumn{{id: "col-footer-divider-0", widgets: []string{dividerKey}, width: 12}}, defaultSectionStyle),
-		makeSection("section-footer-follow-header", []widgetColumn{{id: "col-footer-follow-header-0", widgets: []string{followHeaderKey}, width: 12}}, defaultSectionStyle),
-		makeSection("section-footer-social", []widgetColumn{{id: "col-footer-social-0", widgets: []string{socialKey}, width: 12}}, defaultSectionStyle),
-		makeSection("section-footer-body", []widgetColumn{{id: "col-footer-body-0", widgets: []string{sentByKey}, width: 12}}, defaultSectionStyle),
-		makeSection("section-footer-hs", []widgetColumn{{id: "col-footer-hs-0", widgets: []string{nativeFooterKey}, width: 12}}, defaultSectionStyle),
-	)
 }

@@ -164,8 +164,10 @@ type CloneFlowOptions struct {
 var ErrFlowStepCountMismatch = errors.New("hubspot: workflow step count does not match")
 
 // ErrFlowShapeUnsupported is returned, wrapped, when the source workflow cannot be cloned
-// safely: it branches, has steps off its main path, enrolls by something other than list
-// membership, or would keep pointing at the source campaign's emails. Nothing is created.
+// safely: two of its sends (or two of its dated steps) sit on parallel branches so no order
+// exists, a send or dated step is not reachable from its start action, it loops, it enrolls by
+// something other than list membership, or it would keep pointing at the source campaign's
+// emails. Nothing is created.
 var ErrFlowShapeUnsupported = errors.New("hubspot: workflow shape is not supported for a send series")
 
 // CloneFlowWithEmails recreates a workflow with this campaign's emails in its send
@@ -198,7 +200,7 @@ func (c *Client) CloneFlowWithEmails(ctx context.Context, flowID string, opts Cl
 	if !ok {
 		return nil, fmt.Errorf("%w: workflow %s has no actions to rewrite", ErrFlowShapeUnsupported, flowID)
 	}
-	path, perr := flowMainPath(flow, actions)
+	path, perr := flowSeriesSteps(flow, actions)
 	if perr != nil {
 		return nil, fmt.Errorf("%w: workflow %s: %v", ErrFlowShapeUnsupported, flowID, perr)
 	}
@@ -476,15 +478,26 @@ func flowIDStrings(in []any) []string {
 	return out
 }
 
-// flowMainPath returns the workflow's actions in the order a contact meets them: from
-// startActionId, along each action's single STANDARD connection.
+// flowSeriesSteps returns the workflow's send-email and wait-until-date steps, each kind in the
+// order a contact meets them: the sends first, then the dated steps.
 //
-// Not by action id. A step inserted later gets the next free id, so an id sort puts it last
-// while it sits earlier on the canvas -- and the emails would be mapped to the wrong sends in an
-// order that still looks plausible. A branching workflow is refused: its send steps are not one
-// sequence, so there is no order to map a series onto. So is one with a send or dated step the
-// walk does not reach, which would otherwise keep the SOURCE campaign's email.
-func flowMainPath(flow map[string]any, actions []any) ([]map[string]any, error) {
+// The workflow is walked from startActionId along EVERY edge out of each action -- the plain
+// connection and each arm of a branch -- and a step's place is read off what it can reach. Not off
+// its action id: a step inserted later gets the next free id, so an id sort puts it last while it
+// sits earlier on the canvas, and the emails would be mapped to the wrong sends in an order that
+// still looks plausible.
+//
+// A branch is walked THROUGH, not refused. A survey sequence gates a later send on one (skip
+// whoever already responded), so refusing at the first fork refused the very workflow this clone
+// exists to serve. What a series needs is an unambiguous ORDER, and that is what is checked: each
+// kind of step must be totally ordered by reachability, every step able to reach the one after it.
+// Two steps on parallel arms are incomparable, no order exists, and the clone is refused -- mapping
+// email 2 onto one of them would be a guess, and a plausible-looking one.
+//
+// A step the walk cannot reach is refused as well, because left in place it would keep the SOURCE
+// campaign's email or date. That also makes an unrecognised branch spelling fail closed: an arm
+// the walk does not read is an arm it does not follow, so what lies behind it is unreachable.
+func flowSeriesSteps(flow map[string]any, actions []any) ([]map[string]any, error) {
 	byID := make(map[string]map[string]any, len(actions))
 	for _, a := range actions {
 		action, ok := a.(map[string]any)
@@ -493,48 +506,172 @@ func flowMainPath(flow map[string]any, actions []any) ([]map[string]any, error) 
 		}
 		byID[flowIDString(action["actionId"])] = action
 	}
-	next := flowIDString(flow["startActionId"])
-	if next == "" {
+	start := flowIDString(flow["startActionId"])
+	if start == "" {
 		return nil, fmt.Errorf("it names no startActionId")
 	}
-	var path []map[string]any
-	seen := make(map[string]struct{}, len(actions))
-	for next != "" {
-		if _, loop := seen[next]; loop {
-			return nil, fmt.Errorf("action %s is reached twice", next)
-		}
-		seen[next] = struct{}{}
-		action, ok := byID[next]
-		if !ok {
-			return nil, fmt.Errorf("action %s is referenced but not defined", next)
-		}
-		for _, key := range []string{"staticBranches", "listBranches", "defaultBranch"} {
-			if _, branches := action[key]; branches {
-				return nil, fmt.Errorf("action %s branches; a send series must be one straight sequence", next)
-			}
-		}
-		path = append(path, action)
-		conn, _ := action["connection"].(map[string]any)
-		if conn == nil {
-			break
-		}
-		if et := stringField(conn, "edgeType"); et != "" && et != "STANDARD" {
-			return nil, fmt.Errorf("action %s continues by a %s edge, not a standard one", next, et)
-		}
-		next = flowIDString(conn["nextActionId"])
+	reach, err := flowReach(byID, start)
+	if err != nil {
+		return nil, err
 	}
+
+	var ordered []map[string]any
 	for _, typeID := range []string{sendEmailActionTypeID, waitUntilDateActionTypeID} {
+		var steps []map[string]any
 		total := 0
-		for _, a := range byID {
-			if stringField(a, "actionTypeId") == typeID {
-				total++
+		for _, a := range actions {
+			action, _ := a.(map[string]any)
+			if stringField(action, "actionTypeId") != typeID {
+				continue
+			}
+			total++
+			if _, ok := reach[flowIDString(action["actionId"])]; ok {
+				steps = append(steps, action)
 			}
 		}
-		if reached := len(actionsOfType(path, typeID)); reached != total {
-			return nil, fmt.Errorf("%d of its %d %s step(s) are not on its main path", total-reached, total, typeID)
+		if len(steps) != total {
+			return nil, fmt.Errorf("%d of its %d %s step(s) are not reachable from its start action", total-len(steps), total, typeID)
+		}
+		sorted, serr := flowOrderByReach(steps, reach)
+		if serr != nil {
+			return nil, serr
+		}
+		ordered = append(ordered, sorted...)
+	}
+	return ordered, nil
+}
+
+// flowReach maps every action reachable from start to the set of actions reachable FROM it. It
+// fails on a reference to an action the workflow does not define and on a loop: a loop makes two
+// steps each reachable from the other, which satisfies "comparable" while being no order at all.
+func flowReach(byID map[string]map[string]any, start string) (map[string]map[string]struct{}, error) {
+	reach := make(map[string]map[string]struct{}, len(byID))
+	onPath := make(map[string]struct{}, len(byID))
+	var visit func(id string) error
+	visit = func(id string) error {
+		if _, loop := onPath[id]; loop {
+			return fmt.Errorf("action %s is reached twice", id)
+		}
+		if _, done := reach[id]; done {
+			return nil
+		}
+		action, ok := byID[id]
+		if !ok {
+			return fmt.Errorf("action %s is referenced but not defined", id)
+		}
+		nexts, err := flowSuccessors(action, id)
+		if err != nil {
+			return err
+		}
+		onPath[id] = struct{}{}
+		below := make(map[string]struct{})
+		for _, n := range nexts {
+			if err := visit(n); err != nil {
+				return err
+			}
+			below[n] = struct{}{}
+			for d := range reach[n] {
+				below[d] = struct{}{}
+			}
+		}
+		delete(onPath, id)
+		reach[id] = below
+		return nil
+	}
+	if err := visit(start); err != nil {
+		return nil, err
+	}
+	return reach, nil
+}
+
+// flowOrderByReach sorts steps into the order a contact meets them, or reports that none exists.
+//
+// A step's rank is how many OTHER steps it can reach. In a total order those ranks are exactly
+// len-1 down to 0 -- the first step reaches every other, the last reaches none -- so two steps
+// sharing a rank is the proof that they sit on parallel arms. Distinct ranks are sufficient too: in
+// an acyclic graph, n distinct ranks in [0, n-1] force a chain, because the step ranked n-1 reaches
+// all the rest and the same argument then repeats on what remains.
+func flowOrderByReach(steps []map[string]any, reach map[string]map[string]struct{}) ([]map[string]any, error) {
+	rank := make(map[string]int, len(steps))
+	owner := make(map[int]string, len(steps))
+	for _, step := range steps {
+		id := flowIDString(step["actionId"])
+		n := 0
+		for _, other := range steps {
+			otherID := flowIDString(other["actionId"])
+			if otherID == id {
+				continue
+			}
+			if _, ok := reach[id][otherID]; ok {
+				n++
+			}
+		}
+		if twin, dup := owner[n]; dup {
+			return nil, fmt.Errorf("actions %s and %s are on parallel branches, so neither comes first; a send series needs one order", twin, id)
+		}
+		owner[n] = id
+		rank[id] = n
+	}
+	ordered := slices.Clone(steps)
+	slices.SortFunc(ordered, func(a, b map[string]any) int {
+		return rank[flowIDString(b["actionId"])] - rank[flowIDString(a["actionId"])]
+	})
+	return ordered, nil
+}
+
+// flowSuccessors returns every action a contact can move to from this one: the plain connection,
+// each arm of a static or list branch, and the default arm a contact matching no branch takes.
+//
+// Only the PLAIN connection's edge type is checked. A branch arm's edge is a branch edge by
+// construction, so demanding a type there would refuse every branching workflow again under
+// another name.
+func flowSuccessors(action map[string]any, id string) ([]string, error) {
+	var out []string
+	follow := func(conn map[string]any) {
+		if n := flowIDString(conn["nextActionId"]); n != "" {
+			out = append(out, n)
 		}
 	}
-	return path, nil
+	if conn, _ := action["connection"].(map[string]any); conn != nil {
+		// STANDARD is the next step in line. GOTO is a jump to an action defined elsewhere in the
+		// workflow, e.g. a branch rejoining the main line; workflow 1841232183 has one. Both are
+		// followed as the reachability they are -- a GOTO that jumps BACK is a loop, which flowReach
+		// refuses. Any other type is one this walk has not been shown, and following it blind
+		// could map a send onto an order nobody checked.
+		if et := stringField(conn, "edgeType"); et != "" && et != "STANDARD" && et != "GOTO" {
+			return nil, fmt.Errorf("action %s continues by a %s edge, which this walk does not read", id, et)
+		}
+		follow(conn)
+	}
+	for _, key := range []string{"staticBranches", "listBranches"} {
+		arms, _ := action[key].([]any)
+		for _, a := range arms {
+			arm, _ := a.(map[string]any)
+			if arm == nil {
+				continue
+			}
+			// An arm names its target through a nested connection on the shapes seen, and carries
+			// the id itself on others; reading only one would silently drop the arm.
+			if conn, ok := arm["connection"].(map[string]any); ok {
+				follow(conn)
+			} else {
+				follow(arm)
+			}
+		}
+	}
+	switch db := action["defaultBranch"].(type) {
+	case map[string]any:
+		if conn, ok := db["connection"].(map[string]any); ok {
+			follow(conn)
+		} else {
+			follow(db)
+		}
+	case string:
+		if n := strings.TrimSpace(db); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out, nil
 }
 
 // actionsOfType returns the actions of one type, in the order given.

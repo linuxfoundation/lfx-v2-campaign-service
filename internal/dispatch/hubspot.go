@@ -639,7 +639,18 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if heroWarning != "" {
 		warnings = append(warnings, heroWarning)
 	}
-	contentStaged := applyEmailContentWithHero(ctx, client, email.ID, cfg.Subject, cfg.BodyHTML, hostedHeroURL, cfg.HeroLinkURL, cfg.HeroImageAlt, cfg.ButtonText, cfg.ButtonURL, sponsors, cfg.SentByOrg, cfg.PreviewText)
+	// A survey brief is rebuilt in the LF Research survey chrome, not the event one. Decided here, once,
+	// and carried to the A/B variant below so the two halves of a test cannot differ in layout.
+	layout := emailLayoutFor(brief)
+	// Advisory: figures and dates the generated copy states that the source text does not contain.
+	// Variant B is a second body written from the same source, so it is checked in the same pass
+	// (one de-duplicated, capped list) rather than left as the one unchecked half of a test.
+	checkedCopy := cfg.BodyHTML
+	if cfg.ABTestEnabled {
+		checkedCopy += "\n" + cfg.BodyHTMLB
+	}
+	warnings = append(warnings, surveyCopyWarnings(brief, checkedCopy)...)
+	contentStaged := applyEmailContentWithHero(ctx, client, email.ID, cfg.Subject, cfg.BodyHTML, hostedHeroURL, cfg.HeroLinkURL, cfg.HeroImageAlt, cfg.ButtonText, cfg.ButtonURL, sponsors, cfg.SentByOrg, cfg.PreviewText, layout)
 
 	// STEP 3B (mutating, BEST-EFFORT, OPT-IN): create a native A/B test variant of the clone and
 	// apply the variant's own copy to it. Ordered AFTER the clone's own content (STEP 3) and
@@ -653,7 +664,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// error, and it never blocks on ABTestEnabled being false (the common case costs nothing).
 	var abVariant *hubspot.Email
 	if cfg.ABTestEnabled {
-		abVariant = createABTestVariantWithHero(ctx, client, email.ID, cloneName, cfg.SubjectB, cfg.BodyHTMLB, hostedHeroURL, cfg.HeroLinkURL, cfg.HeroImageAlt, cfg.ButtonText, cfg.ButtonURL, sponsors, cfg.SentByOrg, cfg.PreviewTextB)
+		abVariant = createABTestVariantWithHero(ctx, client, email.ID, cloneName, cfg.SubjectB, cfg.BodyHTMLB, hostedHeroURL, cfg.HeroLinkURL, cfg.HeroImageAlt, cfg.ButtonText, cfg.ButtonURL, sponsors, cfg.SentByOrg, cfg.PreviewTextB, layout)
 	}
 
 	// STEP 4 (mutating, BEST-EFFORT): tag the draft's links with UTM parameters so email
@@ -753,7 +764,7 @@ func heroFailureReason(err error) string {
 // leaves the template's copy in the draft. Best-effort here, but recorded (contentStaged on the
 // campaign result) so a caller that sends the draft without review -- a send workflow -- can
 // refuse one that still holds another campaign's copy.
-func applyEmailContentWithHero(ctx context.Context, client *hubspot.Client, emailID, subject, bodyHTML, hostedHeroURL, heroLinkURL, heroImageAlt, buttonText, buttonURL string, sponsors []hubspot.Sponsor, sentByOrg, previewText string) (contentStaged bool) {
+func applyEmailContentWithHero(ctx context.Context, client *hubspot.Client, emailID, subject, bodyHTML, hostedHeroURL, heroLinkURL, heroImageAlt, buttonText, buttonURL string, sponsors []hubspot.Sponsor, sentByOrg, previewText string, layout hubspot.EmailLayout) (contentStaged bool) {
 	subjectStaged := false
 	if subject = strings.TrimSpace(subject); subject != "" {
 		if _, err := client.PatchEmailSettings(ctx, emailID, hubspot.EmailSettings{Subject: &subject}); err != nil {
@@ -798,6 +809,7 @@ func applyEmailContentWithHero(ctx context.Context, client *hubspot.Client, emai
 		Sponsors:     sponsors,
 		SentByOrg:    sentByOrg,
 		PreviewText:  previewText,
+		Layout:       layout,
 	}); err != nil {
 		// Two failures, opposite meanings. A failed PATCH leaves the clone intact: the draft
 		// still carries the template's content, which is wrong but coherent and retryable, and
@@ -848,14 +860,14 @@ const abVariantNameSuffix = " - Variant B"
 // (already-applied) content with it would destroy Variant A's copy for a reason invisible to
 // anyone looking at the draft afterwards. Losing the second variant here is a smaller, more
 // honest failure than corrupting the first one.
-func createABTestVariantWithHero(ctx context.Context, client *hubspot.Client, parentID, parentName, subjectB, bodyHTMLB, hostedHeroURL, heroLinkURL, heroImageAlt, buttonText, buttonURL string, sponsors []hubspot.Sponsor, sentByOrg, previewTextB string) *hubspot.Email {
+func createABTestVariantWithHero(ctx context.Context, client *hubspot.Client, parentID, parentName, subjectB, bodyHTMLB, hostedHeroURL, heroLinkURL, heroImageAlt, buttonText, buttonURL string, sponsors []hubspot.Sponsor, sentByOrg, previewTextB string, layout hubspot.EmailLayout) *hubspot.Email {
 	variant, err := client.CreateABTestVariant(ctx, parentID, parentName+abVariantNameSuffix)
 	if err != nil {
 		slog.WarnContext(ctx, "could not create a HubSpot A/B test variant; the campaign proceeds as a single email",
 			"email_id", parentID, "error", err)
 		return nil
 	}
-	_ = applyEmailContentWithHero(ctx, client, variant.ID, subjectB, bodyHTMLB, hostedHeroURL, heroLinkURL, heroImageAlt, buttonText, buttonURL, sponsors, sentByOrg, previewTextB)
+	_ = applyEmailContentWithHero(ctx, client, variant.ID, subjectB, bodyHTMLB, hostedHeroURL, heroLinkURL, heroImageAlt, buttonText, buttonURL, sponsors, sentByOrg, previewTextB, layout)
 	slog.InfoContext(ctx, "created a HubSpot A/B test variant of the campaign email",
 		"email_id", parentID, "variant_id", variant.ID, "variant_state", variant.State)
 	return variant

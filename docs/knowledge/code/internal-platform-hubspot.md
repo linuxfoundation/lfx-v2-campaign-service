@@ -629,6 +629,26 @@ The CTA button's and footer link's `background_color`/`link_font.color` moved fr
 contrasted white text at only ~3.14:1, failing the WCAG AA 4.5:1 text threshold, where `#2563eb`
 clears it at ~5.17:1.
 
+`RebuildEmailContentInput.Layout` (`EmailLayout`) selects the chrome built around the body. The zero
+value, `LayoutEvent`, is what every earlier caller got: a footer divider, a "FOLLOW US" header,
+black circle social icons including the LFX Insights mark, "sent by: The Linux Foundation Events"
+and the native footer, with sponsor tiers when supplied. `LayoutSurvey` (`content_survey.go`)
+reproduces the LF Research survey email as sent: HubSpot's View-in-browser strip (`module_id`
+2794854, written with no `path`, in a section with an empty `backgroundColor` so it sits on the
+grey page), the LF Research logo band, the hero linked to the survey, the body, the button, a navy
+`#23496d` divider, a seven-entry colour social row, a second divider, and a footer section holding
+"sent by: The Linux Foundation" and the native footer. It has no sponsor tiers (`Sponsors` is
+ignored) and no "FOLLOW US" header. The page colours (`#efefef` page, `#ffffff` content) are not
+written: the rebuild carries the clone source's `styleSettings` forward, so they come from
+whichever LF survey email was cloned. Two deliberate departures from the sent emails: the native
+footer module stands in for the sent `/email_footer no links` custom module, whose id belongs to
+one portal and would break a draft in a project's own portal; and the button and footer link stay
+`#2563eb` rather than the sent `#0094ff` / `#00a4bd`, which contrast white at only ~3.1:1.
+`nativeFooterWidget` builds the footer for both layouts, so only its colours can differ between
+them. The layout was read from a sent email's `/draft` content, not from the live view: a cloned
+draft's live view still shows the clone source's content, so reading it there hides what the
+rebuild wrote.
+
 `verifyContentSaved` re-reads the draft afterwards, because HubSpot has in practice accepted a
 content PATCH with a 2xx and silently reverted it. It requires EVERY widget it wrote to be
 referenced from `flexAreas`, not merely one: the keys are fixed, so a single surviving key from
@@ -773,11 +793,17 @@ reads the definition as an opaque map (a struct would drop fields it does not de
 rewrite happens in memory, and the result is POSTed field by field without the source's
 server-owned fields. The source is never PATCHed.
 
-- **Order is the canvas, not the id.** `flowMainPath` walks from `startActionId` along each
-  action's single STANDARD `connection`. A step inserted later has the highest id while running
-  earlier, so an id sort would map emails to the wrong sends. A branching action, a non-STANDARD
-  edge, a loop, or a send (`0-4`) or wait-until-date (`0-35`) step the walk does not reach is
-  `ErrFlowShapeUnsupported`.
+- **Order is the canvas, not the id.** `flowSeriesSteps` walks from `startActionId` along EVERY
+  edge -- the plain `connection` and each arm of `staticBranches`, `listBranches` and
+  `defaultBranch` -- and ranks the sends (`0-4`) and, separately, the wait-until-date steps
+  (`0-35`) by how many of their own kind each can reach. A step inserted later has the highest id
+  while running earlier, so an id sort would map emails to the wrong sends. A branch is walked
+  through, not refused: the survey sequence gates a later send on one. Two steps of one kind on
+  parallel arms share a rank, have no order, and are `ErrFlowShapeUnsupported`, as are a loop, a
+  plain edge of a type other than STANDARD or GOTO, and a send or dated step the walk does not
+  reach (which includes one behind a branch spelling the walk does not read: it fails closed). A
+  GOTO edge -- a jump to an action elsewhere, e.g. a branch rejoining the main line -- is followed
+  like a STANDARD one.
 - **Counts pair exactly** (`ErrFlowStepCountMismatch`): one email per send step and one date per
   dated step. The source's own dates are never kept — they belong to another campaign and are
   usually past, where HubSpot moves a contact straight on. Only the date is replaced; each step's

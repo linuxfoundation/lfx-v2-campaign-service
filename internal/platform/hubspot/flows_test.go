@@ -357,8 +357,6 @@ func TestCloneFlowWithEmails_IsAlwaysCreatedDisabled(t *testing.T) {
 }
 
 func TestCloneFlowWithEmails_RefusesBeforeCreating(t *testing.T) {
-	branching := sourceFlow()
-	branching["actions"].([]any)[6].(map[string]any)["staticBranches"] = []any{}
 	offPath := sourceFlow()
 	offPath["actions"] = append(offPath["actions"].([]any),
 		map[string]any{"actionId": "30", "actionTypeId": sendEmailActionTypeID, "fields": map[string]any{"content_id": "old-orphan"}})
@@ -394,14 +392,9 @@ func TestCloneFlowWithEmails_RefusesBeforeCreating(t *testing.T) {
 			is:   ErrFlowStepCountMismatch, want: "3 wait-until-date step(s) but 0 send date(s)",
 		},
 		{
-			name: "a branching workflow", source: branching,
+			name: "a send step the start action never reaches", source: offPath,
 			opts: CloneFlowOptions{Name: "n", EmailIDs: []string{"a", "b", "c"}, SendDates: threeDates()},
-			is:   ErrFlowShapeUnsupported, want: "branches",
-		},
-		{
-			name: "a send step off the main path", source: offPath,
-			opts: CloneFlowOptions{Name: "n", EmailIDs: []string{"a", "b", "c"}, SendDates: threeDates()},
-			is:   ErrFlowShapeUnsupported, want: "not on its main path",
+			is:   ErrFlowShapeUnsupported, want: "not reachable from its start action",
 		},
 		{
 			name: "no start action", source: noStart,
@@ -504,5 +497,209 @@ func TestCloneFlowWithEmails_UnreadableCreateIsUnconfirmed(t *testing.T) {
 	}
 	if !IsUnconfirmed(err) {
 		t.Errorf("error = %v, want it classified unconfirmed", err)
+	}
+}
+
+// branchTestEdge is a plain STANDARD connection to the named action.
+func branchTestEdge(next string) map[string]any {
+	return map[string]any{"edgeType": "STANDARD", "nextActionId": next}
+}
+
+// branchTestAction builds one action; extra carries whatever else it holds -- a connection, or the
+// arms of a branch.
+func branchTestAction(id, typeID string, extra map[string]any) map[string]any {
+	a := map[string]any{"actionId": id, "actionTypeId": typeID}
+	for k, v := range extra {
+		a[k] = v
+	}
+	return a
+}
+
+// branchTestIDs returns the ids of one kind of step, in the order given.
+func branchTestIDs(steps []map[string]any, typeID string) string {
+	var ids []string
+	for _, s := range actionsOfType(steps, typeID) {
+		ids = append(ids, flowIDString(s["actionId"]))
+	}
+	return strings.Join(ids, ",")
+}
+
+func branchTestWalk(start string, actions ...map[string]any) ([]map[string]any, error) {
+	raw := make([]any, 0, len(actions))
+	for _, a := range actions {
+		raw = append(raw, a)
+	}
+	return flowSeriesSteps(map[string]any{"startActionId": start}, raw)
+}
+
+// The survey sequence this clone exists for gates a later send on a branch. A branch whose other
+// arm leaves the series must not stop the walk, and the order must be the canvas's, not the ids':
+// the sends below run 10, 2, 8 on the canvas, so an id sort would reorder them.
+func TestFlowSeriesSteps_WalksThroughABranchThatLeavesTheSeries(t *testing.T) {
+	steps, err := branchTestWalk("20",
+		branchTestAction("20", waitUntilDateActionTypeID, map[string]any{"connection": branchTestEdge("10")}),
+		branchTestAction("10", sendEmailActionTypeID, map[string]any{"connection": branchTestEdge("5")}),
+		branchTestAction("5", "0-1", map[string]any{
+			// One arm ends the workflow for whoever already responded; the default carries on.
+			"staticBranches": []any{map[string]any{"branchValue": "responded", "connection": branchTestEdge("99")}},
+			"defaultBranch":  branchTestEdge("9"),
+		}),
+		branchTestAction("99", "0-1", nil),
+		branchTestAction("9", waitUntilDateActionTypeID, map[string]any{"connection": branchTestEdge("2")}),
+		branchTestAction("2", sendEmailActionTypeID, map[string]any{"connection": branchTestEdge("13")}),
+		branchTestAction("13", waitUntilDateActionTypeID, map[string]any{"connection": branchTestEdge("8")}),
+		branchTestAction("8", sendEmailActionTypeID, nil),
+	)
+	if err != nil {
+		t.Fatalf("a branch whose other arm leaves the series was refused: %v", err)
+	}
+	if got, want := branchTestIDs(steps, sendEmailActionTypeID), "10,2,8"; got != want {
+		t.Errorf("send order = %s, want %s (the canvas order, not the id order)", got, want)
+	}
+	if got, want := branchTestIDs(steps, waitUntilDateActionTypeID), "20,9,13"; got != want {
+		t.Errorf("date order = %s, want %s (the canvas order, not the id order)", got, want)
+	}
+}
+
+// Both arms of a branch carrying on to the same next step is still one order: the arms are not
+// sends, so nothing is ambiguous.
+func TestFlowSeriesSteps_WalksThroughABranchThatRejoins(t *testing.T) {
+	steps, err := branchTestWalk("4",
+		branchTestAction("4", waitUntilDateActionTypeID, map[string]any{"connection": branchTestEdge("2")}),
+		branchTestAction("2", sendEmailActionTypeID, map[string]any{"connection": branchTestEdge("5")}),
+		branchTestAction("5", "0-1", map[string]any{
+			"staticBranches": []any{map[string]any{"branchValue": "a", "connection": branchTestEdge("30")}},
+			"defaultBranch":  branchTestEdge("31"),
+		}),
+		branchTestAction("30", "0-1", map[string]any{"connection": branchTestEdge("9")}),
+		branchTestAction("31", "0-1", map[string]any{"connection": branchTestEdge("9")}),
+		branchTestAction("9", waitUntilDateActionTypeID, map[string]any{"connection": branchTestEdge("8")}),
+		branchTestAction("8", sendEmailActionTypeID, nil),
+	)
+	if err != nil {
+		t.Fatalf("a branch that rejoins was refused: %v", err)
+	}
+	if got, want := branchTestIDs(steps, sendEmailActionTypeID), "2,8"; got != want {
+		t.Errorf("send order = %s, want %s", got, want)
+	}
+	if got, want := branchTestIDs(steps, waitUntilDateActionTypeID), "4,9"; got != want {
+		t.Errorf("date order = %s, want %s", got, want)
+	}
+}
+
+// A send reachable ONLY through a list-branch arm, with the default spelled as a bare id: both
+// spellings must be followed, or the send would read as unreachable.
+func TestFlowSeriesSteps_FollowsListBranchArmsAndABareDefault(t *testing.T) {
+	steps, err := branchTestWalk("4",
+		branchTestAction("4", waitUntilDateActionTypeID, map[string]any{"connection": branchTestEdge("5")}),
+		branchTestAction("5", "0-1", map[string]any{
+			"listBranches":  []any{map[string]any{"branchName": "not yet", "connection": branchTestEdge("2")}},
+			"defaultBranch": "99",
+		}),
+		branchTestAction("99", "0-1", nil),
+		branchTestAction("2", sendEmailActionTypeID, nil),
+	)
+	if err != nil {
+		t.Fatalf("a send behind a list-branch arm was refused: %v", err)
+	}
+	if got, want := branchTestIDs(steps, sendEmailActionTypeID), "2"; got != want {
+		t.Errorf("sends = %s, want %s", got, want)
+	}
+}
+
+// Two sends on parallel arms have no order: mapping email 2 onto one of them would be a guess.
+// The refusal names both so the operator can see which part of the workflow is the problem.
+func TestFlowSeriesSteps_RefusesSendsOnParallelBranches(t *testing.T) {
+	_, err := branchTestWalk("4",
+		branchTestAction("4", waitUntilDateActionTypeID, map[string]any{"connection": branchTestEdge("5")}),
+		branchTestAction("5", "0-1", map[string]any{
+			"staticBranches": []any{map[string]any{"branchValue": "a", "connection": branchTestEdge("6")}},
+			"defaultBranch":  branchTestEdge("7"),
+		}),
+		branchTestAction("6", sendEmailActionTypeID, map[string]any{"connection": branchTestEdge("9")}),
+		branchTestAction("7", sendEmailActionTypeID, map[string]any{"connection": branchTestEdge("9")}),
+		branchTestAction("9", waitUntilDateActionTypeID, nil),
+	)
+	if err == nil || !strings.Contains(err.Error(), "actions 6 and 7 are on parallel branches") {
+		t.Fatalf("parallel sends were not refused by name: %v", err)
+	}
+}
+
+// A branch arm pointing back up the workflow is a loop, which is no order at all.
+func TestFlowSeriesSteps_RefusesALoopThroughABranch(t *testing.T) {
+	_, err := branchTestWalk("4",
+		branchTestAction("4", waitUntilDateActionTypeID, map[string]any{"connection": branchTestEdge("2")}),
+		branchTestAction("2", sendEmailActionTypeID, map[string]any{"connection": branchTestEdge("5")}),
+		branchTestAction("5", "0-1", map[string]any{"defaultBranch": branchTestEdge("4")}),
+	)
+	if err == nil || !strings.Contains(err.Error(), "reached twice") {
+		t.Fatalf("a loop was not refused: %v", err)
+	}
+}
+
+// A send hidden behind an arm in a spelling the walk does not read must be REFUSED rather than
+// left holding the source campaign's email: unreadable means unreachable, never "ignored".
+func TestFlowSeriesSteps_AnUnreadBranchSpellingFailsClosed(t *testing.T) {
+	_, err := branchTestWalk("4",
+		branchTestAction("4", waitUntilDateActionTypeID, map[string]any{"connection": branchTestEdge("5")}),
+		branchTestAction("5", "0-1", map[string]any{"someFutureBranchKey": []any{map[string]any{"connection": branchTestEdge("2")}}}),
+		branchTestAction("2", sendEmailActionTypeID, nil),
+	)
+	if err == nil || !strings.Contains(err.Error(), "not reachable from its start action") {
+		t.Fatalf("a send behind an unread branch spelling was not refused: %v", err)
+	}
+}
+
+// branchTestGoto is a GOTO connection: a jump to an action defined elsewhere in the workflow.
+func branchTestGoto(next string) map[string]any {
+	return map[string]any{"edgeType": "GOTO", "nextActionId": next}
+}
+
+// A branch rejoining the main line is drawn with a GOTO edge (workflow 1841232183 has one, which
+// the first version of the branch walk refused as "not a standard one"). It is reachability like
+// any other, so the order through it must be read.
+func TestFlowSeriesSteps_FollowsAGotoEdgeThatRejoinsTheMainLine(t *testing.T) {
+	steps, err := branchTestWalk("4",
+		branchTestAction("4", waitUntilDateActionTypeID, map[string]any{"connection": branchTestEdge("2")}),
+		branchTestAction("2", sendEmailActionTypeID, map[string]any{"connection": branchTestEdge("5")}),
+		branchTestAction("5", "0-1", map[string]any{
+			"staticBranches": []any{map[string]any{"branchValue": "a", "connection": branchTestEdge("11")}},
+			"defaultBranch":  branchTestEdge("9"),
+		}),
+		// The side arm does something and then jumps back onto the main line, ahead of its second send.
+		branchTestAction("11", "0-1", map[string]any{"connection": branchTestGoto("9")}),
+		branchTestAction("9", waitUntilDateActionTypeID, map[string]any{"connection": branchTestEdge("8")}),
+		branchTestAction("8", sendEmailActionTypeID, nil),
+	)
+	if err != nil {
+		t.Fatalf("a GOTO edge that rejoins the main line was refused: %v", err)
+	}
+	if got, want := branchTestIDs(steps, sendEmailActionTypeID), "2,8"; got != want {
+		t.Errorf("send order = %s, want %s", got, want)
+	}
+	if got, want := branchTestIDs(steps, waitUntilDateActionTypeID), "4,9"; got != want {
+		t.Errorf("date order = %s, want %s", got, want)
+	}
+}
+
+// A GOTO that jumps BACK is a loop, and following GOTO must not make loops acceptable.
+func TestFlowSeriesSteps_RefusesAGotoThatLoopsBack(t *testing.T) {
+	_, err := branchTestWalk("4",
+		branchTestAction("4", waitUntilDateActionTypeID, map[string]any{"connection": branchTestEdge("2")}),
+		branchTestAction("2", sendEmailActionTypeID, map[string]any{"connection": branchTestGoto("4")}),
+	)
+	if err == nil || !strings.Contains(err.Error(), "reached twice") {
+		t.Fatalf("a GOTO loop was not refused: %v", err)
+	}
+}
+
+// An edge type nobody has shown this walk is refused rather than followed blind.
+func TestFlowSeriesSteps_RefusesAnEdgeTypeItHasNotBeenShown(t *testing.T) {
+	_, err := branchTestWalk("4",
+		branchTestAction("4", waitUntilDateActionTypeID, map[string]any{"connection": map[string]any{"edgeType": "FUTURE_EDGE", "nextActionId": "2"}}),
+		branchTestAction("2", sendEmailActionTypeID, nil),
+	)
+	if err == nil || !strings.Contains(err.Error(), "FUTURE_EDGE edge, which this walk does not read") {
+		t.Fatalf("an unknown edge type was not refused: %v", err)
 	}
 }
