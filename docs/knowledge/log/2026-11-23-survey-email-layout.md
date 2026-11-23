@@ -18,7 +18,9 @@ draft still shows the clone source's content and made the two look alike.
   generated body that the brief's source text does not contain becomes a dispatch warning, the
   research team's "never invent" rule checked rather than only asked for in the prompt. The source
   is read with the same patterns as the body and compared as claim keys, not raw text: a figure
-  counts as stated only whole ("5%" is not backed by "35%", "8.5 minutes" is not "5 minutes"), a
+  counts as stated only whole ("5%" is not backed by "35%" or ".5%", "8.5 minutes" is not "5
+  minutes"), a date's year is compared when the copy states one ("April 30, 2028" is not backed by
+  "April 30, 2027"), a
   hyphen or en dash between numbers is a range checked with both ends ("3-5%" does not back "35%",
   "10-15 minutes" does not back "5-15 minutes"), the unit is compared in the singular ("a 3-minute
   questionnaire" backs "3 minutes"), and Variant B's body is checked with A's.

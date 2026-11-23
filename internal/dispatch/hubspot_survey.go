@@ -35,17 +35,26 @@ func emailLayoutFor(brief *model.CampaignBrief) hubspot.EmailLayout {
 // on, and because a wider net would warn on every ordinary number in a body and teach operators to
 // ignore the warning.
 var (
-	// A figure is a whole number or a decimal ("3", "8.5"). A claim includes a range's lower end
-	// ("5-15 minutes", "3–5%", "3%-5%"), so a copy that changes only the lower end is checked as a
-	// whole rather than as its upper end alone. Matching is leftmost, so "8.5 minutes" is read from
-	// its "8", never as the "5 minutes" after the decimal point.
-	surveyClaimPercent = regexp.MustCompile(`\b(?:\d{1,3}(?:\.\d+)?\s?%?\s*[-–]\s*)?\d{1,3}(?:\.\d+)?\s?%`)
-	surveyClaimCount   = regexp.MustCompile(`(?i)\b(?:\d{1,3}(?:\.\d+)?\s*[-–]\s*)?\d{1,3}(?:\.\d+)?[\s-]+(?:questions?|minutes?)\b`)
-	surveyClaimDate    = regexp.MustCompile(`(?i)\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b`)
+	// A figure is a whole number or a decimal, with or without a leading zero ("3", "8.5", ".5").
+	// A claim includes a range's lower end ("5-15 minutes", "3–5%", "3%-5%"), so a copy that
+	// changes only the lower end is checked as a whole rather than as its upper end alone.
+	// Matching is leftmost, so "8.5 minutes" is read from its "8" and ".5%" from its point, never
+	// as the "5" after the point.
+	surveyClaimPercent = regexp.MustCompile(claimLead + `(?:\s?%?\s*[-–]\s*` + claimFigure + `)?\s?%`)
+	surveyClaimCount   = regexp.MustCompile(`(?i)` + claimLead + `(?:\s*[-–]\s*` + claimFigure + `)?[\s-]+(?:questions?|minutes?)\b`)
+	surveyClaimDate    = regexp.MustCompile(`(?i)\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b(?:,?\s+((?:19|20)\d{2})\b)?`)
 	htmlTagPattern     = regexp.MustCompile(`<[^>]*>`)
 	spacePattern       = regexp.MustCompile(`\s+`)
 	// claimParts splits a matched claim into its optional lower end, its figure and its unit.
-	claimParts = regexp.MustCompile(`^(?:(\d+(?:\.\d+)?)\s*%?\s*[-–]\s*)?(\d+(?:\.\d+)?)[\s-]*(%|question|minute)`)
+	claimParts = regexp.MustCompile(`^(?:(\d*\.?\d+)\s*%?\s*[-–]\s*)?(\d*\.?\d+)[\s-]*(%|question|minute)`)
+)
+
+// claimFigure is one figure in a claim: up to three digits with an optional decimal part, or a
+// decimal part alone (".5"). claimLead is the claim's first figure: its digits must start a word,
+// so "1234 minutes" is not read as "234 minutes", while a leading point needs no such edge.
+const (
+	claimFigure = `(?:\d{1,3}(?:\.\d+)?|\.\d+)`
+	claimLead   = `(?:\b\d{1,3}(?:\.\d+)?|\.\d+)`
 )
 
 // maxSurveyCopyWarnings caps the list, so a body that is wrong everywhere does not bury the one
@@ -104,7 +113,7 @@ func surveyCopyWarnings(brief *model.CampaignBrief, bodyHTML string) []string {
 	}
 	sourceDates := dateKeys(source)
 	for _, m := range surveyClaimDate.FindAllStringSubmatch(body, -1) {
-		if !sourceDates[dateKey(m[1], m[2])] {
+		if !sourceDates[dateKey(m[1], m[2], m[3])] {
 			add(strings.TrimSpace(m[0]))
 		}
 	}
@@ -154,20 +163,31 @@ func canonicalFigure(figure string) string {
 	return strconv.FormatFloat(f, 'f', -1, 64)
 }
 
-// dateKey is month-abbreviation plus day, so "February 28" in the copy matches "Feb 28, 2027" in
-// the source: the year is not compared, only the day a reader would act on.
-func dateKey(month, day string) string {
+// dateKey is month-abbreviation plus day, plus the year when one follows the date, so "February
+// 28" in the copy matches "Feb 28, 2027" in the source.
+func dateKey(month, day, year string) string {
 	m := strings.ToLower(month)
 	if len(m) > 3 {
 		m = m[:3]
 	}
-	return m + " " + strings.TrimLeft(day, "0")
+	key := m + " " + strings.TrimLeft(day, "0")
+	if year != "" {
+		key += " " + year
+	}
+	return key
 }
 
+// dateKeys is every date the text states, each under its month-and-day key and, when it carries a
+// year, under that year's key too. So copy that leaves the year out is backed by the day alone,
+// while copy that states a year ("April 30, 2028") is backed only by the same date in that year:
+// a deadline moved a year is reported, and so is a year the source never gave the date.
 func dateKeys(text string) map[string]bool {
 	keys := map[string]bool{}
 	for _, m := range surveyClaimDate.FindAllStringSubmatch(text, -1) {
-		keys[dateKey(m[1], m[2])] = true
+		keys[dateKey(m[1], m[2], "")] = true
+		if m[3] != "" {
+			keys[dateKey(m[1], m[2], m[3])] = true
+		}
 	}
 	return keys
 }

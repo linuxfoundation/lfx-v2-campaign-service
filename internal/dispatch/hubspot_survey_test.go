@@ -143,6 +143,9 @@ func TestSurveyCopyWarnings(t *testing.T) {
 		reported := []struct{ source, body, claim string }{
 			{"It takes 5 minutes.", `<p>It takes 8.5 minutes.</p>`, `"8.5 minutes"`},
 			{"It takes 2.5-3.5 minutes.", `<p>It takes 1.5-3.5 minutes.</p>`, `"1.5-3.5 minutes"`},
+			// A leading-point source figure is read whole, so it does not back a tenfold change.
+			{"A .5% discount.", `<p>A 5% discount.</p>`, `"5%"`},
+			{"It takes .5 minutes.", `<p>It takes 5 minutes.</p>`, `"5 minutes"`},
 		}
 		for _, tc := range reported {
 			got := strings.Join(surveyCopyWarnings(surveyBrief(tc.source), tc.body), "\n")
@@ -153,6 +156,8 @@ func TestSurveyCopyWarnings(t *testing.T) {
 		silent := []struct{ source, body string }{
 			{"It takes 3.5 minutes.", `<p>Just 3.5 minutes.</p>`},
 			{"It takes 2.5-3.5 minutes.", `<p>It takes 2.5–3.5 minutes.</p>`},
+			{"A .5% discount.", `<p>A 0.5% discount.</p>`},
+			{"A 0.5% discount.", `<p>A .5% discount.</p>`},
 		}
 		for _, tc := range silent {
 			if got := surveyCopyWarnings(surveyBrief(tc.source), tc.body); len(got) != 0 {
@@ -188,6 +193,29 @@ func TestSurveyCopyWarnings(t *testing.T) {
 		got := strings.Join(surveyCopyWarnings(surveyBrief("The survey has 9 questions."), `<p>Only 12&nbsp;questions.</p>`), "\n")
 		if !strings.Contains(got, "12") {
 			t.Errorf("an invented 12 questions behind &nbsp; was not reported: %q", got)
+		}
+	})
+
+	t.Run("a year the copy states must be the source's", func(t *testing.T) {
+		const src = "Participants receive a discount valid until April 30, 2027."
+		for body, claim := range map[string]string{
+			`<p>Valid until April 30, 2028.</p>`: `"April 30, 2028"`,
+			`<p>Valid until Apr 30th 2026.</p>`:  `"Apr 30th 2026"`,
+		} {
+			got := strings.Join(surveyCopyWarnings(surveyBrief(src), body), "\n")
+			if !strings.Contains(got, claim) {
+				t.Errorf("copy %q: no warning for %s in:\n%s", body, claim, got)
+			}
+		}
+		for _, body := range []string{`<p>Valid until April 30, 2027.</p>`, `<p>Valid until April 30.</p>`, `<p>Valid until Apr 30th 2027.</p>`} {
+			if got := surveyCopyWarnings(surveyBrief(src), body); len(got) != 0 {
+				t.Errorf("copy %q: a stated date was reported: %v", body, got)
+			}
+		}
+		// A year the source never gave the date is not backed by the day alone.
+		got := strings.Join(surveyCopyWarnings(surveyBrief("Open until April 30."), `<p>Open until April 30, 2027.</p>`), "\n")
+		if !strings.Contains(got, `"April 30, 2027"`) {
+			t.Errorf("a year the source does not state was not reported: %q", got)
 		}
 	})
 
