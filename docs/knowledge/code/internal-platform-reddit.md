@@ -587,6 +587,21 @@ An absent, null or malformed `currency` is `""`; any error is dropped and the cu
 a live account, like discovery's use of the same field. See
 [Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).
 
+`ListAccountCampaignsIn` (#659) is the same read limited to a set of campaign ids, applied to the
+campaign list BEFORE the report fan-out: a campaign outside the set gets no report. The LF system
+account is shared across foundations, and the unscoped read sent a report for every foundation's
+campaign only for `Orchestrator.ReadAccountCampaignMetrics` to discard the rows afterwards — in prod
+that was about 15 reports (up to 4 attempts each) for tlf's 7 rows, and every one ended in a 429.
+A nil set reads every campaign; an empty one sends no report. The campaign list itself is still read
+whole (one paginated call).
+
+Every throttled report in one read is tallied by cause (`monitorThrottleTally`): a 429 from Reddit
+after the bounded retry, or this service's ledger refusing the attempt (`ErrReportBudgetExhausted`).
+Both class as `throttle` on the row; the read writes one warning, `reddit monitor: campaign reports
+were throttled`, with `reddit_429`, `budget_refused` and the first 429's `rate_limit_headers`. Those
+are `Retry-After` and `X-Ratelimit-*` only, numeric values only (`rateLimitHeaders`, kept on
+`apiError.RateLimit` for a 429). The response body is still never logged.
+
 **Scope audit (2026-10-05, LFXV2-2665 Track M3).** The read's only scope filter
 (`configured_status` ACTIVE/PAUSED) matches the BFF, so there is no Google-class scope
 defect; five other defects were fixed:

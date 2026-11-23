@@ -444,6 +444,16 @@ type AccountMonitorReader interface {
 		accountID string, days int) (*model.AccountMonitorRead, error)
 }
 
+// ScopedAccountMonitorReader is an OPTIONAL capability of an AccountMonitorReader on a shared
+// account: the same read, but asking the platform only for the campaigns in campaignIDs, so the
+// other foundations' campaigns cost no upstream calls (#659). ReadAccountCampaignMetrics uses it
+// when the read is scoped; it still filters the rows itself afterwards, so an implementation that
+// returns a row outside campaignIDs shows nothing extra. A non-nil empty campaignIDs reads none.
+type ScopedAccountMonitorReader interface {
+	ReadAccountMonitorIn(ctx context.Context, projectID string, platform model.Provider,
+		accountID string, days int, campaignIDs map[string]bool) (*model.AccountMonitorRead, error)
+}
+
 // AccountMonitorScoper is an OPTIONAL dispatcher capability, discovered by type assertion like
 // AccountMonitorReader: it reduces the project's campaign scope to the upstream campaign ids that
 // can be read under the monitored account (linuxfoundation/lfx-self-serve-ops#897).
@@ -3177,7 +3187,10 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 	start := time.Now()
 	var read *model.AccountMonitorRead
 	var rerr error
-	if withCurrency {
+	scopedReader, canScope := d.(ScopedAccountMonitorReader)
+	if withCurrency && scoped && canScope {
+		read, rerr = scopedReader.ReadAccountMonitorIn(callCtx, projectID, platform, accountID, days, scopeIDs)
+	} else if withCurrency {
 		read, rerr = monitorReader.ReadAccountMonitor(callCtx, projectID, platform, accountID, days)
 	} else {
 		var rows []model.AccountCampaignMetrics

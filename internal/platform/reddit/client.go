@@ -1178,6 +1178,9 @@ type apiError struct {
 	Path       string
 	StatusCode int
 	Body       string
+	// RateLimit is set on a 429 only: the response's rate-limit headers, numeric values only
+	// (rateLimitHeaders). Unlike Body it is safe to log, and the account monitor does (#659).
+	RateLimit map[string]string
 }
 
 // UpstreamStatus implements domain.UpstreamStatusCarrier: the HTTP status the platform
@@ -1598,7 +1601,11 @@ func (c *Client) requestWithThrottleRetryCounted(ctx context.Context, method, pa
 			if readErr != nil {
 				body = fmt.Sprintf("%s (body read error: %v)", body, readErr)
 			}
-			return nil, &apiError{Method: method, Path: path, StatusCode: resp.StatusCode, Body: body}
+			ae := &apiError{Method: method, Path: path, StatusCode: resp.StatusCode, Body: body}
+			if resp.StatusCode == http.StatusTooManyRequests {
+				ae.RateLimit = rateLimitHeaders(resp.Header)
+			}
+			return nil, ae
 		}
 		// A 2xx whose body can't be read or decoded means the mutation SUCCEEDED but
 		// we can't parse the result — wrap as transportError so callers classify it
@@ -3666,4 +3673,34 @@ func truncate(s string, n int) string {
 	}
 	// Fewer than (or exactly) n runes: return the whole string unchanged.
 	return s
+}
+
+// rateLimitHeaderValueRE admits a plain non-negative number, the only shape a rate-limit header
+// value is logged in: anything else is dropped rather than risk logging reflected text.
+var rateLimitHeaderValueRE = regexp.MustCompile(`^[0-9]{1,15}(\.[0-9]{1,6})?$`)
+
+// rateLimitHeaderMax bounds how many headers rateLimitHeaders keeps.
+const rateLimitHeaderMax = 8
+
+// rateLimitHeaders picks a 429's rate-limit headers out of h: Retry-After and every
+// X-Ratelimit-* header, keyed by canonical name, each kept only when its value is a plain number.
+// Nil when there are none, so a log line shows their absence plainly.
+func rateLimitHeaders(h http.Header) map[string]string {
+	var out map[string]string
+	for name, vals := range h {
+		if len(out) >= rateLimitHeaderMax {
+			break
+		}
+		if name != "Retry-After" && !strings.HasPrefix(name, "X-Ratelimit-") {
+			continue
+		}
+		if len(vals) == 0 || !rateLimitHeaderValueRE.MatchString(vals[0]) {
+			continue
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[name] = vals[0]
+	}
+	return out
 }
