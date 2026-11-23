@@ -84,8 +84,16 @@ campaign) and where a negative keyword is added (`add-negative-keywords`). A row
 handle, and the report's text has not been verified, against a live account, to equal the
 targeting entry byte for byte.
 
+## Verified live
+
+One live read (#167, 23 Nov 2026, the same run as the
+[audience read](audience-insights-reddit.md)) confirmed that `breakdowns: [CAMPAIGN_ID, KEYWORD]`
+is accepted and that every row carries `campaign_id` and the keyword text (for example `CNCF`,
+`cloud native`). Keyword rows covered 257,183 of the campaign's 505,751 impressions: only
+keyword-matched delivery is attributed to a keyword.
+
 ## Not verified
 
-No live Reddit account has been read: whether `keyword` is ever `null`, whether the report's text
-matches the targeting entries exactly (case, spacing), and what a campaign with no keyword delivery
-returns are all unconfirmed.
+Still unknown: whether `keyword` is ever `null` (none was seen), whether the report's text matches
+the targeting entries exactly (case, spacing), and what a campaign with no keyword delivery
+returns.

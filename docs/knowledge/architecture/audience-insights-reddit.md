@@ -104,8 +104,9 @@ blocks are Reddit's own.
   returned with no `value`, so each dimension still totals its traffic. An ABSENT key is different
   (the report was not grouped by the breakdown) and fails the read.
 - **Gated by `REDDIT_METRICS_ENABLED`**, default off, like the metrics read on the same operation:
-  matched to the published schema, never exercised against a live ad account. Checked before the
-  scope lookup, so a disabled read is 400 even for a project with no Reddit campaigns.
+  matched to the published schema, and its request shape confirmed by one live read (#167, see
+  Verified live). Checked before the scope lookup, so a disabled read is 400 even for a project
+  with no Reddit campaigns.
 
 ## Layers
 
@@ -117,9 +118,19 @@ blocks are Reddit's own.
 | Platform | `internal/platform/reddit/audience.go` (`GetAudienceInsights`) on the shared broken-down reader `report_breakdown.go`, which the [keyword performance read](keyword-performance-reddit.md) also uses |
 | Chart | `httproute.yaml` `(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience` (the whole routed audience family; this read is the `reddit-ads` member); `ruleset.yaml` entry; `parity_test.go` rows |
 
+## Verified live
+
+One live read (#167, 23 Nov 2026), done in the dev cluster against the LF system account with
+`cmd/verify-metrics` on campaign 2577406841688564185 over `last_30_days`, confirmed:
+
+- the `breakdowns: [CAMPAIGN_ID, <DIM>]` request is accepted for GENDER, COUNTRY and COMMUNITY,
+  and every row carries `campaign_id` (with the dimension alone, no row does);
+- GENDER and COUNTRY rows sum exactly to the campaign total (505,751 impressions, 1,365 clicks);
+  COMMUNITY rows sum to 775,204 impressions because the buckets overlap;
+- the gender values seen were `Men`, `Women`, `Non-binary & custom` and `UNKNOWN`.
+
 ## Not verified
 
-No request has been made against a live Reddit ad account. Unknown until one is: whether a
-breakdown value is ever actually `null`, the exact gender vocabulary, whether a campaign with no
-delivery yields an empty `metrics` array or zero rows per value, and whether `ends_at` includes its
-final hour (the metrics read records the same caveat).
+Still unknown: whether a breakdown value is ever actually `null` (none was seen), whether a
+campaign with no delivery yields an empty `metrics` array or zero rows per value for a broken-down
+report, and whether `ends_at` includes its final hour (the metrics read records the same caveat).
