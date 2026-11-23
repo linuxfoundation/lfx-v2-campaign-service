@@ -127,7 +127,10 @@ One live read (#167, 23 Nov 2026), done in the dev cluster against the LF system
   and every row carries `campaign_id` (with the dimension alone, no row does);
 - GENDER and COUNTRY rows sum exactly to the campaign total (505,751 impressions, 1,365 clicks);
   COMMUNITY rows sum to 775,204 impressions because the buckets overlap;
-- the gender values seen were `Men`, `Women`, `Non-binary & custom` and `UNKNOWN`.
+- the gender values seen were `Men`, `Women`, `Non-binary & custom` and `UNKNOWN`. Gender
+  therefore has its own value check (`genderValueRE`: single inner spaces and `&` allowed, at most
+  64 bytes), and the API's `value` pattern matches it. Country and community keep the strict
+  `audienceValueRE`, and markup or control bytes still fail the read.
 
 ## Not verified
 

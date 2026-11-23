@@ -97,7 +97,9 @@ func healthyAudience(campaignID, breakdown string) (int, string) {
 	case "GENDER":
 		return http.StatusOK, audienceReport(
 			audienceRow(campaignID, "gender", `"female"`, 600, 30, 3_000_000),
-			audienceRow(campaignID, "gender", `null`, 400, 10, 1_000_000))
+			audienceRow(campaignID, "gender", `null`, 400, 10, 1_000_000),
+			// The exact label a live read returned (#167): spaces and an ampersand.
+			audienceRow(campaignID, "gender", `"Non-binary & custom"`, 0, 0, 0))
 	case "COUNTRY":
 		return http.StatusOK, audienceReport(audienceRow(campaignID, "country", `"US"`, 1000, 40, 4_000_000))
 	case "COMMUNITY":
@@ -122,6 +124,7 @@ func TestGetAudienceInsights_RequestsOneReportPerCampaignPerBreakdownAndSums(t *
 	want := []AudienceBucket{
 		{Dimension: "gender", Value: "female", Impressions: 1200, Clicks: 60, CostMicros: 6_000_000, Ctr: 0.05},
 		{Dimension: "gender", Value: "", Impressions: 800, Clicks: 20, CostMicros: 2_000_000, Ctr: 0.025},
+		{Dimension: "gender", Value: "Non-binary & custom"},
 		{Dimension: "country", Value: "US", Impressions: 2000, Clicks: 80, CostMicros: 8_000_000, Ctr: 0.04},
 		{Dimension: "community", Value: "kubernetes", Impressions: 1400, Clicks: 70, CostMicros: 7_000_000, Ctr: 0.05},
 		{Dimension: "community", Value: "golang", Impressions: 600, Clicks: 10, CostMicros: 1_000_000, Ctr: 10.0 / 600},
@@ -260,6 +263,9 @@ func TestGetAudienceInsights_FailsClosed(t *testing.T) {
 		}},
 		{"breakdown value outside the charset", func(id string) string {
 			return audienceReport(audienceRow(id, "country", `"<b>CANARY</b>"`, 10, 1, 100))
+		}},
+		{"country value with a space (only gender admits one)", func(id string) string {
+			return audienceReport(audienceRow(id, "country", `"US CANARY"`, 10, 1, 100))
 		}},
 		{"breakdown value not a string", func(id string) string { return audienceReport(audienceRow(id, "country", `42`, 10, 1, 100)) }},
 		{"duplicate row for one value", func(id string) string { return audienceReport(good(id), good(id)) }},

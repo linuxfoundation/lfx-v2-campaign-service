@@ -24713,7 +24713,7 @@ definitions:
                       ctr: 0.03
                       dimension: gender
                       impressions: 9000
-                      value: female
+                      value: Women
                     - clicks: 270
                       cost_micros: 2700000
                       ctr: 0.03
@@ -24744,7 +24744,7 @@ definitions:
                   ctr: 0.03
                   dimension: gender
                   impressions: 9000
-                  value: female
+                  value: Women
                 - clicks: 270
                   cost_micros: 2700000
                   ctr: 0.03
@@ -24798,7 +24798,8 @@ definitions:
                 type: string
                 description: 'Reddit''s breakdown value, verbatim (a gender, a country code or a subreddit name). ABSENT when Reddit reported an explicit null for this dimension: traffic Reddit did not attribute to any value, kept so the dimension''s buckets still total its traffic. A value outside a conservative charset fails the read rather than being returned.'
                 example: US
-                pattern: ^[A-Za-z0-9][A-Za-z0-9_\-]{0,63}$
+                pattern: ^[A-Za-z0-9][A-Za-z0-9_&\-]*( [A-Za-z0-9_&\-]+)*$
+                maxLength: 64
         example:
             clicks: 270
             cost_micros: 2700000

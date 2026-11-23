@@ -25,15 +25,31 @@ const (
 	AudienceDimensionCommunity = "community"
 )
 
-// audienceValueRE is the charset an audience breakdown value must match to be returned verbatim.
-// It admits the values Reddit's spec documents for these breakdowns (gender "female", country
-// "US", community "AskReddit") and subreddit names generally (letters, digits, underscores), and
-// nothing that could carry markup, whitespace or control bytes. A value outside it is not dropped
-// or folded: the row is untrustworthy and the read fails.
+// audienceValueRE is the charset a country or community breakdown value must match to be returned
+// verbatim. It admits the values Reddit's spec documents for these breakdowns (country "US",
+// community "AskReddit") and subreddit names generally (letters, digits, underscores), and nothing
+// that could carry markup, whitespace or control bytes. A value outside it is not dropped or
+// folded: the row is untrustworthy and the read fails.
 var audienceValueRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_\-]{0,63}$`)
+
+// genderValueRE is the wider charset for GENDER values. A live read (#167) returned `Men`,
+// `Women`, `UNKNOWN` and `Non-binary & custom`. The last has single spaces and an ampersand, which
+// audienceValueRE refuses, so a read with any non-binary delivery would have failed. It still
+// refuses markup, control bytes, leading, trailing or doubled spaces, and anything over 64 bytes.
+// The API's `value` pattern (design/brief.go RedditAdsAudienceBucket) is this one.
+var genderValueRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_&\-]*( [A-Za-z0-9_&\-]+)*$`)
+
+const maxAudienceValueLen = 64
 
 func audienceValueErr(v string) error {
 	if !audienceValueRE.MatchString(v) {
+		return fmt.Errorf("value is outside the accepted charset (%d bytes)", len(v))
+	}
+	return nil
+}
+
+func genderValueErr(v string) error {
+	if len(v) > maxAudienceValueLen || !genderValueRE.MatchString(v) {
 		return fmt.Errorf("value is outside the accepted charset (%d bytes)", len(v))
 	}
 	return nil
@@ -46,7 +62,7 @@ func audienceValueErr(v string) error {
 // the response's Metric schema. AGE is deliberately absent: the `fields` enum and the Metric schema
 // carry it, but the `breakdowns` enum does not, so a report cannot be grouped by it.
 var audienceBreakdowns = []reportBreakdown{
-	{dimension: AudienceDimensionGender, breakdown: "GENDER", rowKey: "gender", valueErr: audienceValueErr},
+	{dimension: AudienceDimensionGender, breakdown: "GENDER", rowKey: "gender", valueErr: genderValueErr},
 	{dimension: AudienceDimensionCountry, breakdown: "COUNTRY", rowKey: "country", valueErr: audienceValueErr},
 	{dimension: AudienceDimensionCommunity, breakdown: "COMMUNITY", rowKey: "community", valueErr: audienceValueErr},
 }
@@ -56,7 +72,7 @@ type AudienceBucket struct {
 	Dimension string
 	// Value is Reddit's breakdown value verbatim; "" when Reddit reported an explicit null for the
 	// dimension (traffic it did not attribute to any value). Never "" otherwise: a present value
-	// must match audienceValueRE, which refuses the empty string.
+	// must match audienceValueRE (genderValueRE for gender), and both refuse the empty string.
 	Value       string
 	Impressions int64
 	Clicks      int64
