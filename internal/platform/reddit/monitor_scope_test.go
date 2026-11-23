@@ -10,8 +10,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestListAccountCampaignsIn_ReportsOnlyTheScopedCampaigns pins #659: on a shared account the
@@ -35,7 +37,8 @@ func TestListAccountCampaignsIn_ReportsOnlyTheScopedCampaigns(t *testing.T) {
 	for _, r := range reports {
 		got = append(got, campaignIDFromFilter(r.Data.Filter))
 	}
-	if len(got) != 2 {
+	sort.Strings(got)
+	if len(got) != 2 || got[0] != "camp1" || got[1] != "camp3" {
 		t.Fatalf("reports sent for %v, want exactly camp1 and camp3", got)
 	}
 
@@ -114,10 +117,55 @@ func TestMonitorThrottleTally_SplitsRedditFromTheLedger(t *testing.T) {
 	if tally.reddit429 != 2 || tally.budgetRefused != 1 {
 		t.Fatalf("reddit429 = %d, budgetRefused = %d; want 2 and 1", tally.reddit429, tally.budgetRefused)
 	}
+	tally.add(fmt.Errorf("reddit API POST /x: %w", &throttledThenRefusedError{err: ErrReportBudgetExhausted, rateLimit: map[string]string{"Retry-After": "5"}}))
+	if tally.reddit429 != 3 || tally.budgetRefused != 1 {
+		t.Fatalf("after a 429 the ledger then refused: reddit429 = %d, budgetRefused = %d; want 3 and 1", tally.reddit429, tally.budgetRefused)
+	}
 	if tally.headers["Retry-After"] != "3" {
 		t.Errorf("headers = %v, want the first 429's", tally.headers)
 	}
 	if monitorFailureClass(fmt.Errorf("w: %w", ErrReportBudgetExhausted)) != monitorFailureClass(&apiError{StatusCode: http.StatusTooManyRequests}) {
 		t.Fatal("precondition: both causes are expected to share the throttle class")
+	}
+}
+
+// TestReport429ThenLedgerRefusal_CountsAsReddit429: Reddit answers the first attempt 429, and the
+// ledger (one slot a minute here) refuses the retry before the caller's deadline. The row is
+// throttled either way, but the log line must name Reddit's 429 as the cause, with its headers,
+// not a ledger refusal (#659 review).
+func TestReport429ThenLedgerRefusal_CountsAsReddit429(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == monitorCampaignsPath {
+			_, _ = w.Write([]byte(`{"data":` + manyActiveCampaignsBody(1) + `}`))
+			return
+		}
+		w.Header().Set("Retry-After", "0")
+		w.Header().Set("X-Ratelimit-Remaining", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	apiSrv := httptest.NewServer(handler)
+	t.Cleanup(apiSrv.Close)
+	tokenSrv := httptest.NewServer(tokenHandlerReturning("tok"))
+	t.Cleanup(tokenSrv.Close)
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL),
+		WithNowFunc(fixedRedditClock()), withRetryBaseDelay(tinyBackoff),
+		WithReportBudgets(NewReportBudgets(reportBudgetWindow, 1, 1)))
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rows, err := c.ListAccountCampaigns(ctx, testAccount.AccountID, 7)
+	if err != nil || len(rows) != 1 || !rows[0].FetchFailed {
+		t.Fatalf("rows = %+v, err = %v; want one FetchFailed row", rows, err)
+	}
+	out := buf.String()
+	for _, want := range []string{"reddit_429=1", "budget_refused=0", "Retry-After:0", "X-Ratelimit-Remaining:0"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log %q does not contain %q", out, want)
+		}
 	}
 }

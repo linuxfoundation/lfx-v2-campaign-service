@@ -453,7 +453,9 @@ func (c *Client) ListAccountCampaignsIn(ctx context.Context, accountID string, d
 	return c.listAccountCampaigns(ctx, accountID, days, withCurrency, only)
 }
 
-// listAccountCampaigns is the body of both public reads; withCurrency adds the account read.
+// listAccountCampaigns is the body of the three public reads: withCurrency adds the account
+// read, and a non-nil only limits the report fan-out to those campaign ids (nil reads every
+// campaign) — see ListAccountCampaignsIn.
 func (c *Client) listAccountCampaigns(ctx context.Context, accountID string, days int, withCurrency bool, only map[string]bool) ([]AccountCampaignRow, string, error) {
 	if err := ValidateAccountID(accountID); err != nil {
 		return nil, "", fmt.Errorf("list account campaigns: %w", err)
@@ -679,8 +681,10 @@ func (c *Client) readMonitorAccountCurrency(ctx context.Context, accountID strin
 // (ErrReportBudgetExhausted) are indistinguishable in prod. Safe for concurrent add.
 type monitorThrottleTally struct {
 	mu sync.Mutex
-	// reddit429 counts reports Reddit refused with a 429 after the bounded retry;
-	// budgetRefused, reports this service's ledger refused before anything was sent.
+	// reddit429 counts reports Reddit refused with a 429 — after the bounded retry, or with
+	// the ledger refusing a retry of it; budgetRefused, reports the ledger refused before Reddit
+	// had answered any attempt. A 429 whose Retry-After exceeds maxRetryWait is a transportError,
+	// classed other, and is in neither count.
 	reddit429, budgetRefused int
 	// headers are the rate-limit headers of the FIRST 429 counted (see rateLimitHeaders).
 	headers map[string]string
@@ -689,14 +693,22 @@ type monitorThrottleTally struct {
 func (t *monitorThrottleTally) add(err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if errors.Is(err, ErrReportBudgetExhausted) {
-		t.budgetRefused++
-		return
-	}
-	t.reddit429++
+	var after429 *throttledThenRefusedError
 	var ae *apiError
-	if t.headers == nil && errors.As(err, &ae) {
-		t.headers = ae.RateLimit
+	switch {
+	case errors.As(err, &after429):
+		// Reddit's 429 came first; the ledger only refused the retry.
+		t.reddit429++
+		if t.headers == nil {
+			t.headers = after429.rateLimit
+		}
+	case errors.Is(err, ErrReportBudgetExhausted):
+		t.budgetRefused++
+	default:
+		t.reddit429++
+		if t.headers == nil && errors.As(err, &ae) {
+			t.headers = ae.RateLimit
+		}
 	}
 }
 

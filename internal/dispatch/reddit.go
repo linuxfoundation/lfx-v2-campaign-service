@@ -923,8 +923,10 @@ func (d *RedditDispatcher) ReadAccountMonitorIn(ctx context.Context, projectID s
 	return d.readAccountMonitor(ctx, projectID, platform, accountID, days, true, campaignIDs)
 }
 
-// readAccountMonitor is the body of ListAccountCampaignMetrics and ReadAccountMonitor;
-// withCurrency selects the client read that also fetches the account's currency.
+// readAccountMonitor is the body of ListAccountCampaignMetrics, ReadAccountMonitor and
+// ReadAccountMonitorIn: withCurrency also reads the account's currency, and a non-nil only limits
+// the reports to those campaign ids (nil reads every campaign) — see
+// reddit.Client.ListAccountCampaignsIn.
 func (d *RedditDispatcher) readAccountMonitor(ctx context.Context, projectID string, platform model.Provider, accountID string, days int, withCurrency bool, only map[string]bool) (*model.AccountMonitorRead, error) {
 	// Validated up front, before any credential is resolved — mirrors googleads.ValidateCustomerID's
 	// ordering (internal/dispatch/googleads.go): an unauthenticated malformed-id caller should never
@@ -941,7 +943,7 @@ func (d *RedditDispatcher) readAccountMonitor(ctx context.Context, projectID str
 	}
 	rows, currency, lerr := client.ListAccountCampaignsIn(ctx, accountID, days, withCurrency, only)
 	if lerr != nil {
-		// Defense in depth only: reachable if ListAccountCampaigns' own shape check ever
+		// Defense in depth only: reachable if ListAccountCampaignsIn's own shape check ever
 		// diverges from ValidateAccountID's above it.
 		if errors.Is(lerr, reddit.ErrInvalidAccountID) {
 			return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, lerr)

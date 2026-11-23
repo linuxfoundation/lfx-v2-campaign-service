@@ -3158,7 +3158,8 @@ func (o *Orchestrator) ReadAccounts(ctx context.Context, projectID string, platf
 // the account-monitor endpoints, with the account's currency when the dispatcher reports it. On a
 // shared-tenancy platform (AccountMonitorScoper) only the project's own campaigns are returned;
 // elsewhere every campaign visible on the account is. Modeled directly on ReadAccounts above: type-assert for the reader
-// (AccountMonitorReader first, then AccountMetricsReader), bound the call, record it through
+// (ScopedAccountMonitorReader first when the read is scoped, then AccountMonitorReader, then
+// AccountMetricsReader), bound the call, record it through
 // recordUpstream, and treat a nil result with no error as a contract violation rather than an
 // authoritative empty answer.
 func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) (*model.AccountMonitorRead, error) {

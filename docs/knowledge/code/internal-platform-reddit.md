@@ -597,7 +597,10 @@ whole (one paginated call).
 
 Every throttled report in one read is tallied by cause (`monitorThrottleTally`): a 429 from Reddit
 after the bounded retry, or this service's ledger refusing the attempt (`ErrReportBudgetExhausted`).
-Both class as `throttle` on the row; the read writes one warning, `reddit monitor: campaign reports
+A call that Reddit answered 429 and whose retry the ledger then refused counts as Reddit's 429
+(`throttledThenRefusedError` carries that 429's headers through the ledger error); a 429 whose
+`Retry-After` exceeds `maxRetryWait` is a `transportError`, classed `other`, and is in neither count.
+Both counted causes class as `throttle` on the row; the read writes one warning, `reddit monitor: campaign reports
 were throttled`, with `reddit_429`, `budget_refused` and the first 429's `rate_limit_headers`. Those
 are `Retry-After` and `X-Ratelimit-*` only, numeric values only (`rateLimitHeaders`, kept on
 `apiError.RateLimit` for a 429). The response body is still never logged.
