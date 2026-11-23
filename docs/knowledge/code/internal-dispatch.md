@@ -3273,6 +3273,28 @@ survey send workflow sends drafts without a reviewer opening each one, so it ref
 without the flag rather than send the template's copy
 (`TestHubSpot_AFailedSubjectIsNotRecordedAsStagedCopy`).
 
+The dispatcher chooses the draft's layout from the brief: `emailLayoutFor` returns
+`hubspot.LayoutSurvey` for a brief whose delivery type is `survey` and the event layout otherwise,
+and the one choice is carried to the A/B variant so the two halves of a test cannot differ. For a
+survey brief it also runs `surveyCopyWarnings`, an ADVISORY check that the generated body states no
+percentage, calendar date, or question or minute count that the brief's `event_details.sourceText`
+does not contain. Tags are stripped first, so a `line-height:160%` is not a claim, and a
+non-breaking space reads as a space. Month spelling is not compared; a year is compared only when
+the copy states one: "April 30" is backed by the day alone, but "April 30, 2028" needs that date in
+2028 in the source, so a deadline moved a year is reported. The source is
+read with the SAME patterns as the body and the two are compared as claim keys (`claimKeys`), never
+as raw text, so the patterns decide where a figure starts and ends: a full stop or a neighbouring
+number ("open. 9 questions", "2026 9 questions") is not read as part of a figure, and a decimal is
+read whole ("8.5 minutes" is not "5 minutes", and a source's ".5%" does not back "5%"). A key is the figure, spelled one way ("3.50" is
+"3.5"), or `lower~upper` for a range, plus the unit in the singular. So a "5%" is not backed by
+"35%" or "3.5%", "35%" is not backed by the range "3-5%", "5-15 minutes" is not backed by "10-15
+minutes", while "10–15", "10 - 15" and "3%-5%" equal "10-15" and "3-5%", and a "3-minute
+questionnaire" backs "3 minutes". A source range also backs each of its ends ("10-15 minutes"
+backs "15 minutes"); a copy's range is backed only by the same range. Variant B's body is checked in the same pass as
+A's, so one list covers both halves of an A/B test. Findings join the dispatch warnings that reach the job-poll
+response, never a failure, capped at five, and built only from what the patterns match so no model
+free text enters a persisted field.
+
 The body write targets the **first rich-text block in the draft's LAYOUT READING ORDER**, and
 refuses when the draft has no rich-text block at all — or when it has no LAYOUT. "First" comes
 from `content.flexAreas`, the drag-and-drop layout tree — the only place a draft records the order

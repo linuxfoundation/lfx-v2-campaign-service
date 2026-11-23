@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/hubspot"
-description: "HubSpot API client (email channel): bearer auth, request layer with 429 retry, marketing-email + CRM-list + event-def + marketing-campaign operations, and marketing-email statistics reads — a UTC calendar range selects which emails are in scope BY SEND DATE and the counters returned are that email's totals to date, behind fail-closed guards for untrustworthy bytes (identityjson), a dishonoured filter, an unrecognized or partially renamed counter vocabulary, a negative or explicitly null counter, and an empty match set (no SENT email with that id in the span — a send outside it, a draft, and a nonexistent id are indistinguishable). Also reads list MEMBERSHIPS (paged, with truncation reported rather than swallowed), the legacy v1 NAME of a list v3 can no longer see, and the lists a prior marketing email actually targeted. The same statistics read also serves the email account monitor over an explicit send-date span. It also clones an Automation v4 workflow into a disabled send series (CloneFlowWithEmails): read-only on the source, steps walked from its start action, emails, dates and enrollment replaced, suppressions merged, and a branching or unrecognised source refused before anything is created."
+description: "HubSpot API client (email channel): bearer auth, request layer with 429 retry, marketing-email + CRM-list + event-def + marketing-campaign operations, and marketing-email statistics reads — a UTC calendar range selects which emails are in scope BY SEND DATE and the counters returned are that email's totals to date, behind fail-closed guards for untrustworthy bytes (identityjson), a dishonoured filter, an unrecognized or partially renamed counter vocabulary, a negative or explicitly null counter, and an empty match set (no SENT email with that id in the span — a send outside it, a draft, and a nonexistent id are indistinguishable). Also reads list MEMBERSHIPS (paged, with truncation reported rather than swallowed), the legacy v1 NAME of a list v3 can no longer see, and the lists a prior marketing email actually targeted. The same statistics read also serves the email account monitor over an explicit send-date span. It also clones an Automation v4 workflow into a disabled send series (CloneFlowWithEmails): read-only on the source, steps walked from its start action, emails, dates and enrollment replaced, suppressions merged, and a source with parallel arms, a loop, an unreachable send or dated step, or an unrecognised step refused before anything is created."
 resource: "internal/platform/hubspot"
 tags:
   - platform-client
@@ -629,6 +629,29 @@ The CTA button's and footer link's `background_color`/`link_font.color` moved fr
 contrasted white text at only ~3.14:1, failing the WCAG AA 4.5:1 text threshold, where `#2563eb`
 clears it at ~5.17:1.
 
+`RebuildEmailContentInput.Layout` (`EmailLayout`) selects the chrome built around the body. The zero
+value, `LayoutEvent`, is what every earlier caller got: a footer divider, a "FOLLOW US" header,
+black circle social icons including the LFX Insights mark, "sent by: The Linux Foundation Events"
+and the native footer, with sponsor tiers when supplied. `LayoutSurvey` (`content_survey.go`)
+reproduces the LF Research survey email as sent: HubSpot's View-in-browser strip (`module_id`
+2794854, written with no `path`, in a section with an empty `backgroundColor` so it sits on the
+grey page), the LF Research logo band, the hero linked to the survey, the body, the button, a navy
+`#23496d` divider, a seven-entry colour social row, a second divider, and a footer section holding
+"sent by: The Linux Foundation" and the native footer. It has no sponsor tiers (`Sponsors` is
+ignored) and no "FOLLOW US" header. The page colours (`#efefef` page, `#ffffff` content) are not
+written: the rebuild carries the clone source's `styleSettings` forward, so they come from
+whichever LF survey email was cloned. Two deliberate departures from the sent emails: the native
+footer module stands in for the sent `/email_footer no links` custom module, whose id belongs to
+one portal and would break a draft in a project's own portal; and the button and footer link stay
+`#2563eb` rather than the sent `#0094ff` / `#00a4bd`, which contrast white at only ~3.1:1; for the
+same reason the View-in-browser link and the social row's text are navy `#23496d`, not the sent
+`#00a4bd`.
+`nativeFooterWidget` builds the footer for both layouts, so only its colours can differ between
+them. The layout was read from a sent email's `/draft` content, not from the live view: a cloned
+draft's live view still shows the clone source's content, so reading it there hides what the
+rebuild wrote. The logo and the GitHub icon are not re-hosted per project: they are served from portal 8112310's
+public file CDN, so deleting either file there breaks that artwork in every project's survey drafts.
+
 `verifyContentSaved` re-reads the draft afterwards, because HubSpot has in practice accepted a
 content PATCH with a 2xx and silently reverted it. It requires EVERY widget it wrote to be
 referenced from `flexAreas`, not merely one: the keys are fixed, so a single surviving key from
@@ -773,11 +796,17 @@ reads the definition as an opaque map (a struct would drop fields it does not de
 rewrite happens in memory, and the result is POSTed field by field without the source's
 server-owned fields. The source is never PATCHed.
 
-- **Order is the canvas, not the id.** `flowMainPath` walks from `startActionId` along each
-  action's single STANDARD `connection`. A step inserted later has the highest id while running
-  earlier, so an id sort would map emails to the wrong sends. A branching action, a non-STANDARD
-  edge, a loop, or a send (`0-4`) or wait-until-date (`0-35`) step the walk does not reach is
-  `ErrFlowShapeUnsupported`.
+- **Order is the canvas, not the id.** `flowSeriesSteps` walks from `startActionId` along EVERY
+  edge -- the plain `connection` and each arm of `staticBranches`, `listBranches` and
+  `defaultBranch` -- and ranks the sends (`0-4`) and, separately, the wait-until-date steps
+  (`0-35`) by how many of their own kind each can reach. A step inserted later has the highest id
+  while running earlier, so an id sort would map emails to the wrong sends. A branch is walked
+  through, not refused: the survey sequence gates a later send on one. Two steps of one kind on
+  parallel arms share a rank, have no order, and are `ErrFlowShapeUnsupported`, as are a loop, a
+  plain edge of a type other than STANDARD or GOTO, and a send or dated step the walk does not
+  reach (which includes one behind a branch spelling the walk does not read: it fails closed). A
+  GOTO edge -- a jump to an action elsewhere, e.g. a branch rejoining the main line -- is followed
+  like a STANDARD one.
 - **Counts pair exactly** (`ErrFlowStepCountMismatch`): one email per send step and one date per
   dated step. The source's own dates are never kept — they belong to another campaign and are
   usually past, where HubSpot moves a contact straight on. Only the date is replaced; each step's
