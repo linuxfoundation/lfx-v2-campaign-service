@@ -83,6 +83,10 @@ type msMetricsServer struct {
 	zipPayload   []byte
 	downloadAuth string // Authorization header seen on the download request
 	omitURL      bool
+	// rejectCompleteOnly answers a ReturnOnlyCompleteData=true submit with 2004, as Microsoft
+	// does for a window it has not finished processing.
+	rejectCompleteOnly bool
+	submits            []bool // ReturnOnlyCompleteData of each submit, in order
 }
 
 func newMSMetricsServer(t *testing.T, zipPayload []byte, pollsBefore int) *msMetricsServer {
@@ -99,11 +103,20 @@ func newMSMetricsServer(t *testing.T, zipPayload []byte, pollsBefore int) *msMet
 		raw, _ := io.ReadAll(r.Body)
 		body := map[string]any{}
 		_ = json.Unmarshal(raw, &body)
+		rr, _ := body["ReportRequest"].(map[string]any)
+		completeOnly, _ := rr["ReturnOnlyCompleteData"].(bool)
 		m.mu.Lock()
 		m.submitBody = body
 		m.submitRaw = raw
+		m.submits = append(m.submits, completeOnly)
+		reject := m.rejectCompleteOnly && completeOnly
 		m.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
+		if reject {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"Errors":[{"Code":2004,"ErrorCode":"NoCompleteDataAvaliable"}]}`)
+			return
+		}
 		_, _ = io.WriteString(w, `{"ReportRequestId":"rr-1"}`)
 	})
 
@@ -1088,7 +1101,7 @@ func TestGetCampaignMetrics_InProgressWindowReadsDespiteTheFlag(t *testing.T) {
 }
 
 // TestGetCampaignMetrics_SettledWindowAsksForCompleteDataAndHoldsTheFlag pins the other half: a
-// settled window (last_month, from the 3rd) is requested with ReturnOnlyCompleteData=true, which
+// settled window (last_month, from the 2nd) is requested with ReturnOnlyCompleteData=true, which
 // returned "Potential Incomplete Data: false" live. If Microsoft still flags it, the report is
 // refused rather than surfaced as a complete measurement. The test clock is 14 Aug 2026.
 func TestGetCampaignMetrics_SettledWindowAsksForCompleteDataAndHoldsTheFlag(t *testing.T) {
@@ -1108,20 +1121,44 @@ func TestGetCampaignMetrics_SettledWindowAsksForCompleteDataAndHoldsTheFlag(t *t
 	}
 }
 
+// TestGetCampaignMetrics_SettledWindowFallsBackOn2004 pins the fallback for a window
+// windowIsSettled calls settled but Microsoft has not finished: the complete-data submit's
+// NoCompleteDataAvaliable (2004) is retried once with ReturnOnlyCompleteData=false, and the
+// report is read as in progress instead of failing.
+func TestGetCampaignMetrics_SettledWindowFallsBackOn2004(t *testing.T) {
+	m := newMSMetricsServer(t, buildReportZip(t, incompleteDataCSV), 0)
+	m.rejectCompleteOnly = true
+	c := newMetricsClient(t, m)
+
+	got, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowLastMonth)
+	if err != nil {
+		t.Fatalf("a 2004 on a settled window must fall back, got %v", err)
+	}
+	if got.Impressions != 15000 || got.Clicks != 350 {
+		t.Errorf("got %+v, want the report's 15000 impressions and 350 clicks", got)
+	}
+	if len(m.submits) != 2 || !m.submits[0] || m.submits[1] {
+		t.Errorf("submits (ReturnOnlyCompleteData) = %v, want [true false]", m.submits)
+	}
+}
+
 func TestWindowIsSettled(t *testing.T) {
-	now := time.Date(2026, 11, 3, 0, 30, 0, 0, time.UTC)
+	day := func(m time.Month, d int) time.Time { return time.Date(2026, m, d, 0, 0, 0, 0, time.UTC) }
 	for _, tc := range []struct {
-		end  time.Time
-		want bool
+		now, end time.Time
+		want     bool
 	}{
-		{time.Date(2026, 10, 31, 0, 0, 0, 0, time.UTC), true},
-		{time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), true},
+		{day(11, 3).Add(30 * time.Minute), day(10, 31), true},
+		{day(11, 3).Add(30 * time.Minute), day(11, 1), true},
 		// Yesterday in UTC can still be today in an account behind UTC.
-		{time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC), false},
-		{time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC), false},
+		{day(11, 3).Add(30 * time.Minute), day(11, 2), false},
+		{day(11, 3).Add(30 * time.Minute), day(11, 3), false},
+		// Month start: last_month (ending 31 Oct) is settled from the 2nd, not on the 1st.
+		{day(11, 2).Add(30 * time.Minute), day(10, 31), true},
+		{day(11, 1).Add(23 * time.Hour), day(10, 31), false},
 	} {
-		if got := windowIsSettled(tc.end, now); got != tc.want {
-			t.Errorf("windowIsSettled(%s) = %v, want %v", tc.end.Format(time.DateOnly), got, tc.want)
+		if got := windowIsSettled(tc.end, tc.now); got != tc.want {
+			t.Errorf("windowIsSettled(end %s, now %s) = %v, want %v", tc.end.Format(time.DateOnly), tc.now.Format(time.RFC3339), got, tc.want)
 		}
 	}
 }
@@ -1333,7 +1370,8 @@ func TestFoldReportRows_IncompleteFlagIsScopedToThePreamble(t *testing.T) {
 		// this row must fold normally rather than refuse the report.
 		{"Potential Incomplete Data: true", "10000", "250", "125.50"},
 	}
-	got, err := foldReportRows(records, "1234567", model.MetricsWindowLast7Days, false)
+	// completeOnly, so the flag check runs and must look at the preamble only.
+	got, err := foldReportRows(records, "1234567", model.MetricsWindowLast7Days, true)
 	if errors.Is(err, ErrReportDataIncomplete) {
 		t.Fatal("a data row must not be read as the header-block incomplete-data flag")
 	}

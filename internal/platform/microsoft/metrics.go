@@ -119,6 +119,12 @@ const (
 const (
 	msErrCodeInvalidScope = "2027"
 	msErrNameInvalidScope = "InvalidAccountThruCampaignReportScope"
+
+	// msErrCodeNoCompleteData / msErrNameNoCompleteData are Microsoft's answer to
+	// ReturnOnlyCompleteData=true on a window it has not finished processing. Microsoft spells
+	// the name with the typo.
+	msErrCodeNoCompleteData = "2004"
+	msErrNameNoCompleteData = "NoCompleteDataAvaliable"
 )
 
 // ErrReportNotReady means the report was still building when reportPollBudget ran out.
@@ -193,6 +199,14 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	deadline := c.now().Add(reportPollBudget)
 	completeOnly := windowIsSettled(end, c.now())
 	reportID, err := c.submitReport(ctx, campaignID, start, end, completeOnly)
+	var ae *apiError
+	if completeOnly && errors.As(err, &ae) && (ae.hasErrorCode(msErrCodeNoCompleteData) || ae.hasErrorCode(msErrNameNoCompleteData)) {
+		// windowIsSettled guessed too early: Microsoft has not finished the window (for
+		// example last_month on the 2nd). Read it as in progress, as every other window is,
+		// rather than failing a read that would otherwise return numbers.
+		completeOnly = false
+		reportID, err = c.submitReport(ctx, campaignID, start, end, false)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +232,7 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 // Microsoft to have finished processing it in every account time zone. It asks for end at least
 // two days before today: a window ending yesterday in UTC can still be "today" for an account
 // behind UTC, and Microsoft answers a complete-data request for it with NoCompleteDataAvaliable
-// (2004). In practice only last_month qualifies, and only from the 3rd of the month.
+// (2004). In practice only last_month qualifies, and only from the 2nd of the month.
 func windowIsSettled(end, now time.Time) bool {
 	n := now.UTC()
 	today := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, time.UTC)
@@ -841,29 +855,23 @@ func reportHeaderAndRows(records [][]string) (header []string, rows [][]string, 
 	return nil, nil, nil, fmt.Errorf("microsoft report csv has no header row")
 }
 
-// ErrReportDataIncomplete means Microsoft flagged the report's own data as incomplete.
+// ErrReportDataIncomplete means Microsoft flagged the report's own data as incomplete on a
+// read that asked for complete data.
 //
-// submitReport sends ReturnOnlyCompleteData=false. Microsoft documents the two settings as
-// a genuine trade, not a preference: with true, a report whose window is not fully processed
-// FAILS outright with NoCompleteDataAvaliable (2004) — which would make any window including
-// today unreadable, i.e. most of them. With false the report builds from what has been
-// processed so far, and the last day of the window may be an under-count.
-//
-// Microsoft signals that in the report's own header block, never in the HTTP status:
+// GetCampaignMetrics sends ReturnOnlyCompleteData=true only for a settled window
+// (windowIsSettled). There Microsoft's header-block flag is meaningful: a live read (#167)
+// returned "Potential Incomplete Data: false" for last_month. If such a report still says
 //
 //	"Potential Incomplete Data: true"
 //
-// Nothing downstream carries the caveat. The metrics endpoint answers 200 with an
-// impressions/clicks/spend triple, and a partial total is indistinguishable, to every
-// consumer, from a complete measurement of a smaller number.
+// it is REFUSED rather than surfaced, because model.CampaignMetrics has no field for "these
+// numbers are provisional" and a partial total would read as a complete measurement of a
+// smaller number. The caller can retry once Microsoft's aggregation settles.
 //
-// So a flagged report is REFUSED rather than surfaced. There is no field on
-// model.CampaignMetrics for "these numbers are provisional", and adding one would have to be
-// honoured by every consumer to mean anything — until then, returning the numbers WOULD be
-// the silent under-count. Refusing is recoverable in a way a wrong number is not: the caller
-// can retry once Microsoft's aggregation settles, and the error says so. This is the same
-// failure-as-measurement refusal the rest of this file applies to a header-only file, a
-// missing column and a short row.
+// A window that includes today is sent with false (true fails with NoCompleteDataAvaliable,
+// 2004) and is read as in progress, NOT refused: with false, Microsoft sets the flag on every
+// report, even a closed month, so it says nothing about that report. Reddit, LinkedIn and
+// Google reads treat today's partial numbers the same way.
 var ErrReportDataIncomplete = errors.New("microsoft flagged this report's data as incomplete (the last day of the window may still be aggregating); the totals would be an under-count")
 
 // incompleteDataMarker is the header-block label Microsoft uses to flag a partially-processed

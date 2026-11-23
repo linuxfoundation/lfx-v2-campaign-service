@@ -1247,9 +1247,12 @@ rendered as a measured zero.
 
 **Completeness (live, #167).** `ReturnOnlyCompleteData` depends on the window
 (`windowIsSettled`). A window that ended at least two days before today (in practice
-`last_month` from the 3rd) is requested with `true`, which returned "Potential Incomplete
+`last_month` from the 2nd) is requested with `true`, which returned "Potential Incomplete
 Data: false" live. If Microsoft still flags such a report, the parser answers
-`ErrReportDataIncomplete` instead of returning the numbers. Any other window is requested with
+`ErrReportDataIncomplete` instead of returning the numbers. If Microsoft has not finished the
+window yet and answers the complete-data submit with `NoCompleteDataAvaliable` (2004), for
+example `last_month` early on the 2nd, the read resubmits once with `false` and reads the
+window as in progress. Any other window is requested with
 `false`, because `true` on a window that includes today fails outright with
 `NoCompleteDataAvaliable` (2004). The live read showed that with `false`, Microsoft sets
 "Potential Incomplete Data: true" on every report, even a closed month, so that flag carries no

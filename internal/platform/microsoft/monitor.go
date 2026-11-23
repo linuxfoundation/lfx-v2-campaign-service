@@ -440,11 +440,11 @@ type AccountReportResult struct {
 // an idle account. Refusing it would make every idle account permanently unreadable. The same
 // reasoning makes a header-only CSV zero rows rather than an error.
 //
-// PARTIAL DATA IS REPORTED, NOT REFUSED — the opposite of GetCampaignMetrics, which refuses a
-// flagged report with ErrReportDataIncomplete. That refusal is sound there because
-// model.CampaignMetrics has no field to carry the caveat, so returning the numbers would
-// present an under-count as complete, and a caller can retry once aggregation settles. Neither
-// holds for the monitor. Its window ALWAYS ends today (SubmitAccountCampaignReport), and today
+// PARTIAL DATA IS REPORTED, NOT REFUSED. GetCampaignMetrics refuses a flagged report with
+// ErrReportDataIncomplete only on a settled window, where it asked for complete data and the
+// flag is meaningful; its in-progress windows are read like this one. Refusal suits a settled
+// read because model.CampaignMetrics has no field to carry the caveat. It does not suit the
+// monitor. Its window ALWAYS ends today (SubmitAccountCampaignReport), and today
 // is the day Microsoft flags as still aggregating, so a monitor that refused flagged reports
 // would essentially never show data. And this result DOES carry the caveat: Partial is set,
 // and the monitor response states the time its metrics are as of, so the reader is told the
