@@ -87,6 +87,57 @@ func TestSurveyCopyWarnings(t *testing.T) {
 		}
 	})
 
+	t.Run("a range whose lower end alone is changed is reported", func(t *testing.T) {
+		cases := []struct{ source, body, claim string }{
+			{"The survey takes 10-15 minutes.", `<p>It takes 5-15 minutes.</p>`, `"5-15 minutes"`},
+			{"The survey takes 10-15 minutes.", `<p>It takes 5–15 minutes.</p>`, `"5–15 minutes"`},
+			{"The survey has 8-12 questions.", `<p>Only 2-12 questions.</p>`, `"2-12 questions"`},
+			{"A 3-5% discount.", `<p>A 1-5% discount.</p>`, `"1-5%"`},
+			{"A 3-5% discount.", `<p>A 1%-5% discount.</p>`, `"1%-5%"`},
+		}
+		for _, tc := range cases {
+			got := strings.Join(surveyCopyWarnings(surveyBrief(tc.source), tc.body), "\n")
+			if !strings.Contains(got, tc.claim) {
+				t.Errorf("source %q, copy %q: no warning for %s in:\n%s", tc.source, tc.body, tc.claim, got)
+			}
+		}
+	})
+
+	t.Run("a range the source states is silent in any dash or percent spelling", func(t *testing.T) {
+		cases := []struct{ source, body string }{
+			{"The survey takes 10-15 minutes.", `<p>It takes 10–15 minutes.</p>`},
+			{"The survey takes 10–15 minutes.", `<p>It takes 10 - 15 minutes.</p>`},
+			{"A 3-5% discount.", `<p>A 3%-5% discount.</p>`},
+			{"A 3–5% discount.", `<p>A 3-5% discount.</p>`},
+		}
+		for _, tc := range cases {
+			if got := surveyCopyWarnings(surveyBrief(tc.source), tc.body); len(got) != 0 {
+				t.Errorf("source %q, copy %q: a stated range was reported: %v", tc.source, tc.body, got)
+			}
+		}
+	})
+
+	t.Run("a singular or plural unit backs the same figure in either direction", func(t *testing.T) {
+		// The word after the unit must not start with "s": "a 3-minute survey" compacts to
+		// "3minutesurvey", which contains "3minutes" by accident and would hide the bug.
+		cases := []struct{ source, body string }{
+			{"Take our 3-minute questionnaire.", `<p>It takes 3 minutes.</p>`},
+			{"It takes 3 minutes.", `<p>Take our 3-minute questionnaire.</p>`},
+			{"A 9-question form.", `<p>Only 9 questions.</p>`},
+			{"Only 9 questions.", `<p>A 9-question form.</p>`},
+		}
+		for _, tc := range cases {
+			if got := surveyCopyWarnings(surveyBrief(tc.source), tc.body); len(got) != 0 {
+				t.Errorf("source %q, copy %q: the same figure was reported: %v", tc.source, tc.body, got)
+			}
+		}
+		// Normalising the unit does not loosen the figure.
+		got := strings.Join(surveyCopyWarnings(surveyBrief("Take our 3-minute questionnaire."), `<p>It takes 5 minutes.</p>`), "\n")
+		if !strings.Contains(got, `"5 minutes"`) {
+			t.Errorf("an invented 5 minutes passed against a 3-minute source: %q", got)
+		}
+	})
+
 	t.Run("a style percentage is not a claim", func(t *testing.T) {
 		body := `<p style="line-height:160%;width:100%">Hello</p>`
 		if got := surveyCopyWarnings(surveyBrief(source), body); len(got) != 0 {

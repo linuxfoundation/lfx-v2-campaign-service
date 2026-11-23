@@ -3280,7 +3280,10 @@ survey brief it also runs `surveyCopyWarnings`, an ADVISORY check that the gener
 percentage, calendar date, or question or minute count that the brief's `event_details.sourceText`
 does not contain. Tags are stripped first, so a `line-height:160%` is not a claim; month spelling
 and the year are not compared. A percentage or count is supported only as a whole figure: a "5%" is
-not backed by a source that says "35%" or "3.5%", and a hyphen between two numbers is read as a range ("3-5%" does not back "35%"). Variant B's body is checked in the same pass as
+not backed by a source that says "35%" or "3.5%", and a hyphen or en dash between two numbers is read as a range ("3-5%" does not back "35%"). A claim
+includes a range's lower end, so "5-15 minutes" is not backed by a source that says "10-15 minutes";
+"10–15", "10 - 15" and "3%-5%" compare equal to "10-15" and "3-5%". The unit is compared in the
+singular, so a source's "3-minute questionnaire" backs copy saying "3 minutes". Variant B's body is checked in the same pass as
 A's, so one list covers both halves of an A/B test. Findings join the dispatch warnings that reach the job-poll
 response, never a failure, capped at five, and built only from what the patterns match so no model
 free text enters a persisted field.

@@ -71,7 +71,7 @@ func addSurveyHeader(widgets map[string]any, sections *[]map[string]any) {
 		"body": map[string]any{
 			"module_id": moduleIDViewInBrowser,
 			"font": map[string]any{
-				"color": "#00a4bd",
+				"color": surveyNavy,
 				"font":  "Arial, sans-serif",
 				"size":  map[string]any{"units": "px", "value": 12},
 				"styles": map[string]any{
@@ -139,7 +139,7 @@ func surveySocialWidget() map[string]any {
 		"body": map[string]any{
 			"css_class": "dnd-module",
 			"font_style": map[string]any{
-				"color": "#00a4bd",
+				"color": surveyNavy,
 				"font":  "Helvetica,Arial,sans-serif",
 				"size":  map[string]any{"units": "px", "value": 14},
 				"styles": map[string]any{

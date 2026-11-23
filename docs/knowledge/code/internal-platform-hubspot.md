@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/hubspot"
-description: "HubSpot API client (email channel): bearer auth, request layer with 429 retry, marketing-email + CRM-list + event-def + marketing-campaign operations, and marketing-email statistics reads — a UTC calendar range selects which emails are in scope BY SEND DATE and the counters returned are that email's totals to date, behind fail-closed guards for untrustworthy bytes (identityjson), a dishonoured filter, an unrecognized or partially renamed counter vocabulary, a negative or explicitly null counter, and an empty match set (no SENT email with that id in the span — a send outside it, a draft, and a nonexistent id are indistinguishable). Also reads list MEMBERSHIPS (paged, with truncation reported rather than swallowed), the legacy v1 NAME of a list v3 can no longer see, and the lists a prior marketing email actually targeted. The same statistics read also serves the email account monitor over an explicit send-date span. It also clones an Automation v4 workflow into a disabled send series (CloneFlowWithEmails): read-only on the source, steps walked from its start action, emails, dates and enrollment replaced, suppressions merged, and a branching or unrecognised source refused before anything is created."
+description: "HubSpot API client (email channel): bearer auth, request layer with 429 retry, marketing-email + CRM-list + event-def + marketing-campaign operations, and marketing-email statistics reads — a UTC calendar range selects which emails are in scope BY SEND DATE and the counters returned are that email's totals to date, behind fail-closed guards for untrustworthy bytes (identityjson), a dishonoured filter, an unrecognized or partially renamed counter vocabulary, a negative or explicitly null counter, and an empty match set (no SENT email with that id in the span — a send outside it, a draft, and a nonexistent id are indistinguishable). Also reads list MEMBERSHIPS (paged, with truncation reported rather than swallowed), the legacy v1 NAME of a list v3 can no longer see, and the lists a prior marketing email actually targeted. The same statistics read also serves the email account monitor over an explicit send-date span. It also clones an Automation v4 workflow into a disabled send series (CloneFlowWithEmails): read-only on the source, steps walked from its start action, emails, dates and enrollment replaced, suppressions merged, and a source with parallel arms, a loop, an unreachable send or dated step, or an unrecognised step refused before anything is created."
 resource: "internal/platform/hubspot"
 tags:
   - platform-client
@@ -643,7 +643,9 @@ written: the rebuild carries the clone source's `styleSettings` forward, so they
 whichever LF survey email was cloned. Two deliberate departures from the sent emails: the native
 footer module stands in for the sent `/email_footer no links` custom module, whose id belongs to
 one portal and would break a draft in a project's own portal; and the button and footer link stay
-`#2563eb` rather than the sent `#0094ff` / `#00a4bd`, which contrast white at only ~3.1:1.
+`#2563eb` rather than the sent `#0094ff` / `#00a4bd`, which contrast white at only ~3.1:1; for the
+same reason the View-in-browser link and the social row's text are navy `#23496d`, not the sent
+`#00a4bd`.
 `nativeFooterWidget` builds the footer for both layouts, so only its colours can differ between
 them. The layout was read from a sent email's `/draft` content, not from the live view: a cloned
 draft's live view still shows the clone source's content, so reading it there hides what the

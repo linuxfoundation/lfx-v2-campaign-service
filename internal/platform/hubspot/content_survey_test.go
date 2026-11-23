@@ -113,6 +113,14 @@ func TestRebuildEmailContent_SurveyLayoutFollowsTheSentEmail(t *testing.T) {
 	if got, want := strings.Join(networks, ","), "facebook,linkedin,youtube,instagram,icon,mail,icon"; got != want {
 		t.Errorf("social networks = %s, want %s", got, want)
 	}
+
+	// The link text is navy, not the sent emails' #00a4bd, which fails WCAG AA contrast at these
+	// small sizes, all the more on the grey page behind the View-in-browser strip.
+	for key, field := range map[string]string{"staging_survey_preheader": "font", "staging_survey_social": "font_style"} {
+		if font, _ := widgets[key][field].(map[string]any); font["color"] != surveyNavy {
+			t.Errorf("%s %s colour = %v, want %s", key, field, font["color"], surveyNavy)
+		}
+	}
 }
 
 // What the survey layout must NOT carry over from the event one. Each of these was in the staged
