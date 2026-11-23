@@ -482,17 +482,21 @@ decoded at all. Note "microcurrency" means the **ad account's own billing curren
 this client does not read — `CostMicros` is therefore micros of an unspecified currency, as it
 is for X, and must not be summed across platforms.
 
-`CAMPAIGN_ID` is requested as a **field**, not merely a breakdown, so every row carries the id
-the provenance check verifies against. `breakdowns` is omitted so Reddit aggregates over the
-whole window; the accumulation loop still sums correctly if that is wrong. `time_zone_id` is
-omitted because the spec documents it as defaulting to UTC, which is the zone
-`dateRangeForWindow` renders in.
+`CAMPAIGN_ID` is requested as a **field and as a breakdown** (`campaignReportBody`, shared with
+the account monitor). The spec alone suggested the field was enough. But a live read on 23 Nov
+2026 (#167) showed that, with the `filter` and no breakdown, Reddit aggregates the window into
+one row **without** `campaign_id`, so every row failed the provenance check. `time_zone_id` is
+omitted. The spec says it defaults to UTC, but the live read matched Fivetran's
+account-time (America/New_York) daily totals exactly, so Reddit appears to apply the ad
+account's time zone.
 
-**What remains unverified**: no request has been made against a live Reddit ad account (this
-repository holds no Reddit credentials), which is why the gate stays on. A schema cannot
-express whether a campaign with no activity yields an empty `metrics` array or a row of
-explicit zeros, nor whether `ends_at` is inclusive of its final hour. Both readings are handled
-without a wrong answer, and both are recorded at their site rather than assumed away.
+**Verified live (#167):** `cmd/verify-metrics`, run in the dev cluster against the LF system
+account, read campaign 2577406841688564185 over `last_30_days` as 505,751 impressions, 1,365
+clicks and 8,190,455,770 micros ($8,190.46). Reddit's reporting via Fivetran gave $8,190.45 for
+the same days; the cent comes from Fivetran rounding each day. A campaign with no activity in
+the window returns an empty `metrics` array, which reads as zero. Still unverified: whether
+`ends_at` includes its final hour, and whether the account's attribution window shifts the
+numbers.
 
 ### Refusing rather than reporting a plausible number
 
@@ -612,7 +616,7 @@ defect; five other defects were fixed:
 - **Verified operation.** Each campaign's numbers come from `POST /ad_accounts/{id}/reports`
   — the operation LFXV2-3282 verified against the published spec — with
   `GetCampaignMetrics`' own body (`CAMPAIGN_ID`, `IMPRESSIONS`, `CLICKS`, `SPEND` as fields,
-  `filter: campaign:id==<id>`, no `breakdowns`), not the BFF's unverified nested
+  `CAMPAIGN_ID` also as the breakdown (#167), `filter: campaign:id==<id>`), not the BFF's unverified nested
   `/campaigns/{id}/reports`. Rows pass through `sumReportRows`, shared with
   `GetCampaignMetrics`: a row attributed to another campaign, or missing a field, fails that
   campaign (`FetchFailed`), and all rows are summed (it used to read `metrics[0]` only). One

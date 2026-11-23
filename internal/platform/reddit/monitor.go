@@ -302,11 +302,11 @@ func (c *Client) listMonitorCampaigns(ctx context.Context, accountID string) ([]
 // fetchMonitorCampaignReport reads one campaign's impressions/clicks/spend over
 // [startsAt, endsAt] from the ONE reporting operation this repository has verified against
 // Reddit's published OpenAPI spec: POST /ad_accounts/{id}/reports (LFXV2-3282, see
-// GetCampaignMetrics). The request body is GetCampaignMetrics' own — UPPERCASE field enums,
-// CAMPAIGN_ID requested as a FIELD so every row carries the id it is attributed to, the
-// campaign scoped by the `filter` DSL, no `breakdowns` — and the rows go through the same
-// sumReportRows, so the monitor and the single-campaign read cannot disagree about which rows
-// they believe.
+// GetCampaignMetrics). The request body is GetCampaignMetrics' own campaignReportBody:
+// UPPERCASE field enums, CAMPAIGN_ID as a field AND a breakdown so every row carries the id
+// it is attributed to (#167), and the campaign scoped by the `filter` DSL. The rows go
+// through the same sumReportRows, so the monitor and the single-campaign read cannot
+// disagree about which rows they believe.
 //
 // It used to POST to the per-campaign nested path /ad_accounts/{id}/campaigns/{cid}/reports,
 // copied from the BFF; nothing in this repository verifies that operation exists. It also
@@ -314,7 +314,7 @@ func (c *Client) listMonitorCampaigns(ctx context.Context, accountID string) ([]
 // and checked no campaign id, so a row for another campaign would have been reported as this
 // one's.
 //
-// Why per-campaign calls rather than ONE account report broken down by CAMPAIGN_ID: the
+// Why per-campaign calls rather than ONE unfiltered account report broken down by CAMPAIGN_ID: the
 // spec's `breakdowns` enum does include CAMPAIGN_ID, but a broken-down account report returns
 // one row per campaign and so depends on report pagination for completeness, and this
 // repository has not verified that envelope's fields (see paginationEnvelope). A campaign
@@ -327,14 +327,7 @@ func (c *Client) listMonitorCampaigns(ctx context.Context, accountID string) ([]
 // An empty metrics array is real zero activity, exactly as GetCampaignMetrics treats it; a
 // missing or null metrics array is an error (decodeReportRows).
 func (c *Client) fetchMonitorCampaignReport(ctx context.Context, accountID, campaignID, startsAt, endsAt string) (impressions, clicks, spendMicros int64, err error) {
-	reqBody := map[string]any{
-		"data": map[string]any{
-			"starts_at": startsAt,
-			"ends_at":   endsAt,
-			"fields":    []string{"CAMPAIGN_ID", "IMPRESSIONS", "CLICKS", "SPEND"},
-			"filter":    "campaign:id==" + campaignID,
-		},
-	}
+	reqBody := campaignReportBody(campaignID, startsAt, endsAt)
 	var rows []reportRow
 	werr := c.walkPages(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/reports", reqBody, func(_ int, resp *apiResponse) error {
 		pageRows, derr := decodeReportRows(resp.Data)
