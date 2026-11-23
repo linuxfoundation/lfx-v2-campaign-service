@@ -1245,17 +1245,28 @@ The adapter cannot tell "the campaign served nothing" from "no such campaign in 
 account's scope", and the two shapes carry identically little information, so neither is
 rendered as a measured zero.
 
-A report Microsoft flags as partial is refused too. `ReturnOnlyCompleteData` is sent `false`
-so a window including today can build at all, which means the totals may be an under-count;
-Microsoft signals that in the CSV preamble rather than the HTTP status. The parser reads
-that flag and answers `ErrReportDataIncomplete` instead of returning the numbers, because
-`model.CampaignMetrics` has no field for "provisional" and a partial total is
-indistinguishable from a complete measurement of a smaller number.
+**Completeness (live, #167).** `ReturnOnlyCompleteData` depends on the window
+(`windowIsSettled`). A window that ended at least two days before today (in practice
+`last_month` from the 3rd) is requested with `true`, which returned "Potential Incomplete
+Data: false" live. If Microsoft still flags such a report, the parser answers
+`ErrReportDataIncomplete` instead of returning the numbers. Any other window is requested with
+`false`, because `true` on a window that includes today fails outright with
+`NoCompleteDataAvaliable` (2004). The live read showed that with `false`, Microsoft sets
+"Potential Incomplete Data: true" on every report, even a closed month, so that flag carries no
+information and is not refused. Those windows read as in progress, as Reddit, LinkedIn and
+Google already do.
+
+**File shape (live, #167).** The CSV opens with a UTF-8 byte-order mark in front of the first
+quoted header line. `downloadReportRecords` strips it; before that, `encoding/csv` refused every
+real report with `bare " in non-quoted-field`.
 
 Reads are gated behind `MICROSOFT_METRICS_ENABLED` (chart default `"false"`), mirroring
-`REDDIT_METRICS_ENABLED`: the v13 Reporting contract was implemented from published
-documentation and has not been exercised against a live Microsoft Advertising account, and a
-guessed read returning 200 looks authoritative to every consumer.
+`REDDIT_METRICS_ENABLED`. On 23 Nov 2026, `cmd/verify-metrics` ran in the dev cluster
+against the LF system account (138011001) for campaign 568362105. `last_30_days` read 20,569
+impressions, 953 clicks and $2,053.03 over 25 Oct–23 Nov. Fivetran's 24 Oct–22 Nov total, minus
+24 Oct, is 19,931 / 936 / $2,024.95; the rest is the partial 23 Nov. `last_month` read 34,887 /
+973 / $1,984.37. Still to confirm: the October total against Fivetran, and the report's
+"Time Zone" header, which says Eastern although `ReportTimeZone` asks for London.
 
 ## Connection-probe predicates (LFXV2-2665)
 

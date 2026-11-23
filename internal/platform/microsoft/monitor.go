@@ -374,7 +374,7 @@ func (c *Client) SubmitAccountCampaignReport(ctx context.Context, days int) (rep
 	scope := map[string]any{
 		"AccountIds": []string{c.account.AccountID},
 	}
-	id, err := c.submitReportDefinition(ctx, scope, start, end)
+	id, err := c.submitReportDefinition(ctx, scope, start, end, false)
 	if err != nil {
 		return "", time.Time{}, time.Time{}, err
 	}

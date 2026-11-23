@@ -191,7 +191,8 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	// ErrReportNotReady (a timing condition the caller can act on) rather than the caller's
 	// own `context deadline exceeded`.
 	deadline := c.now().Add(reportPollBudget)
-	reportID, err := c.submitReport(ctx, campaignID, start, end)
+	completeOnly := windowIsSettled(end, c.now())
+	reportID, err := c.submitReport(ctx, campaignID, start, end, completeOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +211,18 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	if downloadURL == "" {
 		return nil, ErrNoRowsInReport
 	}
-	return c.downloadReport(ctx, downloadURL, campaignID, window)
+	return c.downloadReport(ctx, downloadURL, campaignID, window, completeOnly)
+}
+
+// windowIsSettled reports whether a window ending on end (a UTC calendar date) is old enough for
+// Microsoft to have finished processing it in every account time zone. It asks for end at least
+// two days before today: a window ending yesterday in UTC can still be "today" for an account
+// behind UTC, and Microsoft answers a complete-data request for it with NoCompleteDataAvaliable
+// (2004). In practice only last_month qualifies, and only from the 3rd of the month.
+func windowIsSettled(end, now time.Time) bool {
+	n := now.UTC()
+	today := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, time.UTC)
+	return end.Before(today.AddDate(0, 0, -1))
 }
 
 // submitReport posts the CAMPAIGN-scoped report definition and returns the ReportRequestId.
@@ -221,7 +233,7 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 // settings whose reasoning is recorded there. What this function owns is the SCOPE — the one
 // thing the two reads must differ on — and the 2027 diagnostic that only a campaign-only scope
 // can provoke.
-func (c *Client) submitReport(ctx context.Context, campaignID string, start, end time.Time) (string, error) {
+func (c *Client) submitReport(ctx context.Context, campaignID string, start, end time.Time, completeOnly bool) (string, error) {
 	// Scope carries ONLY Campaigns. AccountThroughCampaignReportScope — the type of
 	// CampaignPerformanceReportRequest.Scope — documents, on both of its elements,
 	// that "the report scope includes a UNION of the AccountIds and Campaigns
@@ -269,7 +281,7 @@ func (c *Client) submitReport(ctx context.Context, campaignID string, start, end
 			},
 		},
 	}
-	reportID, err := c.submitReportDefinition(ctx, scope, start, end)
+	reportID, err := c.submitReportDefinition(ctx, scope, start, end, completeOnly)
 	if err != nil {
 		// If Microsoft rejects the campaign-only scope, say so in the error itself rather
 		// than leaving whoever first runs this against a live account to rediscover the
@@ -298,23 +310,26 @@ func (c *Client) submitReport(ctx context.Context, campaignID string, start, end
 }
 
 // submitReportDefinition posts a CampaignPerformanceReportRequest for scope over [start, end]
-// and returns the ReportRequestId. scope is the AccountThroughCampaignReportScope object; every
-// other setting is fixed here, with its reasoning, and shared by every caller.
-func (c *Client) submitReportDefinition(ctx context.Context, scope map[string]any, start, end time.Time) (string, error) {
+// and returns the ReportRequestId. scope is the AccountThroughCampaignReportScope object;
+// completeOnly sets ReturnOnlyCompleteData (see windowIsSettled). Every other setting is fixed
+// here, with its reasoning, and shared by every caller.
+func (c *Client) submitReportDefinition(ctx context.Context, scope map[string]any, start, end time.Time, completeOnly bool) (string, error) {
 	body := map[string]any{
 		"ReportRequest": map[string]any{
 			"Type":   "CampaignPerformanceReportRequest",
 			"Format": "Csv",
-			// false, deliberately. Microsoft fails a true request outright with
-			// NoCompleteDataAvaliable (2004) when the window is not fully processed, which
-			// would make every window including today unreadable. The cost is that the last
-			// day of the window may be an under-count, flagged in the report's header block
-			// rather than the HTTP status. foldReportRows reads that flag and refuses the
-			// report (see ErrReportDataIncomplete); without that check this setting would
-			// render a partial total as a complete measurement. The account monitor reads the
-			// same flag but REPORTS it (AccountReportResult.Partial) instead of refusing — see
-			// CheckAccountCampaignReport for why its window makes refusal unworkable.
-			"ReturnOnlyCompleteData": false,
+			// true only for a settled window (windowIsSettled), false otherwise. Live reads
+			// (#167) showed both halves of the trade:
+			//   - true on a window that includes today fails outright with
+			//     NoCompleteDataAvaliable (2004), so it can only be used once the window is
+			//     settled. On last_month it returned "Potential Incomplete Data: false".
+			//   - false returns "Potential Incomplete Data: true" on EVERY report, even a closed
+			//     month weeks old. With false the flag carries no information.
+			// So a settled window gets Microsoft's completeness guarantee, and a window that
+			// includes today is read as in progress, as Reddit, LinkedIn and Google already are.
+			// foldReportRows refuses a flagged report only when completeness was requested; the
+			// account monitor REPORTS the flag (AccountReportResult.Partial) instead.
+			"ReturnOnlyCompleteData": completeOnly,
 			"Aggregation":            "Summary",
 			// ConversionsQualified, NOT Conversions. Microsoft's CampaignPerformanceReportColumn
 			// reference marks the `Conversions` column "deprecated as of 2022", directs callers
@@ -488,12 +503,12 @@ func (c *Client) pollOnce(ctx context.Context, reportID string) (string, string,
 }
 
 // downloadReport fetches the ZIP, extracts its single CSV, and folds the rows into metrics.
-func (c *Client) downloadReport(ctx context.Context, downloadURL, campaignID string, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+func (c *Client) downloadReport(ctx context.Context, downloadURL, campaignID string, window model.MetricsWindow, completeOnly bool) (*model.CampaignMetrics, error) {
 	records, err := c.downloadReportRecords(ctx, downloadURL)
 	if err != nil {
 		return nil, err
 	}
-	return foldReportRows(records, campaignID, window)
+	return foldReportRows(records, campaignID, window, completeOnly)
 }
 
 // downloadReportRecords fetches the ZIP and returns its single CSV's parsed records, unfolded.
@@ -552,12 +567,12 @@ func (c *Client) downloadReportRecords(ctx context.Context, downloadURL string) 
 }
 
 // parseReportZip extracts the first CSV entry and totals its rows.
-func parseReportZip(data []byte, campaignID string, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+func parseReportZip(data []byte, campaignID string, window model.MetricsWindow, completeOnly bool) (*model.CampaignMetrics, error) {
 	records, err := readReportZipRecords(data)
 	if err != nil {
 		return nil, err
 	}
-	return foldReportRows(records, campaignID, window)
+	return foldReportRows(records, campaignID, window, completeOnly)
 }
 
 // readReportZipRecords extracts the first CSV entry and returns its parsed records. Every
@@ -602,6 +617,11 @@ func readReportZipRecords(data []byte) ([][]string, error) {
 	if len(decompressed) > reportDownloadCap {
 		return nil, fmt.Errorf("microsoft report csv exceeds %d bytes", reportDownloadCap)
 	}
+	// Microsoft's report writer opens the file with a UTF-8 byte-order mark (seen on a live read,
+	// #167). Left in place, it sits in front of the first record's opening quote, and
+	// encoding/csv refuses the whole file with `bare " in non-quoted-field`, so every report
+	// failed to parse. geo.go strips the same mark from its file's first heading.
+	decompressed = bytes.TrimPrefix(decompressed, []byte("\ufeff"))
 	cr := csv.NewReader(bytes.NewReader(decompressed))
 	// FieldsPerRecord = -1 permits a RAGGED file, which Microsoft's report writer always
 	// produces: the CSV opens with a two-column metadata preamble ("Report Name:", …), then
@@ -622,7 +642,7 @@ func readReportZipRecords(data []byte) ([][]string, error) {
 // Columns are resolved BY HEADER NAME rather than by position: Microsoft's report writer
 // emits the columns in its own order, and a positional read would silently swap Clicks and
 // Spend if that order ever changed — producing plausible numbers that are simply wrong.
-func foldReportRows(records [][]string, campaignID string, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+func foldReportRows(records [][]string, campaignID string, window model.MetricsWindow, completeOnly bool) (*model.CampaignMetrics, error) {
 	header, rows, preamble, err := reportHeaderAndRows(records)
 	if err != nil {
 		return nil, err
@@ -631,7 +651,10 @@ func foldReportRows(records [][]string, campaignID string, window model.MetricsW
 	// alone, whatever the rows happen to contain. Checking it after would let a report
 	// whose flagged data also happened to be malformed report the parse error instead,
 	// hiding the more important fact that the numbers were never complete.
-	if reportDataIsIncomplete(preamble) {
+	// Only a complete-data request can be held to the flag: with ReturnOnlyCompleteData=false
+	// Microsoft sets it on every report (see submitReportDefinition), so refusing on it then
+	// would refuse every read.
+	if completeOnly && reportDataIsIncomplete(preamble) {
 		return nil, ErrReportDataIncomplete
 	}
 	idx := map[string]int{}

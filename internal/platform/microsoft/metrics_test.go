@@ -277,7 +277,7 @@ func TestFoldReportRows_HeaderOnlyIsNotAZero(t *testing.T) {
 		{"CampaignId", "Impressions", "Clicks", "Spend"},
 		{"©2026 Microsoft Corporation. All rights reserved."},
 	}
-	got, err := foldReportRows(records, "1234567", model.MetricsWindowLast7Days)
+	got, err := foldReportRows(records, "1234567", model.MetricsWindowLast7Days, false)
 	if !errors.Is(err, ErrNoRowsInReport) {
 		t.Fatalf("want ErrNoRowsInReport, got err=%v metrics=%+v", err, got)
 	}
@@ -769,7 +769,7 @@ func TestDownloadReportErrorsOmitThePresignedURL(t *testing.T) {
 	const secret = "SECRETSIGNATUREVALUE"
 	u := "https://nonexistent.invalid.example/report.zip?skoid=ACCT&sig=" + secret
 
-	_, err := c.downloadReport(context.Background(), u, "1234567", model.MetricsWindowLast7Days)
+	_, err := c.downloadReport(context.Background(), u, "1234567", model.MetricsWindowLast7Days, false)
 	if err == nil {
 		t.Fatal("expected a transport error against an unroutable host")
 	}
@@ -794,7 +794,7 @@ func TestDownloadReportPreservesContextSentinels(t *testing.T) {
 	cancel()
 
 	_, err := c.downloadReport(ctx, "https://nonexistent.invalid.example/r.zip?sig=SECRET",
-		"1234567", model.MetricsWindowLast7Days)
+		"1234567", model.MetricsWindowLast7Days, false)
 	if err == nil {
 		t.Fatal("expected an error on a cancelled context")
 	}
@@ -834,7 +834,7 @@ func TestParseReportZip_OversizeCSVIsRefusedNotTruncated(t *testing.T) {
 		b.WriteString(row)
 	}
 
-	got, err := parseReportZip(buildReportZip(t, b.String()), "1234567", model.MetricsWindowLast7Days)
+	got, err := parseReportZip(buildReportZip(t, b.String()), "1234567", model.MetricsWindowLast7Days, false)
 	if err == nil {
 		t.Fatalf("expected an oversize error; got Impressions=%d from a CSV of %d rows — %d rows were silently dropped",
 			got.Impressions, totalRows, int64(totalRows)-got.Impressions)
@@ -866,7 +866,7 @@ func TestParseReportZip_AtCapIsAccepted(t *testing.T) {
 		t.Fatalf("test setup: csv is %d bytes, wanted exactly %d", b.Len(), reportDownloadCap)
 	}
 
-	got, err := parseReportZip(buildReportZip(t, b.String()), "1234567", model.MetricsWindowLast7Days)
+	got, err := parseReportZip(buildReportZip(t, b.String()), "1234567", model.MetricsWindowLast7Days, false)
 	if err != nil {
 		t.Fatalf("a CSV exactly at the cap must be accepted: %v", err)
 	}
@@ -973,7 +973,7 @@ func TestFoldReportRows_UnrecognisedTrailerWouldBreakEveryReport(t *testing.T) {
 				{"1234567", "10000", "250", "125.50"},
 				{marker + "2026 Microsoft Corporation. All rights reserved. "},
 			}
-			got, err := foldReportRows(records, "1234567", model.MetricsWindowLast7Days)
+			got, err := foldReportRows(records, "1234567", model.MetricsWindowLast7Days, false)
 			if err != nil {
 				t.Fatalf("marker %q: the trailer was read as data: %v", marker, err)
 			}
@@ -1018,7 +1018,7 @@ func TestFoldReportRows_TotalsAreOverflowChecked(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseReportZip(buildReportZip(t, tc.csv), "1", model.MetricsWindowToday)
+			got, err := parseReportZip(buildReportZip(t, tc.csv), "1", model.MetricsWindowToday, false)
 			if err == nil {
 				t.Fatalf("expected an overflow error; got impressions=%d clicks=%d cost=%d (a wrapped total renders as a measurement)",
 					got.Impressions, got.Clicks, got.CostMicros)
@@ -1033,7 +1033,7 @@ func TestFoldReportRows_TotalsAreOverflowChecked(t *testing.T) {
 // TestFoldReportRows_MultiRowTotalsStillSum guards the overflow checks against being written
 // so tightly they reject ordinary multi-row reports. The realistic CSV has two data rows.
 func TestFoldReportRows_MultiRowTotalsStillSum(t *testing.T) {
-	got, err := parseReportZip(buildReportZip(t, realisticCSV), "1234567", model.MetricsWindowToday)
+	got, err := parseReportZip(buildReportZip(t, realisticCSV), "1234567", model.MetricsWindowToday, false)
 	if err != nil {
 		t.Fatalf("parseReportZip: %v", err)
 	}
@@ -1065,24 +1065,77 @@ const incompleteDataCSV = `"Report Name: Campaign Performance Report"
 "@2026 Microsoft Corporation. All rights reserved. "
 `
 
-// TestGetCampaignMetrics_IncompleteDataIsRefusedNotReported proves a report Microsoft flags as
-// partial does not reach a consumer as a measurement.
-//
-// submitReport sends ReturnOnlyCompleteData=false — it must, because true fails outright with
-// NoCompleteDataAvaliable (2004) on any window including today. The cost is that the totals may
-// be an under-count, and Microsoft says so ONLY in the report's header block, never in the HTTP
-// status. A partial total is indistinguishable from a complete measurement of a smaller number,
-// so it is refused.
-func TestGetCampaignMetrics_IncompleteDataIsRefusedNotReported(t *testing.T) {
+// TestGetCampaignMetrics_InProgressWindowReadsDespiteTheFlag pins the live behaviour found in
+// #167: with ReturnOnlyCompleteData=false, Microsoft sets "Potential Incomplete Data: true" on
+// EVERY report, even a closed month, so the flag carries no information there. A window that
+// includes today is therefore requested with false and read as in progress, the way every
+// other platform's today is, rather than refused on every call.
+func TestGetCampaignMetrics_InProgressWindowReadsDespiteTheFlag(t *testing.T) {
 	m := newMSMetricsServer(t, buildReportZip(t, incompleteDataCSV), 0)
 	c := newMetricsClient(t, m)
 
 	got, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowLast7Days)
+	if err != nil {
+		t.Fatalf("an in-progress window must read despite the flag, got %v", err)
+	}
+	if got.Impressions != 15000 || got.Clicks != 350 {
+		t.Errorf("got %+v, want the report's 15000 impressions and 350 clicks", got)
+	}
+	req, _ := m.submitBody["ReportRequest"].(map[string]any)
+	if v, ok := req["ReturnOnlyCompleteData"].(bool); !ok || v {
+		t.Errorf("ReturnOnlyCompleteData = %v, want false for a window that includes today", req["ReturnOnlyCompleteData"])
+	}
+}
+
+// TestGetCampaignMetrics_SettledWindowAsksForCompleteDataAndHoldsTheFlag pins the other half: a
+// settled window (last_month, from the 3rd) is requested with ReturnOnlyCompleteData=true, which
+// returned "Potential Incomplete Data: false" live. If Microsoft still flags it, the report is
+// refused rather than surfaced as a complete measurement. The test clock is 14 Aug 2026.
+func TestGetCampaignMetrics_SettledWindowAsksForCompleteDataAndHoldsTheFlag(t *testing.T) {
+	m := newMSMetricsServer(t, buildReportZip(t, incompleteDataCSV), 0)
+	c := newMetricsClient(t, m)
+
+	got, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowLastMonth)
 	if !errors.Is(err, ErrReportDataIncomplete) {
-		t.Fatalf("want ErrReportDataIncomplete for a flagged report, got err=%v metrics=%+v", err, got)
+		t.Fatalf("want ErrReportDataIncomplete for a flagged complete-data report, got err=%v metrics=%+v", err, got)
 	}
 	if got != nil {
 		t.Errorf("an incomplete report must not render as metrics, got %+v", got)
+	}
+	req, _ := m.submitBody["ReportRequest"].(map[string]any)
+	if v, ok := req["ReturnOnlyCompleteData"].(bool); !ok || !v {
+		t.Errorf("ReturnOnlyCompleteData = %v, want true for last_month", req["ReturnOnlyCompleteData"])
+	}
+}
+
+func TestWindowIsSettled(t *testing.T) {
+	now := time.Date(2026, 11, 3, 0, 30, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		end  time.Time
+		want bool
+	}{
+		{time.Date(2026, 10, 31, 0, 0, 0, 0, time.UTC), true},
+		{time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), true},
+		// Yesterday in UTC can still be today in an account behind UTC.
+		{time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC), false},
+		{time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC), false},
+	} {
+		if got := windowIsSettled(tc.end, now); got != tc.want {
+			t.Errorf("windowIsSettled(%s) = %v, want %v", tc.end.Format(time.DateOnly), got, tc.want)
+		}
+	}
+}
+
+// TestParseReportZip_LeadingByteOrderMark pins the live file shape (#167): Microsoft's report
+// writer opens the CSV with a UTF-8 BOM in front of the first quoted header line, which
+// encoding/csv otherwise refuses with `bare " in non-quoted-field`.
+func TestParseReportZip_LeadingByteOrderMark(t *testing.T) {
+	got, err := parseReportZip(buildReportZip(t, "\ufeff"+realisticCSV), "1234567", model.MetricsWindowToday, false)
+	if err != nil {
+		t.Fatalf("a report opening with a BOM must parse, got %v", err)
+	}
+	if got.Impressions == 0 {
+		t.Errorf("got %+v, want realisticCSV's totals", got)
 	}
 }
 
@@ -1120,7 +1173,8 @@ func TestFoldReportRows_IncompleteDataFlagVariants(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			records := append(append([][]string{}, tc.preamble...), dataRows...)
-			got, err := foldReportRows(records, "1234567", model.MetricsWindowLast7Days)
+			// completeOnly: the flag is only held against a complete-data request.
+			got, err := foldReportRows(records, "1234567", model.MetricsWindowLast7Days, true)
 			if tc.refuse {
 				if !errors.Is(err, ErrReportDataIncomplete) {
 					t.Fatalf("want ErrReportDataIncomplete, got err=%v metrics=%+v", err, got)
@@ -1153,7 +1207,7 @@ func TestFoldReportRows_IncompleteFlagIsCheckedBeforeTheColumns(t *testing.T) {
 		{"CampaignId", "SomethingElse"},
 		{"1234567", "42"},
 	}
-	if _, err := foldReportRows(records, "1234567", model.MetricsWindowLast7Days); !errors.Is(err, ErrReportDataIncomplete) {
+	if _, err := foldReportRows(records, "1234567", model.MetricsWindowLast7Days, true); !errors.Is(err, ErrReportDataIncomplete) {
 		t.Fatalf("want ErrReportDataIncomplete ahead of the column guard, got %v", err)
 	}
 }
@@ -1202,7 +1256,7 @@ func TestFoldReportRows_TruncatedDataRowIsAnErrorNotASilentDrop(t *testing.T) {
 		{"1234567"}, // truncated: the metric columns are simply absent
 		{"©2026 Microsoft Corporation. All rights reserved."},
 	}
-	got, err := foldReportRows(records, "1234567", model.MetricsWindowLast30Days)
+	got, err := foldReportRows(records, "1234567", model.MetricsWindowLast30Days, false)
 	if err == nil {
 		t.Fatalf("truncated data row was accepted silently; metrics = %+v — its numbers "+
 			"vanished into a total that still looks clean", got)
@@ -1279,7 +1333,7 @@ func TestFoldReportRows_IncompleteFlagIsScopedToThePreamble(t *testing.T) {
 		// this row must fold normally rather than refuse the report.
 		{"Potential Incomplete Data: true", "10000", "250", "125.50"},
 	}
-	got, err := foldReportRows(records, "1234567", model.MetricsWindowLast7Days)
+	got, err := foldReportRows(records, "1234567", model.MetricsWindowLast7Days, false)
 	if errors.Is(err, ErrReportDataIncomplete) {
 		t.Fatal("a data row must not be read as the header-block incomplete-data flag")
 	}
@@ -1657,7 +1711,7 @@ func TestFoldReportRows_ConversionsStatus(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := foldReportRows(tc.records, "1234567", model.MetricsWindowToday)
+			got, err := foldReportRows(tc.records, "1234567", model.MetricsWindowToday, false)
 			if err != nil {
 				t.Fatalf("foldReportRows: %v", err)
 			}
