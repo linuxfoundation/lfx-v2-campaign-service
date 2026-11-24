@@ -78,7 +78,7 @@ var MetaTargetingOptions = Type("meta-targeting-options", func() {
 		Enum(metaTargetingSearchKinds...)
 		Example("interest")
 	})
-	Attribute("options", ArrayOf(MetaTargetingOption), "The matches, de-duplicated by id: Meta's relevance order for interest and work_position, Meta's listing order for behavior. At most 50. Empty when nothing matches.")
+	Attribute("options", ArrayOf(MetaTargetingOption), "The matches, de-duplicated by id (for location, by location_type and id, since a region and a city may share a key): Meta's relevance order for interest and work_position, Meta's listing order for behavior. At most 50. Empty when nothing matches.")
 	Attribute("option_count", Int, "How many options are in `options`", func() { Example(1) })
 	Required("type", "options", "option_count")
 })

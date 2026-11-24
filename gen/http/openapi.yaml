@@ -23495,7 +23495,7 @@ definitions:
                 type: array
                 items:
                     $ref: '#/definitions/MetaTargetingOption'
-                description: 'The matches, de-duplicated by id: Meta''s relevance order for interest and work_position, Meta''s listing order for behavior. At most 50. Empty when nothing matches.'
+                description: 'The matches, de-duplicated by id (for location, by location_type and id, since a region and a city may share a key): Meta''s relevance order for interest and work_position, Meta''s listing order for behavior. At most 50. Empty when nothing matches.'
                 example:
                     - audience_size_lower_bound: 1200000
                       audience_size_upper_bound: 1400000

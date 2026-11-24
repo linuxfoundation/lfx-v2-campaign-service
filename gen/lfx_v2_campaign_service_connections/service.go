@@ -2901,9 +2901,10 @@ type MetaTargetingOption struct {
 type MetaTargetingOptions struct {
 	// The type searched, as requested
 	Type string
-	// The matches, de-duplicated by id: Meta's relevance order for interest and
-	// work_position, Meta's listing order for behavior. At most 50. Empty when
-	// nothing matches.
+	// The matches, de-duplicated by id (for location, by location_type and id,
+	// since a region and a city may share a key): Meta's relevance order for
+	// interest and work_position, Meta's listing order for behavior. At most 50.
+	// Empty when nothing matches.
 	Options []*MetaTargetingOption
 	// How many options are in `options`
 	OptionCount int

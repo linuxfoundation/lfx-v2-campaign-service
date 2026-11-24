@@ -911,9 +911,10 @@ type ListMetaCustomAudiencesResponseBody struct {
 type SearchMetaTargetingOptionsResponseBody struct {
 	// The type searched, as requested
 	Type string `form:"type" json:"type" xml:"type"`
-	// The matches, de-duplicated by id: Meta's relevance order for interest and
-	// work_position, Meta's listing order for behavior. At most 50. Empty when
-	// nothing matches.
+	// The matches, de-duplicated by id (for location, by location_type and id,
+	// since a region and a city may share a key): Meta's relevance order for
+	// interest and work_position, Meta's listing order for behavior. At most 50.
+	// Empty when nothing matches.
 	Options []*MetaTargetingOptionResponseBody `form:"options" json:"options" xml:"options"`
 	// How many options are in `options`
 	OptionCount int `form:"option_count" json:"option_count" xml:"option_count"`
