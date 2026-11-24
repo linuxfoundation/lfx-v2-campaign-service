@@ -10,14 +10,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 )
 
-// Targeting search (#550, gap 7 picker read): look up Meta's detailed-targeting taxonomy by name, so
-// a picker can offer the ids metaConfig.targeting.interests, behaviors and workPositions take
-// without the operator pasting them. One request each, Targeting Search reference:
+// Targeting search (#550, gap 7 picker read): look up Meta's targeting taxonomy by name, so a picker
+// can offer the ids and keys metaConfig.targeting.interests, behaviors, workPositions, locales,
+// regions and cities take without the operator pasting them. One request each, Targeting Search reference:
 //
 //	interest:      GET /search?type=adinterest&q=<text>&limit=<n>
 //	behavior:      GET /search?type=adTargetingCategory&class=behaviors   ("Parameter q ignored": a
@@ -233,10 +234,15 @@ func (c *Client) searchTargeting(ctx context.Context, kind, q string) (_ []Targe
 			dropped++
 			continue
 		}
-		if seen[id] {
+		// Regions and cities are separate key spaces in create, so a location is de-duplicated by type and key.
+		seenKey := id
+		if kind == TargetingSearchLocation {
+			seenKey = row.Type + "\x00" + id
+		}
+		if seen[seenKey] {
 			continue
 		}
-		seen[id] = true
+		seen[seenKey] = true
 		opt := TargetingOption{ID: id, Name: name, Path: row.Path, Description: strings.TrimSpace(row.Description),
 			AudienceLower: nonNegative(row.AudienceLower), AudienceUpper: nonNegative(row.AudienceUpper), Coverage: nonNegative(row.Coverage)}
 		if opt.Description == "" {
@@ -262,7 +268,9 @@ func targetingRowUsable(kind, id, name, rowType string) bool {
 	}
 	switch kind {
 	case TargetingSearchLocale:
-		return canonicalCampaignIDRe.MatchString(id)
+		// locales is an []int in create, so a key too long for one is not offered.
+		_, err := strconv.ParseInt(id, 10, 64)
+		return canonicalCampaignIDRe.MatchString(id) && err == nil
 	case TargetingSearchLocation:
 		return canonicalCampaignIDRe.MatchString(id) && (rowType == TargetingLocationRegion || rowType == TargetingLocationCity)
 	case TargetingSearchBehavior:

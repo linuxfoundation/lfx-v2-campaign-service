@@ -14,7 +14,9 @@ search (`search-meta-targeting-options`) now serves two more kinds:
   optional and absent for the other kinds.
 
 Meta answers both types with `key`, not `id`, so the parser reads `key` for them and keeps a row only
-when the key is what create takes (a positive whole number with no leading zero). Everything else
+when the key is what create takes (a positive whole number with no leading zero, and for a locale one
+that fits create's integer). Locations are de-duplicated by type and key, since regions and cities are
+separate key spaces in create. Everything else
 is unchanged: the same route, `META_TARGETING_SEARCH_ENABLED` flag, `campaign_manager` gateway rule,
 LF system credential fallback, one-hour cache by kind and folded query, send-once throttle handling,
 and a query that is never logged or echoed. No create-side change. A city radius and zip codes stay

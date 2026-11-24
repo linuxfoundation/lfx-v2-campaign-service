@@ -100,18 +100,21 @@ func TestSearchTargeting_KeyedKinds(t *testing.T) {
 			{"key":"1001","name":"English (All)"},
 			{"key":0,"name":"Zero key"},
 			{"key":"024","name":"Leading zero"},
+			{"key":"99999999999999999999","name":"Too long for an int"},
 			{"id":"6003","name":"An id, no key"},
 			{"key":6,"name":"English (US) again"}]}`,
-			[]TargetingOption{{ID: "6", Name: "English (US)"}, {ID: "1001", Name: "English (All)"}}, 3},
+			[]TargetingOption{{ID: "6", Name: "English (US)"}, {ID: "1001", Name: "English (All)"}}, 4},
 		{"location", TargetingSearchLocation, `{"data":[
 			{"key":"2490299","name":"Austin","type":"city","country_code":"US","country_name":"United States","region":"Texas","region_id":3886},
 			{"key":"3886","name":"Texas","type":"region","country_code":"US","country_name":"United States"},
+			{"key":"2490299","name":"Region sharing a city's key","type":"region","country_code":"US"},
 			{"key":"US","name":"United States","type":"country","country_code":"US"},
 			{"key":"US:78701","name":"78701","type":"zip","country_code":"US"},
 			{"key":"2490299","name":"Austin","type":"","country_code":"US"}]}`,
 			[]TargetingOption{
 				{ID: "2490299", Name: "Austin", LocationType: "city", CountryCode: "US", Region: "Texas"},
 				{ID: "3886", Name: "Texas", LocationType: "region", CountryCode: "US"},
+				{ID: "2490299", Name: "Region sharing a city's key", LocationType: "region", CountryCode: "US"},
 			}, 3},
 	} {
 		srv, _, _ := searchServer(t, http.StatusOK, tc.body)

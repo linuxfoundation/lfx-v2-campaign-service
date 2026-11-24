@@ -1328,7 +1328,8 @@ caching caller), `locale` → `GET /search?type=adlocale&q=&limit=50` (the keys 
 `location` → `GET /search?type=adgeolocation&q=&location_types=["region","city"]&limit=50` (the keys
 `regions` and `cities` take). Locale and location rows carry their identifier in `key`, not `id`, and
 are kept only when that key is canonical (`canonicalCampaignIDRe`: no 0, no leading zero, as create
-requires) and, for a location, only when its `type` is `region` or `city`; a location option also
+requires; a locale key must also fit an int64) and, for a location, only when its `type` is `region`
+or `city`, de-duplicated by type and key; a location option also
 carries `LocationType`, `CountryCode` and `Region` for the picker's label. `NormalizeTargetingQuery` (2–100 characters after trimming, valid UTF-8, no control
 characters) is shared with the service layer. Rows keep a numeric id (`graphID`: string or number)
 and a non-blank name, drop a behavior row of another `type`, de-duplicate by id, read a negative size
