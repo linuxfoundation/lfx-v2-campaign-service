@@ -38,7 +38,7 @@ var MetaCustomAudiences = Type("meta-custom-audiences", func() {
 
 // metaTargetingSearchKinds are the kinds search-meta-targeting-options serves. Mirrors
 // meta.TargetingSearchKinds, which a service test pins.
-var metaTargetingSearchKinds = []any{"interest", "behavior", "work_position"}
+var metaTargetingSearchKinds = []any{"interest", "behavior", "work_position", "locale", "location"}
 
 // metaTargetingQueryMin and metaTargetingQueryMax mirror meta.MinTargetingQueryLen and
 // meta.MaxTargetingQueryLen. Goa applies both to the raw parameter; the service applies them again
@@ -54,7 +54,7 @@ const metaTargetingQueryPattern = `^\P{Cc}*[^\s\p{Cc}]\P{Cc}*$`
 
 // MetaTargetingOption is one option of the targeting search.
 var MetaTargetingOption = Type("meta-targeting-option", func() {
-	Attribute("id", String, "The option id, exactly what metaConfig.targeting.interests, behaviors or workPositions (per the type searched) takes", func() {
+	Attribute("id", String, "The option id, exactly what metaConfig.targeting.interests, behaviors, workPositions, regions or cities (per the type searched) takes; for locale, the key in decimal, which metaConfig.targeting.locales takes as an integer", func() {
 		Example("6003107902433")
 	})
 	Attribute("name", String, "Meta's display name for the option. Not an identifier.", func() { Example("Kubernetes") })
@@ -63,6 +63,12 @@ var MetaTargetingOption = Type("meta-targeting-option", func() {
 	Attribute("audience_size_lower_bound", Int64, "Meta's estimated audience size, lower bound (interests and behaviors). Absent when Meta reported none.", func() { Example(1200000) })
 	Attribute("audience_size_upper_bound", Int64, "Meta's estimated audience size, upper bound (interests and behaviors). Absent when Meta reported none.", func() { Example(1400000) })
 	Attribute("coverage", Int64, "Meta's estimated audience size (work positions). Absent when Meta reported none.", func() { Example(56000) })
+	Attribute("location_type", String, "Location answers only: region (metaConfig.targeting.regions) or city (metaConfig.targeting.cities)", func() {
+		Enum("region", "city")
+		Example("city")
+	})
+	Attribute("country_code", String, "Location answers only: the ISO country the region or city is in. Absent when Meta sent none.", func() { Example("US") })
+	Attribute("region", String, "Location answers only: a city's region name, for its label. Absent when Meta sent none.", func() { Example("Texas") })
 	Required("id", "name")
 })
 
@@ -141,10 +147,13 @@ func metaAdsLookupMethods() {
 	})
 
 	Method("search-meta-targeting-options", func() {
-		Description("Search Meta's detailed-targeting taxonomy by name, live from Meta's Targeting Search " +
+		Description("Search Meta's targeting taxonomy by name, live from Meta's Targeting Search " +
 			"(GET /search: type=adinterest for interest, type=adTargetingCategory&class=behaviors for behavior, " +
-			"type=adworkposition for work_position), for picking metaConfig.targeting.interests, behaviors and " +
-			"workPositions by name instead of by id (#550). Meta serves behaviors as one browse of the whole " +
+			"type=adworkposition for work_position, type=adlocale for locale, type=adgeolocation with " +
+			"location_types region and city for location), for picking metaConfig.targeting.interests, behaviors, " +
+			"workPositions, locales, regions and cities by name instead of by key (#550). A location search keeps " +
+			"regions and cities only (countries go in geoTargets as ISO codes) and says which each one is in " +
+			"location_type. Meta serves behaviors as one browse of the whole " +
 			"class, so a behavior search keeps the options whose name contains the query, ignoring case. The answer " +
 			"is Meta's own taxonomy, the same for every token, and names nothing any ad account holds, so it is gated " +
 			"on campaign_manager of {project_id} like every other project read, and a project with no Meta connection " +
@@ -156,13 +165,13 @@ func metaAdsLookupMethods() {
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
-			Attribute("type", String, "What to search: interest (metaConfig.targeting.interests), behavior (behaviors) or work_position (workPositions).", func() {
+			Attribute("type", String, "What to search: interest (metaConfig.targeting.interests), behavior (behaviors), work_position (workPositions), locale (locales) or location (regions and cities).", func() {
 				Enum(metaTargetingSearchKinds...)
 				Example("interest")
 			})
 			Attribute("query", String, "Text to match against option names: 2 to 100 characters, no control "+
 				"characters. The limits apply to the value as sent, and surrounding space is then trimmed, so the "+
-				"trimmed text must still be at least 2 characters. Every distinct interest or work_position query "+
+				"trimmed text must still be at least 2 characters. Every distinct interest, work_position, locale or location query "+
 				"is a Meta call on a shared rate limit (only a repeated identical search is served from cache), so "+
 				"callers should debounce keystrokes rather than search on each one.", func() {
 				MinLength(metaTargetingQueryMin)

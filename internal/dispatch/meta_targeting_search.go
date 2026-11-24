@@ -89,7 +89,8 @@ func finishMetaTargeting(kind string, rows []meta.TargetingOption, query string)
 	out := make([]model.MetaTargetingOption, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, model.MetaTargetingOption{ID: r.ID, Name: r.Name, Path: slices.Clone(r.Path), Description: r.Description,
-			AudienceLower: r.AudienceLower, AudienceUpper: r.AudienceUpper, Coverage: r.Coverage})
+			AudienceLower: r.AudienceLower, AudienceUpper: r.AudienceUpper, Coverage: r.Coverage,
+			LocationType: r.LocationType, CountryCode: r.CountryCode, Region: r.Region})
 	}
 	return out
 }

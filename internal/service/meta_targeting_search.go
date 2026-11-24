@@ -72,8 +72,8 @@ var metaAdsTargetingSearch = accountDiscovery{
 	operation: "targeting search",
 }
 
-// SearchMetaTargetingOptions searches Meta's detailed-targeting taxonomy by name for the
-// metaConfig.targeting interests, behaviors and workPositions pickers (#550).
+// SearchMetaTargetingOptions searches Meta's targeting taxonomy by name for the metaConfig.targeting
+// interests, behaviors, workPositions, locales, regions and cities pickers (#550).
 //
 // Gated on campaign_manager (the project-api gateway rule), NOT global_marketing_ops like the
 // custom-audience picker: that one lists resources ON the shared LF Meta ad account, so it names
@@ -117,6 +117,7 @@ func (s *ConnectionService) SearchMetaTargetingOptions(ctx context.Context, p *c
 		o := &conn.MetaTargetingOption{
 			ID: r.ID, Name: r.Name, Description: optionalString(r.Description),
 			AudienceSizeLowerBound: r.AudienceLower, AudienceSizeUpperBound: r.AudienceUpper, Coverage: r.Coverage,
+			LocationType: optionalString(r.LocationType), CountryCode: optionalString(r.CountryCode), Region: optionalString(r.Region),
 		}
 		if len(r.Path) > 0 {
 			o.Path = slices.Clone(r.Path)

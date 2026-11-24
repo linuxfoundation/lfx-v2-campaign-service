@@ -7773,8 +7773,8 @@ func DecodeSearchMetaTargetingOptionsRequest(mux goahttp.Muxer, decoder func(*ht
 		if type_ == "" {
 			err = goa.MergeErrors(err, goa.MissingFieldError("type", "query string"))
 		}
-		if !(type_ == "interest" || type_ == "behavior" || type_ == "work_position") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("type", type_, []any{"interest", "behavior", "work_position"}))
+		if !(type_ == "interest" || type_ == "behavior" || type_ == "work_position" || type_ == "locale" || type_ == "location") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("type", type_, []any{"interest", "behavior", "work_position", "locale", "location"}))
 		}
 		query = qp.Get("query")
 		if query == "" {
@@ -14322,6 +14322,9 @@ func marshalLfxv2campaignserviceconnectionsMetaTargetingOptionToMetaTargetingOpt
 		AudienceSizeLowerBound: v.AudienceSizeLowerBound,
 		AudienceSizeUpperBound: v.AudienceSizeUpperBound,
 		Coverage:               v.Coverage,
+		LocationType:           v.LocationType,
+		CountryCode:            v.CountryCode,
+		Region:                 v.Region,
 	}
 	if v.Path != nil {
 		res.Path = make([]string, len(v.Path))

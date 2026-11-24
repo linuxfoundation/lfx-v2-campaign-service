@@ -2008,8 +2008,8 @@ func BuildSearchMetaTargetingOptionsPayload(lfxV2CampaignServiceConnectionsSearc
 			return nil, fmt.Errorf("missing required flag --type")
 		}
 		type_ = *lfxV2CampaignServiceConnectionsSearchMetaTargetingOptionsType
-		if !(type_ == "interest" || type_ == "behavior" || type_ == "work_position") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("type", type_, []any{"interest", "behavior", "work_position"}))
+		if !(type_ == "interest" || type_ == "behavior" || type_ == "work_position" || type_ == "locale" || type_ == "location") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("type", type_, []any{"interest", "behavior", "work_position", "locale", "location"}))
 		}
 		if err != nil {
 			return nil, err

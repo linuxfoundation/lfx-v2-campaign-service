@@ -7603,8 +7603,9 @@ type MetaCustomAudienceResponseBody struct {
 // MetaTargetingOptionResponseBody is used to define fields on response body
 // types.
 type MetaTargetingOptionResponseBody struct {
-	// The option id, exactly what metaConfig.targeting.interests, behaviors or
-	// workPositions (per the type searched) takes
+	// The option id, exactly what metaConfig.targeting.interests, behaviors,
+	// workPositions, regions or cities (per the type searched) takes; for locale,
+	// the key in decimal, which metaConfig.targeting.locales takes as an integer
 	ID string `form:"id" json:"id" xml:"id"`
 	// Meta's display name for the option. Not an identifier.
 	Name string `form:"name" json:"name" xml:"name"`
@@ -7623,6 +7624,15 @@ type MetaTargetingOptionResponseBody struct {
 	// Meta's estimated audience size (work positions). Absent when Meta reported
 	// none.
 	Coverage *int64 `form:"coverage,omitempty" json:"coverage,omitempty" xml:"coverage,omitempty"`
+	// Location answers only: region (metaConfig.targeting.regions) or city
+	// (metaConfig.targeting.cities)
+	LocationType *string `form:"location_type,omitempty" json:"location_type,omitempty" xml:"location_type,omitempty"`
+	// Location answers only: the ISO country the region or city is in. Absent when
+	// Meta sent none.
+	CountryCode *string `form:"country_code,omitempty" json:"country_code,omitempty" xml:"country_code,omitempty"`
+	// Location answers only: a city's region name, for its label. Absent when Meta
+	// sent none.
+	Region *string `form:"region,omitempty" json:"region,omitempty" xml:"region,omitempty"`
 }
 
 // MetaLeadFormResponseBody is used to define fields on response body types.
