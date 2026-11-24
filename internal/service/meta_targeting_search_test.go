@@ -43,6 +43,7 @@ func TestSearchMetaTargetingOptions_MapsEveryField(t *testing.T) {
 	d := &mockMetaSearchDispatcher{rows: []model.MetaTargetingOption{
 		{ID: "6003", Name: "Kubernetes", Path: []string{"Interests", "Tech"}, Description: "Container orchestration", AudienceLower: i64p(10), AudienceUpper: i64p(20)},
 		{ID: "1057", Name: "Engineer", Coverage: i64p(56000)},
+		{ID: "2490299", Name: "Austin", LocationType: "city", CountryCode: "US", Region: "Texas"},
 	}}
 	start := time.Now()
 	res, err := metaLookupService(d).SearchMetaTargetingOptions(context.Background(), &conn.SearchMetaTargetingOptionsPayload{ProjectID: "cncf", Type: "interest", Query: "  kube "})
@@ -56,8 +57,9 @@ func TestSearchMetaTargetingOptions_MapsEveryField(t *testing.T) {
 		t.Errorf("deadline = %v, want about %v from now", d.deadline, metaTargetingSearchCallTimeout)
 	}
 	b, _ := json.Marshal(res)
-	const want = `{"Type":"interest","Options":[{"ID":"6003","Name":"Kubernetes","Path":["Interests","Tech"],"Description":"Container orchestration","AudienceSizeLowerBound":10,"AudienceSizeUpperBound":20,"Coverage":null},` +
-		`{"ID":"1057","Name":"Engineer","Path":null,"Description":null,"AudienceSizeLowerBound":null,"AudienceSizeUpperBound":null,"Coverage":56000}],"OptionCount":2}`
+	const want = `{"Type":"interest","Options":[{"ID":"6003","Name":"Kubernetes","Path":["Interests","Tech"],"Description":"Container orchestration","AudienceSizeLowerBound":10,"AudienceSizeUpperBound":20,"Coverage":null,"LocationType":null,"CountryCode":null,"Region":null},` +
+		`{"ID":"1057","Name":"Engineer","Path":null,"Description":null,"AudienceSizeLowerBound":null,"AudienceSizeUpperBound":null,"Coverage":56000,"LocationType":null,"CountryCode":null,"Region":null},` +
+		`{"ID":"2490299","Name":"Austin","Path":null,"Description":null,"AudienceSizeLowerBound":null,"AudienceSizeUpperBound":null,"Coverage":null,"LocationType":"city","CountryCode":"US","Region":"Texas"}],"OptionCount":3}`
 	if string(b) != want {
 		t.Errorf("res = %s\nwant  %s", b, want)
 	}

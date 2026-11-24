@@ -243,16 +243,20 @@ type Service interface {
 	// {project_id} (the LF marketing team), not campaign_manager, which also
 	// admits a foundation's executive director. A pure read: nothing is persisted.
 	ListMetaCustomAudiences(context.Context, *ListMetaCustomAudiencesPayload) (res *MetaCustomAudiences, err error)
-	// Search Meta's detailed-targeting taxonomy by name, live from Meta's
-	// Targeting Search (GET /search: type=adinterest for interest,
+	// Search Meta's targeting taxonomy by name, live from Meta's Targeting Search
+	// (GET /search: type=adinterest for interest,
 	// type=adTargetingCategory&class=behaviors for behavior, type=adworkposition
-	// for work_position), for picking metaConfig.targeting.interests, behaviors
-	// and workPositions by name instead of by id (#550). Meta serves behaviors as
-	// one browse of the whole class, so a behavior search keeps the options whose
-	// name contains the query, ignoring case. The answer is Meta's own taxonomy,
-	// the same for every token, and names nothing any ad account holds, so it is
-	// gated on campaign_manager of {project_id} like every other project read, and
-	// a project with no Meta connection of its own reads through the shared LF
+	// for work_position, type=adlocale for locale, type=adgeolocation with
+	// location_types region and city for location), for picking
+	// metaConfig.targeting.interests, behaviors, workPositions, locales, regions
+	// and cities by name instead of by key (#550). A location search keeps regions
+	// and cities only (countries go in geoTargets as ISO codes) and says which
+	// each one is in location_type. Meta serves behaviors as one browse of the
+	// whole class, so a behavior search keeps the options whose name contains the
+	// query, ignoring case. The answer is Meta's own taxonomy, the same for every
+	// token, and names nothing any ad account holds, so it is gated on
+	// campaign_manager of {project_id} like every other project read, and a
+	// project with no Meta connection of its own reads through the shared LF
 	// system credential, as a create would. No ad account need be selected.
 	// Answers are cached for up to an hour by type and query (behaviors by type),
 	// which serves a repeated identical search, not a new prefix. A throttle from
@@ -2859,8 +2863,9 @@ type MetaLeadForms struct {
 }
 
 type MetaTargetingOption struct {
-	// The option id, exactly what metaConfig.targeting.interests, behaviors or
-	// workPositions (per the type searched) takes
+	// The option id, exactly what metaConfig.targeting.interests, behaviors,
+	// workPositions, regions or cities (per the type searched) takes; for locale,
+	// the key in decimal, which metaConfig.targeting.locales takes as an integer
 	ID string
 	// Meta's display name for the option. Not an identifier.
 	Name string
@@ -2879,6 +2884,15 @@ type MetaTargetingOption struct {
 	// Meta's estimated audience size (work positions). Absent when Meta reported
 	// none.
 	Coverage *int64
+	// Location answers only: region (metaConfig.targeting.regions) or city
+	// (metaConfig.targeting.cities)
+	LocationType *string
+	// Location answers only: the ISO country the region or city is in. Absent when
+	// Meta sent none.
+	CountryCode *string
+	// Location answers only: a city's region name, for its label. Absent when Meta
+	// sent none.
+	Region *string
 }
 
 // MetaTargetingOptions is the result type of the
@@ -2887,9 +2901,10 @@ type MetaTargetingOption struct {
 type MetaTargetingOptions struct {
 	// The type searched, as requested
 	Type string
-	// The matches, de-duplicated by id: Meta's relevance order for interest and
-	// work_position, Meta's listing order for behavior. At most 50. Empty when
-	// nothing matches.
+	// The matches, de-duplicated by id (for location, by location_type and id,
+	// since a region and a city may share a key): Meta's relevance order for
+	// interest and work_position, Meta's listing order for behavior. At most 50.
+	// Empty when nothing matches.
 	Options []*MetaTargetingOption
 	// How many options are in `options`
 	OptionCount int
@@ -3561,14 +3576,15 @@ type SearchMetaTargetingOptionsPayload struct {
 	// Project UUID or slug that scopes the connection
 	ProjectID string
 	// What to search: interest (metaConfig.targeting.interests), behavior
-	// (behaviors) or work_position (workPositions).
+	// (behaviors), work_position (workPositions), locale (locales) or location
+	// (regions and cities).
 	Type string
 	// Text to match against option names: 2 to 100 characters, no control
 	// characters. The limits apply to the value as sent, and surrounding space is
 	// then trimmed, so the trimmed text must still be at least 2 characters. Every
-	// distinct interest or work_position query is a Meta call on a shared rate
-	// limit (only a repeated identical search is served from cache), so callers
-	// should debounce keystrokes rather than search on each one.
+	// distinct interest, work_position, locale or location query is a Meta call on
+	// a shared rate limit (only a repeated identical search is served from cache),
+	// so callers should debounce keystrokes rather than search on each one.
 	Query string
 }
 

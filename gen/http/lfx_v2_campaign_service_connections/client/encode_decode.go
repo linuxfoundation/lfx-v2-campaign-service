@@ -19223,6 +19223,9 @@ func unmarshalMetaTargetingOptionResponseBodyToLfxv2campaignserviceconnectionsMe
 		AudienceSizeLowerBound: v.AudienceSizeLowerBound,
 		AudienceSizeUpperBound: v.AudienceSizeUpperBound,
 		Coverage:               v.Coverage,
+		LocationType:           v.LocationType,
+		CountryCode:            v.CountryCode,
+		Region:                 v.Region,
 	}
 	if v.Path != nil {
 		res.Path = make([]string, len(v.Path))

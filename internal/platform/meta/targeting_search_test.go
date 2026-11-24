@@ -31,8 +31,9 @@ func searchServer(t *testing.T, status int, body string) (*httptest.Server, *ato
 	return srv, &last, &count
 }
 
-// TestSearchTargeting_RequestShapes: each kind sends Meta's documented search: adinterest and
-// adworkposition with q and a limit, behaviors as the adTargetingCategory browse without q.
+// TestSearchTargeting_RequestShapes: each kind sends Meta's documented search: adinterest,
+// adworkposition and adlocale with q and a limit, adgeolocation with q, a limit and the region and
+// city location types, behaviors as the adTargetingCategory browse without q.
 func TestSearchTargeting_RequestShapes(t *testing.T) {
 	for _, tc := range []struct {
 		kind string
@@ -41,6 +42,8 @@ func TestSearchTargeting_RequestShapes(t *testing.T) {
 		{TargetingSearchInterest, url.Values{"type": {"adinterest"}, "q": {"cloud native"}, "limit": {"50"}}},
 		{TargetingSearchWorkPosition, url.Values{"type": {"adworkposition"}, "q": {"cloud native"}, "limit": {"50"}}},
 		{TargetingSearchBehavior, url.Values{"type": {"adTargetingCategory"}, "class": {"behaviors"}}},
+		{TargetingSearchLocale, url.Values{"type": {"adlocale"}, "q": {"cloud native"}, "limit": {"50"}}},
+		{TargetingSearchLocation, url.Values{"type": {"adgeolocation"}, "q": {"cloud native"}, "limit": {"50"}, "location_types": {`["region","city"]`}}},
 	} {
 		srv, last, _ := searchServer(t, http.StatusOK, `{"data":[]}`)
 		rows, _, err := biddingClient(srv.URL, 100).SearchTargeting(context.Background(), tc.kind, "  cloud native ")
@@ -78,6 +81,48 @@ func TestSearchTargeting_ParsesRows(t *testing.T) {
 	}
 	if !reflect.DeepEqual(rows, want) || dropped != 3 {
 		t.Errorf("rows = %+v dropped %d, want %+v dropped 3", rows, dropped, want)
+	}
+}
+
+// TestSearchTargeting_KeyedKinds: a locale or location row is read by its key (a number or a
+// string), kept only when the key is canonical (create refuses 0 and a leading zero) and, for a
+// location, only when it is a region or a city; a location row carries its type, country and region.
+func TestSearchTargeting_KeyedKinds(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		kind    string
+		body    string
+		want    []TargetingOption
+		dropped int
+	}{
+		{"locale", TargetingSearchLocale, `{"data":[
+			{"key":6,"name":"English (US)"},
+			{"key":"1001","name":"English (All)"},
+			{"key":0,"name":"Zero key"},
+			{"key":"024","name":"Leading zero"},
+			{"key":"99999999999999999999","name":"Too long for an int"},
+			{"id":"6003","name":"An id, no key"},
+			{"key":6,"name":"English (US) again"}]}`,
+			[]TargetingOption{{ID: "6", Name: "English (US)"}, {ID: "1001", Name: "English (All)"}}, 4},
+		{"location", TargetingSearchLocation, `{"data":[
+			{"key":"2490299","name":"Austin","type":"city","country_code":"US","country_name":"United States","region":"Texas","region_id":3886},
+			{"key":"3886","name":"Texas","type":"region","country_code":"US","country_name":"United States"},
+			{"key":"2490299","name":"Region sharing a city's key","type":"region","country_code":"US"},
+			{"key":"US","name":"United States","type":"country","country_code":"US"},
+			{"key":"US:78701","name":"78701","type":"zip","country_code":"US"},
+			{"key":"2490299","name":"Austin","type":"","country_code":"US"}]}`,
+			[]TargetingOption{
+				{ID: "2490299", Name: "Austin", LocationType: "city", CountryCode: "US", Region: "Texas"},
+				{ID: "3886", Name: "Texas", LocationType: "region", CountryCode: "US"},
+				{ID: "2490299", Name: "Region sharing a city's key", LocationType: "region", CountryCode: "US"},
+			}, 3},
+	} {
+		srv, _, _ := searchServer(t, http.StatusOK, tc.body)
+		rows, dropped, err := biddingClient(srv.URL, 100).SearchTargeting(context.Background(), tc.kind, "en")
+		srv.Close()
+		if err != nil || !reflect.DeepEqual(rows, tc.want) || dropped != tc.dropped {
+			t.Errorf("%s: rows = %+v dropped %d err %v, want %+v dropped %d", tc.name, rows, dropped, err, tc.want, tc.dropped)
+		}
 	}
 }
 

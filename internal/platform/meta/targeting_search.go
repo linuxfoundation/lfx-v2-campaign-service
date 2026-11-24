@@ -10,20 +10,26 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 )
 
-// Targeting search (#550, gap 7 picker read): look up Meta's detailed-targeting taxonomy by name, so
-// a picker can offer the ids metaConfig.targeting.interests, behaviors and workPositions take
-// without the operator pasting them. One request each, Targeting Search reference:
+// Targeting search (#550, gap 7 picker read): look up Meta's targeting taxonomy by name, so a picker
+// can offer the ids and keys metaConfig.targeting.interests, behaviors, workPositions, locales,
+// regions and cities take without the operator pasting them. One request each, Targeting Search reference:
 //
 //	interest:      GET /search?type=adinterest&q=<text>&limit=<n>
 //	behavior:      GET /search?type=adTargetingCategory&class=behaviors   ("Parameter q ignored": a
 //	               browse of the whole class, filtered here by name)
 //	work_position: GET /search?type=adworkposition&q=<text>&limit=<n>
+//	locale:        GET /search?type=adlocale&q=<text>&limit=<n>   (the keys metaConfig.targeting.locales takes)
+//	location:      GET /search?type=adgeolocation&q=<text>&location_types=["region","city"]&limit=<n>
+//	               (the keys metaConfig.targeting.regions and cities take)
 //
+// The locale and location answers carry the option's identifier in `key`, not `id`; every other
+// field the picker shows is read the same way.
 // The answer is Meta's own taxonomy, the same for every token: it names no ad account resource.
 
 // Targeting search kinds, the values of the read's `type` parameter.
@@ -31,11 +37,25 @@ const (
 	TargetingSearchInterest     = "interest"
 	TargetingSearchBehavior     = "behavior"
 	TargetingSearchWorkPosition = "work_position"
+	TargetingSearchLocale       = "locale"
+	TargetingSearchLocation     = "location"
+)
+
+// Location types a location search keeps: the two metaConfig.targeting lists take (regions,
+// cities). Countries go in geoTargets as ISO codes, and zips and other types have no create field.
+const (
+	TargetingLocationRegion = "region"
+	TargetingLocationCity   = "city"
 )
 
 // TargetingSearchKinds lists the kinds SearchTargeting serves, in a stable order.
 func TargetingSearchKinds() []string {
-	return []string{TargetingSearchInterest, TargetingSearchBehavior, TargetingSearchWorkPosition}
+	return []string{TargetingSearchInterest, TargetingSearchBehavior, TargetingSearchWorkPosition, TargetingSearchLocale, TargetingSearchLocation}
+}
+
+// keyedTargetingKind reports whether kind's rows carry their identifier in `key` (locale, location).
+func keyedTargetingKind(kind string) bool {
+	return kind == TargetingSearchLocale || kind == TargetingSearchLocation
 }
 
 // MinTargetingQueryLen and MaxTargetingQueryLen bound the query text in characters after trimming.
@@ -74,8 +94,10 @@ func NormalizeTargetingQuery(query string) (string, error) {
 }
 
 // TargetingOption is one search answer. ID is exactly what the matching metaConfig.targeting list
-// takes. The size fields are Meta's own estimates and nil when Meta did not report one: interests
-// and behaviors may carry a lower and upper bound, a work position a single coverage figure.
+// takes (a locale's key in decimal, for the int list locales). The size fields are Meta's own
+// estimates and nil when Meta did not report one: interests and behaviors may carry a lower and upper
+// bound, a work position a single coverage figure. LocationType, CountryCode and Region are set on
+// location answers only, so a picker can label a city "Austin, Texas, US" and tell a city from a region.
 type TargetingOption struct {
 	ID            string
 	Name          string
@@ -84,11 +106,17 @@ type TargetingOption struct {
 	AudienceLower *int64
 	AudienceUpper *int64
 	Coverage      *int64
+	LocationType  string
+	CountryCode   string
+	Region        string
 }
 
-// targetingSearchRow is the union of the three kinds' documented row fields.
+// targetingSearchRow is the union of the kinds' documented row fields.
 type targetingSearchRow struct {
 	ID            graphID  `json:"id"`
+	Key           graphID  `json:"key"`
+	CountryCode   string   `json:"country_code"`
+	Region        string   `json:"region"`
 	Name          string   `json:"name"`
 	Type          string   `json:"type"`
 	Path          []string `json:"path"`
@@ -107,6 +135,11 @@ func targetingSearchPath(kind, query string) (string, bool) {
 		v.Set("type", "adinterest")
 	case TargetingSearchWorkPosition:
 		v.Set("type", "adworkposition")
+	case TargetingSearchLocale:
+		v.Set("type", "adlocale")
+	case TargetingSearchLocation:
+		v.Set("type", "adgeolocation")
+		v.Set("location_types", `["`+TargetingLocationRegion+`","`+TargetingLocationCity+`"]`)
 	case TargetingSearchBehavior:
 		v.Set("type", "adTargetingCategory")
 		v.Set("class", "behaviors")
@@ -123,7 +156,9 @@ func targetingSearchPath(kind, query string) (string, bool) {
 // ranking), de-duplicated by id. A behavior search is a browse of the whole class, kept here when the
 // name contains the query (ignoring case) and capped at maxTargetingResults; use SearchTargetingAll
 // to read the whole browse once and filter it locally. A row without a numeric id or a name, or a
-// behavior row of another class, is dropped and counted in dropped.
+// behavior row of another class, is dropped and counted in dropped. A locale or location row is read
+// by its `key` and kept only when that key is what create takes (a positive whole number with no
+// leading zero); a location row is kept only when it is a region or a city.
 //
 // The request is sent ONCE: a throttle is not retried in-call but comes back as the error, which the
 // service answers 503. A picker that waits out a backoff answers a keystroke the operator has already
@@ -192,18 +227,29 @@ func (c *Client) searchTargeting(ctx context.Context, kind, q string) (_ []Targe
 			continue
 		}
 		id, name := string(row.ID), strings.TrimSpace(row.Name)
-		if !numericIDRE.MatchString(id) || name == "" || (kind == TargetingSearchBehavior && row.Type != "" && row.Type != "behaviors") {
+		if keyedTargetingKind(kind) {
+			id = string(row.Key)
+		}
+		if !targetingRowUsable(kind, id, name, row.Type) {
 			dropped++
 			continue
 		}
-		if seen[id] {
+		// Regions and cities are separate key spaces in create, so a location is de-duplicated by type and key.
+		seenKey := id
+		if kind == TargetingSearchLocation {
+			seenKey = row.Type + "\x00" + id
+		}
+		if seen[seenKey] {
 			continue
 		}
-		seen[id] = true
+		seen[seenKey] = true
 		opt := TargetingOption{ID: id, Name: name, Path: row.Path, Description: strings.TrimSpace(row.Description),
 			AudienceLower: nonNegative(row.AudienceLower), AudienceUpper: nonNegative(row.AudienceUpper), Coverage: nonNegative(row.Coverage)}
 		if opt.Description == "" {
 			opt.Description = strings.TrimSpace(row.Subtext)
+		}
+		if kind == TargetingSearchLocation {
+			opt.LocationType, opt.CountryCode, opt.Region = row.Type, strings.TrimSpace(row.CountryCode), strings.TrimSpace(row.Region)
 		}
 		out = append(out, opt)
 		if kind != TargetingSearchBehavior && len(out) == maxTargetingResults {
@@ -211,6 +257,27 @@ func (c *Client) searchTargeting(ctx context.Context, kind, q string) (_ []Targe
 		}
 	}
 	return out, dropped, nil
+}
+
+// targetingRowUsable reports whether a row of kind can be offered: a name, and an id create takes.
+// The id-keyed kinds keep Meta's numeric ids as they are; a locale or location key must be canonical
+// (create refuses 0 and a leading zero), and a location must be a region or a city.
+func targetingRowUsable(kind, id, name, rowType string) bool {
+	if name == "" {
+		return false
+	}
+	switch kind {
+	case TargetingSearchLocale:
+		// locales is an []int in create, so a key too long for one is not offered.
+		_, err := strconv.ParseInt(id, 10, 64)
+		return canonicalCampaignIDRe.MatchString(id) && err == nil
+	case TargetingSearchLocation:
+		return canonicalCampaignIDRe.MatchString(id) && (rowType == TargetingLocationRegion || rowType == TargetingLocationCity)
+	case TargetingSearchBehavior:
+		return numericIDRE.MatchString(id) && (rowType == "" || rowType == "behaviors")
+	default:
+		return numericIDRE.MatchString(id)
+	}
 }
 
 // nonNegative reads Meta's size estimate, where a negative value (Meta answers -1 for "not

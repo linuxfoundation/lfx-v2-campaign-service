@@ -21,8 +21,8 @@ import (
 var _ service.MetaTargetingSearcher = (*MetaDispatcher)(nil)
 
 // SearchMetaTargeting implements service.MetaTargetingSearcher (#550): a search of Meta's
-// detailed-targeting taxonomy (interests, behaviors, work positions) for the metaConfig.targeting
-// pickers.
+// targeting taxonomy (interests, behaviors, work positions, locales, regions and cities) for the
+// metaConfig.targeting pickers.
 //
 // It resolves with creds.resolve, the CREATE path's resolution (the project's own connection, the
 // LF system fallback when it has none, the forced-system redirect), without requiring an ad
@@ -31,7 +31,7 @@ var _ service.MetaTargetingSearcher = (*MetaDispatcher)(nil)
 // taxonomy, the same for every token, and names nothing any ad account holds.
 //
 // Answers are cached AFTER resolution, so a project that can reach no credential still gets its
-// refusal. Interests and work positions are cached by kind and folded query: the key is the whole
+// refusal. Every kind but behaviors is cached by kind and folded query: the key is the whole
 // query, so the cache serves a repeated identical search, not the next keystroke. Behaviors are a
 // browse of the whole class (Meta ignores q), so the class is read once per TTL and every query is
 // filtered from it locally. What bounds the spend otherwise is the 2-character floor, the caller's
@@ -73,7 +73,7 @@ func (d *MetaDispatcher) SearchMetaTargeting(ctx context.Context, projectID stri
 	}
 	if dropped > 0 {
 		// Counts only: the query is never logged.
-		slog.WarnContext(ctx, "meta targeting search dropped rows without a numeric id or a name",
+		slog.WarnContext(ctx, "meta targeting search dropped unusable rows",
 			"type", q.Kind, "dropped", dropped, "kept", len(rows))
 	}
 	d.searchCache().put(key, rows)
@@ -89,7 +89,8 @@ func finishMetaTargeting(kind string, rows []meta.TargetingOption, query string)
 	out := make([]model.MetaTargetingOption, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, model.MetaTargetingOption{ID: r.ID, Name: r.Name, Path: slices.Clone(r.Path), Description: r.Description,
-			AudienceLower: r.AudienceLower, AudienceUpper: r.AudienceUpper, Coverage: r.Coverage})
+			AudienceLower: r.AudienceLower, AudienceUpper: r.AudienceUpper, Coverage: r.Coverage,
+			LocationType: r.LocationType, CountryCode: r.CountryCode, Region: r.Region})
 	}
 	return out
 }

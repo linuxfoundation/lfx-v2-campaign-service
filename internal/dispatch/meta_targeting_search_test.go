@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -39,6 +40,8 @@ func newMetaSearchFake(t *testing.T) *metaSearchFake {
 			return
 		}
 		switch r.URL.Query().Get("type") {
+		case "adgeolocation":
+			_, _ = io.WriteString(w, `{"data":[{"key":"2490299","name":"Austin","type":"city","country_code":"US","region":"Texas"}]}`)
 		case "adTargetingCategory":
 			_, _ = io.WriteString(w, `{"data":[{"id":6002714895372,"name":"Frequent Travelers","type":"behaviors","path":["Travel"]},{"id":6002714898572,"name":"Small business owners","type":"behaviors"}]}`)
 		default:
@@ -94,6 +97,23 @@ func TestMetaDispatcher_SearchMetaTargeting_CachesAfterResolution(t *testing.T) 
 	now = now.Add(metaTargetingTTL)
 	if _, called, err := d.SearchMetaTargeting(ctx, "cncf", model.ProviderMetaAds, model.MetaTargetingQuery{Kind: "interest", Query: "kube"}); err != nil || !called {
 		t.Fatalf("after the TTL = called %v, %v; want Meta reached again", called, err)
+	}
+}
+
+// TestMetaDispatcher_SearchMetaTargeting_CarriesLocations: a location answer reaches the caller with
+// its key, type, country and region, and is cached under its own kind.
+func TestMetaDispatcher_SearchMetaTargeting_CarriesLocations(t *testing.T) {
+	f := newMetaSearchFake(t)
+	defer f.Close()
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{}, meta.WithBaseURL(f.URL))
+	q := model.MetaTargetingQuery{Kind: "location", Query: "austin"}
+	rows, called, err := d.SearchMetaTargeting(context.Background(), "cncf", model.ProviderMetaAds, q)
+	want := []model.MetaTargetingOption{{ID: "2490299", Name: "Austin", LocationType: "city", CountryCode: "US", Region: "Texas"}}
+	if err != nil || !called || !reflect.DeepEqual(rows, want) {
+		t.Fatalf("location search = %+v, %v, %v; want %+v", rows, called, err, want)
+	}
+	if _, called, err := d.SearchMetaTargeting(context.Background(), "cncf", model.ProviderMetaAds, q); err != nil || called || f.count("adgeolocation") != 1 {
+		t.Fatalf("repeat = called %v, %v, %d requests; want a cache hit", called, err, f.count("adgeolocation"))
 	}
 }
 

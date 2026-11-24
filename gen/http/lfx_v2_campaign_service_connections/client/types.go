@@ -911,9 +911,10 @@ type ListMetaCustomAudiencesResponseBody struct {
 type SearchMetaTargetingOptionsResponseBody struct {
 	// The type searched, as requested
 	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
-	// The matches, de-duplicated by id: Meta's relevance order for interest and
-	// work_position, Meta's listing order for behavior. At most 50. Empty when
-	// nothing matches.
+	// The matches, de-duplicated by id (for location, by location_type and id,
+	// since a region and a city may share a key): Meta's relevance order for
+	// interest and work_position, Meta's listing order for behavior. At most 50.
+	// Empty when nothing matches.
 	Options []*MetaTargetingOptionResponseBody `form:"options,omitempty" json:"options,omitempty" xml:"options,omitempty"`
 	// How many options are in `options`
 	OptionCount *int `form:"option_count,omitempty" json:"option_count,omitempty" xml:"option_count,omitempty"`
@@ -7603,8 +7604,9 @@ type MetaCustomAudienceResponseBody struct {
 // MetaTargetingOptionResponseBody is used to define fields on response body
 // types.
 type MetaTargetingOptionResponseBody struct {
-	// The option id, exactly what metaConfig.targeting.interests, behaviors or
-	// workPositions (per the type searched) takes
+	// The option id, exactly what metaConfig.targeting.interests, behaviors,
+	// workPositions, regions or cities (per the type searched) takes; for locale,
+	// the key in decimal, which metaConfig.targeting.locales takes as an integer
 	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
 	// Meta's display name for the option. Not an identifier.
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
@@ -7623,6 +7625,15 @@ type MetaTargetingOptionResponseBody struct {
 	// Meta's estimated audience size (work positions). Absent when Meta reported
 	// none.
 	Coverage *int64 `form:"coverage,omitempty" json:"coverage,omitempty" xml:"coverage,omitempty"`
+	// Location answers only: region (metaConfig.targeting.regions) or city
+	// (metaConfig.targeting.cities)
+	LocationType *string `form:"location_type,omitempty" json:"location_type,omitempty" xml:"location_type,omitempty"`
+	// Location answers only: the ISO country the region or city is in. Absent when
+	// Meta sent none.
+	CountryCode *string `form:"country_code,omitempty" json:"country_code,omitempty" xml:"country_code,omitempty"`
+	// Location answers only: a city's region name, for its label. Absent when Meta
+	// sent none.
+	Region *string `form:"region,omitempty" json:"region,omitempty" xml:"region,omitempty"`
 }
 
 // MetaLeadFormResponseBody is used to define fields on response body types.
@@ -18339,8 +18350,8 @@ func ValidateSearchMetaTargetingOptionsResponseBody(body *SearchMetaTargetingOpt
 		err = goa.MergeErrors(err, goa.MissingFieldError("option_count", "body"))
 	}
 	if body.Type != nil {
-		if !(*body.Type == "interest" || *body.Type == "behavior" || *body.Type == "work_position") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"interest", "behavior", "work_position"}))
+		if !(*body.Type == "interest" || *body.Type == "behavior" || *body.Type == "work_position" || *body.Type == "locale" || *body.Type == "location") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"interest", "behavior", "work_position", "locale", "location"}))
 		}
 	}
 	for _, e := range body.Options {
@@ -26934,6 +26945,11 @@ func ValidateMetaTargetingOptionResponseBody(body *MetaTargetingOptionResponseBo
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
 	}
+	if body.LocationType != nil {
+		if !(*body.LocationType == "region" || *body.LocationType == "city") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.location_type", *body.LocationType, []any{"region", "city"}))
+		}
+	}
 	return
 }
 
@@ -26945,6 +26961,11 @@ func validateMetaTargetingOptionResponseBody(body *MetaTargetingOptionResponseBo
 	}
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	if body.LocationType != nil {
+		if !(*body.LocationType == "region" || *body.LocationType == "city") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".location_type", *body.LocationType, []any{"region", "city"}))
+		}
 	}
 	return
 }

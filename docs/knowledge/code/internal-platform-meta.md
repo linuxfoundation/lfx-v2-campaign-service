@@ -1324,7 +1324,13 @@ may need a Page access token (`pages_manage_ads`, `leads_retrieval`) rather than
 `GET /search?type=adworkposition&q=&limit=50`, `behavior` →
 `GET /search?type=adTargetingCategory&class=behaviors` (Meta ignores `q` there: a browse of the class,
 filtered by name with `FilterTargetingOptions`; `SearchTargetingAll` returns it unfiltered for a
-caching caller). `NormalizeTargetingQuery` (2–100 characters after trimming, valid UTF-8, no control
+caching caller), `locale` → `GET /search?type=adlocale&q=&limit=50` (the keys `locales` takes) and
+`location` → `GET /search?type=adgeolocation&q=&location_types=["region","city"]&limit=50` (the keys
+`regions` and `cities` take). Locale and location rows carry their identifier in `key`, not `id`, and
+are kept only when that key is canonical (`canonicalCampaignIDRe`: no 0, no leading zero, as create
+requires; a locale key must also fit an int64) and, for a location, only when its `type` is `region`
+or `city`, de-duplicated by type and key; a location option also
+carries `LocationType`, `CountryCode` and `Region` for the picker's label. `NormalizeTargetingQuery` (2–100 characters after trimming, valid UTF-8, no control
 characters) is shared with the service layer. Rows keep a numeric id (`graphID`: string or number)
 and a non-blank name, drop a behavior row of another `type`, de-duplicate by id, read a negative size
 as absent and a work position's `subtext` as its description. The request is sent ONCE
@@ -1335,7 +1341,7 @@ answer, timeout), with the chain kept for classification and the query cut off e
 dispatcher (`internal/dispatch/meta_targeting_search.go`) resolves like a create without needing an
 ad account and caches answers for an hour by kind and folded query (behaviors by kind alone) after
 resolution. Not verified live: every answer shape (the reference shows ids as integers, which
-`graphID` accepts).
+`graphID` accepts), including the `adlocale` and `adgeolocation` rows.
 
 ## Ads under an ad set (`ads.go`, decision D7 first step)
 
