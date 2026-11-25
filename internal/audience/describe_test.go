@@ -112,6 +112,29 @@ func TestDescribeRules_PropertyLabelsAndOptions(t *testing.T) {
 	}
 }
 
+// TestDescribeRules_BlankValuesWiden pins includeObjectsWithNoValueSet: HubSpot also admits every
+// contact whose property is blank, so the description must say so or the audience reads narrower
+// than it is. false (the builder's own value) adds nothing.
+func TestDescribeRules_BlankValuesWiden(t *testing.T) {
+	raw := json.RawMessage(`{"filterBranchType":"OR","filters":[],"filterBranches":[{"filterBranchType":"AND","filters":[
+		{"filterType":"PROPERTY","property":"country","operation":{"operationType":"MULTISTRING","operator":"IS_EQUAL_TO","includeObjectsWithNoValueSet":true,"values":["Japan"]}},
+		{"filterType":"PROPERTY","property":"city","operation":{"operationType":"MULTISTRING","operator":"IS_EQUAL_TO","includeObjectsWithNoValueSet":false,"values":["Tokyo"]}},
+		{"filterType":"PROPERTY","property":"jobtitle","operation":{"operationType":"MULTISTRING","operator":"IS_NOT_EQUAL_TO","includeObjectsWithNoValueSet":true,"values":["Student"]}}
+	],"filterBranches":[]}]}`)
+	labels := DescribeLabels{Properties: map[string]PropertyLabel{"country": {Label: "Country/Region"}, "city": {Label: "City"}, "jobtitle": {Label: "Job Title"}}}
+	_, groups, complete, err := DescribeRules(raw, labels)
+	if err != nil {
+		t.Fatalf("DescribeRules: %v", err)
+	}
+	want := []string{"Country/Region is “Japan”, or is blank", "City is “Tokyo”", "Job Title is not “Student”, or is blank"}
+	if len(groups) != 1 || strings.Join(groups[0].Conditions, "\n") != strings.Join(want, "\n") {
+		t.Errorf("conditions = %q, want %q", groups, want)
+	}
+	if !complete {
+		t.Error("the blank-value widening is described, so the description is complete")
+	}
+}
+
 func TestDescribeRules_NestedNegationAndUnknownRules(t *testing.T) {
 	raw := json.RawMessage(`{"filterBranchType":"OR","filters":[],"filterBranches":[{"filterBranchType":"AND","filters":[
 		{"filterType":"IN_LIST","listId":"77","operator":"IN_LIST"}

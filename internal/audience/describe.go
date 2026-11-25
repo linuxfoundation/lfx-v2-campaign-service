@@ -141,13 +141,17 @@ type describeFilter struct {
 }
 
 type describeOperation struct {
-	OperationType string          `json:"operationType"`
-	Operator      string          `json:"operator"`
-	Value         json.RawMessage `json:"value"`
-	Values        json.RawMessage `json:"values"`
-	LowerBound    json.RawMessage `json:"lowerBound"`
-	UpperBound    json.RawMessage `json:"upperBound"`
-	Timestamp     json.RawMessage `json:"timestamp"`
+	OperationType string `json:"operationType"`
+	// IncludeObjectsWithNoValueSet widens the rule: HubSpot also admits every contact whose
+	// property is blank. builder_standard.go's includesNoValueSet refuses such a filter for the
+	// same reason a description must say so.
+	IncludeObjectsWithNoValueSet bool            `json:"includeObjectsWithNoValueSet"`
+	Operator                     string          `json:"operator"`
+	Value                        json.RawMessage `json:"value"`
+	Values                       json.RawMessage `json:"values"`
+	LowerBound                   json.RawMessage `json:"lowerBound"`
+	UpperBound                   json.RawMessage `json:"upperBound"`
+	Timestamp                    json.RawMessage `json:"timestamp"`
 }
 
 // parseDescribeBranch decodes a raw filterBranch; absent or `{}` is (nil, nil) -- no rules.
@@ -570,8 +574,19 @@ func (r *describer) subscription(f describeFilter) string {
 	}
 }
 
-// property renders a property filter: "<label> is “a”, “b”".
+// property renders a property filter: "<label> is “a”, “b”". A rule that also admits contacts
+// with no value says so ("…, or is blank"): without it an operator approves an audience that
+// reads narrower than it is.
 func (r *describer) property(f describeFilter, scope describeScope) string {
+	text := r.propertyRule(f, scope)
+	if op := f.Operation; op != nil && op.IncludeObjectsWithNoValueSet {
+		return text + ", or is blank"
+	}
+	return text
+}
+
+// propertyRule renders the property filter's own condition, without the blank-value widening.
+func (r *describer) propertyRule(f describeFilter, scope describeScope) string {
 	key := propertyKey(f)
 	label, options := r.propertyLabel(key, scope)
 

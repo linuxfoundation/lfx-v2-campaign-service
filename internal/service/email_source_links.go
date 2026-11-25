@@ -32,9 +32,12 @@ var sourceLinkPattern = regexp.MustCompile(`(?i)https?://[^\s<>"']+`)
 const trailingLinkPunctuation = ".,;:!?)]}>"
 
 // normalizeLinkForMatch is the form two addresses are compared in: scheme and host lower-cased,
-// no fragment, no trailing slash. "" for anything that is not an absolute http(s) address with a
-// hostname, and for one that carries userinfo. It
-// deliberately does not touch the path's case or the query, which can both be significant.
+// and an empty path read as "/" (RFC 3986 makes the two the same address). "" for anything that
+// is not an absolute http(s) address with a hostname, and for one that carries userinfo. It
+// deliberately keeps the path's case, a trailing slash, the query and the fragment: a server can
+// serve a different page at "/report/" than at "/report", and a fragment the notes did not give
+// sends the reader to a section the operator did not choose. A link that differs from the notes
+// in any of them loses its anchor, which is the safe way to be wrong.
 func normalizeLinkForMatch(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	// No userinfo: "https://user:secret@host/" is a credential in a link every recipient would
@@ -47,8 +50,11 @@ func normalizeLinkForMatch(raw string) string {
 	if scheme != "http" && scheme != "https" {
 		return ""
 	}
-	u.Scheme, u.Host, u.Fragment, u.RawFragment = scheme, strings.ToLower(u.Host), "", ""
-	return strings.TrimRight(u.String(), "/")
+	u.Scheme, u.Host = scheme, strings.ToLower(u.Host)
+	if u.Path == "" && u.RawPath == "" {
+		u.Path = "/"
+	}
+	return u.String()
 }
 
 // trimTrailingLinkPunctuation drops the punctuation prose puts after an address. A closing

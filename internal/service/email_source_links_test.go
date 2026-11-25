@@ -24,9 +24,9 @@ func TestSourceDocumentLinks(t *testing.T) {
 		"not a link: ftp://acme.example/file, example.org/bare"
 	got := sourceDocumentLinks(notes)
 	for _, want := range []string{
-		"https://acme.example/blog/guide",
+		"https://acme.example/blog/guide/",
 		"https://acme.example/events",
-		"https://acme.example/report?year=2026&x=1",
+		"https://acme.example/report?year=2026&x=1#top",
 	} {
 		if _, ok := got[want]; !ok {
 			t.Errorf("missing %q in %v", want, got)
@@ -39,14 +39,18 @@ func TestSourceDocumentLinks(t *testing.T) {
 
 func TestNormalizeLinkForMatch(t *testing.T) {
 	cases := map[string]string{
-		"https://Acme.Example/Blog/Post/":  "https://acme.example/Blog/Post",
-		" https://acme.example/x#section ": "https://acme.example/x",
-		"https://acme.example":             "https://acme.example",
-		"https://acme.example/x?a=1&b=2":   "https://acme.example/x?a=1&b=2",
-		"javascript:alert(1)":              "",
-		"/relative/path":                   "",
-		"mailto:someone@acme.example":      "",
-		"":                                 "",
+		"https://Acme.Example/Blog/Post/":  "https://acme.example/Blog/Post/",
+		" https://acme.example/x#section ": "https://acme.example/x#section",
+		"https://acme.example":             "https://acme.example/",
+		"HTTPS://ACME.example/":            "https://acme.example/",
+		// A slash inside the query is the query's, never trimmed: "file=reports/" and
+		// "file=reports" can select different resources.
+		"https://acme.example/download?file=reports/": "https://acme.example/download?file=reports/",
+		"https://acme.example/x?a=1&b=2":              "https://acme.example/x?a=1&b=2",
+		"javascript:alert(1)":                         "",
+		"/relative/path":                              "",
+		"mailto:someone@acme.example":                 "",
+		"":                                            "",
 		// Userinfo is refused: it is a credential in a link every recipient receives, and
 		// "trusted@evil" reads as one site and opens another.
 		"https://user:secret@acme.example/private": "",
@@ -64,21 +68,25 @@ func TestNormalizeLinkForMatch(t *testing.T) {
 // TestUnlinkUnvouchedAnchors pins both halves: a link the notes carry is returned byte for byte,
 // and one they do not carry keeps its words and loses every attribute.
 func TestUnlinkUnvouchedAnchors(t *testing.T) {
-	allowed := sourceDocumentLinks("https://acme.example/guide and https://acme.example/report?y=1&z=2")
+	allowed := sourceDocumentLinks("https://acme.example/guide/ and https://acme.example/report?y=1&z=2 and https://acme.example/faq#fees")
 	in := `<p style="margin:0;">Read <a href="https://acme.example/guide/" target="_blank" style="color:#2563eb;">the guide</a>, ` +
 		`<a href="https://acme.example/report?y=1&amp;z=2">the report</a>, ` +
 		`<a href="https://acme.example/invented-post" style="color:#2563eb;">a post</a> and ` +
-		`<a href="https://evil.example/guide">another site</a>. <a>No address</a> &amp; <A HREF="https://acme.example/guide">again</A></p>`
+		`<a href="https://evil.example/guide">another site</a>. <a>No address</a> &amp; <A HREF="https://acme.example/guide">again</A> ` +
+		`<a href="https://acme.example/faq#fees">fees</a> <a href="https://acme.example/faq#invented">a section</a></p>`
 	want := `<p style="margin:0;">Read <a href="https://acme.example/guide/" target="_blank" style="color:#2563eb;">the guide</a>, ` +
 		`<a href="https://acme.example/report?y=1&amp;z=2">the report</a>, ` +
 		`<a>a post</a> and ` +
-		`<a>another site</a>. <a>No address</a> &amp; <A HREF="https://acme.example/guide">again</A></p>`
+		`<a>another site</a>. <a>No address</a> &amp; <a>again</A> ` +
+		`<a href="https://acme.example/faq#fees">fees</a> <a>a section</a></p>`
 	got, dropped := unlinkUnvouchedAnchors(in, allowed)
 	if got != want {
 		t.Errorf("got  %s\nwant %s", got, want)
 	}
-	if dropped != 3 {
-		t.Errorf("dropped = %d, want 3 (the invented path, the other site and the anchor with no address)", dropped)
+	// The notes say ".../guide/" and ".../faq#fees": ".../guide" (no slash) and ".../faq#invented"
+	// are addresses they do not carry.
+	if dropped != 5 {
+		t.Errorf("dropped = %d, want 5 (the invented path, the other site, the anchor with no address, the slashless guide and the invented fragment)", dropped)
 	}
 
 	plain := `<p>No anchors here, only a &lt;a&gt; in text.</p>`

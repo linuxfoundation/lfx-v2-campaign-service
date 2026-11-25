@@ -658,3 +658,6 @@ involved, so each sentence says what one filter does and can be trusted as far a
   and sets `Complete` false, rather than being dropped: a description that silently omits a rule
   overstates who is in the list. An event branch's count or time refinement is named, not
   rendered, for the same reason.
+- A property rule with `includeObjectsWithNoValueSet` set also admits every contact whose property
+  is blank, and says so: "Country/Region is “Japan”, or is blank". Without the clause the list reads
+  narrower than it is.
