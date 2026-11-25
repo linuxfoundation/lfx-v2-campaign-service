@@ -436,6 +436,12 @@ type CampaignResult struct {
 	// kept), never created_degraded, which the orchestrator would reuse as complete. Set only on
 	// that path's partial, which is always returned with an error.
 	TargetingNotApplied bool `json:"targetingNotApplied,omitempty"`
+	// BoostCreativeUnverified marks a boost whose creative failed checkBoostCreativeAuthor (#673):
+	// the campaign exists and the creative was deleted, or is named for removal when it could not
+	// be. The dispatcher records it as a retained partial (pending, campaign id kept), never
+	// created_degraded, so a retry answers "reconciliation required" instead of posting and
+	// deleting again. Set only on that path's partial, which is always returned with an error.
+	BoostCreativeUnverified bool `json:"boostCreativeUnverified,omitempty"`
 	// BoostedPostURN is the existing post a boost create's creative sponsors (#673), recorded once
 	// that creative exists (created or found on the reused campaign). Empty on every other create.
 	BoostedPostURN string `json:"boostedPostUrn,omitempty"`

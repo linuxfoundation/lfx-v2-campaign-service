@@ -52,10 +52,17 @@ could boost any post the connection's member may sponsor, another organization's
 Without the read, `finishBoost` now reads the creative back (`checkBoostCreativeAuthor`) and
 accepts it only when `content.standardUpdateAd.reference` is the requested post and its
 `contentAuthor` is the account's organization. Otherwise, or when the read fails, it DELETEs the
-DRAFT creative it just created and fails with `ErrBoostPostIneligible` and no result, so nothing is
-recorded and the campaign (left PAUSED with no ad) cannot be activated through the service. A
-creative found on a reused campaign is checked too but never deleted, since it may be serving; the
-error names it. A creative refusal on a reused campaign no longer claims the campaign is PAUSED.
+DRAFT creative it just created and fails with `ErrBoostPostIneligible`. A creative found on a
+reused campaign is checked too but never deleted, since it may be serving; the error names it. A
+creative refusal on a reused campaign no longer claims the campaign is PAUSED.
+
+**Update (review round 3)** — returning no result released the claim, so a retry found the
+campaign by name, posted a new creative and deleted it again, in a loop (Bugbot). The failed check
+now returns the partial marked `BoostCreativeUnverified`, which the dispatcher records as `pending`
+with the campaign id kept, as it does `TargetingNotApplied`: the orchestrator does not reuse it, and
+a retry answers "reconciliation required". A failed read wraps its own error, so a 401 stays the
+connection's expiry and a 5xx is not reported as an ineligible post. The compensating DELETE runs on
+`context.WithoutCancel` with a 30 s timeout, so a cancelled job still removes the creative.
 
 Account grants (#581) are not scoped to a project: a project falling back to the LF system row may
 name any grant, and a boost through it passes the post check for that grant's organization. That

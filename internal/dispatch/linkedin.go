@@ -2281,7 +2281,7 @@ func campaignFromLinkedIn(ctx context.Context, r *linkedin.CampaignResult, reque
 			// associate in Campaign Manager.
 			c.Status = campaignStatusCreatedDegraded
 		}
-		if r.TargetingNotApplied {
+		if r.TargetingNotApplied || r.BoostCreativeUnverified {
 			// The client stopped on a campaign found by name because linkedInConfig.targeting is
 			// written only into a campaign this run creates (#552): the requested targeting was
 			// neither checked nor applied and no creative exists. created_degraded would be

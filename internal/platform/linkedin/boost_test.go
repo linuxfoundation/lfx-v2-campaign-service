@@ -466,8 +466,10 @@ func TestCreateCampaign_BoostUnreadablePost(t *testing.T) {
 
 // TestCreateCampaign_BoostUnreadablePostChecksCreativeAuthor: with no post read (a 403), the
 // creative is read back, and anything but the post authored by the account's organization fails
-// the create with no result (nothing recorded, so the campaign cannot be activated here). A
-// creative this call created is deleted; one found on a reused campaign is named, never deleted.
+// the create with the partial marked BoostCreativeUnverified (kept as pending, so the claim is
+// retained and no retry posts again). A creative this call created is deleted; one found on a
+// reused campaign is named, never deleted. A failed read wraps its own error, not
+// ErrBoostPostIneligible, so a 401 still reads as the connection's expiry.
 func TestCreateCampaign_BoostUnreadablePostChecksCreativeAuthor(t *testing.T) {
 	const org = "urn:li:organization:987654321"
 	for _, tc := range []struct {
@@ -477,6 +479,7 @@ func TestCreateCampaign_BoostUnreadablePostChecksCreativeAuthor(t *testing.T) {
 		deletes  int
 		reused   bool
 		notWants []string
+		cause    error // what the error wraps; nil is ErrBoostPostIneligible
 	}{
 		{
 			name:    "another organization's post",
@@ -508,6 +511,14 @@ func TestCreateCampaign_BoostUnreadablePostChecksCreativeAuthor(t *testing.T) {
 			server:  &boostServer{creativeReadStatus: http.StatusInternalServerError},
 			want:    []string{"reading it back to check the post's author failed"},
 			deletes: 1,
+			cause:   errAnyReadFailure,
+		},
+		{
+			name:    "an expired connection on the read",
+			server:  &boostServer{creativeReadStatus: http.StatusUnauthorized},
+			want:    []string{"reading it back to check the post's author failed", "the DRAFT creative urn:li:sponsoredCreative:401 was deleted"},
+			deletes: 1,
+			cause:   ErrCredentialsExpired,
 		},
 		{
 			name:    "a failed delete",
@@ -537,11 +548,26 @@ func TestCreateCampaign_BoostUnreadablePostChecksCreativeAuthor(t *testing.T) {
 				s.existingCampaign = existingBoostCampaign(t)
 			}
 			res, err := newBoostClient(t, s).CreateCampaign(context.Background(), boostInput())
-			if res != nil {
-				t.Errorf("result = %+v, want none, so nothing is recorded", res)
+			wantCampaign := "200"
+			if tc.reused {
+				wantCampaign = "555"
 			}
-			if !errors.Is(err, ErrBoostPostIneligible) {
-				t.Fatalf("err = %v, want ErrBoostPostIneligible", err)
+			if res == nil || !res.BoostCreativeUnverified || res.CampaignID != wantCampaign || res.CreativeCount != 0 || res.BoostedPostURN != "" {
+				t.Errorf("partial = %+v, want campaign %s marked BoostCreativeUnverified with no creative or post recorded", res, wantCampaign)
+			}
+			switch tc.cause {
+			case nil:
+				if !errors.Is(err, ErrBoostPostIneligible) {
+					t.Fatalf("err = %v, want ErrBoostPostIneligible", err)
+				}
+			case errAnyReadFailure:
+				if err == nil || errors.Is(err, ErrBoostPostIneligible) {
+					t.Fatalf("err = %v, want a read failure that is not reported as an ineligible post", err)
+				}
+			default:
+				if !errors.Is(err, tc.cause) || errors.Is(err, ErrBoostPostIneligible) {
+					t.Fatalf("err = %v, want it to wrap %v and not ErrBoostPostIneligible", err, tc.cause)
+				}
 			}
 			if _, pre := domain.AsPreflightRefusal(err); pre {
 				t.Errorf("a refusal after the campaign exists is reported as pre-flight: %v", err)
@@ -562,6 +588,27 @@ func TestCreateCampaign_BoostUnreadablePostChecksCreativeAuthor(t *testing.T) {
 				t.Errorf("creative DELETEs = %d, want %d", s.deletes, tc.deletes)
 			}
 		})
+	}
+}
+
+// errAnyReadFailure marks a table row whose error is any read failure but an ineligible post.
+var errAnyReadFailure = errors.New("any read failure")
+
+// TestCheckBoostCreativeAuthor_DeleteSurvivesCancelledJob: the compensating DELETE runs detached
+// from the job's context, so a job cancelled during the read-back still removes the creative.
+func TestCheckBoostCreativeAuthor_DeleteSurvivesCancelledJob(t *testing.T) {
+	s := &boostServer{creativeRead: boostCreative(boostTestPost, "urn:li:organization:111")}
+	c := newBoostClient(t, s)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := c.checkBoostCreativeAuthor(ctx, "123456789", "urn:li:organization:987654321", "200", boostTestPost, "urn:li:sponsoredCreative:401", true, false)
+	if err == nil {
+		t.Fatal("checkBoostCreativeAuthor accepted a creative it could not read")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.deletes != 1 {
+		t.Errorf("creative DELETEs = %d, want 1 even though the job's context was cancelled", s.deletes)
 	}
 }
 

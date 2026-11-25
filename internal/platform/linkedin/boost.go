@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
@@ -295,7 +296,9 @@ func (c *Client) ensureBoostCreative(ctx context.Context, accountID, campaignID 
 //
 // When the post could not be read first (postChecked false: the connection lacks
 // r_organization_social), the creative is read back and checked against orgURN by
-// checkBoostCreativeAuthor before anything is reported, so that path fails closed too.
+// checkBoostCreativeAuthor before anything is reported, so that path fails closed too. A failed
+// check returns the partial marked BoostCreativeUnverified, which the dispatcher keeps as
+// pending: the claim is retained, so no retry posts and deletes another creative.
 func (c *Client) finishBoost(ctx context.Context, accountID, groupName, groupID, campaignName, campaignID string, campaignReused bool, eventName, postURN, orgURN string, postChecked bool, steps []string, partial func(*CampaignResult) *CampaignResult, finish func(int) *CampaignResult) (*CampaignResult, error) {
 	creativeURN, found, lookupErr, err := c.ensureBoostCreative(ctx, accountID, campaignID, campaignReused, postURN, boostCreativeName(eventName, postURN))
 	if lookupErr != nil {
@@ -322,7 +325,10 @@ func (c *Client) finishBoost(ctx context.Context, accountID, groupName, groupID,
 	}
 	if !postChecked {
 		if err := c.checkBoostCreativeAuthor(ctx, accountID, orgURN, campaignID, postURN, creativeURN, !found, campaignReused); err != nil {
-			return nil, err
+			steps = append(steps, fmt.Sprintf("Boost creative %s failed the author check; campaign %s is kept for reconciliation", creativeURN, campaignID))
+			r := partial(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps))
+			r.BoostCreativeUnverified = true
+			return r, err
 		}
 		steps = append(steps, fmt.Sprintf("Boost creative %s read back: the post is authored by %s", creativeURN, orgURN))
 	}
@@ -336,6 +342,10 @@ func (c *Client) finishBoost(ctx context.Context, accountID, groupName, groupID,
 	result.BoostedPostURN = postURN
 	return result, nil
 }
+
+// boostCreativeDeleteTimeout bounds checkBoostCreativeAuthor's compensating DELETE, which runs
+// detached from the job's context so a cancelled job still removes the creative.
+const boostCreativeDeleteTimeout = 30 * time.Second
 
 // boostCreativeRead is the part of a Creatives API GET a boost's author check reads: LinkedIn
 // answers a creative made with content.reference as content.standardUpdateAd (probed on
@@ -355,19 +365,21 @@ type boostCreativeRead struct {
 // connection cannot read posts: without it, a caller could boost any post the connection's
 // member may sponsor, from another organization's page included.
 //
-// Any other outcome is an error with no partial result, so nothing is recorded and the campaign
-// cannot be activated through this service: a retry finds the group and campaign by name and
-// checks again. A creative this call created (created) is deleted first; it is a DRAFT, which
-// LinkedIn lets a DELETE remove (a DRAFT cannot be archived). A failed read is treated like a
-// wrong author, since nothing then shows the creative is safe to keep. A creative found on a
+// Any other outcome is an error; finishBoost records the campaign as pending for
+// reconciliation. A creative this call created (created) is deleted first; it is a DRAFT, which
+// LinkedIn lets a DELETE remove (a DRAFT cannot be archived). The DELETE runs on a context
+// detached from the job's, with its own timeout, so a cancelled job still cleans up. A failed
+// read is treated like a wrong author, since nothing then shows the creative is safe to keep,
+// and its error stays wrapped (%w), so an expired connection still reads as one; it is not
+// reported as an ineligible post, since it says nothing about the post. A creative found on a
 // reused campaign is never deleted here: it may be serving, so the error names it instead.
 func (c *Client) checkBoostCreativeAuthor(ctx context.Context, accountID, orgURN, campaignID, postURN, creativeURN string, created, campaignReused bool) error {
 	shown := domain.CallerValue(postURN)
 	why := ""
-	raw, err := c.doEntityGET(ctx, fmt.Sprintf("adAccounts/%s/creatives/%s", accountID, encodeURNForPath(creativeURN)))
+	raw, readErr := c.doEntityGET(ctx, fmt.Sprintf("adAccounts/%s/creatives/%s", accountID, encodeURNForPath(creativeURN)))
 	switch {
-	case err != nil:
-		why = fmt.Sprintf("reading it back to check the post's author failed (%v)", err)
+	case readErr != nil:
+		why = "reading it back to check the post's author failed"
 	case identityjson.Check(raw) != nil:
 		why = "LinkedIn's answer for it could not be trusted"
 	default:
@@ -389,17 +401,25 @@ func (c *Client) checkBoostCreativeAuthor(ctx context.Context, accountID, orgURN
 			return nil
 		}
 	}
+	// cause is what the error wraps: the read's own error when the read failed (a 401 keeps
+	// ErrCredentialsExpired), else ErrBoostPostIneligible.
+	cause := ErrBoostPostIneligible
+	if readErr != nil {
+		cause = readErr
+	}
 	if !created {
-		return fmt.Errorf("%w: creative %s, found on campaign %s for post %s, failed the author check: %s; remove it in Campaign Manager before boosting this post again", ErrBoostPostIneligible, creativeURN, campaignID, shown, why)
+		return fmt.Errorf("creative %s, found on campaign %s for post %s, failed the author check: %s; remove it in Campaign Manager before boosting this post again: %w", creativeURN, campaignID, shown, why, cause)
 	}
 	cleanup := fmt.Sprintf("the DRAFT creative %s was deleted", creativeURN)
 	path := fmt.Sprintf("adAccounts/%s/creatives/%s", accountID, encodeURNForPath(creativeURN))
-	if _, derr := c.doRequest(ctx, http.MethodDelete, path, nil, nil, nil, true); derr != nil {
+	delCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), boostCreativeDeleteTimeout)
+	defer cancel()
+	if _, derr := c.doRequest(delCtx, http.MethodDelete, path, nil, nil, nil, true); derr != nil {
 		cleanup = fmt.Sprintf("deleting the DRAFT creative %s failed (%v), so delete it in Campaign Manager", creativeURN, derr)
 	}
 	left := fmt.Sprintf("campaign %s is left PAUSED with no ad", campaignID)
 	if campaignReused {
 		left = fmt.Sprintf("campaign %s (found by name) is left as it was", campaignID)
 	}
-	return fmt.Errorf("%w: boost creative for post %s failed the author check: %s; %s, and %s", ErrBoostPostIneligible, shown, why, cleanup, left)
+	return fmt.Errorf("boost creative for post %s failed the author check: %s; %s, and %s: %w", shown, why, cleanup, left, cause)
 }

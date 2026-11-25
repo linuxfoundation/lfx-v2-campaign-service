@@ -1283,9 +1283,11 @@ acceptance does not end the check: with no post read, `finishBoost` calls
 `checkBoostCreativeAuthor`, which GETs the creative and requires
 `content.standardUpdateAd.reference` to be the post and `.contentAuthor` the account's
 organization. Anything else, a failed read included, DELETEs a creative this call created (a DRAFT,
-which can be deleted but not archived) and returns `ErrBoostPostIneligible` with no result, so the
-claim is released and nothing is recorded; a creative found on a reused campaign is named, never
-deleted. Unverified:
+which can be deleted but not archived; the DELETE is detached from the job's context with a 30 s
+timeout) and returns the partial marked `BoostCreativeUnverified`, which the dispatcher records as
+`pending` with the campaign id kept, so a retry answers "reconciliation required". The error wraps
+`ErrBoostPostIneligible`, or the read's own error when the read failed (a 401 keeps
+`ErrCredentialsExpired`). A creative found on a reused campaign is named, never deleted. Unverified:
 a video post on this path gets no `SINGLE_VIDEO` format (the probe covered a share only), so a
 video boost needs a token with `r_organization_social` until it is probed. Every quoted value passes through
 `domain.CallerValue`, and an author that is not an `urn:li:organization:` (a member's person URN,

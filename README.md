@@ -813,8 +813,8 @@ openssl rand -base64 32
   organization authored it and LinkedIn would sponsor it. Without that scope
   the read answers 403 and LinkedIn decides at the creative POST; the job then
   reads the creative back and, unless that organization authored the post,
-  deletes the DRAFT creative and fails, leaving a PAUSED campaign with no ad
-  and recording nothing. Only the
+  deletes the DRAFT creative and fails, leaving a PAUSED campaign with no ad,
+  recorded as `pending` for reconciliation. Only the
   exact value `true` enables it; anything else fails closed, and a create
   naming it is refused with a 400 before a job exists. The chart sets it to
   `"false"` (`app.environment.LINKEDIN_ADS_BOOST_POST_ENABLED.value`);

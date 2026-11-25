@@ -5954,6 +5954,11 @@ refuses, so a repeat answers reconciliation required. It is the state Microsoft'
 `TestLinkedIn_ReusedCampaignTargetingStopIsNotReusable` and, through two orchestrator starts,
 `TestOrchestrator_TargetingStopIsNotReusedOnRetry`.
 
+A boost whose creative failed the client's author check (`BoostCreativeUnverified`, #673: no post
+read, and the creative read back as another post or author, or unreadable) is stamped `pending` the
+same way, so a retry does not post and delete another creative. Pinned in
+`TestLinkedIn_CampaignFromLinkedInStatus`.
+
 **LinkedIn Text Ads (#586).** `linkedinConfig.Format` and `TextAds` (`linkedin_text_ads.go`) are
 checked by `checkFormatShape` (a non-string `format`; a `textAds` that is not an array of objects
 of the four `TextAd` string fields, null fields and unknown keys included) and `linkedinFormat`,
