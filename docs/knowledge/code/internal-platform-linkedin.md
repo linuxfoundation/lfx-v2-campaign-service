@@ -1319,6 +1319,18 @@ excluded under the other is one audience both targeted and excluded, which would
 and reach the campaign POST after the group exists (#557 review). Pinned by the cross-facet cases
 in `TestValidateTargeting` and by `TestValidateTargeting_RefusalIsDeterministic`.
 
+## Audience Expansion and Audience Network (`delivery_options.go`, #667)
+
+`CampaignInput.DeliveryOptions` holds two optional booleans. `createSponsoredCampaign` writes them
+with `DeliveryOptions.apply`: `offsiteDeliveryEnabled` always, `false` unless chosen (the value #133
+pinned: `true` opts into the LinkedIn Audience Network's third-party placements, which nobody
+chooses by default), and `audienceExpansionEnabled` only when chosen. The zero value is the body
+every create sent before. `ValidateDeliveryOptions` refuses `offsiteDeliveryEnabled` true on a
+`FormatText` create (the Audience Network serves Sponsored Content only), and `CreateCampaign`
+runs it before the campaign group. A campaign reused by name keeps its settings, and the result
+gets a warning step. `GetCampaignSettings` reads both into `CampaignSettings`, nil when not
+reported. Neither has been sent as `true` to a live account.
+
 ## Variant name, call to action and description (`variants.go`, #588, #589)
 
 `CreativeVariant` carries three optional strings. `Name` becomes the creative's `name` through

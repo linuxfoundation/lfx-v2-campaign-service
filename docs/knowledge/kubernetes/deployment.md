@@ -231,6 +231,12 @@ a job exists. Not role-gated.
 sent to a live LinkedIn account. Only exactly `"true"` enables it; off, a create naming one is
 refused with a 400 before a job exists.
 
+`LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED` defaults to `"false"` (#667) and is the same kind of gate
+for `linkedInConfig.audienceExpansionEnabled` and `linkedInConfig.offsiteDeliveryEnabled`, the
+campaign's Audience Expansion and LinkedIn Audience Network choices. Off, every create sends
+`offsiteDeliveryEnabled: false` and no `audienceExpansionEnabled`, as before; a create naming
+either (`false` included) is refused with a 400 before a job exists.
+
 `SURVEY_SEQUENCE_WORKFLOW_ID` is a plain value defaulting to `""`, which selects the in-code
 default `1841232183`: the LF Research survey-promo workflow a survey send series
 (`send-workflows`) is copied from when a request names none. That id exists only in the LF
