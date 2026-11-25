@@ -95,8 +95,8 @@ func TestReplaceEmailBodyKeepingChrome_KeepsTheBrandsHeaderAndFooter(t *testing.
 	if err != nil {
 		t.Fatalf("ReplaceEmailBodyKeepingChrome: %v", err)
 	}
-	if *patchCount != 1 {
-		t.Fatalf("expected exactly one PATCH, got %d", *patchCount)
+	if patchCount.Load() != 1 {
+		t.Fatalf("expected exactly one PATCH, got %d", patchCount.Load())
 	}
 	widgets, order, doc := savedDraft(t, c)
 
@@ -210,8 +210,8 @@ func TestReplaceEmailBodyKeepingChrome_NoFooterWritesNothing(t *testing.T) {
 	if !errors.Is(err, ErrNoBrandChrome) {
 		t.Fatalf("err = %v, want ErrNoBrandChrome", err)
 	}
-	if *patchCount != 0 {
-		t.Fatalf("a draft with no footer to keep must not be written, got %d PATCH", *patchCount)
+	if patchCount.Load() != 0 {
+		t.Fatalf("a draft with no footer to keep must not be written, got %d PATCH", patchCount.Load())
 	}
 }
 
@@ -241,8 +241,8 @@ func TestReplaceEmailBodyKeepingChrome_RequiresAnIDAndABody(t *testing.T) {
 	if _, _, err := c.ReplaceEmailBodyKeepingChrome(context.Background(), "email-1", ReplaceEmailBodyInput{BodyHTML: "<p> </p>"}); err == nil {
 		t.Error("a body with no visible text must be refused: it would empty the draft between its header and footer")
 	}
-	if *patchCount != 0 {
-		t.Errorf("a refused call must write nothing, got %d PATCH", *patchCount)
+	if patchCount.Load() != 0 {
+		t.Errorf("a refused call must write nothing, got %d PATCH", patchCount.Load())
 	}
 }
 

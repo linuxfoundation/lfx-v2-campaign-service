@@ -5,19 +5,55 @@ package hubspot
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
+	"sync"
 	"testing"
 )
+
+// requestCapture hands what a handler saw to the test goroutine. The handler runs on the
+// httptest server's goroutine, so a plain captured variable is a data race, and a t.Fatalf from
+// there is FailNow off the test goroutine. This records under a lock, keeps a decode failure as a
+// value, and leaves every assertion to the test.
+type requestCapture struct {
+	mu     sync.Mutex
+	path   string
+	method string
+	body   map[string]any
+	err    error
+}
+
+// record notes the request line and, when withBody is set, its JSON body.
+func (c *requestCapture) record(r *http.Request, withBody bool) {
+	var body map[string]any
+	var err error
+	if withBody {
+		err = json.NewDecoder(r.Body).Decode(&body)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.path, c.method, c.body, c.err = r.URL.Path, r.Method, body, err
+}
+
+// seen returns the last recorded request; it fails the test, on the test goroutine, when that
+// request's body could not be decoded.
+func (c *requestCapture) seen(t *testing.T) (path, method string, body map[string]any) {
+	t.Helper()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err != nil {
+		t.Fatalf("decode request body: %v", c.err)
+	}
+	return c.path, c.method, c.body
+}
 
 // The two recipient settings travel in the SAME write as the lists, because the `to` object is
 // written whole: a PATCH naming only a setting would be a complete `to` with no recipients in it.
 func TestSetSendListWithSettings_StatesTheSettingsBesideTheLists(t *testing.T) {
-	var body map[string]any
-	var gotPath string
+	var captured requestCapture
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		body = decodeBody(t, r)
+		captured.record(r, true)
 		_, _ = io.WriteString(w, `{"id":"999","to":{"suppressGraymail":false,"limitSendFrequency":true}}`)
 	})
 	off, on := false, true
@@ -26,6 +62,7 @@ func TestSetSendListWithSettings_StatesTheSettingsBesideTheLists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetSendListWithSettings: %v", err)
 	}
+	gotPath, _, body := captured.seen(t)
 	if gotPath != "/marketing/v3/emails/999/draft" || email == nil || email.ID != "999" {
 		t.Errorf("the write must PATCH the draft route and return the email, got path %q email %+v", gotPath, email)
 	}
@@ -49,14 +86,15 @@ func TestSetSendListWithSettings_StatesTheSettingsBesideTheLists(t *testing.T) {
 // a newsletter issue. Stating one here would change the recipients of sends this client has
 // always left alone.
 func TestSetSendList_LeavesTheSettingsToHubSpot(t *testing.T) {
-	var body map[string]any
+	var captured requestCapture
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		body = decodeBody(t, r)
+		captured.record(r, true)
 		_, _ = io.WriteString(w, `{"id":"999"}`)
 	})
 	if _, err := c.SetSendList(context.Background(), "999", []string{"3797"}, nil); err != nil {
 		t.Fatalf("SetSendList: %v", err)
 	}
+	_, _, body := captured.seen(t)
 	to, _ := body["to"].(map[string]any)
 	for _, key := range []string{"suppressGraymail", "limitSendFrequency"} {
 		if _, stated := to[key]; stated {
@@ -70,6 +108,7 @@ func TestSetSendList_LeavesTheSettingsToHubSpot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetSendListWithSettings: %v", err)
 	}
+	_, _, body = captured.seen(t)
 	to, _ = body["to"].(map[string]any)
 	if _, stated := to["limitSendFrequency"]; stated {
 		t.Errorf("a nil setting must be left out, got %v", to["limitSendFrequency"])
@@ -113,15 +152,16 @@ func TestGetEmailSendSettings(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var gotPath, gotMethod string
+			var captured requestCapture
 			c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-				gotPath, gotMethod = r.URL.Path, r.Method
+				captured.record(r, false)
 				_, _ = io.WriteString(w, tc.body)
 			})
 			got, err := c.GetEmailSendSettings(context.Background(), " 555 ")
 			if err != nil {
 				t.Fatalf("GetEmailSendSettings: %v", err)
 			}
+			gotPath, gotMethod, _ := captured.seen(t)
 			if gotMethod != http.MethodGet || gotPath != "/marketing/v3/emails/555" {
 				t.Errorf("request = %s %s, want a GET of the email itself", gotMethod, gotPath)
 			}

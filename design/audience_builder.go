@@ -901,7 +901,10 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 		Description("List the brands that have SENT a HubSpot newsletter in this project's portal, most recently " +
 			"sent first, for the newsletter surface's brand picker. A brand is read from the email name " +
 			"(\"<YY>Q<N> - <Brand> - Newsletter - <Month>\"). Drafts and scheduled sends do not count. " +
-			"The listing walks the portal's email history and is cached per project for 15 minutes.")
+			"The listing reads the portal's most recently updated emails up to a scan bound, so on a large " +
+			"portal a brand whose newsletters are all older than that is not listed. A bounded read that " +
+			"finds no sent newsletter at all is a recoverable failure, not an empty list. Cached per " +
+			"project for 15 minutes.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -922,8 +925,11 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 
 	Method("get-audience-brand-newsletters", func() {
 		Description("Find the brand's most recently SENT HubSpot newsletters and report the lists each one targeted. " +
-			"A newsletter is a sent email whose NAME contains both the brand and the word \"newsletter\" " +
-			"(case-insensitive). The newest is the template a new issue clones; the rest are content " +
+			"A newsletter is a sent email whose NAME names the brand the way get-audience-newsletter-brands " +
+			"reads it: the brand parsed from the name must EQUAL the given brand, ignoring case. It is " +
+			"equality, not containment, so \"LF\" does not match an \"LF Education\" newsletter and " +
+			"\"PyTorch\" does not match a \"PyTorch Foundation\" one; pass a brand exactly as that listing " +
+			"returned it. The newest is the template a new issue clones; the rest are content " +
 			"references. Drafts and scheduled sends are never returned.")
 		Payload(func() {
 			bearerToken()

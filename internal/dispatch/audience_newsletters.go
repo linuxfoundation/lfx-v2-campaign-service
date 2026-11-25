@@ -65,6 +65,14 @@ func isSentIssue(email hubspot.Email, now time.Time) bool {
 	return !markedTestSend.MatchString(email.Name)
 }
 
+// IsSentBrandIssue reports whether an email is an issue the brand SENT: exactly the rows the
+// newsletter picker offers for that brand (isSentIssue's send gates plus IsBrandNewsletter's
+// name rule). It is the gate for an email id a brief NAMES as a reference, which is
+// caller-supplied and so has to be checked against what the picker could have listed.
+func IsSentBrandIssue(email hubspot.Email, brand string, now time.Time) bool {
+	return isSentIssue(email, now) && IsBrandNewsletter(email.Name, brand)
+}
+
 // BrandNewsletters reports the brand's most recently SENT newsletters, newest first, with the
 // lists each one targeted. The newest is the template a new issue clones; the rest are content
 // references, and their lists are the precedent for the new issue's audience.
@@ -196,6 +204,10 @@ const newsletterBrandsTTL = 15 * time.Minute
 type cachedNewsletterBrands struct {
 	at     time.Time
 	brands []audience.NewsletterBrand
+	// credential is the fingerprint of the connection the listing was read with. A hit counts
+	// only for the same one: a project that connects its own portal, replaces it, or falls back
+	// to the shared one must not keep getting the previous portal's brands.
+	credential string
 }
 
 // quarterCode matches the "26Q2" code the LF naming convention puts first, also when it is
@@ -300,25 +312,38 @@ func NewsletterBrandFromName(name string) (string, bool) {
 // draft is not offered: the surface clones the previous issue, and a draft is no issue.
 func (x *AudienceExplorer) NewsletterBrands(ctx context.Context, projectID string) (out []audience.NewsletterBrand, err error) {
 	now := x.now()
-	x.brandsMu.Lock()
-	if hit, ok := x.brandsCache[projectID]; ok && now.Sub(hit.at) < newsletterBrandsTTL {
-		x.brandsMu.Unlock()
-		return hit.brands, nil
-	}
-	x.brandsMu.Unlock()
-
+	// The connection is resolved BEFORE the cache is consulted: the cache is keyed by project,
+	// and which portal a project reads can change under it.
 	client, fromSystem, err := x.builder.client(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { err = systemScopedHubSpot(err, fromSystem) }()
+	credential := client.CredentialFingerprint()
 
-	emails, _, serr := client.SearchEmailsMatchingBounded(ctx, func(e hubspot.Email) bool {
+	x.brandsMu.Lock()
+	if hit, ok := x.brandsCache[projectID]; ok && hit.credential == credential && now.Sub(hit.at) < newsletterBrandsTTL {
+		x.brandsMu.Unlock()
+		return hit.brands, nil
+	}
+	x.brandsMu.Unlock()
+
+	emails, bounded, serr := client.SearchEmailsMatchingBounded(ctx, func(e hubspot.Email) bool {
 		_, ok := NewsletterBrandFromName(e.Name)
 		return ok
 	})
 	if serr != nil {
 		return nil, serr
+	}
+	// The walk reads the portal's most recently updated emails and stops at a scan bound. On a
+	// large portal it always stops there, so this is a listing of the brands with a RECENT
+	// newsletter, which is what the published contract says and what a picker for "the previous
+	// issue" needs. A bounded walk that found no sent issue at all cannot be told from an unread
+	// portal, so that one is the same recoverable failure BrandNewsletters reports, and is not
+	// cached.
+	if bounded {
+		slog.InfoContext(ctx, "newsletter brands: the email walk stopped at its scan bound; brands whose issues are all older are not listed",
+			"project_id", projectID, "matched", len(emails))
 	}
 
 	type acc struct {
@@ -367,12 +392,15 @@ func (x *AudienceExplorer) NewsletterBrands(ctx context.Context, projectID strin
 	for _, a := range accs {
 		out = append(out, a.brand)
 	}
+	if bounded && len(out) == 0 {
+		return nil, fmt.Errorf("newsletter brands: the email search stopped at its scan bound and none of the rows it matched was a sent issue, so an empty brand list cannot be distinguished from an unread one: %w", hubspot.ErrSearchIncomplete)
+	}
 
 	x.brandsMu.Lock()
 	if x.brandsCache == nil {
 		x.brandsCache = map[string]cachedNewsletterBrands{}
 	}
-	x.brandsCache[projectID] = cachedNewsletterBrands{at: now, brands: out}
+	x.brandsCache[projectID] = cachedNewsletterBrands{at: now, brands: out, credential: credential}
 	x.brandsMu.Unlock()
 	return out, nil
 }

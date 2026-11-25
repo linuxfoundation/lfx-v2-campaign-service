@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
@@ -38,15 +39,20 @@ func TestSourceDocumentLinks(t *testing.T) {
 
 func TestNormalizeLinkForMatch(t *testing.T) {
 	cases := map[string]string{
-		"https://Acme.Example/Blog/Post/":          "https://acme.example/Blog/Post",
-		" https://acme.example/x#section ":         "https://acme.example/x",
-		"https://acme.example":                     "https://acme.example",
-		"https://acme.example/x?a=1&b=2":           "https://acme.example/x?a=1&b=2",
-		"javascript:alert(1)":                      "",
-		"/relative/path":                           "",
-		"mailto:someone@acme.example":              "",
-		"":                                         "",
-		"https://user:secret@acme.example/private": "https://user:secret@acme.example/private",
+		"https://Acme.Example/Blog/Post/":  "https://acme.example/Blog/Post",
+		" https://acme.example/x#section ": "https://acme.example/x",
+		"https://acme.example":             "https://acme.example",
+		"https://acme.example/x?a=1&b=2":   "https://acme.example/x?a=1&b=2",
+		"javascript:alert(1)":              "",
+		"/relative/path":                   "",
+		"mailto:someone@acme.example":      "",
+		"":                                 "",
+		// Userinfo is refused: it is a credential in a link every recipient receives, and
+		// "trusted@evil" reads as one site and opens another.
+		"https://user:secret@acme.example/private": "",
+		"https://acme.example@evil.example/":       "",
+		// A port with no hostname is not a site.
+		"https://:8080/path": "",
 	}
 	for in, want := range cases {
 		if got := normalizeLinkForMatch(in); got != want {
@@ -172,10 +178,14 @@ func TestGenerateEmailCopy_NewsletterKeepsOnlyLinksFromTheNotes(t *testing.T) {
 		DeliveryType: model.DeliveryNewsletter,
 		EventDetails: json.RawMessage(`{"eventName":"Acme Newsletter - November 2026","sourceText":"Guide is out: https://acme.example/guide\nNew members joined"}`),
 	}
-	var prompt string
+	// The handler runs on the server's goroutine, so the prompt it saw crosses under a lock.
+	var promptMu sync.Mutex
+	var seenPrompt string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
-		prompt = string(raw)
+		promptMu.Lock()
+		seenPrompt = string(raw)
+		promptMu.Unlock()
 		content := `{"subject":"Acme Newsletter: the guide is out","preheader":"New members too","sections":[` +
 			`{"type":"rich_text","html":"<h1>Acme Newsletter</h1><p>Read <a href=\"https://acme.example/guide\">the guide</a>.</p>"},` +
 			`{"type":"rich_text","html":"<h2>New members</h2><p>Meet <a href=\"https://acme.example/members\">them</a>.</p>"}]}`
@@ -197,6 +207,9 @@ func TestGenerateEmailCopy_NewsletterKeepsOnlyLinksFromTheNotes(t *testing.T) {
 	if len(result.Sections) != 2 {
 		t.Fatalf("sections = %d, want 2", len(result.Sections))
 	}
+	promptMu.Lock()
+	prompt := seenPrompt
+	promptMu.Unlock()
 	first, second := *result.Sections[0].HTML, *result.Sections[1].HTML
 	if !strings.Contains(first, `href="https://acme.example/guide"`) {
 		t.Errorf("the link the notes carry must survive: %s", first)
@@ -206,5 +219,30 @@ func TestGenerateEmailCopy_NewsletterKeepsOnlyLinksFromTheNotes(t *testing.T) {
 	}
 	if !strings.Contains(prompt, `- Guide is out: https://acme.example/guide\n  - New members joined`) {
 		t.Errorf("the notes must reach the model one item per line; request was %s", prompt)
+	}
+}
+
+// TestTrimTrailingLinkPunctuation pins the bracket rule: a ")" that closes one opened inside the
+// address is part of it, an unmatched one is the sentence's.
+func TestTrimTrailingLinkPunctuation(t *testing.T) {
+	cases := map[string]string{
+		"https://acme.example/x.":               "https://acme.example/x",
+		"https://acme.example/x).":              "https://acme.example/x",
+		"https://acme.example/wiki/Foo_(bar)":   "https://acme.example/wiki/Foo_(bar)",
+		"https://acme.example/wiki/Foo_(bar)).": "https://acme.example/wiki/Foo_(bar)",
+		"https://acme.example/wiki/Foo_(bar),":  "https://acme.example/wiki/Foo_(bar)",
+		"https://acme.example/a?b=c!?":          "https://acme.example/a?b=c",
+		"":                                      "",
+	}
+	for in, want := range cases {
+		if got := trimTrailingLinkPunctuation(in); got != want {
+			t.Errorf("trimTrailingLinkPunctuation(%q) = %q, want %q", in, got, want)
+		}
+	}
+	links := sourceDocumentLinks("Read (https://acme.example/wiki/Foo_(bar)) and https://acme.example/y.")
+	for _, want := range []string{"https://acme.example/wiki/Foo_(bar)", "https://acme.example/y"} {
+		if _, ok := links[want]; !ok {
+			t.Errorf("sourceDocumentLinks lost %q, got %v", want, links)
+		}
 	}
 }

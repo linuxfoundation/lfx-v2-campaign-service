@@ -51,7 +51,10 @@ func (x *AudienceExplorer) DescribeLists(ctx context.Context, projectID string, 
 	}
 	reads := make([]read, len(ids))
 	cache := make(map[string]*hubspot.List, len(ids))
-	answered := 0
+	// Lists actually READ. A 404 is an answer about one list, not proof the connection works:
+	// counted as one, a batch of a missing list plus a permission failure came back 200 with
+	// nothing readable in it, hiding an unusable credential.
+	readCount := 0
 	var firstErr error
 	for i, id := range ids {
 		list, gerr := client.GetList(ctx, id)
@@ -59,10 +62,9 @@ func (x *AudienceExplorer) DescribeLists(ctx context.Context, projectID string, 
 		case gerr == nil && list != nil:
 			reads[i].list = list
 			cache[id] = list
-			answered++
+			readCount++
 		case hubspot.IsNotFound(gerr):
 			reads[i].notFound = true
-			answered++
 		default:
 			if gerr == nil {
 				gerr = fmt.Errorf("hubspot: list %s returned no list", id)
@@ -73,7 +75,7 @@ func (x *AudienceExplorer) DescribeLists(ctx context.Context, projectID string, 
 			slog.WarnContext(ctx, "could not read a list to describe it", "project_id", projectID, "list_id", id, "error", gerr)
 		}
 	}
-	if answered == 0 && firstErr != nil {
+	if readCount == 0 && firstErr != nil {
 		return nil, firstErr
 	}
 

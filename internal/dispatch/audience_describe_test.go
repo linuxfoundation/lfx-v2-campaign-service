@@ -133,3 +133,21 @@ func TestDescribeLists_RefusesAnOversizedBatchBeforeAnyRequest(t *testing.T) {
 	require.ErrorAs(t, err, &field)
 	assert.Zero(t, atomic.LoadInt32(&calls), "a refused batch must not reach the portal")
 }
+
+// A missing list is an answer about that list, not proof the connection works. With one list
+// missing and the other refused, NOTHING was read, so the batch is the same connection error as
+// when every list is refused, not a 200 of rows that hides a broken token.
+func TestDescribeLists_AMissingListDoesNotMaskAnUnreadableConnection(t *testing.T) {
+	var calls int32
+	srv := describeServer(t, &calls)
+	defer srv.Close()
+
+	_, err := describeExplorer(srv.URL).DescribeLists(context.Background(), "proj-1", []string{"404", "500"})
+	require.Error(t, err)
+
+	// Every failure a 404: the connection answered, so each list is reported as not found.
+	got, err := describeExplorer(srv.URL).DescribeLists(context.Background(), "proj-1", []string{"404"})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, audience.DescribeStatusNotFound, got[0].Status)
+}

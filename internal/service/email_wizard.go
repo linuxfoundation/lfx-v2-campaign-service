@@ -225,6 +225,9 @@ func loadWizardSession(ctx context.Context, briefRepo domain.BriefRepository, se
 	if gerr != nil {
 		return nil, nil, mapBriefErr(gerr)
 	}
+	if rerr := refuseNewsletterWizard(brief); rerr != nil {
+		return nil, nil, rerr
+	}
 	return sess, brief, nil
 }
 
@@ -389,8 +392,12 @@ func (s *BriefService) StartEmailWizardPlan(ctx context.Context, p *briefs.Start
 	}
 	// Read the brief first: a session for a brief that does not exist (or belongs to another
 	// project) must be a 404, not a foreign-key error from the insert below.
-	if _, gerr := briefRepo.GetBrief(ctx, p.ProjectID, p.BriefID); gerr != nil {
+	startBrief, gerr := briefRepo.GetBrief(ctx, p.ProjectID, p.BriefID)
+	if gerr != nil {
 		return nil, mapBriefErr(gerr)
+	}
+	if rerr := refuseNewsletterWizard(startBrief); rerr != nil {
+		return nil, rerr
 	}
 
 	// ALWAYS server-minted. A caller-supplied token was accepted here, and the column is
@@ -706,6 +713,25 @@ func wizardPlanMessage(d wizardEventDetails, tpl emailstage.Template, plan wizar
 		fmt.Fprintf(&b, "Dates: %s. ", dates)
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// refuseNewsletterWizard turns a newsletter brief away from the wizard. The wizard's clone step
+// writes with hubspot.ApplyEmailContent, which replaces one rich-text block and tags links with
+// the events UTM convention: on a newsletter that leaves the previous issue's other items in the
+// draft and mislabels its clicks. A newsletter issue is staged through the dispatcher instead
+// (applyNewsletterContent keeps the brand chrome, replaces the whole body, and stages links
+// untagged), so until the wizard has that path it must not take a newsletter at all.
+func refuseNewsletterWizard(brief *model.CampaignBrief) error {
+	if brief == nil {
+		return nil
+	}
+	if brief.DeliveryType == model.DeliveryNewsletter || emailstage.IsNewsletterStage(brief.Stage) {
+		return &briefs.BadRequestError{
+			Code:    "400",
+			Message: "the email wizard does not stage newsletter issues; stage the issue from the newsletter flow",
+		}
+	}
+	return nil
 }
 
 // resolveStageTemplate is the stage library entry for a brief's stage, on the surface the stage

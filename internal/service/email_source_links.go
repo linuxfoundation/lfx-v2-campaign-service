@@ -32,11 +32,15 @@ var sourceLinkPattern = regexp.MustCompile(`(?i)https?://[^\s<>"']+`)
 const trailingLinkPunctuation = ".,;:!?)]}>"
 
 // normalizeLinkForMatch is the form two addresses are compared in: scheme and host lower-cased,
-// no fragment, no trailing slash. "" for anything that is not an absolute http(s) address. It
+// no fragment, no trailing slash. "" for anything that is not an absolute http(s) address with a
+// hostname, and for one that carries userinfo. It
 // deliberately does not touch the path's case or the query, which can both be significant.
 func normalizeLinkForMatch(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Host == "" {
+	// No userinfo: "https://user:secret@host/" is a credential in a link every recipient would
+	// receive, and "https://trusted.example@evil.example/" reads as one site and opens another.
+	// Hostname, not Host: ":8080" alone is a Host with no site in it.
+	if err != nil || u.Hostname() == "" || u.User != nil {
 		return ""
 	}
 	scheme := strings.ToLower(u.Scheme)
@@ -47,11 +51,25 @@ func normalizeLinkForMatch(raw string) string {
 	return strings.TrimRight(u.String(), "/")
 }
 
+// trimTrailingLinkPunctuation drops the punctuation prose puts after an address. A closing
+// bracket that closes one opened INSIDE the address belongs to it (".../wiki/Foo_(bar)"); only an
+// unmatched one is the prose's ("(see https://example.org/x)"). The UI's extractHttpLinks applies
+// the same rule, and the two must agree: a link kept there and cut here loses its anchor.
+func trimTrailingLinkPunctuation(raw string) string {
+	for raw != "" && strings.ContainsRune(trailingLinkPunctuation, rune(raw[len(raw)-1])) {
+		if raw[len(raw)-1] == ')' && strings.Count(raw, "(") >= strings.Count(raw, ")") {
+			break
+		}
+		raw = raw[:len(raw)-1]
+	}
+	return raw
+}
+
 // sourceDocumentLinks returns every address the notes carry, in match form.
 func sourceDocumentLinks(sourceText string) map[string]struct{} {
 	links := map[string]struct{}{}
 	for _, raw := range sourceLinkPattern.FindAllString(sourceText, -1) {
-		if key := normalizeLinkForMatch(strings.TrimRight(raw, trailingLinkPunctuation)); key != "" {
+		if key := normalizeLinkForMatch(trimTrailingLinkPunctuation(raw)); key != "" {
 			links[key] = struct{}{}
 		}
 	}

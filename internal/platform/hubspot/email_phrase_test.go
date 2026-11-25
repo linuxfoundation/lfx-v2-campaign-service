@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -82,9 +83,10 @@ func TestContainsAnyPhrase_WholeWords(t *testing.T) {
 }
 
 func TestSearchEmailsAnyPhrase_MatchesNameOrSubjectInOneWalk(t *testing.T) {
-	calls := 0
+	// Written on the server's handler goroutine, read on the test's: an atomic, not a plain int.
+	var calls atomic.Int32
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		calls++
+		calls.Add(1)
 		if q := r.URL.Query(); q.Get("q") != "" || q.Get("query") != "" {
 			t.Errorf("phrases must never be sent upstream, got %s", r.URL.RawQuery)
 		}
@@ -108,8 +110,8 @@ func TestSearchEmailsAnyPhrase_MatchesNameOrSubjectInOneWalk(t *testing.T) {
 	if strings.Join(ids, ",") != "1,2" {
 		t.Errorf("matched %v, want 1 (name) and 2 (subject) only", ids)
 	}
-	if calls != 1 {
-		t.Errorf("one page should mean one request, got %d", calls)
+	if got := calls.Load(); got != 1 {
+		t.Errorf("one page should mean one request, got %d", got)
 	}
 }
 

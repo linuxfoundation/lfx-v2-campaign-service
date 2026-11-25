@@ -1065,7 +1065,11 @@ func logMissingDispatchers(dispatchers map[model.Provider]service.PlatformDispat
 // rather than a direct cast — one declared contract, both injection sites.
 func bindBriefLiveBackends(bb briefBackendSetter, budget *membudget.Budget, pool *postgres.Pool, briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator, connRepo *postgres.ConnectionRepo, enc domain.Encryptor, audiences domain.AudienceRepository, dispatchers map[model.Provider]service.PlatformDispatcher) {
 	bb.SetBackend(briefs, campaigns, jobs, orch)
-	bb.SetEmailReferenceSource(service.NewEmailReferenceSource(connRepo, enc))
+	// A brief names its reference emails by raw id; only a sent issue of the brief's own brand
+	// may be read. The rule is dispatch's, the same one the picker lists by.
+	bb.SetEmailReferenceSource(service.NewEmailReferenceSource(connRepo, enc, func(email hubspot.Email, brand string) bool {
+		return dispatch.IsSentBrandIssue(email, brand, time.Now())
+	}))
 	// ORDER MATTERS between these two, and only in one direction.
 	//
 	// On the cold-start retry path this mutates a BriefService that is ALREADY MOUNTED and

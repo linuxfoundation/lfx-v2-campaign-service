@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/emailstage"
 )
@@ -69,6 +70,9 @@ type emailCopyEventDetails struct {
 	// Written by the newsletter surface (the brand's previous issues). Empty on every other brief,
 	// which keeps the automatic most-recent lookup. See EmailReferenceSource.BuildReferenceBlockFromIDs.
 	ReferenceEmailIDs []string `json:"referenceEmailIds"`
+	// NewsletterBrand is the brand the newsletter surface planned this issue for, as picked from
+	// the brand listing. It scopes ReferenceEmailIDs: only a sent issue of this brand is read.
+	NewsletterBrand string `json:"newsletterBrand"`
 	// Themes is the key the UI writes for the event's subject matter, and the one that carries it on
 	// every brief this service sees. Merged with `Topics` above by topicList rather than one winning.
 	Themes []string `json:"themes"`
@@ -1326,6 +1330,35 @@ func truncateString(s string, maxLen int) string {
 	return strings.TrimRight(string(runes), " \t\n\r")
 }
 
+// emailCopyStage is the stage a copy request is written for. The prompt surface follows the
+// BRIEF's delivery type, not the caller's free-text `stage` parameter, in both directions:
+//
+//   - A NEWSLETTER brief always resolves to a newsletter stage: the requested one when it is one,
+//     else the brief's stored stage, else the surface default. An absent parameter used to mean
+//     the frozen legacy event prompt, which drops the operator's notes and skips the link rule.
+//   - Any OTHER brief never gets the newsletter prompt. A newsletter stage sent for an event or
+//     survey brief is an unrecognised stage for that surface and resolves as one (Registration
+//     Push, emailstage.Resolve's fallback), so the stored delivery/stage pairing cannot be
+//     bypassed from the query string. Every other value is kept exactly as given.
+func emailCopyStage(brief *model.CampaignBrief, requested string) string {
+	if brief == nil {
+		return requested
+	}
+	if brief.DeliveryType != model.DeliveryNewsletter {
+		if emailstage.IsNewsletterStage(requested) {
+			return emailstage.RegistrationPush
+		}
+		return requested
+	}
+	if emailstage.IsNewsletterStage(requested) {
+		return requested
+	}
+	if emailstage.IsNewsletterStage(brief.Stage) {
+		return brief.Stage
+	}
+	return emailstage.DefaultNewsletterStage
+}
+
 // GenerateEmailCopy implements the briefs.Service GenerateEmailCopy method.
 // It generates AI-written email copy (subject, preheader, body, CTA) for a campaign brief.
 // It does NOT persist the generated copy to the brief.
@@ -1381,7 +1414,7 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 		// Absent is not an error: the design leaves `stage` optional. An absent one takes the
 		// frozen legacy prompt (byte-identical to the pre-stage behaviour, LFXV2-1940); only a
 		// non-empty unrecognised value falls through Resolve to Registration Push.
-		stage: strVal(p.Stage),
+		stage: emailCopyStage(brief, strVal(p.Stage)),
 		// Same absent-is-a-no-op shape as stage: composeEmailCopyPrompt only appends the
 		// urgency-fomo block for an EXACT match, so an unrecognised value here silently produces
 		// ordinary stage-based copy rather than an error.
@@ -1401,8 +1434,10 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	// connection, no published emails, or an unreachable portal still gets copy generated, just
 	// without style mirroring. See EmailReferenceSource for why this cannot fail the request.
 	if ref := s.snapshotEmailReferenceSource(); ref != nil {
-		if ids := details.ReferenceEmailIDs; len(ids) > 0 {
-			promptVars.referenceBlock = ref.BuildReferenceBlockFromIDs(ctx, brief.ProjectID, ids)
+		// Chosen references are a newsletter-surface input; on any other brief the key is ignored
+		// and the automatic lookup runs, as it did before the key existed.
+		if ids := details.ReferenceEmailIDs; len(ids) > 0 && brief.DeliveryType == model.DeliveryNewsletter {
+			promptVars.referenceBlock = ref.BuildReferenceBlockFromIDs(ctx, brief.ProjectID, details.NewsletterBrand, ids)
 		} else {
 			promptVars.referenceBlock = ref.BuildReferenceBlock(ctx, brief.ProjectID)
 		}

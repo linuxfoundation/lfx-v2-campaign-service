@@ -58,12 +58,23 @@ type EmailReferenceSource struct {
 	conn connReader
 	enc  domain.Encryptor
 	opts []hubspot.Option
+	// chosenGate decides whether an email the caller NAMED may be read as a reference for the
+	// given brand. A constructor argument so the wiring cannot be dropped silently; nil refuses
+	// every chosen email.
+	chosenGate ChosenReferenceGate
 }
 
-// NewEmailReferenceSource builds a reference source. opts are forwarded to hubspot.NewClient
-// (e.g. test overrides for the base URL or HTTP client).
-func NewEmailReferenceSource(conn connReader, enc domain.Encryptor, opts ...hubspot.Option) *EmailReferenceSource {
-	return &EmailReferenceSource{conn: conn, enc: enc, opts: opts}
+// ChosenReferenceGate reports whether an email a brief names as a reference is one the newsletter
+// picker could have offered for that brand: an issue the brand actually sent. It is injected
+// rather than called directly because the rule lives in internal/dispatch (the same parser and
+// send gates that build the picker), which this package cannot import -- see hubspotCreds.
+type ChosenReferenceGate func(email hubspot.Email, brand string) bool
+
+// NewEmailReferenceSource builds a reference source. gate is the rule BuildReferenceBlockFromIDs
+// applies to every chosen email (nil refuses them all; the automatic lookup does not use it).
+// opts are forwarded to hubspot.NewClient (e.g. test overrides for the base URL or HTTP client).
+func NewEmailReferenceSource(conn connReader, enc domain.Encryptor, gate ChosenReferenceGate, opts ...hubspot.Option) *EmailReferenceSource {
+	return &EmailReferenceSource{conn: conn, enc: enc, chosenGate: gate, opts: opts}
 }
 
 // BuildReferenceBlock returns a truncated, plain-text style/tone reference block built from the
@@ -137,14 +148,25 @@ func (r *EmailReferenceSource) BuildReferenceBlock(ctx context.Context, projectI
 // on the newsletter surface it is the issue the new one is cloned from. At most
 // referenceCandidateLimit ids are read; blank and repeated ids are skipped.
 //
-// It is allowed on the shared LF connection, unlike BuildReferenceBlock, because the reason that
-// one refuses does not apply. BuildReferenceBlock searches the WHOLE portal and so would pull
-// other projects' emails in unasked. These ids were picked by name from the brand-newsletter or
-// template listing, which show the same shared portal's emails to every project already; reading
-// the ones a person chose is not a portal-wide sweep.
+// Like BuildReferenceBlock it REFUSES the shared LF connection. The brief's brand and ids are
+// both caller-written, so on a portal every project shares they prove nothing about ownership: a
+// project could name another brand and have that brand's issue put in the model prompt. Until an
+// email carries a server-side ownership signal, a project reads reference emails only from its
+// own portal.
+//
+// On the project's own connection every email still passes the chosen-reference gate before its
+// body is read: it must be an issue the brief's brand SENT, which is what the picker lists. A
+// draft, an automated email or a non-newsletter email is skipped. No gate, or no brand, reads
+// nothing.
 //
 // Best-effort like BuildReferenceBlock: every failure yields "" or skips the one email.
-func (r *EmailReferenceSource) BuildReferenceBlockFromIDs(ctx context.Context, projectID string, ids []string) string {
+func (r *EmailReferenceSource) BuildReferenceBlockFromIDs(ctx context.Context, projectID, brand string, ids []string) string {
+	brand = strings.TrimSpace(brand)
+	if r.chosenGate == nil || brand == "" {
+		slog.DebugContext(ctx, "chosen email reference lookup skipped: no brand or no gate to check the chosen emails against",
+			"project_id", projectID)
+		return ""
+	}
 	wanted := make([]string, 0, referenceCandidateLimit)
 	seen := map[string]struct{}{}
 	for _, id := range ids {
@@ -164,10 +186,15 @@ func (r *EmailReferenceSource) BuildReferenceBlockFromIDs(ctx context.Context, p
 	if len(wanted) == 0 {
 		return ""
 	}
-	client, _, err := r.resolveClient(ctx, projectID)
+	client, fromSystem, err := r.resolveClient(ctx, projectID)
 	if err != nil {
 		slog.DebugContext(ctx, "chosen email reference lookup skipped: could not resolve a hubspot client",
 			"project_id", projectID, "error", err)
+		return ""
+	}
+	if fromSystem {
+		slog.DebugContext(ctx, "chosen email reference lookup skipped: only the shared LF connection is available, and a caller-named email there may belong to another project",
+			"project_id", projectID)
 		return ""
 	}
 	candidates := make([]hubspot.Email, 0, len(wanted))
@@ -176,6 +203,11 @@ func (r *EmailReferenceSource) BuildReferenceBlockFromIDs(ctx context.Context, p
 		if gerr != nil {
 			slog.DebugContext(ctx, "chosen email reference lookup: skipping one email",
 				"project_id", projectID, "email_id", id, "error", gerr)
+			continue
+		}
+		if !r.chosenGate(*e, brand) {
+			slog.WarnContext(ctx, "chosen email reference refused: not a sent issue of the brief's brand",
+				"project_id", projectID, "email_id", id)
 			continue
 		}
 		candidates = append(candidates, *e)

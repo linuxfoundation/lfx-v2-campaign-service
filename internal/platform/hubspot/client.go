@@ -22,6 +22,8 @@ package hubspot
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -86,6 +88,15 @@ type Credentials struct {
 	// PrivateAppToken is the HubSpot private-app access token sent as the bearer
 	// credential on every request.
 	PrivateAppToken string
+}
+
+// CredentialFingerprint is a short, stable, non-reversible tag for the credential this client
+// authenticates with. It lets a cache keyed by project notice that the project's connection now
+// resolves to a DIFFERENT portal token (own connection added, replaced, or the shared fallback),
+// without holding or comparing the token itself.
+func (c *Client) CredentialFingerprint() string {
+	sum := sha256.Sum256([]byte(c.creds.PrivateAppToken))
+	return hex.EncodeToString(sum[:8])
 }
 
 // AccountConfig identifies the HubSpot portal the client operates against. It is

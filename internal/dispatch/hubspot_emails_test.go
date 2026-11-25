@@ -92,3 +92,47 @@ func TestHubSpot_SearchEmailsReturnsEmptyNotNil(t *testing.T) {
 		t.Errorf("got %d emails, want 0", len(got))
 	}
 }
+
+// The dispatcher satisfies the orchestrator's optional PHRASE-search capability, asserted at
+// compile time for the same reason as SearchEmails above: the orchestrator finds it by type
+// assertion, so a removed or drifted method would otherwise surface as "phrase search is not
+// supported" in production with every test still green.
+var _ interface {
+	SearchEmailsAnyPhrase(context.Context, string, model.Provider, []string) ([]model.MarketingEmail, error)
+} = (*HubSpotDispatcher)(nil)
+
+// TestHubSpot_SearchEmailsAnyPhraseFiltersAndMaps drives the dispatcher's own phrase search from
+// an HTTP response to the domain model. The client suite calls hubspot.Client directly and the
+// service suites use fake searchers, so nothing else exercises this method: it must resolve the
+// connection, keep only the rows a phrase matches, and map them like SearchEmails does.
+func TestHubSpot_SearchEmailsAnyPhraseFiltersAndMaps(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if q := r.URL.Query(); q.Get("q") != "" || q.Get("query") != "" {
+			t.Errorf("phrases are matched here, never sent upstream, got %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[`+
+			`{"id":"1","name":"Open Source Summit Japan 2026 | Tracks","subject":"Explore","state":"PUBLISHED","updatedAt":"2026-08-01T17:04:00Z"},`+
+			`{"id":"2","name":"Linux Foundation Newsletter","subject":"November","state":"PUBLISHED","updatedAt":"2026-08-02T17:04:00Z"}`+
+			`]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+
+	got, err := d.SearchEmailsAnyPhrase(context.Background(), "proj-1", model.ProviderHubSpot, []string{"Open Source Summit"})
+	if err != nil {
+		t.Fatalf("SearchEmailsAnyPhrase: %v", err)
+	}
+	want := model.MarketingEmail{
+		ID:        "1",
+		Name:      "Open Source Summit Japan 2026 | Tracks",
+		Subject:   "Explore",
+		State:     "PUBLISHED",
+		UpdatedAt: "2026-08-01T17:04:00Z",
+	}
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("SearchEmailsAnyPhrase = %+v, want only %+v", got, want)
+	}
+}

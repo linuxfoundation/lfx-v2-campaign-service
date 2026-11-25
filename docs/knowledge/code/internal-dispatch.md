@@ -3398,6 +3398,26 @@ name marks it as a test, in brackets ("(Marketing Ops Test)", "[TEST]"), was pub
 list; as a brand's latest issue it would have made that list the next issue's audience. "A/B test"
 outside brackets is a real issue and still counts. Test: `audience_newsletters_issue_test.go`.
 
+`IsSentBrandIssue(email, brand, now)` is the same two rules as one predicate (`isSentIssue` and
+`IsBrandNewsletter`), exported for the one caller outside this package: `service`'s
+`EmailReferenceSource` uses it, through a gate `internal/container` passes to its constructor, to
+check an email id a brief NAMES as a reference before reading its body. The id is caller-supplied, so it has to be one
+the picker could have offered.
+
+`NewsletterBrands` reads the portal's most recently updated emails and stops at the walk's scan
+bound (`SearchEmailsMatchingBounded`). On a large portal it always stops there, so the listing is
+the brands with a RECENT newsletter, which is what the published contract says. It logs when the
+walk was bounded, and a bounded walk that yielded no sent issue at all is `ErrSearchIncomplete`
+(not cached), because that empty list cannot be told from an unread portal. The cache is keyed by
+project but bound to the connection it was read with (`hubspot.Client.CredentialFingerprint`, a
+short hash, never the token): the connection is resolved before the cache is consulted, so a project
+that connects its own portal, replaces it, or falls back to the shared one does not keep getting
+the previous portal's brands.
+
+`DescribeLists` reports a connection error when NO list could be read and any failure was not a
+404. A missing list is an answer about that list, not proof the credential works: counted as one, a
+batch of a missing list plus a refused one came back `200` with nothing readable in it.
+
 ### A/B test pre-check (`PreflightCreate`)
 
 `HubSpotDispatcher.PreflightCreate` is the HubSpot implementation of the optional

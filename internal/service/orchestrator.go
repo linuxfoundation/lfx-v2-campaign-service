@@ -1991,7 +1991,22 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// otherwise reused forever, so a HubSpot draft deleted in HubSpot could never be staged
 		// again. Then the row has just been retired, the slot is empty, and its version is
 		// claimed afresh below, exactly as for a brief never dispatched to this platform.
-		if !o.retireIfGoneUpstream(ctx, jobID, brief, p, existing, by) {
+		outcome, replacement := o.retireIfGoneUpstream(ctx, jobID, brief, p, variant, existing, by)
+		switch outcome {
+		case retireFreed:
+			// The slot is empty: claim it below. Two requests can both get here for the same
+			// deleted draft; the single-flight claim lets exactly one stage the replacement.
+		case retireReplaced:
+			// A concurrent request already staged the replacement. That is this request's
+			// answer too, not the deleted draft's id.
+			reuseResult(&res, replacement)
+			return res
+		case retireInFlight:
+			identifyRow(&res, replacement)
+			res.Skipped = true
+			res.Error = "skipped: this draft was deleted upstream and another request is staging its replacement; retry once it finishes"
+			return res
+		default:
 			reuseResult(&res, existing)
 			return res
 		}
@@ -2501,17 +2516,26 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 // is not checked.
 //
 // Fails SAFE: any doubt -- the dispatcher cannot check, the platform could not be read, the row
-// could not be retired -- returns false and the caller reuses the row exactly as before. A
-// duplicate is the failure the reuse exists to prevent, so only a definite "not found" frees the
-// slot. The retirement is the same soft delete the delete-campaign endpoint makes, so the row
-// keeps its upstream id for the audit trail and the search index hears that it was deleted.
-func (o *Orchestrator) retireIfGoneUpstream(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, c *model.Campaign, by *model.Actor) bool {
+// could not be retired and is still the live row -- is retireKeep and the caller reuses the row
+// exactly as before. A duplicate is the failure the reuse exists to prevent, so only a definite
+// "not found" frees the slot. The retirement is the same soft delete the delete-campaign endpoint
+// makes, so the row keeps its upstream id for the audit trail and the search index hears that it
+// was deleted.
+//
+// Losing a RACE is not doubt. Two creates can both see the same completed row and both learn its
+// draft is gone; one retires it, and the other's delete then fails as not-found, a stale version
+// or a write in progress. Reusing the row there would report an id this very request has just
+// confirmed deleted as a success. So after such a failure the slot is read again and the answer
+// is whatever it now holds: empty (freed, claim it), a different completed draft (the winner's
+// replacement), or an unfinished row (the winner is mid-stage). Only when the SAME row is still
+// the live one is its state unresolved, and that keeps the reuse.
+func (o *Orchestrator) retireIfGoneUpstream(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, variant string, c *model.Campaign, by *model.Actor) (retireOutcome, *model.Campaign) {
 	if model.ProviderSupportsSlotVersions(p) || c == nil || c.PlatformCampaignID == "" {
-		return false
+		return retireKeep, nil
 	}
 	checker, ok := o.dispatchers[p].(UpstreamPresenceChecker)
 	if !ok {
-		return false
+		return retireKeep, nil
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, upstreamPresenceTimeout)
 	gone, err := checker.UpstreamGone(checkCtx, brief.ProjectID, c)
@@ -2519,20 +2543,59 @@ func (o *Orchestrator) retireIfGoneUpstream(ctx context.Context, jobID string, b
 	if err != nil {
 		slog.WarnContext(ctx, "could not tell whether a completed campaign still exists upstream; reusing it",
 			"platform", p, "job_id", jobID, "campaign_row_id", c.ID, "platform_campaign_id", c.PlatformCampaignID, "error", err)
-		return false
+		return retireKeep, nil
 	}
 	if !gone {
-		return false
+		return retireKeep, nil
 	}
-	if derr := o.campaigns.DeleteCampaign(ctx, brief.ProjectID, brief.ID, c.ID, c.Version, by, o.campaignIndexPayload(indexer.ActionDeleted)); derr != nil {
+	derr := o.campaigns.DeleteCampaign(ctx, brief.ProjectID, brief.ID, c.ID, c.Version, by, o.campaignIndexPayload(indexer.ActionDeleted))
+	if derr == nil {
+		slog.InfoContext(ctx, "a completed campaign was deleted upstream; retired its row so the brief can dispatch again",
+			"platform", p, "job_id", jobID, "campaign_row_id", c.ID, "platform_campaign_id", c.PlatformCampaignID)
+		return retireFreed, nil
+	}
+	if !errors.Is(derr, domain.ErrNotFound) && !errors.Is(derr, domain.ErrPreconditionFailed) && !errors.Is(derr, domain.ErrCampaignWriteInProgress) {
 		slog.WarnContext(ctx, "a completed campaign is gone upstream but its row could not be retired; reusing it",
 			"platform", p, "job_id", jobID, "campaign_row_id", c.ID, "platform_campaign_id", c.PlatformCampaignID, "error", derr)
-		return false
+		return retireKeep, nil
 	}
-	slog.InfoContext(ctx, "a completed campaign was deleted upstream; retired its row so the brief can dispatch again",
-		"platform", p, "job_id", jobID, "campaign_row_id", c.ID, "platform_campaign_id", c.PlatformCampaignID)
-	return true
+	// The row changed under this request: most likely a concurrent create retired it. Ask the
+	// slot what it holds now instead of answering from the row read before the race.
+	latest, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p, variant)
+	switch {
+	case errors.Is(lerr, domain.ErrNotFound):
+		slog.InfoContext(ctx, "a completed campaign was deleted upstream and a concurrent request retired its row; the slot is free",
+			"platform", p, "job_id", jobID, "campaign_row_id", c.ID, "platform_campaign_id", c.PlatformCampaignID)
+		return retireFreed, nil
+	case lerr != nil || latest == nil:
+		slog.WarnContext(ctx, "a completed campaign is gone upstream, its row could not be retired and the slot could not be read again; reusing it",
+			"platform", p, "job_id", jobID, "campaign_row_id", c.ID, "platform_campaign_id", c.PlatformCampaignID, "error", errors.Join(derr, lerr))
+		return retireKeep, nil
+	case latest.ID == c.ID && latest.PlatformCampaignID == c.PlatformCampaignID:
+		slog.WarnContext(ctx, "a completed campaign is gone upstream but its row could not be retired and is still the live one; reusing it",
+			"platform", p, "job_id", jobID, "campaign_row_id", c.ID, "platform_campaign_id", c.PlatformCampaignID, "error", derr)
+		return retireKeep, nil
+	case isReusableCampaign(latest):
+		return retireReplaced, latest
+	default:
+		return retireInFlight, latest
+	}
 }
+
+// retireOutcome is what retireIfGoneUpstream left the slot in.
+type retireOutcome int
+
+const (
+	// retireKeep: the row stands (still upstream, not checkable, or its state is unresolved).
+	// The caller reuses it.
+	retireKeep retireOutcome = iota
+	// retireFreed: the row is retired and the slot is empty. The caller claims it.
+	retireFreed
+	// retireReplaced: a concurrent request already completed a replacement, returned with it.
+	retireReplaced
+	// retireInFlight: a concurrent request is staging the replacement, returned with its row.
+	retireInFlight
+)
 
 // reuseResult reports an existing COMPLETED campaign as this request's result: OK, not created
 // by this request (Reused), and identified by its row so a caller can tell which of a

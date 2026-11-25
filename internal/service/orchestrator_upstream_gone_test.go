@@ -27,12 +27,18 @@ type presenceDispatcher struct {
 
 	checkMu sync.Mutex
 	checked []string
+	// onCheck, when set, runs during the upstream check: it stands in for a CONCURRENT create
+	// that saw the same deleted draft and got to the row first.
+	onCheck func()
 }
 
 func (d *presenceDispatcher) UpstreamGone(_ context.Context, _ string, c *model.Campaign) (bool, error) {
 	d.checkMu.Lock()
 	defer d.checkMu.Unlock()
 	d.checked = append(d.checked, c.PlatformCampaignID)
+	if d.onCheck != nil {
+		d.onCheck()
+	}
 	return d.gone, d.err
 }
 
@@ -163,5 +169,87 @@ func TestOrchestrator_ASlotVersionedPlatformIsNeverCheckedUpstream(t *testing.T)
 	}
 	if !strings.Contains(result, `"reused":true`) {
 		t.Errorf("result = %s, want the existing campaign reused", result)
+	}
+}
+
+// Losing the retirement race is not doubt. Both requests have confirmed the draft is gone, so the
+// loser must never report the deleted draft's id as a successful reuse: it answers from what the
+// slot holds once the winner has acted.
+func TestOrchestrator_LosingTheRetirementRaceNeverReusesTheDeletedDraft(t *testing.T) {
+	const slot = "b1|" + string(model.ProviderHubSpot)
+	for _, tc := range []struct {
+		name string
+		// winner mutates the repository the way the concurrent request left it.
+		winner         func(camps *fakeCampaignRepo, row *model.Campaign)
+		wantDispatches int
+		wantInResult   []string
+	}{
+		{
+			name: "the winner retired the row and the slot is free",
+			winner: func(camps *fakeCampaignRepo, row *model.Campaign) {
+				row.Status = model.CampaignStatusDeleted
+				delete(camps.existing, slot)
+			},
+			wantDispatches: 1,
+			wantInResult:   []string{`"campaign_id":"pc-hubspot"`},
+		},
+		{
+			name: "the winner already staged the replacement",
+			winner: func(camps *fakeCampaignRepo, row *model.Campaign) {
+				row.Status = model.CampaignStatusDeleted
+				camps.existing[slot] = &model.Campaign{
+					ID: "row-2", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderHubSpot,
+					PlatformCampaignID: "228610027856", Status: "created", SlotVersion: model.FirstSlotVersion, Version: 1,
+				}
+			},
+			wantDispatches: 0,
+			wantInResult:   []string{`"reused":true`, `"campaign_id":"228610027856"`},
+		},
+		{
+			name: "the winner is still staging the replacement",
+			winner: func(camps *fakeCampaignRepo, row *model.Campaign) {
+				row.Status = model.CampaignStatusDeleted
+				camps.existing[slot] = &model.Campaign{
+					ID: "row-2", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderHubSpot,
+					Status: model.CampaignStatusPending, SlotVersion: model.FirstSlotVersion, Version: 1,
+				}
+			},
+			wantDispatches: 0,
+			wantInResult:   []string{`"skipped":true`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			row := stagedRow(model.ProviderHubSpot)
+			jobs := newFakeJobRepo()
+			camps := &fakeCampaignRepo{
+				existing: map[string]*model.Campaign{slot: row},
+				byID:     map[string]*model.Campaign{row.ID: row},
+			}
+			disp := &presenceDispatcher{gone: true}
+			disp.onCheck = func() {
+				camps.mu.Lock()
+				defer camps.mu.Unlock()
+				tc.winner(camps, row)
+			}
+			orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderHubSpot: disp})
+			brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+			id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderHubSpot}, nil)
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			result := string(waitForTerminal(t, jobs, id).Result)
+
+			if got := disp.dispatches(); got != tc.wantDispatches {
+				t.Errorf("dispatched %d times, want %d (result %s)", got, tc.wantDispatches, result)
+			}
+			if strings.Contains(result, "225163932254") {
+				t.Errorf("result = %s, must not carry the id of the draft this request confirmed deleted", result)
+			}
+			for _, want := range tc.wantInResult {
+				if !strings.Contains(result, want) {
+					t.Errorf("result = %s, want it to contain %s", result, want)
+				}
+			}
+		})
 	}
 }

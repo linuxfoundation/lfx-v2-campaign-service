@@ -2746,10 +2746,37 @@ A newsletter brief's facts are the operator's notes in `event_details.sourceText
 `Source document` exactly as a survey's are. Its style reference is NOT the automatic most-recent
 lookup: `event_details.referenceEmailIds` carries the brand's previous issues the operator chose
 (from `get-audience-brand-newsletters`), and `EmailReferenceSource.BuildReferenceBlockFromIDs`
-reads exactly those, in order, with the FIRST as the structural template. Unlike
-`BuildReferenceBlock` it runs on the shared LF connection, because reading emails a person picked by
-name is not the portal-wide sweep that one refuses. The newsletter prompt keeps facts to the notes
-and takes only structure and voice from the past issues.
+reads those, in order, with the FIRST as the structural template. Like `BuildReferenceBlock` it
+REFUSES the shared LF connection: the brief's brand and ids are both caller-written, so on a portal
+every project shares they prove nothing about ownership, and a project could otherwise name another
+brand and have that brand's issue put in the model prompt. On the shared connection the copy is
+written from the notes alone, without the previous issues' structure and voice (staging still
+clones the previous issue in HubSpot). On the project's own connection each email still passes a
+gate before its body is read: it must be an issue the brief's brand (`event_details.newsletterBrand`)
+SENT, which is what the picker lists (`dispatch.IsSentBrandIssue`, passed to
+`NewEmailReferenceSource` by `internal/container` because `service` cannot import `dispatch`; a
+constructor argument so the wiring cannot be dropped silently). A draft, an automated email or a
+non-newsletter email is skipped with a warning; no brand or no gate reads nothing. The ids are
+honoured only on a newsletter brief; any other brief keeps the automatic lookup. The newsletter
+prompt keeps facts to the notes and takes only structure and voice from the past issues.
+
+`generate-email-copy` picks its prompt from the stage, and its `stage` parameter is optional. A
+newsletter brief never takes the frozen legacy event prompt for want of one: `emailCopyStage`
+resolves a newsletter brief to a newsletter stage whatever the caller sent (the requested stage when
+it is one, else the brief's stored stage, else the surface default), so the notes reach the prompt
+and the link rule runs. The rule runs the other way too: `Newsletter` sent for an event, survey or
+paid brief is an unrecognised stage for that surface and resolves to Registration Push, so the
+stored delivery/stage pairing cannot be bypassed from the query string. Every other value is kept as
+given.
+
+A completed HubSpot row whose draft is gone upstream is retired so the brief can stage again
+(`retireIfGoneUpstream`). Two creates can both see that row and both confirm the draft is gone; the
+one whose delete then fails as not-found, a stale version or a write in progress has lost a race,
+not met doubt, and must not report the deleted draft's id as a reuse. It reads the slot again and
+answers from what is there: empty (`retireFreed`, claim it; the single-flight claim lets one
+through), a different completed draft (`retireReplaced`, reuse the winner's), or an unfinished row
+(`retireInFlight`, skipped with a retry message). Only when the same row is still the live one does
+the fail-safe reuse stand.
 
 Three things are particular to how a newsletter's copy is generated (`email_copy.go`):
 
@@ -2808,6 +2835,12 @@ The email wizard resolves a brief's stage through `resolveStageTemplate` (`IsSur
 clone (draft name) — as `generate-email-copy` does, and carries a survey brief's
 `event_details.sourceText` into its prompt facts as a fenced `Source document`, bounded by
 `maxFactSourceTextRunes`.
+
+The wizard does not take a newsletter brief. Its clone step writes with `hubspot.ApplyEmailContent`
+(one rich-text block replaced, events UTM tagging applied), which on a newsletter would leave the
+previous issue's other items in the draft and mislabel its clicks. `refuseNewsletterWizard` answers
+`400` at session start and wherever a session's brief is loaded; a newsletter issue is staged by the
+dispatcher (`applyNewsletterContent`).
 
 A survey's `event_details.sourceText` is never cut silently: `sourceTextTooLong` refuses one past
 `maxFactSourceTextRunes` with a 400 naming the field and the limit, at brief create and replace
