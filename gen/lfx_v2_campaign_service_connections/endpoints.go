@@ -78,6 +78,7 @@ type Endpoints struct {
 	GetLinkedinAdsAudience             goa.Endpoint
 	ListLinkedinAdsAudiences           goa.Endpoint
 	ListLinkedinAdsConversions         goa.Endpoint
+	ListLinkedinAdsLeadForms           goa.Endpoint
 	ListLinkedinAdsAdoptableCampaigns  goa.Endpoint
 	GetLinkedinAdsCreateAccount        goa.Endpoint
 	SearchLinkedinAdsTargetingEntities goa.Endpoint
@@ -176,6 +177,7 @@ func NewEndpoints(s Service) *Endpoints {
 		GetLinkedinAdsAudience:             NewGetLinkedinAdsAudienceEndpoint(s, a.JWTAuth),
 		ListLinkedinAdsAudiences:           NewListLinkedinAdsAudiencesEndpoint(s, a.JWTAuth),
 		ListLinkedinAdsConversions:         NewListLinkedinAdsConversionsEndpoint(s, a.JWTAuth),
+		ListLinkedinAdsLeadForms:           NewListLinkedinAdsLeadFormsEndpoint(s, a.JWTAuth),
 		ListLinkedinAdsAdoptableCampaigns:  NewListLinkedinAdsAdoptableCampaignsEndpoint(s, a.JWTAuth),
 		GetLinkedinAdsCreateAccount:        NewGetLinkedinAdsCreateAccountEndpoint(s, a.JWTAuth),
 		SearchLinkedinAdsTargetingEntities: NewSearchLinkedinAdsTargetingEntitiesEndpoint(s, a.JWTAuth),
@@ -272,6 +274,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.GetLinkedinAdsAudience = m(e.GetLinkedinAdsAudience)
 	e.ListLinkedinAdsAudiences = m(e.ListLinkedinAdsAudiences)
 	e.ListLinkedinAdsConversions = m(e.ListLinkedinAdsConversions)
+	e.ListLinkedinAdsLeadForms = m(e.ListLinkedinAdsLeadForms)
 	e.ListLinkedinAdsAdoptableCampaigns = m(e.ListLinkedinAdsAdoptableCampaigns)
 	e.GetLinkedinAdsCreateAccount = m(e.GetLinkedinAdsCreateAccount)
 	e.SearchLinkedinAdsTargetingEntities = m(e.SearchLinkedinAdsTargetingEntities)
@@ -1758,6 +1761,30 @@ func NewListLinkedinAdsConversionsEndpoint(s Service, authJWTFn security.AuthJWT
 			return nil, err
 		}
 		return s.ListLinkedinAdsConversions(ctx, p)
+	}
+}
+
+// NewListLinkedinAdsLeadFormsEndpoint returns an endpoint function that calls
+// the method "list-linkedin-ads-lead-forms" of service
+// "lfx-v2-campaign-service-connections".
+func NewListLinkedinAdsLeadFormsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ListLinkedinAdsLeadFormsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ListLinkedinAdsLeadForms(ctx, p)
 	}
 }
 

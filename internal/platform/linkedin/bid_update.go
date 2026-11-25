@@ -100,8 +100,8 @@ type campaignBiddingPlan struct {
 }
 
 // campaignBidding returns the campaign-create bidding for a manual bid (> 0) or automatic (0),
-// under the requested objective: "" (the strategy decides, as before #582), ObjectiveWebsiteVisit
-// or ObjectiveWebsiteConversion.
+// under the requested objective: "" (the strategy decides, as before #582), ObjectiveWebsiteVisit,
+// ObjectiveWebsiteConversion or ObjectiveLeadGeneration (#664, automatic only).
 //
 // DECISION (2026-10-13, Misha): with no objective named, automatic LinkedIn campaigns optimise for
 // CLICKS via WEBSITE_VISIT/MAX_CLICK, because MAX_CONVERSION — the only automated target the
@@ -148,9 +148,25 @@ type campaignBiddingPlan struct {
 // default with unitCost 0, under which "the campaign does not deliver".
 func campaignBidding(manualBid float64, objective string) (campaignBiddingPlan, error) {
 	switch objective {
-	case "", ObjectiveWebsiteVisit, ObjectiveWebsiteConversion:
+	case "", ObjectiveWebsiteVisit, ObjectiveWebsiteConversion, ObjectiveLeadGeneration:
 	default:
-		return campaignBiddingPlan{}, fmt.Errorf("linkedin: objective %q is not one this service creates; use %s or %s", objective, ObjectiveWebsiteVisit, ObjectiveWebsiteConversion)
+		return campaignBiddingPlan{}, fmt.Errorf("linkedin: objective %q is not one this service creates; use %s, %s or %s", objective, ObjectiveWebsiteVisit, ObjectiveWebsiteConversion, ObjectiveLeadGeneration)
+	}
+	// LEAD_GENERATION (#664) is created with automatic bidding only: MAX_LEAD, costType CPM, no
+	// unitCost. Name segment "Leads". See lead_gen.go for the sources and the decision.
+	if objective == ObjectiveLeadGeneration {
+		if manualBid != 0 {
+			return campaignBiddingPlan{}, fmt.Errorf("linkedin: objective %s is created with automatic bidding (%s) only; omit the manual bid", ObjectiveLeadGeneration, OptimizationTargetMaxLead)
+		}
+		return campaignBiddingPlan{
+			fields: map[string]any{
+				"costType":               costTypeCPM,
+				"optimizationTargetType": OptimizationTargetMaxLead,
+			},
+			objectiveType:      ObjectiveLeadGeneration,
+			optimizationTarget: OptimizationTargetMaxLead,
+			nameObjective:      "Leads",
+		}, nil
 	}
 	if manualBid == 0 {
 		if objective == ObjectiveWebsiteConversion {

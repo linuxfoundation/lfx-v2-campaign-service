@@ -15,6 +15,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 )
 
 // LinkedInAdSegmentKind is the one AudienceReader kind the LinkedIn dispatcher serves: the ad
@@ -239,4 +240,26 @@ func copyEntityRows(rows []model.TargetingEntity) []model.TargetingEntity {
 	out := make([]model.TargetingEntity, len(rows))
 	copy(out, rows)
 	return out
+}
+
+var _ service.LinkedInLeadFormReader = (*LinkedInDispatcher)(nil)
+
+// ListLinkedInLeadForms lists the Lead Gen Forms on the ad account a LinkedIn create for the
+// project uses (#664), for the linkedInConfig.leadGenForm picker. It resolves as the other
+// picker reads do (createLookupClient, honouring the picker's account_id), so every form listed
+// is one the create's own form check accepts. Archived forms are left out.
+func (d *LinkedInDispatcher) ListLinkedInLeadForms(ctx context.Context, projectID string, platform model.Provider) (_ *model.LinkedInLeadForms, called bool, _ error) {
+	res, client, accountID, err := d.createLookupClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, false, err
+	}
+	forms, err := client.ListLeadForms(ctx)
+	if err != nil {
+		return nil, true, linkedInLookupError("list linkedin lead gen forms", res, err)
+	}
+	out := make([]model.LinkedInLeadForm, 0, len(forms))
+	for _, f := range forms {
+		out = append(out, model.LinkedInLeadForm{ID: f.ID, URN: f.URN(), Name: f.Name, State: f.State})
+	}
+	return &model.LinkedInLeadForms{AccountID: accountID, Forms: out}, true, nil
 }

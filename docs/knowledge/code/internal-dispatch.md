@@ -5858,6 +5858,18 @@ is not a JSON boolean (null reads as omitted); `Dispatch` runs it before the str
 (`audience_expansion_enabled`, `offsite_delivery_enabled`) through `boolToStrPtr`, so an
 unreported value is absent, not `"false"`.
 
+**LinkedIn Lead Gen Form campaigns (#664).** `linkedin_lead_gen.go`. `linkedInConfig.objective`
+`"lead_generation"` resolves in `linkedinObjective` to `linkedin.ObjectiveLeadGeneration`, refused
+with a manual bid. `checkLeadGenShape` refuses a `leadGenForm` or `leadGenCallToAction` that is not a
+JSON string (`Dispatch` runs it before the strict decode); `linkedinLeadGen` refuses all three while
+`LINKEDIN_ADS_LEAD_GEN_ENABLED` is off, a form or label without the objective, then runs
+`linkedin.ValidateLeadGen` (form id shape, label, text format, Audience Network, variant call to
+action) against the validated delivery options. `PreflightCreate` and `Dispatch` both run it, after
+the delivery options; the result reaches the client as `CampaignInput.LeadGen`.
+`ListLinkedInLeadForms` (in `linkedin_lookups.go`) serves the form picker through
+`createLookupClient`, like the segment and conversion pickers. `linkedinResultObjective` accepts a
+recorded `LEAD_GENERATION`, so the settings readback compares it.
+
 **Meta video variants (#550 gap 9).** `checkMetaVideoVariants` (gate `META_VIDEO_ENABLED`, uuid
 shape, no image alongside) runs in `PreflightCreate` and `Dispatch`. `resolveVariantAssets` resolves
 each variant's image slot and video slot through one `resolveSlot` closure (shared dedupe cache and

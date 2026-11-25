@@ -82,6 +82,7 @@ type Server struct {
 	GetLinkedinAdsAudience             http.Handler
 	ListLinkedinAdsAudiences           http.Handler
 	ListLinkedinAdsConversions         http.Handler
+	ListLinkedinAdsLeadForms           http.Handler
 	ListLinkedinAdsAdoptableCampaigns  http.Handler
 	GetLinkedinAdsCreateAccount        http.Handler
 	SearchLinkedinAdsTargetingEntities http.Handler
@@ -202,6 +203,7 @@ func New(
 			{"GetLinkedinAdsAudience", "GET", "/projects/{project_id}/linkedin-ads/audience"},
 			{"ListLinkedinAdsAudiences", "GET", "/projects/{project_id}/linkedin-ads/audiences"},
 			{"ListLinkedinAdsConversions", "GET", "/projects/{project_id}/linkedin-ads/conversions"},
+			{"ListLinkedinAdsLeadForms", "GET", "/projects/{project_id}/linkedin-ads/lead-forms"},
 			{"ListLinkedinAdsAdoptableCampaigns", "GET", "/projects/{project_id}/linkedin-ads/adoptable-campaigns"},
 			{"GetLinkedinAdsCreateAccount", "GET", "/projects/{project_id}/linkedin-ads/create-account"},
 			{"SearchLinkedinAdsTargetingEntities", "GET", "/projects/{project_id}/linkedin-ads/targeting-entities"},
@@ -293,6 +295,7 @@ func New(
 		GetLinkedinAdsAudience:             NewGetLinkedinAdsAudienceHandler(e.GetLinkedinAdsAudience, mux, decoder, encoder, errhandler, formatter),
 		ListLinkedinAdsAudiences:           NewListLinkedinAdsAudiencesHandler(e.ListLinkedinAdsAudiences, mux, decoder, encoder, errhandler, formatter),
 		ListLinkedinAdsConversions:         NewListLinkedinAdsConversionsHandler(e.ListLinkedinAdsConversions, mux, decoder, encoder, errhandler, formatter),
+		ListLinkedinAdsLeadForms:           NewListLinkedinAdsLeadFormsHandler(e.ListLinkedinAdsLeadForms, mux, decoder, encoder, errhandler, formatter),
 		ListLinkedinAdsAdoptableCampaigns:  NewListLinkedinAdsAdoptableCampaignsHandler(e.ListLinkedinAdsAdoptableCampaigns, mux, decoder, encoder, errhandler, formatter),
 		GetLinkedinAdsCreateAccount:        NewGetLinkedinAdsCreateAccountHandler(e.GetLinkedinAdsCreateAccount, mux, decoder, encoder, errhandler, formatter),
 		SearchLinkedinAdsTargetingEntities: NewSearchLinkedinAdsTargetingEntitiesHandler(e.SearchLinkedinAdsTargetingEntities, mux, decoder, encoder, errhandler, formatter),
@@ -391,6 +394,7 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.GetLinkedinAdsAudience = m(s.GetLinkedinAdsAudience)
 	s.ListLinkedinAdsAudiences = m(s.ListLinkedinAdsAudiences)
 	s.ListLinkedinAdsConversions = m(s.ListLinkedinAdsConversions)
+	s.ListLinkedinAdsLeadForms = m(s.ListLinkedinAdsLeadForms)
 	s.ListLinkedinAdsAdoptableCampaigns = m(s.ListLinkedinAdsAdoptableCampaigns)
 	s.GetLinkedinAdsCreateAccount = m(s.GetLinkedinAdsCreateAccount)
 	s.SearchLinkedinAdsTargetingEntities = m(s.SearchLinkedinAdsTargetingEntities)
@@ -489,6 +493,7 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountGetLinkedinAdsAudienceHandler(mux, h.GetLinkedinAdsAudience)
 	MountListLinkedinAdsAudiencesHandler(mux, h.ListLinkedinAdsAudiences)
 	MountListLinkedinAdsConversionsHandler(mux, h.ListLinkedinAdsConversions)
+	MountListLinkedinAdsLeadFormsHandler(mux, h.ListLinkedinAdsLeadForms)
 	MountListLinkedinAdsAdoptableCampaignsHandler(mux, h.ListLinkedinAdsAdoptableCampaigns)
 	MountGetLinkedinAdsCreateAccountHandler(mux, h.GetLinkedinAdsCreateAccount)
 	MountSearchLinkedinAdsTargetingEntitiesHandler(mux, h.SearchLinkedinAdsTargetingEntities)
@@ -3880,6 +3885,61 @@ func NewListLinkedinAdsConversionsHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "list-linkedin-ads-conversions")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountListLinkedinAdsLeadFormsHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-lead-forms"
+// endpoint.
+func MountListLinkedinAdsLeadFormsHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/linkedin-ads/lead-forms", f)
+}
+
+// NewListLinkedinAdsLeadFormsHandler creates a HTTP handler which loads the
+// HTTP request and calls the "lfx-v2-campaign-service-connections" service
+// "list-linkedin-ads-lead-forms" endpoint.
+func NewListLinkedinAdsLeadFormsHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeListLinkedinAdsLeadFormsRequest(mux, decoder)
+		encodeResponse = EncodeListLinkedinAdsLeadFormsResponse(encoder)
+		encodeError    = EncodeListLinkedinAdsLeadFormsError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "list-linkedin-ads-lead-forms")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
 		payload, err := decodeRequest(r)
 		if err != nil {

@@ -812,6 +812,16 @@ openssl rand -base64 32
   The chart sets it to `"false"`
   (`app.environment.LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once the probe passes.
+- `LINKEDIN_ADS_LEAD_GEN_ENABLED` (default unset, i.e. OFF) — opts a deployment
+  IN to LinkedIn Lead Gen Form campaigns (#664): `linkedInConfig.objective`
+  `"lead_generation"` with `linkedInConfig.leadGenForm` (and the optional
+  `linkedInConfig.leadGenCallToAction`), and the form picker
+  `GET /projects/{project_id}/linkedin-ads/lead-forms`. Only the exact value
+  `true` enables them; anything else fails closed: a create naming any of them
+  is refused with a 400 before a job exists, and the picker answers 400. The
+  chart sets it to `"false"`
+  (`app.environment.LINKEDIN_ADS_LEAD_GEN_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once the paused probe passes.
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request
   names no `source_workflow_url`. Unset or empty selects the in-code

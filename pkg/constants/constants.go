@@ -793,6 +793,14 @@ const (
 	// the field's docs passes.
 	EnvLinkedInAdsDeliveryOptionsEnabled = "LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED"
 
+	// EnvLinkedInAdsLeadGenEnabled opts a deployment IN to LinkedIn Lead Gen Form campaigns (#664):
+	// linkedInConfig.objective "lead_generation" with linkedInConfig.leadGenForm (and the optional
+	// linkedInConfig.leadGenCallToAction), and the lead form picker read. Only the exact value
+	// "true" enables them; unset or any other value fails closed, and a create naming any of them
+	// is refused before a job exists. It keeps LEAD_GENERATION campaigns and leadgenCallToAction
+	// creatives off the live ad account until the paused probe in the PR passes.
+	EnvLinkedInAdsLeadGenEnabled = "LINKEDIN_ADS_LEAD_GEN_ENABLED"
+
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,
 	// so every campaign authenticates as the marketing-ops account regardless of any

@@ -1331,6 +1331,23 @@ runs it before the campaign group. A campaign reused by name keeps its settings,
 gets a warning step. `GetCampaignSettings` reads both into `CampaignSettings`, nil when not
 reported. Neither has been sent as `true` to a live account.
 
+## Lead Gen Form campaigns (`lead_gen.go`, #664)
+
+`CampaignInput.LeadGen` (a form id and a button label) with `Objective` `ObjectiveLeadGeneration`
+makes a lead gen create. `campaignBidding` plans it as `LEAD_GENERATION` / `MAX_LEAD` / `CPM` with
+name segment `Leads`, automatic only. `ValidateLeadGen` runs before any POST: it normalises the
+form (`<id>` or `urn:li:adForm:<id>`, a canonical positive int64), defaults the label to `REGISTER`
+and checks it against `LeadGenCallToActionLabels`, and refuses a text format, the Audience Network,
+a variant `CallToAction`, and the objective and form without each other. `checkLeadForm` then
+reads `GET /rest/leadForms/{id}` before the campaign group: a form whose
+`owner.sponsoredAccount` is not the account, an `ARCHIVED` one, or a 403/404 is a pre-flight
+refusal; any other failure a plain error, nothing created. `createCreative` adds
+`leadgenCallToAction: {destination: urn:li:adForm:<id>, label}` to every DRAFT creative.
+`ListLeadForms` walks the owner finder (`q=owner&owner=(sponsoredAccount:<urn>)`, `owner` in
+`preEncodedParams`) with `offsetWalk`, leaves out archived forms, fails on a form of another owner,
+and sorts by name then id. All shapes are from the li-lms-2026-11 docs; none has been sent to a
+live account.
+
 ## Variant name, call to action and description (`variants.go`, #588, #589)
 
 `CreativeVariant` carries three optional strings. `Name` becomes the creative's `name` through

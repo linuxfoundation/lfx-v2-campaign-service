@@ -1016,6 +1016,18 @@ app:
     LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to LinkedIn Lead Gen Form campaigns (#664):
+    # linkedInConfig.objective "lead_generation" with linkedInConfig.leadGenForm
+    # (and leadGenCallToAction), and the lead form picker
+    # (/projects/{project_id}/linkedin-ads/lead-forms). No LEAD_GENERATION
+    # campaign or leadgenCallToAction creative has been created on a live
+    # LinkedIn account. Set it to exactly "true" in lfx-v2-argocd once the
+    # paused probe in the PR passes. While off, a create naming any of them is
+    # refused before a job exists and the picker answers 400. Any value other
+    # than "true" is treated as off.
+    LINKEDIN_ADS_LEAD_GEN_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to the X (Twitter) Ads ACCOUNT MONITOR
     # (/projects/{project_id}/connection-twitter-ads/account-monitor). Default
     # off for the same reason as MICROSOFT_METRICS_ENABLED above: the X account
