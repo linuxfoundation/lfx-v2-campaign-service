@@ -266,7 +266,7 @@ func TestCreateCampaign_FailedConversionOnAReusedCampaignSaysItMayBeServing(t *t
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "adCampaigns") && !strings.Contains(r.URL.Path, "adCampaignGroups") {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"elements":[{"id":777,"name":"`+reusedCampaignName(t)+`","status":"ACTIVE","campaignGroup":"urn:li:sponsoredCampaignGroup:100","objectiveType":"WEBSITE_VISIT"}],"metadata":{}}`)
+			_, _ = io.WriteString(w, `{"elements":[{"id":777,"name":"`+reusedCampaignName(t)+`","status":"ACTIVE","campaignGroup":"urn:li:sponsoredCampaignGroup:100","objectiveType":"WEBSITE_VISIT","optimizationTargetType":"MAX_CLICK"}],"metadata":{}}`)
 			return
 		}
 		inner(w, r)

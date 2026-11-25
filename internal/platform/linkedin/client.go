@@ -1633,13 +1633,15 @@ func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, n
 		// that aborts too (PR #637 review). A manual request still reuses it: before #582 every
 		// WEBSITE_CONVERSION campaign this service created was manual, and whether LinkedIn echoes
 		// NONE in the search response is unverified, so aborting would strand a manual retry.
-		// Under WEBSITE_VISIT it is the mirror image (#675): manual and automated Website visits
-		// campaigns share the "Traffic" segment, and before #675 every WEBSITE_VISIT campaign this
-		// service created was automated MAX_CLICK — so an unreported target there is ambiguous for
-		// a MANUAL request, which aborts, while an automatic retry still reuses it.
+		// Under WEBSITE_VISIT an unreported target aborts in BOTH directions (#675, PR #676 review):
+		// manual and automated Website visits campaigns share the "Traffic" segment, and once this
+		// service can create manual ones (and keeps them after the flag is switched off), a
+		// same-name campaign with no reported target may be either. Reusing it for an automatic
+		// MAX_CLICK request would attach creatives to a campaign still bidding its manual CPC, and
+		// for a manual request to one LinkedIn bids automatically — so neither reuses it.
 		if optimizationTarget != "" && el.OptimizationTargetType == "" &&
-			((objectiveType == ObjectiveWebsiteConversion && !manualBiddingTarget(optimizationTarget)) ||
-				(objectiveType == ObjectiveWebsiteVisit && manualBiddingTarget(optimizationTarget))) {
+			(objectiveType == ObjectiveWebsiteVisit ||
+				(objectiveType == ObjectiveWebsiteConversion && !manualBiddingTarget(optimizationTarget))) {
 			return false, fmt.Errorf("campaign %q already exists in this campaign group with objectiveType %s but LinkedIn did not report its optimizationTargetType, so it cannot be confirmed to bid %s; aborting rather than reuse it or create a duplicate — check its bidding in Campaign Manager", el.Name, objectiveType, optimizationTarget)
 		}
 		if optimizationTarget != "" && el.OptimizationTargetType != "" &&

@@ -1779,8 +1779,9 @@ LinkedIn's manual mode, as on the manual conversions create. It is named `Traffi
 Ads too, and the bid lever re-bids it like any manual campaign. Because automatic and manual
 traffic share the `Traffic` name, the create's by-name reuse compares the bidding mode under
 `WEBSITE_VISIT` too: a same-name campaign of the other mode is never reused, and one that reports
-no `optimizationTargetType` is not reused for a manual create (every earlier `WEBSITE_VISIT`
-campaign was `MAX_CLICK`; an automatic create still reuses it). The settings readback's
+no `optimizationTargetType` is reused by neither a manual nor an automatic create — it could bid
+either way, whatever `costType` or `unitCost` it reports, so the create aborts and names it to
+check in Campaign Manager. The settings readback's
 `objective_type` for a manual row is `WEBSITE_VISIT` when the create recorded it (with target
 `NONE`). Not yet probed
 live from this service.

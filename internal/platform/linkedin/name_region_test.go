@@ -116,7 +116,7 @@ func legacyFallbackServer(t *testing.T, groupExists bool, existingCampaign strin
 				if existingCampaign != "" {
 					// Marshalled, not concatenated, so a name needing JSON escaping stays valid JSON.
 					_ = json.NewEncoder(w).Encode(map[string]any{
-						"elements": []map[string]string{{"name": existingCampaign, "status": "PAUSED", "id": "urn:li:sponsoredCampaign:777", "campaignGroup": "urn:li:sponsoredCampaignGroup:100"}},
+						"elements": []map[string]string{{"name": existingCampaign, "status": "PAUSED", "id": "urn:li:sponsoredCampaign:777", "campaignGroup": "urn:li:sponsoredCampaignGroup:100", "optimizationTargetType": "MAX_CLICK"}},
 						"metadata": map[string]string{"nextPageToken": ""},
 					})
 					return

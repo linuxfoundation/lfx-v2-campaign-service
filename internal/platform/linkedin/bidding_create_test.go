@@ -163,7 +163,7 @@ func TestFindCampaignByNameInGroup_RefusesAnObjectiveMismatch(t *testing.T) {
 		t.Run(label, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, `{"elements":[{"name":"`+name+`","status":"PAUSED","id":"urn:li:sponsoredCampaign:200","campaignGroup":"urn:li:sponsoredCampaignGroup:555"`+tc.reported+`}],"metadata":{"nextPageToken":""}}`)
+				_, _ = io.WriteString(w, `{"elements":[{"name":"`+name+`","status":"PAUSED","id":"urn:li:sponsoredCampaign:200","campaignGroup":"urn:li:sponsoredCampaignGroup:555","optimizationTargetType":"MAX_CLICK"`+tc.reported+`}],"metadata":{"nextPageToken":""}}`)
 			}))
 			defer srv.Close()
 			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
@@ -426,23 +426,25 @@ func TestCreateCampaign_ManualTrafficIsWebsiteVisitCPC(t *testing.T) {
 
 // TestFindCampaignByNameInGroup_WebsiteVisitBiddingMode (#675): automatic and manual Website
 // visits campaigns share the "Traffic" name, so a same-name WEBSITE_VISIT campaign is reused only
-// in the same bidding mode. An unreported optimizationTargetType is ambiguous for a MANUAL request
-// (every WEBSITE_VISIT campaign before #675 was MAX_CLICK) and aborts; an automatic retry still
-// reuses it, as before #675.
+// in the same bidding mode. An unreported optimizationTargetType is ambiguous in both directions
+// once manual traffic campaigns can exist (PR #676 review), so it aborts for an automatic request
+// as well as a manual one — whatever costType or unitCost the search reports beside it.
 func TestFindCampaignByNameInGroup_WebsiteVisitBiddingMode(t *testing.T) {
 	const name = "Events | KubeCon | NA | Traffic | Prospecting | Text | tlf | MoFU"
 	for label, tc := range map[string]struct {
 		want, reported string
 		wantErr        bool
 	}{
-		"automatic reuses automatic":     {want: OptimizationTargetMaxClick, reported: `,"optimizationTargetType":"MAX_CLICK"`},
-		"automatic reuses unreported":    {want: OptimizationTargetMaxClick, reported: ``},
-		"automatic refuses manual NONE":  {want: OptimizationTargetMaxClick, reported: `,"optimizationTargetType":"NONE"`, wantErr: true},
-		"manual reuses manual NONE":      {want: OptimizationTargetNone, reported: `,"optimizationTargetType":"NONE"`},
-		"manual reuses ENHANCED":         {want: OptimizationTargetNone, reported: `,"optimizationTargetType":"ENHANCED_CONVERSION"`},
-		"manual refuses unreported":      {want: OptimizationTargetNone, reported: ``, wantErr: true},
-		"manual refuses automatic":       {want: OptimizationTargetNone, reported: `,"optimizationTargetType":"MAX_CLICK"`, wantErr: true},
-		"manual refuses target cost too": {want: OptimizationTargetNone, reported: `,"optimizationTargetType":"TARGET_COST_PER_CLICK"`, wantErr: true},
+		"automatic reuses automatic":                     {want: OptimizationTargetMaxClick, reported: `,"optimizationTargetType":"MAX_CLICK"`},
+		"automatic refuses unreported":                   {want: OptimizationTargetMaxClick, reported: ``, wantErr: true},
+		"automatic refuses unreported with a manual cpc": {want: OptimizationTargetMaxClick, reported: `,"costType":"CPC","unitCost":{"amount":"4.50","currencyCode":"USD"}`, wantErr: true},
+		"automatic refuses unreported with cpm":          {want: OptimizationTargetMaxClick, reported: `,"costType":"CPM"`, wantErr: true},
+		"automatic refuses manual NONE":                  {want: OptimizationTargetMaxClick, reported: `,"optimizationTargetType":"NONE"`, wantErr: true},
+		"manual reuses manual NONE":                      {want: OptimizationTargetNone, reported: `,"optimizationTargetType":"NONE"`},
+		"manual reuses ENHANCED":                         {want: OptimizationTargetNone, reported: `,"optimizationTargetType":"ENHANCED_CONVERSION"`},
+		"manual refuses unreported":                      {want: OptimizationTargetNone, reported: ``, wantErr: true},
+		"manual refuses automatic":                       {want: OptimizationTargetNone, reported: `,"optimizationTargetType":"MAX_CLICK"`, wantErr: true},
+		"manual refuses target cost too":                 {want: OptimizationTargetNone, reported: `,"optimizationTargetType":"TARGET_COST_PER_CLICK"`, wantErr: true},
 	} {
 		t.Run(label, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

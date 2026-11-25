@@ -1120,9 +1120,14 @@ as on the manual conversions create, so the bid lever (`ManualCPC`) and the reus
 This package does not read the flag; the dispatcher gates the pairing
 (`LINKEDIN_ADS_TRAFFIC_MANUAL_BID_ENABLED`). Since manual and automatic traffic now share the
 `Traffic` name, `findCampaignByNameInGroup` mirrors the conversions rule: under `WEBSITE_VISIT` a
-same-name campaign of the other bidding mode aborts, and an UNREPORTED target aborts a MANUAL
-create (every earlier `WEBSITE_VISIT` campaign was `MAX_CLICK`) while an automatic one still reuses
-it. Not yet probed live from this service.
+same-name campaign of the other bidding mode aborts, and an UNREPORTED target aborts BOTH a manual
+and an automatic create (PR #676 review): once manual traffic campaigns can exist, and outlive the
+flag being switched off, an unreported target could be either mode, and reusing a manual one for
+`MAX_CLICK` would attach creatives to a campaign still bidding its manual CPC. No `costType` or
+`unitCost` is consulted (manual CPM exists, and automatic is CPM too), so reuse needs a reported
+automated target; this is the same assumption the `WEBSITE_CONVERSION` rule has made for
+`MAX_CONVERSION` since PR #637 — LinkedIn reports the target on a campaign created with one. Not yet
+probed live from this service.
 
 `CampaignResult.BidApplied` is false when `createSponsoredCampaign` reused a campaign found by name
 in the group (it now returns `(id, reused, err)`), with a "bid NOT applied to reused campaign" step.

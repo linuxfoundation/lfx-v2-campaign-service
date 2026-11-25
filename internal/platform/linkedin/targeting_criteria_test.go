@@ -148,7 +148,7 @@ func TestCreateCampaign_ReusedCampaignWithTargetingStopsBeforeCreatives(t *testi
 				w.Header().Set("Content-Type", "application/json")
 				if r.Method == http.MethodGet {
 					if strings.Contains(r.URL.Path, "adCampaigns") && !strings.Contains(r.URL.Path, "adCampaignGroups") {
-						_, _ = io.WriteString(w, `{"elements":[{"id":777,"name":"`+name+`","status":"ACTIVE","campaignGroup":"urn:li:sponsoredCampaignGroup:100","objectiveType":"`+plan.objectiveType+`"}],"metadata":{}}`)
+						_, _ = io.WriteString(w, `{"elements":[{"id":777,"name":"`+name+`","status":"ACTIVE","campaignGroup":"urn:li:sponsoredCampaignGroup:100","objectiveType":"`+plan.objectiveType+`","optimizationTargetType":"`+plan.optimizationTarget+`"}],"metadata":{}}`)
 						return
 					}
 					_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)

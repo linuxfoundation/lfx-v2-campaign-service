@@ -48,6 +48,10 @@ type liWire struct {
 	creates   []string // campaign names POSTed, in order
 	creatives []string // the campaign URN each creative was created under
 	requests  int
+	// targets is each created campaign's optimizationTargetType, by id, echoed by the search as
+	// LinkedIn reports it: an automatic retry reuses only a campaign confirmed to bid
+	// automatically (PR #676 review).
+	targets map[string]string
 }
 
 func (w *liWire) snapshot() (creates, creatives []string, requests int) {
@@ -65,8 +69,9 @@ func (w *liWire) dispatcher(t *testing.T) *LinkedInDispatcher {
 		defer w.mu.Unlock()
 		w.requests++
 		var req struct {
-			Name     string `json:"name"`
-			Campaign string `json:"campaign"`
+			Name                   string `json:"name"`
+			Campaign               string `json:"campaign"`
+			OptimizationTargetType string `json:"optimizationTargetType"`
 		}
 		_ = json.Unmarshal(body, &req)
 		elements := func(items []fakeCampaign, group bool) {
@@ -76,6 +81,9 @@ func (w *liWire) dispatcher(t *testing.T) *LinkedInDispatcher {
 				if !group {
 					el["status"] = "PAUSED"
 					el["campaignGroup"] = "urn:li:sponsoredCampaignGroup:" + w.groups[0].id
+					if target := w.targets[it.id]; target != "" {
+						el["optimizationTargetType"] = target
+					}
 				}
 				out = append(out, el)
 			}
@@ -100,6 +108,10 @@ func (w *liWire) dispatcher(t *testing.T) *LinkedInDispatcher {
 		case strings.Contains(r.URL.Path, "adCampaigns"):
 			id := fmt.Sprintf("%d", 200+len(w.campaigns))
 			w.campaigns = append(w.campaigns, fakeCampaign{id, req.Name})
+			if w.targets == nil {
+				w.targets = map[string]string{}
+			}
+			w.targets[id] = req.OptimizationTargetType
 			w.creates = append(w.creates, req.Name)
 			rw.Header().Set("x-restli-id", "urn:li:sponsoredCampaign:"+id)
 			_, _ = io.WriteString(rw, `{}`)
