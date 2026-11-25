@@ -1007,9 +1007,12 @@ app:
     # Opts this deployment IN to linkedInConfig.format "boost" (#673): the
     # campaign's one creative sponsors linkedInConfig.boostPost, an existing
     # post of the organization the ad account serves (content.reference),
-    # instead of a dark post per variant. The post read (Posts API, scope
-    # r_organization_social) and the reference creative have not been
-    # exercised against a live LinkedIn account. Set it to exactly "true" in
+    # instead of a dark post per variant. The post is checked first only when
+    # the connection can read posts (scope r_organization_social); without it
+    # LinkedIn decides at the creative POST, and the job reads the creative back
+    # and deletes it unless the organization authored the post. The reference
+    # creative was probed live on 2026-11-26 (a share, without the post read).
+    # Set it to exactly "true" in
     # lfx-v2-argocd once a paused probe create passes. While off, a create
     # naming format "boost" is refused before a job exists. Any value other
     # than "true" is treated as off, so a typo fails closed.

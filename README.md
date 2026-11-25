@@ -808,8 +808,13 @@ openssl rand -base64 32
   deployment IN to `linkedInConfig.format: "boost"` (#673): the campaign's
   one creative sponsors `linkedInConfig.boostPost`, an existing post of the
   organization the ad account serves, instead of a dark post per variant.
-  The job reads the post first and refuses it, with nothing created, unless
-  that organization authored it and LinkedIn would sponsor it. Only the
+  When the connection can read posts (`r_organization_social`), the job reads
+  the post first and refuses it, with nothing created, unless that
+  organization authored it and LinkedIn would sponsor it. Without that scope
+  the read answers 403 and LinkedIn decides at the creative POST; the job then
+  reads the creative back and, unless that organization authored the post,
+  deletes the DRAFT creative and fails, leaving a PAUSED campaign with no ad
+  and recording nothing. Only the
   exact value `true` enables it; anything else fails closed, and a create
   naming it is refused with a 400 before a job exists. The chart sets it to
   `"false"` (`app.environment.LINKEDIN_ADS_BOOST_POST_ENABLED.value`);

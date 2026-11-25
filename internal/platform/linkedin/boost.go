@@ -58,7 +58,8 @@ import (
 const FormatBoost = "boost"
 
 // ErrBoostPostIneligible marks a boost post LinkedIn would refuse to sponsor from this ad account,
-// found by reading the post before anything is created. Its sentences are service-authored; the
+// found by reading the post before anything is created, or, when the post cannot be read, by reading
+// its creative back (checkBoostCreativeAuthor). Its sentences are service-authored; the
 // only values they quote pass through domain.CallerValue.
 var ErrBoostPostIneligible = errors.New("linkedin: the post cannot be boosted from this ad account")
 
@@ -291,7 +292,11 @@ func (c *Client) ensureBoostCreative(ctx context.Context, accountID, campaignID 
 // The creative POST's failures follow the single-image loop's: an ambiguous POST is UNCONFIRMED
 // and a definite one failed, each with the partial result carrying the group and campaign. There
 // is no dark post, so nothing else can be orphaned.
-func (c *Client) finishBoost(ctx context.Context, accountID, groupName, groupID, campaignName, campaignID string, campaignReused bool, eventName, postURN string, steps []string, partial func(*CampaignResult) *CampaignResult, finish func(int) *CampaignResult) (*CampaignResult, error) {
+//
+// When the post could not be read first (postChecked false: the connection lacks
+// r_organization_social), the creative is read back and checked against orgURN by
+// checkBoostCreativeAuthor before anything is reported, so that path fails closed too.
+func (c *Client) finishBoost(ctx context.Context, accountID, groupName, groupID, campaignName, campaignID string, campaignReused bool, eventName, postURN, orgURN string, postChecked bool, steps []string, partial func(*CampaignResult) *CampaignResult, finish func(int) *CampaignResult) (*CampaignResult, error) {
 	creativeURN, found, lookupErr, err := c.ensureBoostCreative(ctx, accountID, campaignID, campaignReused, postURN, boostCreativeName(eventName, postURN))
 	if lookupErr != nil {
 		return nil, fmt.Errorf("looking for a creative of campaign %q (found by name in group %q) that already sponsors post %s failed; this call created nothing and posted no creative, and a retry finds the campaign again and repeats the lookup: %w", campaignID, groupID, postURN, lookupErr)
@@ -304,11 +309,22 @@ func (c *Client) finishBoost(ctx context.Context, accountID, groupName, groupID,
 		}
 		if why := boostCreativeRefusal(err, postURN, accountID); why != "" {
 			steps = append(steps, why)
+			// Only a campaign this call created is known to be PAUSED: one found by name may be ACTIVE.
+			paused := ""
+			if !campaignReused {
+				paused = " (the campaign is PAUSED)"
+			}
 			return partial(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps)),
-				fmt.Errorf("boost creative for post %s failed: %s: %w — group %q and campaign %q already exist (the campaign is PAUSED); inspect the returned partial result", postURN, why, err, groupID, campaignID)
+				fmt.Errorf("boost creative for post %s failed: %s: %w — group %q and campaign %q already exist%s; inspect the returned partial result", postURN, why, err, groupID, campaignID, paused)
 		}
 		return partial(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps)),
 			fmt.Errorf("boost creative for post %s failed: %w — group %q and campaign %q already exist; inspect the returned partial result", postURN, err, groupID, campaignID)
+	}
+	if !postChecked {
+		if err := c.checkBoostCreativeAuthor(ctx, accountID, orgURN, campaignID, postURN, creativeURN, !found, campaignReused); err != nil {
+			return nil, err
+		}
+		steps = append(steps, fmt.Sprintf("Boost creative %s read back: the post is authored by %s", creativeURN, orgURN))
 	}
 	if found {
 		steps = append(steps, fmt.Sprintf("Creative already sponsoring post %s found on campaign %s: %s (not created again)", postURN, campaignID, creativeURN))
@@ -319,4 +335,71 @@ func (c *Client) finishBoost(ctx context.Context, accountID, groupName, groupID,
 	result.Steps = steps
 	result.BoostedPostURN = postURN
 	return result, nil
+}
+
+// boostCreativeRead is the part of a Creatives API GET a boost's author check reads: LinkedIn
+// answers a creative made with content.reference as content.standardUpdateAd (probed on
+// 26 Nov 2026), naming the post and its author.
+type boostCreativeRead struct {
+	ID      string `json:"id"`
+	Content struct {
+		StandardUpdateAd *struct {
+			ContentAuthor string `json:"contentAuthor"`
+			Reference     string `json:"reference"`
+		} `json:"standardUpdateAd"`
+	} `json:"content"`
+}
+
+// checkBoostCreativeAuthor reads creativeURN back and returns nil only when it sponsors postURN
+// and orgURN authored that post. It stands in for verifyBoostPost's author check when the
+// connection cannot read posts: without it, a caller could boost any post the connection's
+// member may sponsor, from another organization's page included.
+//
+// Any other outcome is an error with no partial result, so nothing is recorded and the campaign
+// cannot be activated through this service: a retry finds the group and campaign by name and
+// checks again. A creative this call created (created) is deleted first; it is a DRAFT, which
+// LinkedIn lets a DELETE remove (a DRAFT cannot be archived). A failed read is treated like a
+// wrong author, since nothing then shows the creative is safe to keep. A creative found on a
+// reused campaign is never deleted here: it may be serving, so the error names it instead.
+func (c *Client) checkBoostCreativeAuthor(ctx context.Context, accountID, orgURN, campaignID, postURN, creativeURN string, created, campaignReused bool) error {
+	shown := domain.CallerValue(postURN)
+	why := ""
+	raw, err := c.doEntityGET(ctx, fmt.Sprintf("adAccounts/%s/creatives/%s", accountID, encodeURNForPath(creativeURN)))
+	switch {
+	case err != nil:
+		why = fmt.Sprintf("reading it back to check the post's author failed (%v)", err)
+	case identityjson.Check(raw) != nil:
+		why = "LinkedIn's answer for it could not be trusted"
+	default:
+		var read boostCreativeRead
+		decodeErr := json.Unmarshal(raw, &read)
+		ad := read.Content.StandardUpdateAd
+		switch {
+		case decodeErr != nil || ad == nil:
+			why = "LinkedIn's answer for it names no sponsored post"
+		case ad.Reference != postURN:
+			why = fmt.Sprintf("it sponsors post %s, not %s", domain.CallerValue(ad.Reference), shown)
+		case ad.ContentAuthor != orgURN:
+			who := "a LinkedIn member"
+			if strings.HasPrefix(ad.ContentAuthor, "urn:li:organization:") {
+				who = domain.CallerValue(ad.ContentAuthor)
+			}
+			why = fmt.Sprintf("the post is authored by %s, not by %s, the organization ad account %s serves; only that organization's own posts can be boosted here", who, orgURN, accountID)
+		default:
+			return nil
+		}
+	}
+	if !created {
+		return fmt.Errorf("%w: creative %s, found on campaign %s for post %s, failed the author check: %s; remove it in Campaign Manager before boosting this post again", ErrBoostPostIneligible, creativeURN, campaignID, shown, why)
+	}
+	cleanup := fmt.Sprintf("the DRAFT creative %s was deleted", creativeURN)
+	path := fmt.Sprintf("adAccounts/%s/creatives/%s", accountID, encodeURNForPath(creativeURN))
+	if _, derr := c.doRequest(ctx, http.MethodDelete, path, nil, nil, nil, true); derr != nil {
+		cleanup = fmt.Sprintf("deleting the DRAFT creative %s failed (%v), so delete it in Campaign Manager", creativeURN, derr)
+	}
+	left := fmt.Sprintf("campaign %s is left PAUSED with no ad", campaignID)
+	if campaignReused {
+		left = fmt.Sprintf("campaign %s (found by name) is left as it was", campaignID)
+	}
+	return fmt.Errorf("%w: boost creative for post %s failed the author check: %s; %s, and %s", ErrBoostPostIneligible, shown, why, cleanup, left)
 }

@@ -2168,8 +2168,14 @@ the request: the post is read by the job, not by the synchronous check.
 A 403 on the read means the connection cannot read posts (its token lacks
 `r_organization_social`), not that the post is ineligible. The checks above are then skipped
 (logged, and a result step says so), no campaign `format` is sent (LinkedIn infers it from the
-creative), and the group, PAUSED campaign and creative are created, letting LinkedIn decide. If
-LinkedIn refuses the creative, the row is `created_degraded` with the group and campaign, as for a
+creative), and the group, PAUSED campaign and creative are created, letting LinkedIn decide. The
+job then reads the creative back (`GET /rest/adAccounts/<acct>/creatives/<urn>`, which answers
+`content.standardUpdateAd.contentAuthor` and `.reference`) and, unless it sponsors the requested post
+and the post's author is the account's organization, deletes the DRAFT creative (`DELETE` on the
+same path; a DRAFT cannot be archived) and fails the job with no result, so nothing is recorded and
+the campaign, left PAUSED with no ad, cannot be activated from here. A failed read is treated the
+same way. On a retry, a creative found on the reused campaign is checked too; one that fails is
+named, never deleted, since it may be serving. If LinkedIn refuses the creative, the row is `created_degraded` with the group and campaign, as for a
 failed image creative; `UGC_FORBIDDEN` reads "LinkedIn refused to sponsor post X from ad account Y
 (UGC_FORBIDDEN): the connection's LinkedIn member needs a sponsoring role (ADMINISTRATOR,
 DIRECT_SPONSORED_CONTENT_POSTER or CONTENT_ADMIN) on the organization page that authored it", and

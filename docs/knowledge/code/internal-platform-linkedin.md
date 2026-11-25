@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding whose objective follows the strategy (automatic WEBSITE_VISIT + MAX_CLICK + CPM, manual WEBSITE_CONVERSION + CPC/NONE/unitCost) unless the caller asks for automatic website conversions (WEBSITE_CONVERSION + MAX_CONVERSION + CPM, only with a conversion to associate) or a manual bid on website visits (WEBSITE_VISIT + CPC/NONE/unitCost), either automatic one optionally with a target cost sent as unitCost, where the create once sent no optimizationTargetType, a boost create whose one creative references an existing organization post read and checked before the campaign group (best-effort: a connection that cannot read posts lets LinkedIn's creative POST decide), and optional single-flight access-token refresh."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding whose objective follows the strategy (automatic WEBSITE_VISIT + MAX_CLICK + CPM, manual WEBSITE_CONVERSION + CPC/NONE/unitCost) unless the caller asks for automatic website conversions (WEBSITE_CONVERSION + MAX_CONVERSION + CPM, only with a conversion to associate) or a manual bid on website visits (WEBSITE_VISIT + CPC/NONE/unitCost), either automatic one optionally with a target cost sent as unitCost, where the create once sent no optimizationTargetType, a boost create whose one creative references an existing organization post read and checked before the campaign group (best-effort: a connection that cannot read posts lets LinkedIn's creative POST decide, then has the creative's author checked on read-back), and optional single-flight access-token refresh."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -1278,13 +1278,20 @@ account, no body) that the pre-checks were skipped, and the create goes on with 
 `format` (step "Boost post … not pre-checked"). Probed 2026-11-26 (LinkedIn-Version 202611, LF
 Events 509430019): such a token gets 403 `ACCESS_DENIED` on the read and 201 on the creative,
 and LinkedIn sets the campaign's format to `STANDARD_UPDATE` itself. LinkedIn's creative POST then
-decides; its refusal comes back through `finishBoost`'s creative-failure path below. Unverified:
+decides; its refusal comes back through `finishBoost`'s creative-failure path below. Its
+acceptance does not end the check: with no post read, `finishBoost` calls
+`checkBoostCreativeAuthor`, which GETs the creative and requires
+`content.standardUpdateAd.reference` to be the post and `.contentAuthor` the account's
+organization. Anything else, a failed read included, DELETEs a creative this call created (a DRAFT,
+which can be deleted but not archived) and returns `ErrBoostPostIneligible` with no result, so the
+claim is released and nothing is recorded; a creative found on a reused campaign is named, never
+deleted. Unverified:
 a video post on this path gets no `SINGLE_VIDEO` format (the probe covered a share only), so a
 video boost needs a token with `r_organization_social` until it is probed. Every quoted value passes through
 `domain.CallerValue`, and an author that is not an `urn:li:organization:` (a member's person URN,
 which the caller never supplied) is reported only as "a LinkedIn member". The create body sends
 `content.reference`; LinkedIn reads such a creative back as `content.standardUpdateAd.reference`
-(202610+), and nothing here decodes a creative's `content`. Sources (li-lms-2026-11, consulted 2026-11-26): the Posts API GET and
+(202610+), which only `checkBoostCreativeAuthor` decodes (`boostCreativeRead`). Sources (li-lms-2026-11, consulted 2026-11-26): the Posts API GET and
 content table, and the Creatives API error table (`UGC_RESHARE_CANNOT_BE_SPONSORED`,
 `UGC_INVALID_VISIBILITY_SETTING`, `UGC_INVALID_FEED_DISTRIBUTION`,
 `REFERENCE_MEDIA_CATEGORY_AND_CAMPAIGN_FORMAT_MISMATCH`), cited in `boost.go`. A video post's

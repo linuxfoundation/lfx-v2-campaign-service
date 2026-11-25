@@ -3517,7 +3517,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// group lock, after every local check, so a refused input costs no request. The post's
 	// content also decides the campaign format (SINGLE_VIDEO for a video post). A connection that
 	// cannot read posts (a 403) skips the checks and sends no format: LinkedIn infers it from the
-	// creative, and the creative POST decides whether the post can be sponsored.
+	// creative, the creative POST decides whether the post can be sponsored, and finishBoost then
+	// reads the creative back and refuses it unless orgURN authored the post (boostOrgURN and
+	// boostPostChecked carry the outcome there).
+	var boostOrgURN string
+	var boostPostChecked bool
 	if format == FormatBoost {
 		orgURN, err := c.orgURN(accountID)
 		if err != nil {
@@ -3527,10 +3531,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if campaignFormat, checked, err = c.verifyBoostPost(ctx, accountID, orgURN, in.BoostPost); err != nil {
 			return nil, err
 		}
+		boostOrgURN, boostPostChecked = orgURN, checked
 		if checked {
 			steps = append(steps, fmt.Sprintf("Boost post %s verified: published by %s, public, organic, sponsorable", in.BoostPost, orgURN))
 		} else {
-			steps = append(steps, fmt.Sprintf("Boost post %s not pre-checked: this connection cannot read posts (LinkedIn answered 403; it lacks r_organization_social), so LinkedIn decides at the creative whether the post can be sponsored; a video post gets no SINGLE_VIDEO format on this path, which is unverified", in.BoostPost))
+			steps = append(steps, fmt.Sprintf("Boost post %s not pre-checked: this connection cannot read posts (LinkedIn answered 403; it lacks r_organization_social), so LinkedIn decides at the creative whether the post can be sponsored, and the creative's author is checked once it exists; a video post gets no SINGLE_VIDEO format on this path, which is unverified", in.BoostPost))
 		}
 	}
 
@@ -3759,7 +3764,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return result
 	}
 	if format == FormatBoost {
-		return c.finishBoost(ctx, accountID, groupName, groupID, campaignName, campaignID, campaignReused, eventName, in.BoostPost, steps, withImages, finish)
+		return c.finishBoost(ctx, accountID, groupName, groupID, campaignName, campaignID, campaignReused, eventName, in.BoostPost, boostOrgURN, boostPostChecked, steps, withImages, finish)
 	}
 	if format == FormatDocument {
 		count, docURN, docSteps, derr := c.createDocumentAd(ctx, accountID, campaignID, eventName, in)

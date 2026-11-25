@@ -228,10 +228,13 @@ create is refused with a 400 before a job exists, as before #675. Not role-gated
 
 `LINKEDIN_ADS_BOOST_POST_ENABLED` defaults to `"false"` (#673) and gates
 `linkedInConfig.format: "boost"`: the campaign's one creative sponsors `linkedInConfig.boostPost`,
-an existing post of the organization the ad account serves, after the job has read the post
-(Posts API, which needs `r_organization_social` on the connection) and checked LinkedIn would
-sponsor it. Neither the read nor the reference creative has been exercised against a live account
-from this service. Only exactly `"true"` enables it; off, a create naming it is refused with a 400
+an existing post of the organization the ad account serves. When the connection can read posts
+(Posts API, `r_organization_social`), the job reads the post first and refuses it, with nothing
+created, unless LinkedIn would sponsor it. Without that scope the read answers 403, LinkedIn
+decides at the creative POST, and the job reads the creative back: unless the organization
+authored the post, it deletes the DRAFT creative and fails, leaving a PAUSED campaign with no ad.
+The reference creative, its read-back and a DRAFT creative's DELETE were probed live on 2026-11-26
+(a share, on the no-read path); the post read has not been. Only exactly `"true"` enables it; off, a create naming it is refused with a 400
 before a job exists. Not role-gated.
 
 `LINKEDIN_ADS_VIDEO_ENABLED` defaults to `"false"` (#586) and gates LinkedIn video Sponsored
