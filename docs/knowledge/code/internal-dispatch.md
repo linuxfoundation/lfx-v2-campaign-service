@@ -363,7 +363,9 @@ guess, so it keeps nothing.
 
 - `reddit.go` — `PostURL`, `ImageURL` (`sanitizeSnapshotURL`); each variant's `headline`/`body`,
   every `keywords`, `geoTargets`, `subCountryGeoTargets`, `subreddits` and `interests` entry, and `callToAction`,
-  `conversionPixelId`, `videoGoal` (`sanitizeSnapshotText`) — `redditSnapshotConfig`, #245.
+  `conversionPixelId`, `videoGoal` (`sanitizeSnapshotText`) — `redditSnapshotConfig`, #245. Each
+  `carouselCards` entry's `destinationUrl` (`sanitizeSnapshotURL`) and `headline`
+  (`sanitizeSnapshotText`), #661; its `imageAssetId` is kept verbatim.
 - `meta.go` — each variant's `ImageURL` (`sanitizeSnapshotURL`) and `PrimaryText`/`Headline`/
   `Description`, every `geoTargets` entry, `pixelId`, `dsaBeneficiary`, `dsaPayor`
   (`sanitizeSnapshotText`) — `metaSnapshotConfig`, #245.

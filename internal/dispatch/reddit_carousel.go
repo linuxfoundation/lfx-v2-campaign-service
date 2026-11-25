@@ -6,7 +6,6 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -139,21 +138,8 @@ func (d *RedditDispatcher) checkRedditCarouselAssets(ctx context.Context, brief 
 	}
 	for i, id := range ids {
 		field := fmt.Sprintf("%s[%d].imageAssetId", reddit.FieldCarouselCards, i+1)
-		meta, err := d.assets.GetAssetMetadata(ctx, brief.ProjectID, brief.ID, id)
-		if err != nil {
-			if errors.Is(err, domain.ErrNotFound) {
-				return domain.PreflightRefusalf("redditConfig.%s references creative asset %s, which does not exist for this brief", field, id)
-			}
-			return fmt.Errorf("reddit: read creative asset %s: %w", id, err)
-		}
-		if meta == nil || meta.ByteSize <= 0 {
-			return domain.PreflightRefusalf("redditConfig.%s references creative asset %s, which has no stored bytes", field, id)
-		}
-		if meta.MimeType != model.MimeTypePNG && meta.MimeType != model.MimeTypeJPEG {
-			return domain.PreflightRefusalf("creative asset %s is not an image; redditConfig.%s accepts PNG or JPEG", id, field)
-		}
-		if err := assetsign.ValidateIDs(brief.ProjectID, brief.ID, id); err != nil {
-			return fmt.Errorf("reddit: creative asset %s cannot be served at a signed URL: %w", id, err)
+		if err := d.checkRedditStoredAsset(ctx, brief, field, id, false); err != nil {
+			return err
 		}
 	}
 	return nil

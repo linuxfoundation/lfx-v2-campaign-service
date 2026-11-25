@@ -197,7 +197,6 @@ func TestRedditCarousel_PreflightRefusesSynchronously(t *testing.T) {
 		// Off, an unrelated mistyped field must not turn the gated carousel into an accepted job.
 		{"flag off beside a broken field", "", "", carouselExtra(rcCards...) + `,"keywords":"not-a-list"`, constants.EnvRedditCarouselEnabled},
 		{"one card", "true", "", carouselExtra(rcCards[0]), "a carousel takes 2 to 6"},
-		{"with a video", "true", "", carouselExtra(rcCards...) + `,"thumbnailAssetId":"` + rcCards[0] + `"`, ""},
 		{"with imageAssetId", "true", "", carouselExtra(rcCards...) + `,"imageAssetId":"` + raAsset + `"`, "cannot be combined"},
 		{"malformed id", "true", "", carouselExtra(rcCards[0], "x"), "not a valid asset id"},
 		{"missing destination", "true", "", `,"carouselCards":[{"imageAssetId":"` + rcCards[0] + `","headline":"A"},{"imageAssetId":"` + rcCards[1] + `","headline":"B","destinationUrl":"https://e.example"}]`, "carouselCards[1]: destinationUrl is required"},
@@ -226,6 +225,12 @@ func TestRedditCarousel_PreflightRefusesSynchronously(t *testing.T) {
 	if err := pre(carouselExtra(rcCards...)); !errors.Is(err, domain.ErrPreflightNotApplicable) {
 		t.Fatalf("valid carousel config: err = %v, want ErrPreflightNotApplicable", err)
 	}
+	// With both flags on, the video gate passes a well-formed video, so the carousel's own
+	// exclusivity rule is what refuses the mix.
+	t.Setenv(constants.EnvRedditVideoEnabled, "true")
+	requireConfigInvalid(t, pre(carouselExtra(rcCards...)+`,"videoAssetId":"`+rvVideo+`","thumbnailAssetId":"`+rvThumb+`"`),
+		"carouselCards cannot be combined with postUrl, imageUrl, imageAssetId, videoAssetId or thumbnailAssetId")
+	t.Setenv(constants.EnvRedditVideoEnabled, "")
 	// With one ad per variant on, a carousel with two variants would silently drop all but the
 	// first: refused, while one variant is the one-ad carousel create.
 	t.Setenv(constants.EnvRedditAdPerVariantEnabled, "true")
