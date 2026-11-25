@@ -1495,48 +1495,48 @@ type CampaignCreateInput struct {
 	// so conversions also require global_marketing_ops on the project (403; 503
 	// when the check cannot be made). LINKEDIN OBJECTIVE (#582): linkedInConfig
 	// takes an optional `objective`, "traffic" or "conversions" (exact,
-	// lowercase). Omitted, the bidding strategy decides as before (automatic:
-	// objectiveType WEBSITE_VISIT, optimizationTargetType MAX_CLICK; manual:
-	// WEBSITE_CONVERSION with a manual CPC). "traffic" is WEBSITE_VISIT /
-	// MAX_CLICK / costType CPM and is offered with automatic bidding only.
-	// "conversions" is objectiveType WEBSITE_CONVERSION: with manual bidding it is
-	// the manual create unchanged (optimizationTargetType NONE, costType CPC,
-	// unitCost = bidAmount); with automatic bidding (LinkedIn's Maximum delivery)
-	// it is optimizationTargetType MAX_CONVERSION with costType CPM and no
-	// unitCost, and REQUIRES a non-empty linkedInConfig.conversions, because
-	// LinkedIn will not activate a MAX_CONVERSION campaign until a conversion is
-	// associated with it: the campaign is created PAUSED and the conversions
-	// associated right after it, so it inherits the conversions gates
-	// (LINKEDIN_ADS_CONVERSIONS_ENABLED and global_marketing_ops). If an
-	// association then fails the campaign is created_degraded with the step to
-	// associate the conversion in Campaign Manager before activating. Both
-	// conversions shapes have the Conversions name segment; a same-name campaign
-	// of the other bidding mode (manual NONE / ENHANCED_CONVERSION versus
-	// automated) is never reused. update-campaign-bid answers 409 for an automatic
-	// conversions campaign, as for MAX_CLICK: it has no manual bid. Refused with a
-	// 400 before any job exists: an objective that is not one of the two strings
-	// (an explicit null, "", a number, another word or casing), "traffic" with
-	// manual bidding, and "conversions" with automatic bidding and no conversions.
-	// LINKEDIN DAILY CAP (#584): with lifetimeBudget true, linkedInConfig takes an
-	// optional `dailyCapUsd` (USD), sent as the campaign's dailyBudget beside its
-	// totalBudget, on LinkedIn's continuous schedule (no campaign end; the event's
-	// campaign group carries it, and a create that cannot keep the shared group
-	// ending at the campaign's end is refused). Refused with a 400 before any job
-	// exists when it is set without lifetimeBudget, is not a number (null
-	// included), is not above zero, is under LinkedIn's $10 daily minimum, or is
-	// more than the lifetime budget. LINKEDIN LEAD GEN FORMS (#664):
-	// linkedInConfig.objective "lead_generation" creates a LEAD_GENERATION
-	// campaign with automatic bidding (MAX_LEAD; a manual bid is refused) whose
-	// creatives open the Lead Gen Form `leadGenForm` names (required: the form's
-	// numeric id or urn:li:adForm:<id>, built in Campaign Manager on the create's
-	// ad account; list-linkedin-ads-lead-forms lists them), sent as each
-	// creative's leadgenCallToAction with the button label `leadGenCallToAction`
-	// (optional, default REGISTER; one of APPLY, DOWNLOAD, VIEW_QUOTE, LEARN_MORE,
-	// SIGN_UP, SUBSCRIBE, REGISTER, REQUEST_DEMO, JOIN, ATTEND,
-	// UNLOCK_FULL_DOCUMENT, SHOP_NOW, BUY_NOW, SEE_MORE). leadGenForm names a
-	// resource of the ad account, so it requires global_marketing_ops of the
-	// project. Refused with a 400 before any job exists: any of the three while
-	// the deployment has not set LINKEDIN_ADS_LEAD_GEN_ENABLED to "true";
+	// lowercase), or "lead_generation" (#664, see LINKEDIN LEAD GEN FORMS).
+	// Omitted, the bidding strategy decides as before (automatic: objectiveType
+	// WEBSITE_VISIT, optimizationTargetType MAX_CLICK; manual: WEBSITE_CONVERSION
+	// with a manual CPC). "traffic" is WEBSITE_VISIT / MAX_CLICK / costType CPM
+	// and is offered with automatic bidding only. "conversions" is objectiveType
+	// WEBSITE_CONVERSION: with manual bidding it is the manual create unchanged
+	// (optimizationTargetType NONE, costType CPC, unitCost = bidAmount); with
+	// automatic bidding (LinkedIn's Maximum delivery) it is optimizationTargetType
+	// MAX_CONVERSION with costType CPM and no unitCost, and REQUIRES a non-empty
+	// linkedInConfig.conversions, because LinkedIn will not activate a
+	// MAX_CONVERSION campaign until a conversion is associated with it: the
+	// campaign is created PAUSED and the conversions associated right after it, so
+	// it inherits the conversions gates (LINKEDIN_ADS_CONVERSIONS_ENABLED and
+	// global_marketing_ops). If an association then fails the campaign is
+	// created_degraded with the step to associate the conversion in Campaign
+	// Manager before activating. Both conversions shapes have the Conversions name
+	// segment; a same-name campaign of the other bidding mode (manual NONE /
+	// ENHANCED_CONVERSION versus automated) is never reused. update-campaign-bid
+	// answers 409 for an automatic conversions campaign, as for MAX_CLICK: it has
+	// no manual bid. Refused with a 400 before any job exists: an objective that
+	// is not one of the two strings (an explicit null, "", a number, another word
+	// or casing), "traffic" with manual bidding, and "conversions" with automatic
+	// bidding and no conversions. LINKEDIN DAILY CAP (#584): with lifetimeBudget
+	// true, linkedInConfig takes an optional `dailyCapUsd` (USD), sent as the
+	// campaign's dailyBudget beside its totalBudget, on LinkedIn's continuous
+	// schedule (no campaign end; the event's campaign group carries it, and a
+	// create that cannot keep the shared group ending at the campaign's end is
+	// refused). Refused with a 400 before any job exists when it is set without
+	// lifetimeBudget, is not a number (null included), is not above zero, is under
+	// LinkedIn's $10 daily minimum, or is more than the lifetime budget. LINKEDIN
+	// LEAD GEN FORMS (#664): linkedInConfig.objective "lead_generation" creates a
+	// LEAD_GENERATION campaign with automatic bidding (MAX_LEAD; a manual bid is
+	// refused) whose creatives open the Lead Gen Form `leadGenForm` names
+	// (required: the form's numeric id or urn:li:adForm:<id>, built in Campaign
+	// Manager on the create's ad account; list-linkedin-ads-lead-forms lists
+	// them), sent as each creative's leadgenCallToAction with the button label
+	// `leadGenCallToAction` (optional, default REGISTER; one of APPLY, DOWNLOAD,
+	// VIEW_QUOTE, LEARN_MORE, SIGN_UP, SUBSCRIBE, REGISTER, REQUEST_DEMO, JOIN,
+	// ATTEND, UNLOCK_FULL_DOCUMENT, SHOP_NOW, BUY_NOW, SEE_MORE). leadGenForm
+	// names a resource of the ad account, so it requires global_marketing_ops of
+	// the project. Refused with a 400 before any job exists: any of the three
+	// while the deployment has not set LINKEDIN_ADS_LEAD_GEN_ENABLED to "true";
 	// lead_generation without leadGenForm, or leadGenForm or leadGenCallToAction
 	// without lead_generation; a leadGenForm that is not a string of a positive
 	// integer id; an unknown label; format "text"; offsiteDeliveryEnabled true;

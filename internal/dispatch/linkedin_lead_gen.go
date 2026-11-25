@@ -44,8 +44,8 @@ func linkedinLeadGenDisabled(fields string) error {
 // 400 from PreflightCreate, and the same sentence failing a job that reached Dispatch.
 //
 //   - leadGenForm or leadGenCallToAction without objective "lead_generation": refused.
-//   - any of the three while LINKEDIN_ADS_LEAD_GEN_ENABLED is off: refused (linkedinObjective
-//     refuses the objective itself first).
+//   - any of the three while LINKEDIN_ADS_LEAD_GEN_ENABLED is off: refused. The gate is enforced
+//     only here; linkedinObjective, which runs earlier, refuses only a manual bid.
 //   - otherwise linkedin.ValidateLeadGen: the form id's shape, the label, and the format, Audience
 //     Network and variant call-to-action rules. The format is normalised as the client will; an
 //     unknown one is left to linkedinFormat's refusal.

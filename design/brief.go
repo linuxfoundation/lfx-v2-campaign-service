@@ -321,7 +321,7 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		"project (403; "+
 		"503 when the check cannot be made). "+
 		"LINKEDIN OBJECTIVE (#582): linkedInConfig takes an optional `objective`, \"traffic\" or "+
-		"\"conversions\" (exact, lowercase). Omitted, the bidding strategy decides as before (automatic: "+
+		"\"conversions\" (exact, lowercase), or \"lead_generation\" (#664, see LINKEDIN LEAD GEN FORMS). Omitted, the bidding strategy decides as before (automatic: "+
 		"objectiveType WEBSITE_VISIT, optimizationTargetType MAX_CLICK; manual: WEBSITE_CONVERSION with a "+
 		"manual CPC). \"traffic\" is WEBSITE_VISIT / MAX_CLICK / costType CPM and is offered with automatic "+
 		"bidding only. \"conversions\" is objectiveType WEBSITE_CONVERSION: with manual bidding it is the "+

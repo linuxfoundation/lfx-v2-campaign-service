@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"sort"
 	"strconv"
@@ -151,13 +152,14 @@ const leadFormStateArchived = "ARCHIVED"
 
 // checkLeadForm reads the form before any POST and refuses one that is not the ad account's own
 // or is archived, so a wrong id fails with nothing created instead of on the first creative
-// after the campaign group and campaign exist. A 404 or 403 reads as "not this account's form";
-// any other failure is returned as is (nothing was created either way).
+// after the campaign group and campaign exist. A 404 reads as "not this account's form"; any
+// other failure, a 403 included (it can equally be a token or role that cannot read forms), is
+// returned as is (nothing was created either way).
 func (c *Client) checkLeadForm(ctx context.Context, accountID string, lg LeadGen) error {
 	raw, err := c.doEntityGET(ctx, "leadForms/"+lg.FormID)
 	if err != nil {
 		var ae *apiError
-		if errors.As(err, &ae) && (ae.StatusCode == 404 || ae.StatusCode == 403) {
+		if errors.As(err, &ae) && ae.StatusCode == http.StatusNotFound {
 			return fmt.Errorf("%w: Lead Gen Form %s was not found on ad account %s", ErrLeadGenInvalid, lg.FormID, accountID)
 		}
 		return fmt.Errorf("read linkedin lead gen form %s: %w", lg.FormID, err)

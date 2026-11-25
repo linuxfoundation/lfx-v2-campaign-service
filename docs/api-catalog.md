@@ -1696,6 +1696,8 @@ with **Maximum delivery** (automatic bidding). Optional; exact lowercase strings
 | `conversions` | automatic (default) | `WEBSITE_CONVERSION` | `MAX_CONVERSION` | `CPM` | — | `Conversions` | **yes** |
 | omitted / `conversions` | manual | `WEBSITE_CONVERSION` | `NONE` | `CPC` | bid (USD) | `Conversions` | no |
 | `traffic` | manual | refused `400` | | | | | |
+| `lead_generation` (#664) | automatic (default) | `LEAD_GENERATION` | `MAX_LEAD` | `CPM` | — | `Leads` | no (needs `leadGenForm`) |
+| `lead_generation` | manual | refused `400` | | | | | |
 
 LinkedIn rules, from li-lms-2026-02 (unchanged through li-lms-2026-10; the service pins `202611` since #639),
 consulted 2026-11-13: "Ad Budget Type Allowable Combinations" — `WEBSITE_CONVERSION` allows `NONE`,
@@ -1727,7 +1729,7 @@ create's by-name reuse also compares the bidding mode — a same-name campaign r
 the reverse, and a same-name `WEBSITE_CONVERSION` campaign that reports no `optimizationTargetType`
 is not reused for `MAX_CONVERSION` either (the create aborts; a manual create still reuses it). The settings readback's `objective_type` reads the
 `objectiveType` the create recorded in the campaign's result (automatic + `conversions` →
-`WEBSITE_CONVERSION`, otherwise `WEBSITE_VISIT`), never the config snapshot, which a campaign
+`WEBSITE_CONVERSION`, `lead_generation` → `LEAD_GENERATION`, otherwise `WEBSITE_VISIT`), never the config snapshot, which a campaign
 update can replace.
 
 #### LinkedInConfig Audience Expansion and Audience Network (#667)
@@ -1775,7 +1777,7 @@ positive integer; an unknown label; `format: "text"`; `offsiteDeliveryEnabled: t
 `variants[].callToAction` (on a lead gen creative the form's button is the call to action).
 Dispatch repeats every check, and the client then reads the form (`GET /rest/leadForms/{id}`)
 before the campaign group exists: a form another owner holds, an archived one, or one LinkedIn
-answers 403/404 for fails the job with nothing created. The campaign name's Objective segment is
+answers 404 for fails the job with nothing created (any other read failure, a 403 included, fails it too, as an upstream error). The campaign name's Objective segment is
 `Leads`, and the settings readback compares `objective_type` against the recorded
 `LEAD_GENERATION`. Not yet created on a live account; the paused probe is in the PR.
 

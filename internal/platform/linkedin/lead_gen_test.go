@@ -179,6 +179,7 @@ func TestCreateCampaign_LeadFormCheckSendsNothing(t *testing.T) {
 		{"an organic form", `{"id":1,"state":"PUBLISHED","owner":{"organization":"urn:li:organization:1"}}`, 0, "does not belong"},
 		{"archived", strings.Replace(ownedLeadForm, "PUBLISHED", "ARCHIVED", 1), 0, "is archived"},
 		{"not found", `{}`, http.StatusNotFound, "was not found"},
+		{"forbidden is not read as not found", `{}`, http.StatusForbidden, ""},
 		{"server error", `{}`, http.StatusInternalServerError, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -213,9 +214,12 @@ func TestListLeadForms(t *testing.T) {
 		{"another owner", `{"id":2,"name":"A","state":"PUBLISHED","owner":{"sponsoredAccount":"urn:li:sponsoredAccount:9"}}`, nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
 			var query string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
 				query = r.URL.RawQuery
+				mu.Unlock()
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = io.WriteString(w, `{"elements":[`+tc.elements+`],"metadata":{}}`)
 			}))
@@ -231,6 +235,8 @@ func TestListLeadForms(t *testing.T) {
 			if err != nil || !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("ListLeadForms = %+v, %v; want %+v", got, err, tc.want)
 			}
+			mu.Lock()
+			defer mu.Unlock()
 			if !strings.Contains(query, "owner=(sponsoredAccount:urn%3Ali%3AsponsoredAccount%3A123456789)") || !strings.Contains(query, "q=owner") {
 				t.Errorf("query = %q, want q=owner and the pre-encoded owner", query)
 			}

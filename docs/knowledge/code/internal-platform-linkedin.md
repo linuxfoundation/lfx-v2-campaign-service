@@ -1340,7 +1340,7 @@ form (`<id>` or `urn:li:adForm:<id>`, a canonical positive int64), defaults the 
 and checks it against `LeadGenCallToActionLabels`, and refuses a text format, the Audience Network,
 a variant `CallToAction`, and the objective and form without each other. `checkLeadForm` then
 reads `GET /rest/leadForms/{id}` before the campaign group: a form whose
-`owner.sponsoredAccount` is not the account, an `ARCHIVED` one, or a 403/404 is a pre-flight
+`owner.sponsoredAccount` is not the account, an `ARCHIVED` one, or a 404 is a pre-flight
 refusal; any other failure a plain error, nothing created. `createCreative` adds
 `leadgenCallToAction: {destination: urn:li:adForm:<id>, label}` to every DRAFT creative.
 `ListLeadForms` walks the owner finder (`q=owner&owner=(sponsoredAccount:<urn>)`, `owner` in

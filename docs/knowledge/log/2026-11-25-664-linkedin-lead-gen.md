@@ -9,7 +9,7 @@ on CPM, automatic bidding only, name segment `Leads`; every creative carries
 400 before a job exists. So is a missing or malformed form, a form without the objective, a manual
 bid, an unknown label, a text create, the Audience Network, and a variant call to action. Dispatch
 repeats the checks, and the client reads the form before the campaign group exists: another
-owner's form, an archived one, or a 403/404 creates nothing. `leadGenForm` requires
+owner's form, an archived one, or a 404 creates nothing. `leadGenForm` requires
 `global_marketing_ops`.
 
 `GET /projects/{project_id}/linkedin-ads/lead-forms` lists the account's non-archived forms for

@@ -3281,15 +3281,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, domain.PreflightRefusalf("campaign name is %d characters, exceeds the %d-character limit; shorten the event name or project", n, maxNameLen)
 	}
 
-	// Hold the event's group from its find-or-create through the campaign POST (#584). Between a
-	// create's group check and its campaign existing, another create of the same event could
-	// otherwise widen the group: a daily-capped campaign has no end of its own, so a widening that
-	// lands before it exists (its sibling search cannot see it yet) would let it serve to the new,
-	// later end. Same-event creates in this process therefore run that span one at a time, and
-	// the next one's sibling search sees the campaign. A group THIS create makes is covered too,
-	// because the lock is taken before the group exists. A wait is bounded by ctx. Released as
-	// soon as createSponsoredCampaign returns: the dark post and creatives do not touch the
-	// group's schedule. Other replicas are not covered (LFXV2-2665).
 	// The lead gen form (#664) is read before the campaign group exists: a form of another
 	// account, an archived one or a wrong id is refused with nothing created.
 	if in.LeadGen != nil {
@@ -3301,9 +3292,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
+	// Hold the event's group from its find-or-create through the campaign POST (#584). Between a
+	// create's group check and its campaign existing, another create of the same event could
+	// otherwise widen the group: a daily-capped campaign has no end of its own, so a widening that
+	// lands before it exists (its sibling search cannot see it yet) would let it serve to the new,
+	// later end. Same-event creates in this process therefore run that span one at a time, and
+	// the next one's sibling search sees the campaign. A group THIS create makes is covered too,
+	// because the lock is taken before the group exists. A wait is bounded by ctx. Released as
+	// soon as createSponsoredCampaign returns: the dark post and creatives do not touch the
+	// group's schedule. Other replicas are not covered (LFXV2-2665).
 	releaseGroup, err := eventGroupLocks.acquire(ctx, c.baseURL+"\x00"+accountID+"\x00"+groupName)
 	if err != nil {
-		return nil, fmt.Errorf("campaign group %q: waiting for another create of this event was aborted before any LinkedIn request; nothing was created: %w", groupName, err)
+		return nil, fmt.Errorf("campaign group %q: waiting for another create of this event was aborted before any LinkedIn write; nothing was created: %w", groupName, err)
 	}
 	groupHeld := true
 	unlockGroup := func() {
