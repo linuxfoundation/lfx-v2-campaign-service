@@ -1020,6 +1020,23 @@ headers for the ETag. `createVideoDarkPost` shares `darkPostEnvelope`/`postDarkP
 `createDarkPost`. URNs go to `CampaignResult.VideoURNs`. See
 [LinkedIn Video Sponsored Content](../architecture/linkedin-video-ads.md).
 
+## Carousel creates (`carousel.go`, #665)
+
+`CampaignInput.Format` `FormatCarousel` with `CarouselCards` and `CarouselIntroText` creates a
+`SPONSORED_UPDATES` campaign of format `CAROUSEL` (`campaignFormatCarousel`, Ad Format segment
+`Carousel`) with ONE creative. `CreateCampaign` refuses, before any request: variants beside the
+cards, cards or intro text under another format, what `ValidateCarousel` refuses (2 to 10 cards,
+headline at most 45, intro at most 255, destination per `validateLandingURL`, the rules
+`validateRegistrationURL` now delegates to, at most 2,000 characters), a card image not supplied or
+refused by `ValidateCarouselImage` (PNG/JPEG, at most 10 MB, at most 4320x4320, exactly square), a lead generation
+carousel (`ValidateLeadGen`), and a tagged landing page over 2,000 characters
+(`carouselLandingPages`, against the final campaign name). `uploadVariantImages` uploads each
+distinct card image; `createCarousel` posts the dark post (`createCarouselDarkPost`: cards in
+order, each `landingPage` tagged `utm_content=card-<k>` by `buildUTMURLWithContent`, which
+`BuildUTMURL` now wraps; `contentLandingPage` card 1's) and the creative. `findCampaignByNameInGroup`
+compares `sponsoredFormatKind`, so image, video and carousel campaigns never reuse one another. See
+[LinkedIn Carousel Sponsored Content](../architecture/linkedin-carousel-ads.md).
+
 ## Create-time bidding (`CampaignInput.ManualCPCBid`, `campaignBidding`, LFXV2-2665)
 
 **Bug fixed**: the create body used to send `WEBSITE_CONVERSION`, `costType` `CPC` and NO

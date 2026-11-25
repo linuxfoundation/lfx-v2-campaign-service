@@ -5820,6 +5820,23 @@ came from — `linkedInConfig.textAds reference creative asset …` on a text cr
 otherwise; the snapshot redacts text-ad copy like
 variant copy, and `linkedinCreativeCount` gives `campaignFromLinkedIn` the requested creative count.
 
+**LinkedIn carousel creates (#665).** `linkedin_carousel.go`. `checkFormatShape` hands
+`carouselCards` and `carouselIntroText` to `checkCarouselFieldShape` (cards an array of objects of
+the three `CarouselCard` string fields, null fields and unknown keys refused; intro text a string).
+`linkedinFormat` refuses either field under another format and calls `linkedinCarouselFormat`:
+gate `LINKEDIN_ADS_CAROUSEL_ENABLED` first, then no variants or text ads, uuid `imageAssetId`s and
+`linkedin.ValidateCarousel`; it returns `"carousel"`, which `Dispatch` stores. `PreflightCreate`
+(synchronous 400) and `Dispatch` (not-created refusal) both run it. `resolveLinkedInImages`
+resolves `carouselCards[].imageAssetId` under the carousel size and image rules, naming
+`carouselCards` in its refusals; `PreflightCreate` also runs `checkCarouselCardShapes`, which
+reads each card asset's recorded dimensions through the optional `assetMetadataReader`
+(`GetAssetMetadata`, no bytes) and refuses one that is not square (decision 2026-11-25), leaving
+unknown dimensions to Dispatch; `linkedinCreativeCount` is 1 for a carousel;
+`linkedinSnapshotConfig` redacts the headlines and intro text and keeps only the scheme and host of
+each `destinationUrl` (`sanitizeSnapshotURL`). `TestPlatformConfigsNameTheirAssetUnderOneKey`
+covers the card's `imageAssetId`. See
+[LinkedIn Carousel Sponsored Content](../architecture/linkedin-carousel-ads.md).
+
 **LinkedIn video variants (#586).** `checkLinkedInVideoVariants` (gate `LINKEDIN_ADS_VIDEO_ENABLED`,
 uuid shape, no image alongside, all-or-none) runs in `PreflightCreate` and `Dispatch`.
 `resolveLinkedInImages` now resolves images AND videos under one `AssetReserver` reservation and

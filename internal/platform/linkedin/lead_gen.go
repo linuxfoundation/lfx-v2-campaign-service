@@ -120,6 +120,10 @@ func ValidateLeadGen(lg *LeadGen, objective, format string, delivery DeliveryOpt
 	if format == FormatText {
 		return nil, fmt.Errorf("%w: a lead generation campaign is Sponsored Content; format %q is not available", ErrLeadGenInvalid, FormatText)
 	}
+	// A lead gen carousel opens one form from every card; that creative shape is not built (#665).
+	if format == FormatCarousel {
+		return nil, fmt.Errorf("%w: format %q is not available with objective %s yet", ErrLeadGenInvalid, FormatCarousel, ObjectiveLeadGeneration)
+	}
 	if delivery.OffsiteDeliveryEnabled != nil && *delivery.OffsiteDeliveryEnabled {
 		return nil, fmt.Errorf("%w: %s true is not available with objective %s", ErrLeadGenInvalid, FieldOffsiteDeliveryEnabled, ObjectiveLeadGeneration)
 	}

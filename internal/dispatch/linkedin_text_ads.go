@@ -54,7 +54,12 @@ func checkFormatShape(config json.RawMessage) error {
 		case strings.EqualFold(k, "format"):
 			var str string
 			if isJSONNull(raw) || json.Unmarshal(raw, &str) != nil {
-				return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.format must be the string %q or %q", domain.ErrCreateConfigInvalid, linkedin.FormatSingleImage, linkedin.FormatText))
+				return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.format must be the string %q, %q or %q", domain.ErrCreateConfigInvalid, linkedin.FormatSingleImage, linkedin.FormatText, linkedin.FormatCarousel))
+			}
+		case strings.EqualFold(k, "carouselCards"), strings.EqualFold(k, "carouselIntroText"):
+			// The carousel's fields (#665) have their own shape rules (linkedin_carousel.go).
+			if err := checkCarouselFieldShape(k, raw); err != nil {
+				return err
 			}
 		case strings.EqualFold(k, "textAds"):
 			var list []json.RawMessage
@@ -87,14 +92,16 @@ func checkFormatShape(config json.RawMessage) error {
 }
 
 // linkedinFormat checks linkedInConfig.format and textAds before any job or request (#586) and
-// returns the format Dispatch stores: linkedin.FormatText for a text create, and "" for the
+// returns the format Dispatch stores: linkedin.FormatText for a text create,
+// linkedin.FormatCarousel for a carousel create (#665, linkedinCarouselFormat), and "" for the
 // default (omitted or "single_image"), so a default create's snapshot and client input stay
 // byte for byte what they were before #586. Every refusal is an ErrCreateConfigInvalid pre-flight refusal,
 // so PreflightCreate answers it with a synchronous 400 and Dispatch fails the job with the same
 // sentence:
 //
 //   - an unknown format;
-//   - textAds without format "text";
+//   - textAds without format "text", and carouselCards or carouselIntroText without format
+//     "carousel";
 //   - format "text" while LINKEDIN_ADS_TEXT_ADS_ENABLED is off;
 //   - format "text" without bidding.strategy "manual" — LinkedIn offers Text Ads no automated
 //     bidding, so the default automatic plan cannot be created as one;
@@ -107,6 +114,15 @@ func linkedinFormat(cfg linkedinConfig, plan bidPlan) (string, error) {
 	format, err := linkedin.NormalizeFormat(cfg.Format)
 	if err != nil {
 		return refuse(err)
+	}
+	if format != linkedin.FormatCarousel && (cfg.CarouselCards != nil || cfg.CarouselIntroText != "") {
+		return refuse(fmt.Errorf("carouselCards and carouselIntroText are accepted only with format %q", linkedin.FormatCarousel))
+	}
+	if format == linkedin.FormatCarousel {
+		if cfg.TextAds != nil {
+			return refuse(fmt.Errorf("textAds are accepted only with format %q", linkedin.FormatText))
+		}
+		return linkedinCarouselFormat(cfg)
 	}
 	if format != linkedin.FormatText {
 		if cfg.TextAds != nil {
@@ -131,10 +147,14 @@ func linkedinFormat(cfg linkedinConfig, plan bidPlan) (string, error) {
 }
 
 // linkedinCreativeCount is how many creatives the create asks for: the text ads of a text
-// create, the variants otherwise.
+// create, one for a carousel create, the variants otherwise.
 func linkedinCreativeCount(cfg linkedinConfig) int {
-	if cfg.Format == linkedin.FormatText {
+	switch cfg.Format {
+	case linkedin.FormatText:
 		return len(cfg.TextAds)
+	case linkedin.FormatCarousel:
+		// A carousel is ONE creative, however many cards it has (#665).
+		return 1
 	}
 	return len(cfg.Variants)
 }

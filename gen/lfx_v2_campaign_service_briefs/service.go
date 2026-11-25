@@ -63,14 +63,18 @@ type Service interface {
 	// through LinkedIn's Images API (an organization-owned image URN) and used as
 	// that dark post's article thumbnail; LinkedIn accepts at most 5,000,000 bytes
 	// and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or
-	// 360x640 to 2430x4320 (vertical) pixels. A brief's library is bounded by a
-	// per-brief quota on both count and total stored bytes; an upload that would
-	// exceed either is refused with 409 and reason creative_asset_quota_exceeded,
-	// and list-creative-assets publishes the ceilings and the current totals so a
-	// client can see the headroom before it uploads. A re-upload of identical
-	// bytes is idempotent and is NOT judged against the quota, since it stores
-	// nothing. An archived brief returns 404, matching every other access to a
-	// brief's children.
+	// 360x640 to 2430x4320 (vertical) pixels. A LinkedIn carousel card
+	// (linkedInConfig.format "carousel", #665, 400 unless
+	// LINKEDIN_ADS_CAROUSEL_ENABLED is "true") names one by
+	// carouselCards[].imageAssetId; a carousel takes 2 to 10 cards, each a square
+	// (1:1) image of at most 10,000,000 bytes and 4320x4320 pixels. A brief's
+	// library is bounded by a per-brief quota on both count and total stored
+	// bytes; an upload that would exceed either is refused with 409 and reason
+	// creative_asset_quota_exceeded, and list-creative-assets publishes the
+	// ceilings and the current totals so a client can see the headroom before it
+	// uploads. A re-upload of identical bytes is idempotent and is NOT judged
+	// against the quota, since it stores nothing. An archived brief returns 404,
+	// matching every other access to a brief's children.
 	UploadCreativeAsset(context.Context, *UploadCreativeAssetPayload) (res *CreativeAsset, err error)
 	// List the creative assets stored for a brief, with the per-brief quota the
 	// next upload will be judged against. Metadata only: the image bytes are never

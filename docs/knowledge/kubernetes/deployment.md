@@ -243,6 +243,11 @@ campaigns: `linkedInConfig.objective` `"lead_generation"`, `linkedInConfig.leadG
 naming any of them is refused with a 400 before a job exists and the picker answers 400; nothing
 else changes.
 
+`LINKEDIN_ADS_CAROUSEL_ENABLED` defaults to `"false"` (#665) and gates `linkedInConfig.format`
+`"carousel"` with `linkedInConfig.carouselCards` and `carouselIntroText`: a CAROUSEL campaign whose
+carousel dark post has not been exercised against a live LinkedIn account. Only exactly `"true"`
+enables it; off, a create naming it is refused with a 400 before a job exists. Not role-gated.
+
 `SURVEY_SEQUENCE_WORKFLOW_ID` is a plain value defaulting to `""`, which selects the in-code
 default `1841232183`: the LF Research survey-promo workflow a survey send series
 (`send-workflows`) is copied from when a request names none. That id exists only in the LF

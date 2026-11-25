@@ -1772,7 +1772,7 @@ account, so it requires `global_marketing_ops` like `conversions`. Refused with 
 before any job exists: any of them while the flag is not exactly `"true"`; `lead_generation`
 without `leadGenForm`, or `leadGenForm`/`leadGenCallToAction` without it; a manual bid; a
 `leadGenForm` or `leadGenCallToAction` that is not a JSON string; an id that is not a canonical
-positive integer; an unknown label; `format: "text"`; `offsiteDeliveryEnabled: true` (LinkedIn:
+positive integer; an unknown label; `format: "text"` or `"carousel"`; `offsiteDeliveryEnabled: true` (LinkedIn:
 "You cannot set offsiteDeliveryEnabled to True when using Lead Gen"); and a
 `variants[].callToAction` (on a lead gen creative the form's button is the call to action).
 Dispatch repeats every check, and the client then reads the form (`GET /rest/leadForms/{id}`)
@@ -1888,7 +1888,7 @@ creatives finder discovers text ads like any creative) and the bid and budget le
 text campaign as on a single-image one.
 
 Refused with a synchronous `400 invalid campaign config: linkedInConfig: …` before any job exists:
-a `format` other than `"single_image"` or `"text"` (or not a string); `textAds` without
+a `format` other than `"single_image"`, `"text"` or `"carousel"` (or not a string); `textAds` without
 `format: "text"`; `format: "text"` with automatic or omitted bidding, with `variants`, with no
 `textAds` or more than 100; a `textAds` that is not an array of objects whose fields are the four
 strings above (`null`, a number, an unknown key such as a misspelled `description`); a headline or
@@ -1897,6 +1897,68 @@ malformed `imageUrn`; both image fields; `objective: "traffic"` (a text create i
 manual bid is created only under Website conversions, so `objective` is omitted or
 `"conversions"`). A stored image that is not a 100x100 PNG/JPEG of at most
 2 MB fails the job before anything is created.
+
+#### LinkedInConfig carousel ads (`linkedInConfig.format: "carousel"`, #665)
+
+An opt-in CAROUSEL Sponsored Content campaign — one sponsored post of 2 to 10 swipeable image
+cards, each with its own headline and landing page — behind `LINKEDIN_ADS_CAROUSEL_ENABLED` (off by
+default; while off, `format: "carousel"` is a synchronous `400` naming the flag). Omitted `format`
+is the single-image create, unchanged.
+
+```jsonc
+"linkedInConfig": {
+  "format": "carousel",
+  "carouselIntroText": "Meet the KubeCon 2099 keynote speakers",  // required, at most 255 characters
+  "carouselCards": [                                              // 2-10, replaces variants
+    { "imageAssetId": "<brief creative asset id>",                // required: square PNG/JPEG, <= 10 MB, <= 4320x4320
+      "headline": "Keynote: Jane Doe" },                          // required, at most 45 characters
+    { "imageAssetId": "<brief creative asset id>", "headline": "Panel: Platform teams",
+      "destinationUrl": "https://events.example.org/schedule" }    // optional, default the registration URL
+  ],
+  "budgetUsd": 100, "startDate": "2099-01-01", "endDate": "2099-02-01",
+  "geoTargets": [ ... ], "targetingProfile": "...", "bidding": { ... }, "objective": "...", "conversions": [ ... ]
+}
+```
+
+The campaign is `type: SPONSORED_UPDATES`, `format: CAROUSEL`, with the bidding, objective and
+delivery options every other create gets (automatic `WEBSITE_VISIT` / `MAX_CLICK`, `conversions`,
+manual; `offsiteDeliveryEnabled` `false` unless chosen). Its name's Ad Format segment is
+`Carousel`, so it never shares a name with a single-image, text or video campaign of the event; a
+same-name campaign of another format is refused rather than reused. Each card image is uploaded
+once through the Images API after the campaign exists, then ONE dark post and ONE DRAFT creative:
+
+```
+POST /rest/posts
+{"author":"urn:li:organization:<org>","commentary":"<carouselIntroText>","visibility":"PUBLIC",
+ "distribution":{"feedDistribution":"NONE",...},"lifecycleState":"PUBLISHED","adContext":{"dscAdAccount":"..."},
+ "content":{"carousel":{"cards":[{"media":{"id":"urn:li:image:…","title":"<headline>"},"landingPage":"<destination + UTMs, utm_content=card-1>"}, …]}},
+ "contentLandingPage":"<card 1's landing page>"}
+POST /rest/adAccounts/<acct>/creatives
+{"campaign":"urn:li:sponsoredCampaign:<c>","intendedStatus":"DRAFT","name":"<event> | carousel-1","content":{"reference":"<post urn>"}}
+```
+
+Each card's landing page is its `destinationUrl` (or the brief's registration URL) with the
+create's UTM parameters and `utm_content=card-<k>`, `k` the card's 1-based position, so each card
+is attributed on its own. The config snapshot keeps each card's canonical asset id and headline,
+and only the scheme and host of its `destinationUrl`.
+
+Refused with a synchronous `400 invalid campaign config: linkedInConfig: …` before any job exists:
+`carouselCards` or `carouselIntroText` without `format: "carousel"`; `format: "carousel"` with
+`variants` or `textAds`; fewer than 2 or more than 10 cards; a `carouselCards` that is not an
+array of objects whose fields are the three strings above (`null`, a number, an unknown key), or a
+`carouselIntroText` that is not a string; a card without a uuid `imageAssetId`; a headline or the
+intro text blank or dash-only after normalisation, or over 45 / 255 characters (refused, never
+truncated); a `destinationUrl` that is not an absolute `http(s)` URL, carries userinfo or a
+malformed query, or is over 2,000 characters; and `objective: "lead_generation"` (a lead gen
+carousel is not built yet); and a card image whose recorded dimensions are not exactly square
+(1:1; decision 2026-11-25, LinkedIn recommends 1:1 and documents no tolerance). An asset that does
+not exist for the brief, is a video, or is not a square PNG/JPEG within the limits above (checked
+from the image itself when no dimensions are recorded) fails the job before anything is created;
+so does a tagged landing page over 2,000 characters.
+
+**Probe before enabling (owed):** one paused create in the shared ad account with two cards;
+confirm the campaign is accepted with `format: CAROUSEL`, the post with `content.carousel` and
+`contentLandingPage`, and the creative referencing it; then archive it.
 
 #### LinkedIn lifetime budget on a fixed schedule (#633)
 
