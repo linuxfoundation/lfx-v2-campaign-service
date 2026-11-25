@@ -74,10 +74,15 @@ type redditConfig struct {
 	// video/mp4 and a stored PNG/JPEG of THIS brief, authored as a VIDEO post (reddit_video.go).
 	// Set together, and never with imageUrl, imageAssetId or postUrl. omitempty keeps an image or
 	// post-URL campaign's persisted snapshot exactly as before.
-	VideoAssetID      string `json:"videoAssetId,omitempty"`
-	ThumbnailAssetID  string `json:"thumbnailAssetId,omitempty"`
-	CallToAction      string `json:"callToAction"`
-	ConversionPixelID string `json:"conversionPixelId"`
+	VideoAssetID     string `json:"videoAssetId,omitempty"`
+	ThumbnailAssetID string `json:"thumbnailAssetId,omitempty"`
+	// CarouselCards (#661, behind REDDIT_CAROUSEL_ENABLED) are 2 to 6 cards, each a stored
+	// PNG/JPEG of THIS brief with a headline and a destination URL, authored as one CAROUSEL post
+	// (reddit_carousel.go). Never with imageUrl, imageAssetId, postUrl or a video. omitempty keeps
+	// every other campaign's persisted snapshot exactly as before.
+	CarouselCards     []redditCarouselCard `json:"carouselCards,omitempty"`
+	CallToAction      string               `json:"callToAction"`
+	ConversionPixelID string               `json:"conversionPixelId"`
 	// ConversionEvent is the pixel event a conversions campaign optimizes toward (#549); empty
 	// keeps PURCHASE. Gated by REDDIT_CONVERSION_EVENT_ENABLED and validated, synchronously, by
 	// checkRedditConversionEvent (reddit_conversion_event.go).
@@ -287,6 +292,10 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	if err := checkRedditVideoShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	// And a mistyped carouselCards (#661).
+	if err := checkRedditCarouselShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	// And a mistyped subCountryGeoTargets (#549 gap 11).
 	if err := checkRedditSubCountryGeoShape(config); err != nil {
 		return nil, notCreated(err)
@@ -400,6 +409,11 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	if err != nil {
 		return nil, notCreated(err)
 	}
+	// The carousel choice (#661) likewise refuses a carousel beside any other creative.
+	carouselIDs, err := d.checkRedditCarouselChoice(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
 	assetID, err := d.checkRedditAssetChoice(cfg)
 	if err != nil {
 		// Fixed, caller-safe texts (domain.ErrCreateConfigInvalid's contract), raised before any
@@ -420,6 +434,15 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		}
 		videoURLSource = d.lateAssetURLKind(assetsign.KindVideo, brief, videoID, &signedURLs)
 		thumbURLSource = d.lateAssetURLKind(assetsign.KindImage, brief, thumbID, &signedURLs)
+	}
+	var carouselCards []reddit.CarouselCard
+	if len(carouselIDs) > 0 {
+		// Every card's image is proven before any Reddit call; the URLs are minted late by the
+		// client, in card order, as image URLs.
+		if err := d.checkRedditCarouselAssets(ctx, brief, carouselIDs); err != nil {
+			return nil, notCreated(err)
+		}
+		carouselCards = d.redditCarouselInput(brief, cfg.CarouselCards, carouselIDs, &signedURLs)
 	}
 
 	// Community and interest resolution (#549 gaps 4 and 8), before anything is created and
@@ -476,6 +499,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		ImageURLSource:     imageURLSource,
 		VideoURLSource:     videoURLSource,
 		ThumbnailURLSource: thumbURLSource,
+		CarouselCards:      carouselCards,
 		CallToAction:       cfg.CallToAction,
 		ConversionPixelID:  cfg.ConversionPixelID,
 		ConversionEvent:    cfg.ConversionEvent,
@@ -1250,8 +1274,10 @@ func redditRunStatus(status string) (string, error) {
 // ordinary term, name, id or enum value passes through unchanged.
 //
 // Kept verbatim: Objective (refused by the client unless it names a known objective),
-// ImageAssetID, VideoAssetID and ThumbnailAssetID (stored asset keys, validated as UUIDs before
-// the create), numbers and dates.
+// ImageAssetID, VideoAssetID, ThumbnailAssetID and each CarouselCards[].ImageAssetID (stored
+// asset keys, validated as UUIDs before the create), numbers and dates. A carousel card's
+// Headline is ad copy (sanitizeSnapshotText) and its DestinationURL a caller URL
+// (sanitizeSnapshotURL), like a variant's headline and the post URL.
 // Bidding is kept verbatim too: resolveBidding refuses a strategy other than automatic or
 // manual before anything is sent, and bidAmount is a number
 // (TestConfigSnapshot_BiddingRoundTripsThroughTheValidator replays the stored copy).
@@ -1271,6 +1297,16 @@ func redditSnapshotConfig(cfg redditConfig) redditConfig {
 	snapshot.CallToAction = sanitizeSnapshotText(cfg.CallToAction)
 	snapshot.ConversionPixelID = sanitizeSnapshotText(cfg.ConversionPixelID)
 	snapshot.VideoGoal = sanitizeSnapshotText(cfg.VideoGoal)
+	if cfg.CarouselCards != nil {
+		snapshot.CarouselCards = make([]redditCarouselCard, len(cfg.CarouselCards))
+		for i, c := range cfg.CarouselCards {
+			snapshot.CarouselCards[i] = redditCarouselCard{
+				ImageAssetID:   c.ImageAssetID,
+				Headline:       sanitizeSnapshotText(c.Headline),
+				DestinationURL: sanitizeSnapshotURL(c.DestinationURL),
+			}
+		}
+	}
 	if cfg.Variants != nil {
 		snapshot.Variants = make([]reddit.AdVariant, len(cfg.Variants))
 		copy(snapshot.Variants, cfg.Variants)

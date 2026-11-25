@@ -5853,47 +5853,60 @@ type CampaignCreateInputRequestBody struct {
 	// step naming the failed variants, and the status toggle cascades over every
 	// ad. More than 5 variants, or a blank or over-300-character variant headline,
 	// is refused synchronously with 400 "invalid campaign config:
-	// redditConfig.variants...: ..." before any job exists. X TARGETING (#564):
-	// twitterConfig takes `geoTargets` (ISO 3166-1 alpha-2 country codes, at most
-	// 50, uppercased and de-duplicated) and `languages` (X language values such as
-	// en, at most 20, lowercased and de-duplicated). Before anything is created
-	// each country is resolved with X's GET targeting_criteria/locations
-	// (location_type COUNTRIES, exactly one country-level entry required) and the
-	// languages are checked against GET targeting_criteria/languages; the new line
-	// item then gets one LOCATION or LANGUAGE criterion (operator EQ) per value,
-	// after the line item and before the promoted tweet. A value X does not offer,
-	// or a lookup that cannot be read, fails the job with nothing created; a
-	// criterion that fails stops the create before any tweet, with the PAUSED
-	// campaign and line item reported. Such a partial create is retained:
-	// repeating the request answers reconciliation required rather than
-	// re-dispatching, so an operator completes the targeting in X Ads Manager.
-	// When a create does find its line item by name, it changes that line item's
-	// targeting only if X reports it PAUSED, adding just the missing criteria
-	// before the tweet; otherwise, or if its status or criteria cannot be read, it
-	// stops before the tweet. twitterConfig also takes `keywords` (broad keywords,
-	// each trimmed, 1-80 characters with no control character, case-insensitive
-	// duplicates dropped, at most 60) and `interestIds` (X interest ids, 1-19
-	// digits, each listed by GET targeting_criteria/interests, which is walked to
-	// its end before anything is created; at most 60), sent as BROAD_KEYWORD and
-	// INTEREST criteria (operator EQ) after the languages, with the same failure
-	// and reuse rules (#564 gap 4), and `conversationTopics` (X conversation topic
-	// values, 1-32 letters or digits, lowercased, each listed by GET
-	// targeting_criteria/conversations, which is walked to its end before anything
-	// is created; at most 60), sent as CONVERSATION criteria (operator EQ) after
-	// the interests, with the same rules (#564 gap 8), and `platforms` (X device
-	// platform values such as 0 for iOS, not the request's ad platforms; 1-32
-	// letters or digits, lowercased, each listed by GET
-	// targeting_criteria/platforms before anything is created; at most 10), sent
-	// as PLATFORM criteria (operator EQ) after the conversation topics, with the
-	// same rules (#564 gap 9), plus `devices` (X device values such as 1q for the
-	// iPhone 3GS; 1-32 letters or digits, lowercased, each listed by GET
-	// targeting_criteria/devices before anything is created; at most 60), sent as
-	// DEVICE criteria after the platforms, `ageBucket` (a string: one of X's
-	// AGE_BUCKET values such as AGE_18_TO_34 or AGE_OVER_25, uppercased; X allows
-	// a single age bucket per line item), sent as one AGE criterion, and `gender`
-	// (a string: MALE or FEMALE, case-insensitive), sent as one GENDER criterion
-	// with X's value 1 or 2; a blank ageBucket or gender is unset (every age,
-	// every gender) (#564 gap 9). All nine are OFF unless
+	// redditConfig.variants...: ..." before any job exists. REDDIT CAROUSEL
+	// (#661): redditConfig.carouselCards is 2 to 6 cards, each {imageAssetId (a
+	// stored PNG or JPEG of this brief), headline (at most 180 characters, the
+	// card's caption), destinationUrl (an absolute http or https URL, sent with
+	// the post's UTM parameters)}, authored as one CAROUSEL post and one ad whose
+	// images Reddit fetches from short-lived signed URLs. Never with postUrl,
+	// imageUrl, imageAssetId, videoAssetId or thumbnailAssetId, nor with two or
+	// more variants while REDDIT_AD_PER_VARIANT_ENABLED is on. OFF unless
+	// REDDIT_CAROUSEL_ENABLED is exactly "true": the post shape is from Reddit's
+	// public schema and has not been sent live. The flag off, a wrong JSON type, a
+	// card count or field outside those limits, a non-UUID id or signed asset URLs
+	// not configured is refused synchronously with 400 "invalid campaign config:
+	// redditConfig: ..." before any job exists; a card asset missing for this
+	// brief, empty or not PNG/JPEG fails the job before any Reddit call. X
+	// TARGETING (#564): twitterConfig takes `geoTargets` (ISO 3166-1 alpha-2
+	// country codes, at most 50, uppercased and de-duplicated) and `languages` (X
+	// language values such as en, at most 20, lowercased and de-duplicated).
+	// Before anything is created each country is resolved with X's GET
+	// targeting_criteria/locations (location_type COUNTRIES, exactly one
+	// country-level entry required) and the languages are checked against GET
+	// targeting_criteria/languages; the new line item then gets one LOCATION or
+	// LANGUAGE criterion (operator EQ) per value, after the line item and before
+	// the promoted tweet. A value X does not offer, or a lookup that cannot be
+	// read, fails the job with nothing created; a criterion that fails stops the
+	// create before any tweet, with the PAUSED campaign and line item reported.
+	// Such a partial create is retained: repeating the request answers
+	// reconciliation required rather than re-dispatching, so an operator completes
+	// the targeting in X Ads Manager. When a create does find its line item by
+	// name, it changes that line item's targeting only if X reports it PAUSED,
+	// adding just the missing criteria before the tweet; otherwise, or if its
+	// status or criteria cannot be read, it stops before the tweet. twitterConfig
+	// also takes `keywords` (broad keywords, each trimmed, 1-80 characters with no
+	// control character, case-insensitive duplicates dropped, at most 60) and
+	// `interestIds` (X interest ids, 1-19 digits, each listed by GET
+	// targeting_criteria/interests, which is walked to its end before anything is
+	// created; at most 60), sent as BROAD_KEYWORD and INTEREST criteria (operator
+	// EQ) after the languages, with the same failure and reuse rules (#564 gap 4),
+	// and `conversationTopics` (X conversation topic values, 1-32 letters or
+	// digits, lowercased, each listed by GET targeting_criteria/conversations,
+	// which is walked to its end before anything is created; at most 60), sent as
+	// CONVERSATION criteria (operator EQ) after the interests, with the same rules
+	// (#564 gap 8), and `platforms` (X device platform values such as 0 for iOS,
+	// not the request's ad platforms; 1-32 letters or digits, lowercased, each
+	// listed by GET targeting_criteria/platforms before anything is created; at
+	// most 10), sent as PLATFORM criteria (operator EQ) after the conversation
+	// topics, with the same rules (#564 gap 9), plus `devices` (X device values
+	// such as 1q for the iPhone 3GS; 1-32 letters or digits, lowercased, each
+	// listed by GET targeting_criteria/devices before anything is created; at most
+	// 60), sent as DEVICE criteria after the platforms, `ageBucket` (a string: one
+	// of X's AGE_BUCKET values such as AGE_18_TO_34 or AGE_OVER_25, uppercased; X
+	// allows a single age bucket per line item), sent as one AGE criterion, and
+	// `gender` (a string: MALE or FEMALE, case-insensitive), sent as one GENDER
+	// criterion with X's value 1 or 2; a blank ageBucket or gender is unset (every
+	// age, every gender) (#564 gap 9). All nine are OFF unless
 	// TWITTER_CREATE_TARGETING_ENABLED is exactly "true". A blank or malformed
 	// entry, a list over its cap, a value that is not an array of strings (or, for
 	// ageBucket and gender, not a string; null reads as absent), an age bucket or

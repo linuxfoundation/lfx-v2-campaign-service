@@ -833,6 +833,33 @@ videoAssetId?: string           — OPTIONAL (#549) id of a creative asset of TH
                                   snapshot keeps both ids, never a URL.
 thumbnailAssetId?: string       — OPTIONAL (#549) id of a stored PNG or JPEG of THIS brief: the video
                                   post's thumbnail. Only with `videoAssetId` (see above).
+carouselCards?: [{imageAssetId: string, headline: string, destinationUrl: string}]
+                                — OPTIONAL (#661) 2 to 6 cards authored as ONE promoted CAROUSEL post
+                                  before the campaign:
+                                  {"type":"CAROUSEL","headline":..,"allow_comments":false,
+                                   "content":[{"media_url":<card image URL>,"caption":<card headline>,
+                                   "call_to_action":..,"destination_url":<card URL + UTM>}, ...]}
+                                  on POST /profiles/{account}/posts, one entry per card in order.
+                                  `imageAssetId` is a stored PNG/JPEG of THIS brief, served at a
+                                  short-lived signed image URL minted immediately before the request;
+                                  `headline` (required, at most 180 characters: the schema's caption
+                                  limit) is the card caption; `destinationUrl` (required, absolute
+                                  http/https, no userinfo) gets the post's UTM parameters. Post
+                                  headline and CTA as for an image post. One post and one ad: while
+                                  `REDDIT_AD_PER_VARIANT_ENABLED` is on, two or more variants are a
+                                  **400**. Outcomes as for a video post (refused post →
+                                  `created_degraded`; campaign refused after the post → partial
+                                  result, claim kept). OFF unless `REDDIT_CAROUSEL_ENABLED` is exactly
+                                  `"true"`: the shape is from Reddit's public OpenAPI document and has
+                                  not been sent live. Synchronous **400** "invalid campaign config:
+                                  redditConfig: ..." for the flag off, a wrong JSON type, fewer than 2
+                                  or more than 6 cards, a card field outside those limits, a non-UUID
+                                  id, a mix with `postUrl` / `imageUrl` / `imageAssetId` /
+                                  `videoAssetId` / `thumbnailAssetId`, or signed asset URLs not
+                                  configured; re-checked at dispatch. A card asset missing for this
+                                  brief, empty or not PNG/JPEG fails the job BEFORE any Reddit call
+                                  (claim released). The snapshot keeps the ids, sanitizes headlines and
+                                  reduces destinations to scheme+host, never a signed URL.
 callToAction?: string           — OPTIONAL button label for an AUTHORED post (see `imageUrl`).
                                   Case-insensitive, resolved to Reddit's exact title-case label (e.g.
                                   'Learn More', 'Sign Up', 'Buy Tickets'); an unknown value is rejected

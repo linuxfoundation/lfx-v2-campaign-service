@@ -96,7 +96,8 @@ func (d *RedditDispatcher) checkRedditAssetChoice(cfg redditConfig) (string, err
 // rules (checkRedditAdPerVariant, #549 gap 6), or whose gender, languages or schedule are refused
 // (checkRedditDemographicTargeting, #549 gap 13), or whose subCountryGeoTargets are refused
 // (checkRedditSubCountryGeo, #549 gap 11), or whose video post is gated off or contradictory
-// (checkRedditVideoChoice, #549 gap 5). It
+// (checkRedditVideoChoice, #549 gap 5), or whose carousel post is gated off or breaks its card
+// rules (checkRedditCarouselChoice, #661). It
 // never calls Reddit, so every other outcome is ErrPreflightNotApplicable. Whether the asset belongs to the brief cannot be checked here (the
 // pre-check is not given the brief); Dispatch checks it before any upstream call. A config that does
 // not decode is left to Dispatch, except a wrong-typed `bidding` (checkBiddingShape).
@@ -128,6 +129,10 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 	}
 	// And a wrong-typed videoAssetId or thumbnailAssetId (#549 gap 5).
 	if err := checkRedditVideoShape(config); err != nil {
+		return err
+	}
+	// And a wrong-typed carouselCards (#661).
+	if err := checkRedditCarouselShape(config); err != nil {
 		return err
 	}
 	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can past a type
@@ -180,6 +185,10 @@ func (d *RedditDispatcher) PreflightCreate(ctx context.Context, projectID string
 	// or contradictory video config is the synchronous 400 even beside an unrelated broken field
 	// (checkRedditVideoShape above already refused a mistyped video field).
 	if _, _, err := d.checkRedditVideoChoice(cfg); err != nil {
+		return err
+	}
+	// The carousel post's gate and card rules (#661), likewise on the best-effort decode.
+	if _, err := d.checkRedditCarouselChoice(cfg); err != nil {
 		return err
 	}
 	if decodeErr != nil {

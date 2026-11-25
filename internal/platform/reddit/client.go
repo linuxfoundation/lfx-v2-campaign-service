@@ -511,6 +511,12 @@ type CampaignInput struct {
 	// been created. Neither URL may be logged or persisted: each may be a bearer credential.
 	VideoURLSource     func(ctx context.Context) (string, error)
 	ThumbnailURLSource func(ctx context.Context) (string, error)
+	// CarouselCards, when non-empty (and with PostURL, ImageURL, ImageURLSource and the video
+	// sources all empty), make CreateCampaign author a CAROUSEL post instead (#661): one content
+	// entry per card on the same legacy /profiles/{id}/posts endpoint (carousel.go). 2 to 6
+	// cards; each card's ImageURLSource is called LATE, in card order, immediately before the
+	// post request. Like a video post it is always one post and one ad.
+	CarouselCards []CarouselCard
 	// CallToAction is the button label on an AUTHORED post (see ImageURL). It must
 	// be one of Reddit's accepted CTA labels (case-insensitive, e.g. "Learn More",
 	// "Sign Up", "Buy Tickets"); empty defaults to defaultRedditCTA. Ignored when a
@@ -1947,6 +1953,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		authorFailure *PromoOutcomeRow
 	)
 	hasVideo := in.VideoURLSource != nil || in.ThumbnailURLSource != nil
+	// A CAROUSEL post (#661) is exclusive too: every card rule is checked here, before any
+	// request, so a bad card creates nothing.
+	hasCarousel := len(in.CarouselCards) > 0
+	if hasCarousel {
+		if err := validateCarouselInput(in); err != nil {
+			return nil, err
+		}
+	}
 	if hasVideo {
 		// A VIDEO post (#549) is all-or-nothing and exclusive: Reddit requires a thumbnail for
 		// it, and an image or an existing post alongside would leave it ambiguous which
@@ -1958,11 +1972,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return nil, domain.PreflightRefusalf("a Reddit video post cannot be combined with a post URL or an image")
 		}
 	}
-	if validatedPostID == "" && (strings.TrimSpace(in.ImageURL) != "" || in.ImageURLSource != nil || hasVideo) {
+	if validatedPostID == "" && (strings.TrimSpace(in.ImageURL) != "" || in.ImageURLSource != nil || hasVideo || hasCarousel) {
 		if in.ImageURLSource != nil && strings.TrimSpace(in.ImageURL) != "" {
 			return nil, domain.PreflightRefusalf("supply ImageURL or ImageURLSource, not both")
 		}
-		if in.ImageURLSource == nil && !hasVideo {
+		if in.ImageURLSource == nil && !hasVideo && !hasCarousel {
 			imageURL := strings.TrimSpace(in.ImageURL)
 			if err := validateImageURL(imageURL); err != nil {
 				return nil, err
@@ -2219,7 +2233,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// more request timeout — assetsign.MinTTL covers it. Nothing has been created yet, so
 		// a failure is (nil, err).
 		media := promotedPostMedia{Type: postTypeImage}
-		if hasVideo {
+		if hasCarousel {
+			// Every card's late URL is minted here, in card order, immediately before the one
+			// request that hands them to Reddit.
+			cards, cerr := resolveCarouselCards(ctx, in)
+			if cerr != nil {
+				return nil, cerr
+			}
+			media = promotedPostMedia{Type: postTypeCarousel, Cards: cards}
+		} else if hasVideo {
 			// Both late URLs are minted here, video first, immediately before the one request
 			// that hands them to Reddit; validateImageURL is the shape check for either.
 			videoURL, verr := lateMediaURL(ctx, in.VideoURLSource, "video")
@@ -2303,7 +2325,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// idempotency makes that permanent.
 		} else {
 			validatedPostID = postID
-			if hasVideo {
+			if hasCarousel {
+				steps = append(steps, fmt.Sprintf("Authored promoted carousel post: %s (%d cards, CTA: %s)", postID, len(in.CarouselCards), postCTA))
+			} else if hasVideo {
 				steps = append(steps, fmt.Sprintf("Authored promoted video post: %s (CTA: %s)", postID, postCTA))
 			} else {
 				steps = append(steps, fmt.Sprintf("Authored promoted post: %s (CTA: %s)", postID, postCTA))
@@ -2386,17 +2410,21 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 					VariantAds:   variants.snapshot(),
 				}, err
 			}
-			// A VIDEO post (#549 gap 5) is likewise authored before the campaign: a definite
-			// refusal here leaves it unattached — or, when its authoring was UNCONFIRMED (a 5xx,
-			// a 2xx with no id), possibly existing. Either way return a partial result so the
-			// caller keeps the claim and records the post, instead of authoring another one on
-			// retry.
-			videoPostUnconfirmed := authorFailure != nil && authorFailure.Outcome == PromoAuthorUnconfirmed
-			if hasVideo && (validatedPostID != "" || videoPostUnconfirmed) {
+			// A VIDEO post (#549 gap 5) or a CAROUSEL post (#661) is likewise authored before
+			// the campaign: a definite refusal here leaves it unattached — or, when its authoring
+			// was UNCONFIRMED (a 5xx, a 2xx with no id), possibly existing. Either way return a
+			// partial result so the caller keeps the claim and records the post, instead of
+			// authoring another one on retry.
+			postUnconfirmed := authorFailure != nil && authorFailure.Outcome == PromoAuthorUnconfirmed
+			if (hasVideo || hasCarousel) && (validatedPostID != "" || postUnconfirmed) {
+				kind := "video"
+				if hasCarousel {
+					kind = "carousel"
+				}
 				if validatedPostID != "" {
-					steps = append(steps, fmt.Sprintf("Campaign creation was refused; the promoted video post %s above exists and is not attached to an ad", validatedPostID))
+					steps = append(steps, fmt.Sprintf("Campaign creation was refused; the promoted %s post %s above exists and is not attached to an ad", kind, validatedPostID))
 				} else {
-					steps = append(steps, "Campaign creation was refused; the promoted video post above may exist (its creation was unconfirmed) and is not attached to an ad -- check the ad account's posts before retrying")
+					steps = append(steps, fmt.Sprintf("Campaign creation was refused; the promoted %s post above may exist (its creation was unconfirmed) and is not attached to an ad -- check the ad account's posts before retrying", kind))
 				}
 				return &CampaignResult{
 					Platform:     "reddit-ads",
@@ -2954,16 +2982,32 @@ func (c *Client) ConversionPixelID() string { return c.account.ConversionPixelID
 // destination only for image and carousel posts, but a video ad without one would not drive
 // registrations). This shape is built from the published schema and has NOT been sent to a live
 // account: REDDIT_VIDEO_ENABLED keeps it off until a probe confirms it.
+//
+// A CAROUSEL post (#661, media.Type == postTypeCarousel) has one content entry per card, each
+// with the card's image as media_url, its headline as caption, its UTM'd destination_url and the
+// post's call_to_action (carousel.go). REDDIT_CAROUSEL_ENABLED keeps it off until a probe.
 func (c *Client) createPromotedPost(ctx context.Context, accountID string, in CampaignInput, variantIndex int, headline, cta string, media promotedPostMedia) (string, error) {
+	content := []map[string]any{{
+		"media_url":       media.MediaURL,
+		"call_to_action":  cta,
+		"destination_url": buildRedditUTMURL(in, variantIndex),
+	}}
+	if media.Type == postTypeCarousel {
+		content = make([]map[string]any, len(media.Cards))
+		for i, card := range media.Cards {
+			content[i] = map[string]any{
+				"media_url":       card.MediaURL,
+				"caption":         card.Caption,
+				"call_to_action":  cta,
+				"destination_url": card.DestinationURL,
+			}
+		}
+	}
 	data := map[string]any{
 		"type":           media.Type,
 		"headline":       headline,
 		"allow_comments": false,
-		"content": []map[string]any{{
-			"media_url":       media.MediaURL,
-			"call_to_action":  cta,
-			"destination_url": buildRedditUTMURL(in, variantIndex),
-		}},
+		"content":        content,
 	}
 	if media.Type == postTypeVideo {
 		data["thumbnail_url"] = media.ThumbnailURL
@@ -2991,12 +3035,14 @@ const (
 	postTypeVideo = "VIDEO"
 )
 
-// promotedPostMedia is what an authored post shows: an IMAGE post's image URL, or a VIDEO post's
-// video URL plus the thumbnail URL Reddit requires for it (#549).
+// promotedPostMedia is what an authored post shows: an IMAGE post's image URL, a VIDEO post's
+// video URL plus the thumbnail URL Reddit requires for it (#549), or a CAROUSEL post's cards
+// (#661).
 type promotedPostMedia struct {
 	Type         string
 	MediaURL     string
 	ThumbnailURL string
+	Cards        []carouselContent
 }
 
 // lateMediaURL obtains one late media URL (a VIDEO post's video or thumbnail, #549) and checks
@@ -3396,8 +3442,14 @@ func redditUTMParams(in CampaignInput, variantIndex int) map[string]string {
 
 // buildRedditUTMURL mirrors buildRedditUtmUrl.
 func buildRedditUTMURL(in CampaignInput, variantIndex int) string {
+	return buildRedditUTMURLFrom(in.RegistrationURL, in, variantIndex)
+}
+
+// buildRedditUTMURLFrom is buildRedditUTMURL for any destination: a carousel card's own
+// destinationUrl (#661) gets the same UTM parameters as the registration URL.
+func buildRedditUTMURLFrom(rawBase string, in CampaignInput, variantIndex int) string {
 	// TrimSpace mirrors validateRegistrationURL, which accepts padded input.
-	base := strings.TrimSpace(in.RegistrationURL)
+	base := strings.TrimSpace(rawBase)
 	utm := redditUTMParams(in, variantIndex)
 
 	// Parse FIRST, then trim a trailing slash from the PATH only. Trimming the

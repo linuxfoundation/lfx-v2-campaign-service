@@ -78,6 +78,12 @@ func TestSnapshotAssetIDs_FindsRedditVideoKeys(t *testing.T) {
 	wantIDs(t, `{"redditConfig":{"THUMBNAILASSETID":"`+assetB+`"}}`, assetB)
 }
 
+// TestSnapshotAssetIDs_FindsRedditCarouselCards pins the Reddit carousel (#661): each card names
+// its image under imageAssetId inside the carouselCards array, and every one is guarded.
+func TestSnapshotAssetIDs_FindsRedditCarouselCards(t *testing.T) {
+	wantIDs(t, `{"redditConfig":{"carouselCards":[{"imageAssetId":"`+assetA+`","headline":"A"},{"imageAssetId":"`+assetB+`"}]}}`, assetA, assetB)
+}
+
 // TestSnapshotAssetIDs_WalksNestedShapes pins that the walk reaches the place the two biggest
 // platforms actually put the id: inside `variants`, an ARRAY of objects. A top-level-only scan
 // would find nothing at all for Meta and LinkedIn.

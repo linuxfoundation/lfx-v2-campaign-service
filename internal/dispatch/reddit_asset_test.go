@@ -76,6 +76,8 @@ type redditAssetHarness struct {
 	// thumbURL and postType are the authored post's thumbnail_url and type (#549 video posts).
 	thumbURL string
 	postType string
+	// content is every authored content entry (#661 carousel posts carry one per card).
+	content []redditHarnessContent
 	// postsFail makes the post create answer 400 with a body echoing media_url, the shape that
 	// would carry a signature into persisted steps.
 	postsFail bool
@@ -103,16 +105,14 @@ func (h *redditAssetHarness) dispatcher(t *testing.T) *RedditDispatcher {
 			body, _ := io.ReadAll(r.Body)
 			var req struct {
 				Data struct {
-					Type         string `json:"type"`
-					ThumbnailURL string `json:"thumbnail_url"`
-					Content      []struct {
-						MediaURL string `json:"media_url"`
-					} `json:"content"`
+					Type         string                 `json:"type"`
+					ThumbnailURL string                 `json:"thumbnail_url"`
+					Content      []redditHarnessContent `json:"content"`
 				} `json:"data"`
 			}
 			_ = json.Unmarshal(body, &req)
 			h.mu.Lock()
-			h.postType, h.thumbURL = req.Data.Type, req.Data.ThumbnailURL
+			h.postType, h.thumbURL, h.content = req.Data.Type, req.Data.ThumbnailURL, req.Data.Content
 			if len(req.Data.Content) > 0 {
 				h.mediaURL = req.Data.Content[0].MediaURL
 			}
@@ -143,6 +143,13 @@ func (h *redditAssetHarness) dispatcher(t *testing.T) *RedditDispatcher {
 		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
 		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
 	)
+}
+
+// redditHarnessContent is one content entry of an authored post.
+type redditHarnessContent struct {
+	MediaURL       string `json:"media_url"`
+	Caption        string `json:"caption"`
+	DestinationURL string `json:"destination_url"`
 }
 
 func redditAssetCfg(extra string) json.RawMessage {

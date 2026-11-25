@@ -55,8 +55,10 @@ func TestPlatformConfigsNameTheirAssetUnderOneKey(t *testing.T) {
 		// A Reddit video post (#549) names its video and its thumbnail under the second and third keys.
 		"reddit-video":     redditConfig{VideoAssetID: assetID},
 		"reddit-thumbnail": redditConfig{ThumbnailAssetID: assetID},
-		"microsoft":        microsoftConfig{ImageAssetID: assetID},
-		"meta":             metaConfig{Variants: []meta.AdVariant{{ImageAssetID: assetID}}},
+		// A Reddit carousel card (#661) names its image under the first key.
+		"reddit-carousel": redditConfig{CarouselCards: []redditCarouselCard{{ImageAssetID: assetID}}},
+		"microsoft":       microsoftConfig{ImageAssetID: assetID},
+		"meta":            metaConfig{Variants: []meta.AdVariant{{ImageAssetID: assetID}}},
 		// The Meta video variant (#550) names its asset under the second key.
 		"meta-video": metaConfig{Variants: []meta.AdVariant{{VideoAssetID: assetID}}},
 		"linkedin":   linkedinConfig{Variants: []linkedin.CreativeVariant{{ImageAssetID: assetID}}},
