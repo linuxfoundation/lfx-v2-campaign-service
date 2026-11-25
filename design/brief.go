@@ -338,6 +338,15 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		"manual bid. Refused with a 400 before any job exists: an objective that is not one of the two "+
 		"strings (an explicit null, \"\", a number, another word or casing), \"traffic\" with manual "+
 		"bidding, and \"conversions\" with automatic bidding and no conversions. "+
+		"LINKEDIN TARGET COST (#674): linkedInConfig.bidding alone also takes an optional `targetAmount` "+
+		"(USD, whole cents, greater than zero, at most 1,000,000), automatic bidding's target: it is sent "+
+		"as the campaign's unitCost beside the automated optimizationTargetType (MAX_CLICK, or "+
+		"MAX_CONVERSION with objective \"conversions\"), with costType CPM. Omitted, nothing changes. The "+
+		"campaign is recorded as automatic, so update-campaign-bid answers 409 for it and never rewrites the "+
+		"target. Refused with a 400 before any job exists: targetAmount while "+
+		"LINKEDIN_ADS_TARGET_COST_ENABLED is not \"true\", with strategy \"manual\", null or not a number, "+
+		"or an amount that is not a whole number of cents above zero. It is an unknown bidding field on "+
+		"every other platform. "+
 		"LINKEDIN DAILY CAP (#584): with lifetimeBudget true, linkedInConfig takes an optional `dailyCapUsd` "+
 		"(USD), sent as the campaign's dailyBudget beside its totalBudget, on LinkedIn's continuous schedule "+
 		"(no campaign end; the event's campaign group carries it, and a create that cannot keep the shared "+

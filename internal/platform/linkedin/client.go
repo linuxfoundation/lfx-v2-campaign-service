@@ -302,6 +302,12 @@ type CampaignInput struct {
 	// conversion; ObjectiveLeadGeneration (#664) is automatic only (MAX_LEAD) and requires LeadGen.
 	// See campaignBidding.
 	Objective string
+	// TargetCost is automatic bidding's optional target (#674), in USD at whole cents like
+	// ManualCPCBid. ZERO sends no target, exactly as before #674; a positive value is sent as the
+	// campaign's unitCost beside MAX_CLICK or MAX_CONVERSION (costType stays CPM). Refused with a
+	// manual bid. The dispatcher gates it behind LINKEDIN_ADS_TARGET_COST_ENABLED. See
+	// withTargetCost.
+	TargetCost float64
 	// Images holds the stored image for every ImageAssetID a variant names, keyed by that
 	// id. Each distinct key is uploaded ONCE per CreateCampaign however many variants share it.
 	Images map[string]ImageUpload
@@ -411,6 +417,9 @@ type CampaignResult struct {
 	// takes the recorded objective from here rather than from the caller-replaceable config snapshot.
 	ObjectiveType      string `json:"objectiveType,omitempty"`
 	OptimizationTarget string `json:"optimizationTarget,omitempty"`
+	// TargetCost is the automatic target (#674) this run created the campaign with, as the USD
+	// unitCost amount string it sent; set beside BidApplied, omitted when the create named none.
+	TargetCost string `json:"targetCost,omitempty"`
 	// ConversionsAssociated and ConversionsFailed split CampaignInput.Conversions (#552) by
 	// whether this run's Campaign Conversions PUT succeeded. Omitted when none were requested.
 	// A non-empty ConversionsFailed makes the dispatcher report the campaign created_degraded.
@@ -3120,6 +3129,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// campaignBidding's objective sentences name only this package's constants.
 		return nil, domain.WrapPreflightRefusal(err)
 	}
+	// Automatic bidding's optional target (#674), checked before any POST like the bid. Its
+	// sentences are service-authored and numeric-only, as ValidateBidAmount's are.
+	if bidding, err = withTargetCost(bidding, in.TargetCost); err != nil {
+		return nil, domain.WrapPreflightRefusal(err)
+	}
 
 	// Conversion rule ids (#552), checked before any POST like the bid.
 	conversions, err := ValidateConversions(in.Conversions)
@@ -3663,6 +3677,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if result.BidApplied {
 			result.ObjectiveType = bidding.objectiveType
 			result.OptimizationTarget = bidding.optimizationTarget
+			result.TargetCost = bidding.targetCost
 		}
 		return result
 	}

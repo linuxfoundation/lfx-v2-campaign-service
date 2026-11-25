@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding whose objective follows the strategy (automatic WEBSITE_VISIT + MAX_CLICK + CPM, manual WEBSITE_CONVERSION + CPC/NONE/unitCost) unless the caller asks for automatic website conversions (WEBSITE_CONVERSION + MAX_CONVERSION + CPM, only with a conversion to associate) or a manual bid on website visits (WEBSITE_VISIT + CPC/NONE/unitCost), where the create once sent no optimizationTargetType, and optional single-flight access-token refresh."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding whose objective follows the strategy (automatic WEBSITE_VISIT + MAX_CLICK + CPM, manual WEBSITE_CONVERSION + CPC/NONE/unitCost) unless the caller asks for automatic website conversions (WEBSITE_CONVERSION + MAX_CONVERSION + CPM, only with a conversion to associate) or a manual bid on website visits (WEBSITE_VISIT + CPC/NONE/unitCost), either automatic one optionally with a target cost sent as unitCost, where the create once sent no optimizationTargetType, and optional single-flight access-token refresh."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -1131,6 +1131,25 @@ probed live from this service.
 
 `CampaignResult.BidApplied` is false when `createSponsoredCampaign` reused a campaign found by name
 in the group (it now returns `(id, reused, err)`), with a "bid NOT applied to reused campaign" step.
+
+**Automatic target cost (#674)**: `CampaignInput.TargetCost` (USD, 0 = none) is applied after
+`campaignBidding` by `withTargetCost`, which adds `unitCost {amount, currencyCode USD}` to a copy of
+the plan's fields and leaves `optimizationTargetType` (`MAX_CLICK` or `MAX_CONVERSION`) and
+`costType` `CPM` as they were; zero returns the plan unchanged, so a create without a target sends
+what it did before. A manual plan is refused (`ErrTargetCostNotAutomatic`), and the amount goes
+through `ValidateTargetCost` (`ValidateBidAmount`'s rules via `validateCentAmount`, its sentences
+naming "the target cost"; the bid's sentences are unchanged), all before any POST.
+`CampaignResult.TargetCost` records the sent wire amount beside `BidApplied`. The shape mirrors
+Campaign Manager campaigns on the CNCF account read 2026-11-26 (873501596: `MAX_CONVERSION`, `CPM`,
+`unitCost` 10; 912330026: `MAX_CLICK`, `CPM`, 17.88). LinkedIn's "Create and Manage Campaigns"
+(li-lms-2026-10) defines `unitCost` for manual, target-cost and cost-cap bidding only, says `MAX_*`
+spends "without an advertiser specifying bid" and that auto-bidding `unitCost` has "no
+validations"; `TARGET_COST_PER_CLICK` / `CAP_COST_AND_MAXIMIZE_CLICKS` exist for `WEBSITE_VISIT`
+only, and `WEBSITE_CONVERSION` allows neither, so `MAX_*` + `CPM` + `unitCost` is the one shape for
+both objectives. Whether LinkedIn treats that amount as a target is unverified until a live probe.
+The optimization target is unchanged, so the name-reuse lookup (manual vs automated) and the bid
+lever (refuses `MAX_*`) behave as for any automatic campaign; a reused campaign keeps its own
+bidding and records no `TargetCost`. Tests: `target_cost_test.go`.
 
 ## Campaign name (multi-campaign cs-4)
 

@@ -1074,6 +1074,18 @@ app:
     LINKEDIN_ADS_LEAD_GEN_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to linkedInConfig.bidding.targetAmount (#674):
+    # automatic bidding with a target, sent as the campaign's unitCost beside
+    # MAX_CLICK or MAX_CONVERSION with costType CPM (the shape of the KubeCon
+    # NA 2026 Campaign Manager campaigns). LinkedIn's documentation does not
+    # describe unitCost on a MAX_* campaign, and this service has not created
+    # one. Set it to exactly "true" in lfx-v2-argocd once a paused probe create
+    # shows LinkedIn holding the amount as the target. While off, a create
+    # naming targetAmount is refused before a job exists. Any value other than
+    # "true" is treated as off.
+    LINKEDIN_ADS_TARGET_COST_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to the X (Twitter) Ads ACCOUNT MONITOR
     # (/projects/{project_id}/connection-twitter-ads/account-monitor). Default
     # off for the same reason as MICROSOFT_METRICS_ENABLED above: the X account

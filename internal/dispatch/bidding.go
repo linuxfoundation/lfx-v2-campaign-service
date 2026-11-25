@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -64,10 +65,15 @@ type biddingConfig struct {
 	// any path that reaches it, so only microsoftBidPlan, which handles the conversion strategies
 	// before resolveBidding, ever reads it.
 	TargetCpa *float64 `json:"targetCpa"`
+	// TargetAmount is linkedInConfig's automatic-bidding target (#674), in USD at whole cents,
+	// sent as the campaign's unitCost. Accepted by linkedInConfig only: checkBiddingShape refuses
+	// the key on every other platform, and resolveBidding refuses it on any path that reaches it,
+	// so only linkedinBidPlan, which takes it off before resolveBidding, ever reads it.
+	TargetAmount *float64 `json:"targetAmount"`
 
-	// strategyPresent / bidAmountPresent / targetCpaPresent: the key appeared in the JSON (with
-	// any value, null included). Set by UnmarshalJSON only.
-	strategyPresent, bidAmountPresent, targetCpaPresent bool
+	// strategyPresent / bidAmountPresent / targetCpaPresent / targetAmountPresent: the key
+	// appeared in the JSON (with any value, null included). Set by UnmarshalJSON only.
+	strategyPresent, bidAmountPresent, targetCpaPresent, targetAmountPresent bool
 }
 
 // UnmarshalJSON decodes the bidding object keeping field presence and JSON type: a present
@@ -81,9 +87,10 @@ func (b *biddingConfig) UnmarshalJSON(data []byte) error {
 	}
 	// Exact keys only, as checkBiddingShape enforces: a case variant ("Strategy") or an unknown key
 	// would otherwise be silently ignored, and the campaign created automatic without the cap.
-	// targetCpa is admitted here for every platform; checkBiddingShape, which knows the config
-	// key, refuses it outside microsoftConfig before this decode runs on the create path.
-	if msg := biddingKeyProblem(fields, true); msg != "" {
+	// targetCpa and targetAmount are admitted here for every platform; checkBiddingShape, which
+	// knows the config key, refuses each outside its platform (microsoftConfig, linkedInConfig)
+	// before this decode runs on the create path.
+	if msg := biddingKeyProblem(fields, biddingPlatformFields...); msg != "" {
 		return fmt.Errorf("bidding: %s", msg)
 	}
 	*b = biddingConfig{}
@@ -115,6 +122,16 @@ func (b *biddingConfig) UnmarshalJSON(data []byte) error {
 			b.TargetCpa = &n
 		}
 	}
+	if v, ok := fields["targetAmount"]; ok {
+		b.targetAmountPresent = true
+		if !isJSONNull(v) {
+			var n float64
+			if err := json.Unmarshal(v, &n); err != nil {
+				return fmt.Errorf("bidding.targetAmount must be a number")
+			}
+			b.TargetAmount = &n
+		}
+	}
 	return nil
 }
 
@@ -134,6 +151,9 @@ func (b biddingConfig) MarshalJSON() ([]byte, error) {
 	}
 	if b.TargetCpa != nil {
 		out["targetCpa"] = *b.TargetCpa
+	}
+	if b.TargetAmount != nil {
+		out["targetAmount"] = *b.TargetAmount
 	}
 	return json.Marshal(out)
 }
@@ -169,6 +189,9 @@ type bidPlan struct {
 	// automatic, since the platform sets every bid; targetCPA is the target (zero for none).
 	conversions bool
 	targetCPA   float64
+	// targetCost is linkedInConfig's automatic-bidding target (#674), in USD; zero for none.
+	// Recorded as automatic, like targetCPA: LinkedIn sets every bid toward it.
+	targetCost float64
 }
 
 // manual reports whether the plan creates a manual max-CPC campaign.
@@ -223,6 +246,11 @@ func resolveBidding(key string, cfg *biddingConfig) (bidPlan, error) {
 	// before calling here; on any other path it is a field this strategy does not take.
 	if cfg.targetCpaPresent {
 		return bidPlan{}, biddingInvalid(key, "targetCpa is only accepted by microsoftConfig with strategy \"targetCpa\"")
+	}
+	// targetAmount belongs to linkedInConfig's automatic bidding (#674), which linkedinBidPlan
+	// takes off before calling here; on any other path it is a field this strategy does not take.
+	if cfg.targetAmountPresent {
+		return bidPlan{}, biddingInvalid(key, "targetAmount is only accepted by linkedInConfig with automatic bidding")
 	}
 	if cfg.bidAmountPresent && cfg.BidAmount == nil {
 		return bidPlan{}, biddingInvalid(key, "bidAmount must be a number; null is refused — omit bidAmount for automatic bidding, or send the bid for manual")
@@ -321,7 +349,7 @@ func checkBiddingShape(config json.RawMessage, key string) error {
 	if json.Unmarshal(raw, &fields) != nil {
 		return biddingInvalid(key, "bidding must be an object, {\"strategy\": \"automatic\" | \"manual\", \"bidAmount\": number}")
 	}
-	if msg := biddingKeyProblem(fields, key == microsoftConfigKey); msg != "" {
+	if msg := biddingKeyProblem(fields, platformBiddingFields(key)...); msg != "" {
 		return biddingInvalid(key, "%s", msg)
 	}
 	if v, ok := fields["strategy"]; ok {
@@ -342,24 +370,49 @@ func checkBiddingShape(config json.RawMessage, key string) error {
 			return biddingInvalid(key, "targetCpa must be a number (for example 25), not null, a string or other JSON type")
 		}
 	}
+	if v, ok := fields["targetAmount"]; ok {
+		var n float64
+		if isJSONNull(v) || json.Unmarshal(v, &n) != nil {
+			return biddingInvalid(key, "targetAmount must be a number (for example 17.88), not null, a string or other JSON type")
+		}
+	}
 	return nil
 }
 
 // biddingFields are the only keys a bidding object may carry, spelled exactly. targetCpa is
-// microsoftConfig's alone (#563 gap 7); see biddingKeyProblem.
-var biddingFields = []string{"strategy", "bidAmount", "targetCpa"}
+// microsoftConfig's alone (#563 gap 7) and targetAmount linkedInConfig's alone (#674); see
+// biddingKeyProblem.
+var biddingFields = []string{"strategy", "bidAmount", "targetCpa", "targetAmount"}
+
+// biddingPlatformFields are the biddingFields only one platform's config may carry.
+var biddingPlatformFields = []string{"targetCpa", "targetAmount"}
 
 // microsoftConfigKey is the config key whose bidding object may carry targetCpa.
 const microsoftConfigKey = "microsoftConfig"
+
+// linkedinConfigKey is the config key whose bidding object may carry targetAmount (#674).
+const linkedinConfigKey = "linkedInConfig"
+
+// platformBiddingFields returns the platform-only bidding field the config key admits, if any.
+func platformBiddingFields(key string) []string {
+	switch key {
+	case microsoftConfigKey:
+		return []string{"targetCpa"}
+	case linkedinConfigKey:
+		return []string{"targetAmount"}
+	}
+	return nil
+}
 
 // biddingKeyProblem refuses any key of a bidding object that is not exactly "strategy" or
 // "bidAmount" (PR #332 review): a case variant names the field the caller meant ("use
 // \"strategy\""), and anything else is an unknown field. Without this, `{"Strategy":"manual",
 // "BidAmount":1.25}` decoded to an empty object — automatic bidding, no cap.
 //
-// allowTargetCpa admits "targetCpa" (microsoftConfig only, #563 gap 7); otherwise it is an unknown
-// field, as before it existed.
-func biddingKeyProblem(fields map[string]json.RawMessage, allowTargetCpa bool) string {
+// allowed admits the platform-only fields it names ("targetCpa" for microsoftConfig, #563 gap 7;
+// "targetAmount" for linkedInConfig, #674); any other platform-only field is an unknown field, as
+// before it existed.
+func biddingKeyProblem(fields map[string]json.RawMessage, allowed ...string) string {
 	keys := make([]string, 0, len(fields))
 	for k := range fields {
 		keys = append(keys, k)
@@ -368,7 +421,7 @@ func biddingKeyProblem(fields map[string]json.RawMessage, allowTargetCpa bool) s
 	for _, k := range keys {
 		known := false
 		for _, f := range biddingFields {
-			if f == "targetCpa" && !allowTargetCpa {
+			if slices.Contains(biddingPlatformFields, f) && !slices.Contains(allowed, f) {
 				continue
 			}
 			if k == f {
@@ -380,10 +433,11 @@ func biddingKeyProblem(fields map[string]json.RawMessage, allowTargetCpa bool) s
 			}
 		}
 		if !known {
-			if allowTargetCpa {
-				return fmt.Sprintf("unknown bidding field %s; bidding accepts only \"strategy\", \"bidAmount\" and \"targetCpa\"", quoteKey(k))
+			names := []string{`"strategy"`, `"bidAmount"`}
+			for _, f := range allowed {
+				names = append(names, strconv.Quote(f))
 			}
-			return fmt.Sprintf("unknown bidding field %s; bidding accepts only \"strategy\" and \"bidAmount\"", quoteKey(k))
+			return fmt.Sprintf("unknown bidding field %s; bidding accepts only %s and %s", quoteKey(k), strings.Join(names[:len(names)-1], ", "), names[len(names)-1])
 		}
 	}
 	return ""

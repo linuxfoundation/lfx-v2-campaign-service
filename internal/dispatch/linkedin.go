@@ -203,6 +203,8 @@ type linkedinConfig struct {
 	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic:
 	// a WEBSITE_VISIT campaign bidding MAX_CLICK, or WEBSITE_CONVERSION bidding MAX_CONVERSION
 	// under objective "conversions" (#582). Manual is WEBSITE_CONVERSION + a manual CPC.
+	// Automatic may carry targetAmount (#674), sent as unitCost behind
+	// LINKEDIN_ADS_TARGET_COST_ENABLED; see linkedinTargetAmount.
 	Bidding *biddingConfig `json:"bidding,omitempty"`
 	// Targeting is the caller's own targetingCriteria (#552), behind
 	// LINKEDIN_ADS_TARGETING_ENABLED. Set, it replaces TargetingProfile and the hard-coded
@@ -665,11 +667,37 @@ func linkedinObjective(cfg linkedinConfig, plan bidPlan) (string, error) {
 // cents (linkedin.ValidateBidAmount, refused rather than rounded). LinkedIn's bid floor depends on
 // the audience and is not a fixed figure this service can check ahead of it; its refusal fails the
 // job.
+//
+// bidding.targetAmount (#674) is automatic bidding's optional target, sent as the campaign's
+// unitCost beside MAX_CLICK or MAX_CONVERSION (linkedin.withTargetCost). Refused while
+// LINKEDIN_ADS_TARGET_COST_ENABLED is off, when null, with a manual bid, and unless
+// linkedin.ValidateTargetCost accepts it (whole cents, above zero, at most the contract ceiling).
 func linkedinBidPlan(cfg linkedinConfig) (bidPlan, error) {
-	const key = "linkedInConfig"
-	plan, err := resolveBidding(key, cfg.Bidding)
-	if err != nil || !plan.manual() {
+	const key = linkedinConfigKey
+	bidding, target, err := linkedinTargetAmount(cfg.Bidding)
+	if err != nil {
+		return bidPlan{}, err
+	}
+	plan, err := resolveBidding(key, bidding)
+	if err != nil {
 		return plan, err
+	}
+	if target != nil {
+		if plan.manual() {
+			return bidPlan{}, biddingInvalid(key, "targetAmount is only accepted with automatic bidding; a manual campaign's bid is bidAmount, so remove targetAmount or choose strategy \"automatic\"")
+		}
+		if _, verr := linkedin.ValidateTargetCost(*target); verr != nil {
+			reason, ok := linkedin.BidAmountReason(verr)
+			if !ok {
+				reason = "the target cost is not accepted by LinkedIn"
+			}
+			return bidPlan{}, biddingInvalid(key, "targetAmount: %s", reason)
+		}
+		plan.targetCost = *target
+		return plan, nil
+	}
+	if !plan.manual() {
+		return plan, nil
 	}
 	if _, verr := linkedin.ValidateBidAmount(plan.amount); verr != nil {
 		reason, ok := linkedin.BidAmountReason(verr)
@@ -679,6 +707,35 @@ func linkedinBidPlan(cfg linkedinConfig) (bidPlan, error) {
 		return bidPlan{}, biddingInvalid(key, "bidAmount: %s", reason)
 	}
 	return plan, nil
+}
+
+// linkedinTargetCostEnabled reports whether this deployment opted in to
+// linkedInConfig.bidding.targetAmount (#674). Read per call so it flips without a rebuild. Off by
+// default: no automatic campaign with a unitCost target has been created by this service on a live
+// account yet, and LinkedIn's documentation does not describe that pairing (linkedin.withTargetCost).
+func linkedinTargetCostEnabled() bool {
+	return os.Getenv(constants.EnvLinkedInAdsTargetCostEnabled) == "true"
+}
+
+// linkedinTargetAmount takes bidding.targetAmount (#674) off the bidding object before
+// resolveBidding, which refuses it on every other platform, and returns the remaining object and
+// the amount (nil when the key is absent). A present key is refused while
+// LINKEDIN_ADS_TARGET_COST_ENABLED is off, and an explicit null always: only an absent target means
+// "no target". The amount itself is checked by linkedinBidPlan against the resolved strategy.
+func linkedinTargetAmount(b *biddingConfig) (*biddingConfig, *float64, error) {
+	if b == nil || !b.targetAmountPresent {
+		return b, nil, nil
+	}
+	if !linkedinTargetCostEnabled() {
+		return nil, nil, biddingInvalid(linkedinConfigKey, "targetAmount is disabled on this deployment until an operator sets %s to \"true\"; remove targetAmount to create the campaign with automatic bidding and no target", constants.EnvLinkedInAdsTargetCostEnabled)
+	}
+	if b.TargetAmount == nil {
+		return nil, nil, biddingInvalid(linkedinConfigKey, "targetAmount must be a number; null is refused — omit targetAmount for automatic bidding with no target")
+	}
+	target := *b.TargetAmount
+	rest := *b
+	rest.TargetAmount, rest.targetAmountPresent = nil, false
+	return &rest, &target, nil
 }
 
 // checkDailyCapShape refuses a linkedInConfig.dailyCapUsd that is not a JSON number (#584),
@@ -752,7 +809,8 @@ func derefFloat(p *float64) float64 {
 
 // PreflightCreate refuses, before the create job exists, a linkedInConfig that cannot be created as
 // asked, as a synchronous 400:
-//   - bidding: a wrong-typed `bidding` (checkBiddingShape) or a bid plan linkedinBidPlan refuses;
+//   - bidding: a wrong-typed `bidding` (checkBiddingShape) or a bid plan linkedinBidPlan refuses
+//     (a targetAmount included, #674);
 //   - conversions: a `conversions` that is not an array of strings (checkConversionsShape), or one
 //     linkedinConversions refuses (the deployment gate off, or linkedin.ValidateConversions);
 //   - targeting: a `targeting` whose JSON shape is wrong and, with targeting set, an
@@ -1180,6 +1238,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		Images:           images,
 		Videos:           videos,
 		ManualCPCBid:     plan.amount,
+		TargetCost:       plan.targetCost,
 		Objective:        objective,
 		Conversions:      cfg.Conversions,
 		Targeting:        cfg.Targeting,

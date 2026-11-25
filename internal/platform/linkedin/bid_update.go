@@ -97,6 +97,9 @@ type campaignBiddingPlan struct {
 	objectiveType      string
 	optimizationTarget string
 	nameObjective      string
+	// targetCost is the unitCost amount (USD wire string) an automatic create sends as its target
+	// (#674, withTargetCost); "" when none.
+	targetCost string
 }
 
 // campaignBidding returns the campaign-create bidding for a manual bid (> 0) or automatic (0),
@@ -242,6 +245,52 @@ func manualBiddingTarget(target string) bool {
 	return target == OptimizationTargetNone || target == OptimizationTargetEnhancedConversion
 }
 
+// ErrTargetCostNotAutomatic marks a create refused because it names a target cost (#674) with a
+// manual bid: a manual campaign's unitCost IS its max CPC, so a target has no field to go to.
+var ErrTargetCostNotAutomatic = errors.New("linkedin: a target cost applies to automatic bidding only; a manual campaign's unitCost is its max CPC bid")
+
+// withTargetCost adds an automatic create's target (#674) to its bidding plan: unitCost = the
+// amount in USD at whole cents (ValidateTargetCost — refused, never rounded), beside the plan's
+// automated optimizationTargetType (MAX_CLICK or MAX_CONVERSION) and costType CPM, both left as
+// campaignBidding chose them. target 0 returns the plan unchanged, so a create without a target
+// sends exactly what it did before #674. A manual plan is refused (ErrTargetCostNotAutomatic).
+//
+// THE SHAPE mirrors the marketing team's Campaign Manager campaigns on the CNCF account, read
+// 2026-11-26: 873501596 (MAX_CONVERSION, costType CPM, unitCost 10 USD) and 912330026
+// (MAX_CLICK, CPM, unitCost 17.88). LinkedIn's documentation ("Create and Manage Campaigns",
+// li-lms-2026-10, Campaign Schema and "Optimization of Campaigns") defines unitCost as "amount to
+// bid (for manual bidding), amount which is the target cost (for target cost bidding) ... or cost
+// cap (for cost cap bidding)", and says the MAX_* auto-bidding targets spend "without an
+// advertiser specifying bid", with unitCost defaulting to 0 and "no validations" on it. It does
+// NOT describe unitCost on a MAX_* campaign. TARGET_COST_PER_CLICK and CAP_COST_AND_MAXIMIZE_CLICKS
+// exist for WEBSITE_VISIT, but WEBSITE_CONVERSION allows neither ("Ad Budget Type Allowable
+// Combinations": NONE, ENHANCED_CONVERSION, MAX_CONVERSION), so the one shape that serves both
+// objectives, and the one the live campaigns carry, is MAX_* + CPM + unitCost. The optimization
+// target is unchanged, so the name-reuse lookup and the bid lever (which refuses every MAX_*
+// campaign) treat it as the automatic campaign it is. The dispatcher offers it only behind
+// LINKEDIN_ADS_TARGET_COST_ENABLED, until a paused probe create confirms LinkedIn keeps the amount
+// as the campaign's target; this package does not read the flag.
+func withTargetCost(plan campaignBiddingPlan, target float64) (campaignBiddingPlan, error) {
+	if target == 0 {
+		return plan, nil
+	}
+	if manualBiddingTarget(plan.optimizationTarget) {
+		return campaignBiddingPlan{}, ErrTargetCostNotAutomatic
+	}
+	wire, err := ValidateTargetCost(target)
+	if err != nil {
+		return campaignBiddingPlan{}, err
+	}
+	fields := make(map[string]any, len(plan.fields)+1)
+	for k, v := range plan.fields {
+		fields[k] = v
+	}
+	fields["unitCost"] = map[string]any{"amount": wire, "currencyCode": "USD"}
+	plan.fields = fields
+	plan.targetCost = wire
+	return plan, nil
+}
+
 // linkedinMaxBid is the contract's ceiling (service.maxCampaignBid). LinkedIn's own range is
 // audience-dependent and LinkedIn's to enforce — its refusal is classified below.
 const linkedinMaxBid = 1_000_000.0
@@ -272,24 +321,37 @@ func BidAmountReason(err error) (string, bool) {
 // that is not a whole number of cents is REFUSED rather than rounded: rounding would set one bid
 // upstream and persist another on the row.
 func ValidateBidAmount(amount float64) (string, error) {
+	return validateCentAmount(amount, "bid")
+}
+
+// ValidateTargetCost is ValidateBidAmount for an automatic create's target cost (#674): the same
+// rules — finite, above zero, at most the contract ceiling, a whole number of cents, refused
+// rather than rounded — with sentences that name the target cost. LinkedIn applies "no
+// validations" to unitCost on an auto-bidding campaign, so this service's own check is the only one.
+func ValidateTargetCost(amount float64) (string, error) {
+	return validateCentAmount(amount, "target cost")
+}
+
+// validateCentAmount holds ValidateBidAmount's rules; noun names the amount in each sentence.
+func validateCentAmount(amount float64, noun string) (string, error) {
 	switch {
 	case math.IsNaN(amount) || math.IsInf(amount, 0) || amount <= 0:
-		return "", &bidAmountError{msg: "the bid must be a finite number greater than zero"}
+		return "", &bidAmountError{msg: fmt.Sprintf("the %s must be a finite number greater than zero", noun)}
 	case amount > linkedinMaxBid:
-		return "", &bidAmountError{msg: fmt.Sprintf("the bid %s exceeds the largest bid this service sets on LinkedIn (%s)",
-			strconv.FormatFloat(amount, 'f', -1, 64), strconv.FormatFloat(linkedinMaxBid, 'f', -1, 64))}
+		return "", &bidAmountError{msg: fmt.Sprintf("the %s %s exceeds the largest %s this service sets on LinkedIn (%s)",
+			noun, strconv.FormatFloat(amount, 'f', -1, 64), noun, strconv.FormatFloat(linkedinMaxBid, 'f', -1, 64))}
 	}
 	cents := math.Round(amount * 100)
 	if cents < 1 {
-		return "", &bidAmountError{msg: "the bid rounds to zero; the smallest bid this service sets on LinkedIn is 0.01"}
+		return "", &bidAmountError{msg: fmt.Sprintf("the %s rounds to zero; the smallest %s this service sets on LinkedIn is 0.01", noun, noun)}
 	}
 	// WHOLE CENTS, EXACTLY: the canonical two-decimal wire form, parsed back, must be the very
 	// float requested. No tolerance — 2.340000001 is refused, not sent as "2.34" while the row
 	// persists 2.340000001.
 	wire := strconv.FormatFloat(cents/100, 'f', 2, 64)
 	if back, err := strconv.ParseFloat(wire, 64); err != nil || back != amount {
-		return "", &bidAmountError{msg: fmt.Sprintf("the bid %s is not a whole number of cents; LinkedIn bids are set in the account currency to two decimal places",
-			strconv.FormatFloat(amount, 'f', -1, 64))}
+		return "", &bidAmountError{msg: fmt.Sprintf("the %s %s is not a whole number of cents; LinkedIn %ss are set in the account currency to two decimal places",
+			noun, strconv.FormatFloat(amount, 'f', -1, 64), noun)}
 	}
 	return wire, nil
 }

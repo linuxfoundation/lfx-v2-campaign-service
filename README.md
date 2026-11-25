@@ -864,6 +864,15 @@ openssl rand -base64 32
   before a job exists. The chart sets it to `"false"`
   (`app.environment.LINKEDIN_ADS_DOCUMENT_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once the paused probe passes.
+- `LINKEDIN_ADS_TARGET_COST_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `linkedInConfig.bidding.targetAmount` (#674): automatic
+  bidding with a target, sent as the campaign's `unitCost` (USD, whole
+  cents) beside `MAX_CLICK` or `MAX_CONVERSION` with `costType` `CPM`. Only
+  the exact value `true` enables it; anything else fails closed, and a
+  create naming `targetAmount` is refused with a 400 before a job exists.
+  The chart sets it to `"false"`
+  (`app.environment.LINKEDIN_ADS_TARGET_COST_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once a paused live probe passes.
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request
   names no `source_workflow_url`. Unset or empty selects the in-code

@@ -545,6 +545,31 @@ required for `"targetCpa"` and refused for `"maxConversions"`, > 0, at most 1,00
 decimals, in the account currency. Both are recorded as `automatic` (the platform sets every bid),
 so `PATCH .../bid` answers 409. The `targetCpa` key is an unknown field on every other platform.
 
+`linkedInConfig.bidding` alone also takes an optional **`targetAmount`** (#674), behind
+`LINKEDIN_ADS_TARGET_COST_ENABLED` (default off): automatic bidding's target, in USD like the
+budget, e.g. `{"strategy": "automatic", "targetAmount": 17.88}` (`strategy` may be omitted). It is
+sent as the campaign's `unitCost` `{amount, currencyCode: "USD"}` beside the automated
+`optimizationTargetType` — `MAX_CLICK`, or `MAX_CONVERSION` with `linkedInConfig.objective`
+`conversions` — and `costType` stays `CPM`; objective, name segment and conversions rules are
+unchanged. Omitted, the create is exactly as before. This mirrors Campaign Manager campaigns that
+carry a target (CNCF account, KubeCon NA 2026: 873501596 `MAX_CONVERSION` + `CPM` + `unitCost` 10;
+912330026 `MAX_CLICK` + `CPM` + 17.88). LinkedIn's "Create and Manage Campaigns" (li-lms-2026-10)
+defines `unitCost` for manual, target-cost and cost-cap bidding and does not describe it on a
+`MAX_*` campaign (auto-bidding `unitCost` "defaults to 0" with "no validations"); its
+`TARGET_COST_PER_CLICK` and `CAP_COST_AND_MAXIMIZE_CLICKS` targets are allowed for `WEBSITE_VISIT`
+only, never `WEBSITE_CONVERSION` ("Ad Budget Type Allowable Combinations"). So the flag stays off
+until a paused live probe confirms LinkedIn holds the amount as the target. Refused with a
+synchronous `400` before any job exists, each as `invalid campaign config: linkedInConfig.bidding: …`:
+`targetAmount is disabled on this deployment until an operator sets LINKEDIN_ADS_TARGET_COST_ENABLED
+to "true"; …` while the flag is off (named before any amount problem); `targetAmount is only
+accepted with automatic bidding; a manual campaign's bid is bidAmount, …` with `"manual"`; `null`,
+a string or another JSON type; and `targetAmount: the target cost …` for an amount that is not
+finite and above zero, exceeds 1,000,000, or is not a whole number of cents (never rounded). The
+campaign is recorded `automatic` with no `max_cpc_bid`, so `PATCH .../bid` answers 409 and never
+rewrites the target (changing a target after create is not offered); the settings readback shows
+it as the upstream-only `unit_cost`. The `targetAmount` key is an unknown field on every other
+platform.
+
 What each platform is sent — `manual` is exactly the shape `PATCH .../bid` accepts, so the bid can
 be changed later; `automatic` is refused there (409) until an operator switches the strategy:
 
