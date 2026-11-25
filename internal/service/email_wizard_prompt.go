@@ -238,6 +238,12 @@ wrong for this one. Every fact in your output must come from the event facts sec
 		b.WriteString("\nSurvey specification (follow it exactly; the past emails above set only the voice):\n")
 		b.WriteString(resolveStageTemplate(f.stage).ContentPrompt)
 	}
+	// The newsletter issue's specification is a content requirement for the same reason: the past
+	// issues above set the structure and voice, and the operator's notes are the only facts.
+	if emailstage.IsNewsletterStage(f.stage) {
+		b.WriteString("\nNewsletter specification (follow it exactly; the past emails above set only the voice and structure):\n")
+		b.WriteString(resolveStageTemplate(f.stage).ContentPrompt)
+	}
 	return systemPrompt, b.String()
 }
 

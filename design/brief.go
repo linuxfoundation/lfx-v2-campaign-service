@@ -23,7 +23,7 @@ import (
 // cannot drift; TestPublishedStageEnumMatchesEmailStageNames pins the published result of all three
 // to `emailstage.Names()` and `emailstage.SurveyNames()` plus "".
 func briefStageEnum() {
-	Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo")
+	Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo", "Newsletter")
 }
 
 // BriefData holds the shared brief attributes used by response types. It is Reference()d by the
@@ -60,7 +60,7 @@ var BriefData = Type("brief-data", func() {
 	// lookup can name — see the note on `stage`.
 	Attribute("event_slug", String, "Event/course slug. Part of a brief's composite identity, not unique on its own: see delivery_type and stage.")
 	Attribute("delivery_type", String, "Delivery surface this brief was authored for.", func() {
-		Enum("paid-marketing", "email", "survey")
+		Enum("paid-marketing", "email", "survey", "newsletter")
 		Example("email")
 	})
 	// The Enum is here on BriefData -- the WRITE side -- and not only on find-brief, because a
@@ -2403,7 +2403,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// only surface whose brief could be saved, so an omitted pair addresses exactly the
 			// row such a caller would have found before.
 			Attribute("delivery_type", String, "Delivery surface the brief was authored for.", func() {
-				Enum("paid-marketing", "email", "survey")
+				Enum("paid-marketing", "email", "survey", "newsletter")
 				Default("paid-marketing")
 				Example("email")
 			})

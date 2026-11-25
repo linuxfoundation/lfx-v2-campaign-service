@@ -715,6 +715,9 @@ func resolveStageTemplate(stage string) emailstage.Template {
 	if emailstage.IsSurveyStage(stage) {
 		return emailstage.ResolveSurvey(stage)
 	}
+	if emailstage.IsNewsletterStage(stage) {
+		return emailstage.ResolveNewsletter(stage)
+	}
 	return emailstage.Resolve(stage)
 }
 

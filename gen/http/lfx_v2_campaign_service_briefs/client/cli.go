@@ -98,8 +98,8 @@ func BuildFindBriefPayload(lfxV2CampaignServiceBriefsFindBriefProjectID *string,
 	var deliveryType string
 	{
 		deliveryType = lfxV2CampaignServiceBriefsFindBriefDeliveryType
-		if !(deliveryType == "paid-marketing" || deliveryType == "email" || deliveryType == "survey") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("delivery_type", deliveryType, []any{"paid-marketing", "email", "survey"}))
+		if !(deliveryType == "paid-marketing" || deliveryType == "email" || deliveryType == "survey" || deliveryType == "newsletter") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("delivery_type", deliveryType, []any{"paid-marketing", "email", "survey", "newsletter"}))
 		}
 		if err != nil {
 			return nil, err
@@ -108,8 +108,8 @@ func BuildFindBriefPayload(lfxV2CampaignServiceBriefsFindBriefProjectID *string,
 	var stage string
 	{
 		stage = lfxV2CampaignServiceBriefsFindBriefStage
-		if !(stage == "" || stage == "CFP Launch" || stage == "Schedule Announcement" || stage == "Registration Push" || stage == "Discount Offer" || stage == "Final Countdown" || stage == "Post-Event" || stage == "Survey Promo" || stage == "Survey Reminder" || stage == "Survey Closing" || stage == "Report Promo") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("stage", stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo"}))
+		if !(stage == "" || stage == "CFP Launch" || stage == "Schedule Announcement" || stage == "Registration Push" || stage == "Discount Offer" || stage == "Final Countdown" || stage == "Post-Event" || stage == "Survey Promo" || stage == "Survey Reminder" || stage == "Survey Closing" || stage == "Report Promo" || stage == "Newsletter") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("stage", stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo", "Newsletter"}))
 		}
 		if err != nil {
 			return nil, err

@@ -153,6 +153,13 @@ type hubspotRec struct {
 	sourceEmailType   string
 	sourceEmailStatus int
 	sourceEmailGets   int
+	// sourceEmailTo is the `to` object the fake reports on that same GET: the source email's
+	// lists and the two recipient settings beside them. Nil omits the key, the shape of an email
+	// that states no settings.
+	sourceEmailTo map[string]any
+	// sendListAnswer, when set, is the body the fake answers the send-list PATCH with, in place
+	// of the bare draft: a portal that reports the recipient settings it ended up with.
+	sendListAnswer string
 }
 
 // richModule is a rich-text drag-and-drop module: a body carrying `html`, plus the scaffolding
@@ -535,7 +542,7 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 			// makes, which the generic draft cases below must not be able to answer.
 			rec.mu.Lock()
 			rec.sourceEmailGets++
-			emailType, status := rec.sourceEmailType, rec.sourceEmailStatus
+			emailType, status, to := rec.sourceEmailType, rec.sourceEmailStatus, rec.sourceEmailTo
 			rec.mu.Unlock()
 			if status != 0 {
 				w.WriteHeader(status)
@@ -544,6 +551,9 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 			email := map[string]any{"id": "555", "name": "Template"}
 			if emailType != "" {
 				email["type"] = emailType
+			}
+			if to != nil {
+				email["to"] = to
 			}
 			_ = json.NewEncoder(w).Encode(email)
 		case r.Method == http.MethodGet && r.URL.Path == "/marketing/v3/emails/998/draft":
@@ -583,6 +593,13 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 				rec.markSubject(fmt.Sprint(body["subject"]))
 			default:
 				rec.markSendList(body)
+				rec.mu.Lock()
+				answer := rec.sendListAnswer
+				rec.mu.Unlock()
+				if answer != "" {
+					_, _ = io.WriteString(w, answer)
+					return
+				}
 			}
 			_, _ = io.WriteString(w, `{"id":"999","name":"KubeCon NA 2026 — brief-1","state":"DRAFT"}`)
 		default:

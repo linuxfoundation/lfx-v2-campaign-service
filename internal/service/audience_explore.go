@@ -49,8 +49,13 @@ type AudienceExplorer interface {
 	SearchLists(ctx context.Context, projectID, query string) ([]audience.ListRow, error)
 	SuppressionLists(ctx context.Context, projectID, brandShort, eventName, registrantsEvent string) ([]audience.SuppressionRow, *audience.ListRow, error)
 	LastSent(ctx context.Context, projectID, eventName, brandShort string, limit int) ([]audience.LastSentEmail, error)
+	BrandNewsletters(ctx context.Context, projectID, brand string, limit int) ([]audience.LastSentEmail, error)
+	NewsletterBrands(ctx context.Context, projectID string) ([]audience.NewsletterBrand, error)
 	ExistingMasterLists(ctx context.Context, projectID, eventName, brandShort string) ([]audience.ListRow, error)
 	PreviewCount(ctx context.Context, projectID string, listIDs []string) (audience.PreviewCount, error)
+	// DescribeLists renders each list's filter rules in plain English. Read-only; a list that
+	// cannot be read is described as such rather than failing the batch.
+	DescribeLists(ctx context.Context, projectID string, listIDs []string) ([]audience.ListDescription, error)
 	// ComposeMaster CREATES lists in the project's portal and is not idempotent. A
 	// failure after the suppression list was created returns a
 	// *audience.ComposePartialError, which this layer must surface rather than
@@ -305,7 +310,48 @@ func (s *AudienceExploreService) GetAudienceLastSent(ctx context.Context, p *exp
 	if lerr != nil {
 		return nil, audienceExploreErr(ctx, "read last-sent emails", p.ProjectID, lerr)
 	}
-	res := &explore.GetAudienceLastSentResult{Emails: make([]*explore.AudienceLastSentEmail, 0, len(emails))}
+	return &explore.GetAudienceLastSentResult{Emails: lastSentRows(emails)}, nil
+}
+
+// GetAudienceBrandNewsletters lists the brand's previous sent newsletters, in the last-sent row
+// shape, so the newsletter surface can clone the newest and pre-fill its audience.
+func (s *AudienceExploreService) GetAudienceBrandNewsletters(ctx context.Context, p *explore.GetAudienceBrandNewslettersPayload) (*explore.GetAudienceBrandNewslettersResult, error) {
+	explorer, err := s.ready()
+	if err != nil {
+		return nil, err
+	}
+	emails, lerr := explorer.BrandNewsletters(ctx, p.ProjectID, p.Brand, p.Limit)
+	if lerr != nil {
+		return nil, audienceExploreErr(ctx, "read brand newsletters", p.ProjectID, lerr)
+	}
+	return &explore.GetAudienceBrandNewslettersResult{Emails: lastSentRows(emails)}, nil
+}
+
+// GetAudienceNewsletterBrands lists the brands with a sent newsletter, for the brand picker.
+func (s *AudienceExploreService) GetAudienceNewsletterBrands(ctx context.Context, p *explore.GetAudienceNewsletterBrandsPayload) (*explore.GetAudienceNewsletterBrandsResult, error) {
+	explorer, err := s.ready()
+	if err != nil {
+		return nil, err
+	}
+	brands, berr := explorer.NewsletterBrands(ctx, p.ProjectID)
+	if berr != nil {
+		return nil, audienceExploreErr(ctx, "read newsletter brands", p.ProjectID, berr)
+	}
+	res := &explore.GetAudienceNewsletterBrandsResult{Brands: make([]*explore.AudienceNewsletterBrand, 0, len(brands))}
+	for _, b := range brands {
+		row := &explore.AudienceNewsletterBrand{Brand: b.Brand, LatestEmailName: b.LatestEmailName, Issues: b.Issues}
+		if sentAt := strings.TrimSpace(b.LatestSentAt); sentAt != "" {
+			row.LatestSentAt = &sentAt
+		}
+		res.Brands = append(res.Brands, row)
+	}
+	return res, nil
+}
+
+// lastSentRows maps sent-email rows to their wire shape, shared by last-sent and
+// brand-newsletters.
+func lastSentRows(emails []audience.LastSentEmail) []*explore.AudienceLastSentEmail {
+	rows := make([]*explore.AudienceLastSentEmail, 0, len(emails))
 	for _, e := range emails {
 		row := &explore.AudienceLastSentEmail{
 			EmailID:          e.EmailID,
@@ -326,14 +372,17 @@ func (s *AudienceExploreService) GetAudienceLastSent(ctx context.Context, p *exp
 		if reason := e.MatchReason; reason != "" {
 			row.MatchReason = &reason
 		}
+		if source := strings.TrimSpace(e.SourceURL); source != "" {
+			row.SourceURL = &source
+		}
 		// Left absent rather than sent as "": a published-at the portal did not report
 		// is not a send that happened at the zero time.
 		if sentAt := strings.TrimSpace(e.SentAt); sentAt != "" {
 			row.SentAt = &sentAt
 		}
-		res.Emails = append(res.Emails, row)
+		rows = append(rows, row)
 	}
-	return res, nil
+	return rows
 }
 
 func (s *AudienceExploreService) GetExistingAudienceMasterLists(ctx context.Context, p *explore.GetExistingAudienceMasterListsPayload) (*explore.GetExistingAudienceMasterListsResult, error) {
@@ -373,6 +422,50 @@ func (s *AudienceExploreService) PreviewAudienceCount(ctx context.Context, p *ex
 		Estimate: int64(count.Estimate),
 		Reason:   count.Reason,
 	}, nil
+}
+
+// DescribeAudienceLists says in plain English who each list contains. Read-only.
+func (s *AudienceExploreService) DescribeAudienceLists(ctx context.Context, p *explore.DescribeAudienceListsPayload) (*explore.DescribeAudienceListsResult, error) {
+	explorer, err := s.ready()
+	if err != nil {
+		return nil, err
+	}
+	described, derr := explorer.DescribeLists(ctx, p.ProjectID, p.ListIds)
+	if derr != nil {
+		return nil, audienceExploreErr(ctx, "describe audience lists", p.ProjectID, derr)
+	}
+	res := &explore.DescribeAudienceListsResult{Lists: make([]*explore.AudienceListDescription, 0, len(described))}
+	for _, d := range described {
+		groups := make([]*explore.AudienceRuleGroup, 0, len(d.Groups))
+		for _, g := range d.Groups {
+			conds := g.Conditions
+			if conds == nil {
+				conds = []string{}
+			}
+			groups = append(groups, &explore.AudienceRuleGroup{Conditions: conds})
+		}
+		row := &explore.AudienceListDescription{
+			ListID:     d.ListID,
+			Name:       d.Name,
+			HubspotURL: d.HubSpotURL,
+			Status:     d.Status,
+			Summary:    d.Summary,
+			Match:      d.Match,
+			Groups:     groups,
+			Complete:   d.Complete,
+		}
+		// An unreported size is ABSENT on the wire, never 0: a list HubSpot did not size is not
+		// an empty list, and the caller renders the two differently.
+		if d.Size >= 0 {
+			size := int64(d.Size)
+			row.Size = &size
+		}
+		if pt := strings.TrimSpace(d.ProcessingType); pt != "" {
+			row.ProcessingType = &pt
+		}
+		res.Lists = append(res.Lists, row)
+	}
+	return res, nil
 }
 
 func (s *AudienceExploreService) ComposeAudienceMaster(ctx context.Context, p *explore.ComposeAudienceMasterPayload) (*explore.AudienceComposeMasterResult, error) {

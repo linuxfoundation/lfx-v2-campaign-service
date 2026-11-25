@@ -22,6 +22,7 @@ import (
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
 )
 
@@ -892,7 +893,23 @@ func (s *ConnectionService) ListHubspotEmails(ctx context.Context, p *conn.ListH
 		query = *p.Q
 	}
 
-	emails, serr := orch.SearchEmails(ctx, p.ProjectID, d.provider, query)
+	// `match` is the template picker's brand-and-event scope: ANY of several whole-word
+	// phrases, in one walk. It cannot be combined with `q` -- an empty answer would not say
+	// which of the two found nothing -- and a set that normalises to nothing (only punctuation)
+	// is refused rather than silently walked as the unfiltered listing it would otherwise be.
+	var emails []model.MarketingEmail
+	var serr error
+	if len(p.Match) > 0 {
+		if strings.TrimSpace(query) != "" {
+			return nil, &conn.BadRequestError{Code: "400", Message: "q and match cannot be combined; send one or the other"}
+		}
+		if len(hubspot.NormalizeSearchPhrases(p.Match)) == 0 {
+			return nil, &conn.BadRequestError{Code: "400", Message: "match needs at least one phrase containing a letter or digit"}
+		}
+		emails, serr = orch.SearchEmailsAnyPhrase(ctx, p.ProjectID, d.provider, p.Match)
+	} else {
+		emails, serr = orch.SearchEmails(ctx, p.ProjectID, d.provider, query)
+	}
 	if serr != nil {
 		// ErrEmailSearchUnsupported is the one arm classifyDiscoveryError cannot carry: it
 		// keys on ErrAccountsUnsupported, and the two are separate sentinels precisely

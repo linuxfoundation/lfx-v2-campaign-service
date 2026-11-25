@@ -41,7 +41,13 @@ func TestBriefIdentityPairProblem(t *testing.T) {
 		{"survey with no stage", model.DeliverySurvey, "", true},
 		{"survey carrying an event stage", model.DeliverySurvey, emailstage.FinalCountdown, true},
 
-		{"an unknown surface", model.DeliveryType("newsletter"), "", true},
+		{"newsletter issue", model.DeliveryNewsletter, emailstage.NewsletterIssue, false},
+		{"newsletter with no stage", model.DeliveryNewsletter, "", true},
+		{"newsletter carrying an event stage", model.DeliveryNewsletter, emailstage.RegistrationPush, true},
+		{"newsletter carrying a survey stage", model.DeliveryNewsletter, emailstage.SurveyPromo, true},
+		{"email carrying the newsletter stage", model.DeliveryEmail, emailstage.NewsletterIssue, true},
+
+		{"an unknown surface", model.DeliveryType("podcast"), "", true},
 		{"the empty surface", model.DeliveryType(""), "", true},
 	}
 
@@ -74,6 +80,16 @@ func TestEverySurveyStageIsAcceptedOnItsOwnSurface(t *testing.T) {
 		if err := briefIdentityPairProblem(model.DeliverySurvey, stage); err != nil {
 			t.Errorf("survey stage %q is declared by SurveyNames() but refused on the survey "+
 				"surface: %v", stage, err)
+		}
+	}
+}
+
+// TestEveryNewsletterStageIsAcceptedOnItsOwnSurface is the newsletter copy of the survey test above.
+func TestEveryNewsletterStageIsAcceptedOnItsOwnSurface(t *testing.T) {
+	for _, stage := range emailstage.NewsletterNames() {
+		if err := briefIdentityPairProblem(model.DeliveryNewsletter, stage); err != nil {
+			t.Errorf("newsletter stage %q is declared by NewsletterNames() but refused on the "+
+				"newsletter surface: %v", stage, err)
 		}
 	}
 }

@@ -15,6 +15,7 @@ import (
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/emailstage"
 )
 
 // emailCopyEventDetails is the slice of a brief's EventDetails this generation needs.
@@ -63,6 +64,11 @@ type emailCopyEventDetails struct {
 	// the email should have carried; the bound is set to leave the rest of the block room rather
 	// than to be reached in practice.
 	SourceText string `json:"sourceText"`
+	// ReferenceEmailIDs are past HubSpot emails the OPERATOR chose as this brief's content
+	// reference, in order: the first is the structural template, the rest are style samples.
+	// Written by the newsletter surface (the brand's previous issues). Empty on every other brief,
+	// which keeps the automatic most-recent lookup. See EmailReferenceSource.BuildReferenceBlockFromIDs.
+	ReferenceEmailIDs []string `json:"referenceEmailIds"`
 	// Themes is the key the UI writes for the event's subject matter, and the one that carries it on
 	// every brief this service sees. Merged with `Topics` above by topicList rather than one winning.
 	Themes []string `json:"themes"`
@@ -379,6 +385,49 @@ func decodeEmailCopyEventDetails(blob json.RawMessage) (emailCopyEventDetails, e
 // factURL DROPS an over-long one instead, and the only value a whole-block truncation could ever
 // reach is the description at the end.
 func (d emailCopyEventDetails) eventFactsBlock() string {
+	return d.factsBlock(factText(d.SourceText, maxFactSourceTextRunes))
+}
+
+// newsletterFactsBlock is eventFactsBlock for a NEWSLETTER brief, whose source document is the
+// operator's notes written one item per line. The notes keep their lines here (factLines), so the
+// model sees where one item ends and the next begins, and which link belongs to which item.
+// Collapsed into one line, as every other source document is, eight items read as one run-on
+// sentence with eight addresses in it.
+//
+// Notes that would not fit as lines fall back to the single-line form, which is always within
+// the bound: the per-line marker costs a few characters, and the notes must never be what the
+// block leaves out.
+func (d emailCopyEventDetails) newsletterFactsBlock() string {
+	if lines := factLines(d.SourceText, maxFactSourceTextRunes); lines != "" {
+		return d.factsBlock(lines)
+	}
+	return d.eventFactsBlock()
+}
+
+// newsletterNotesLineMarker opens each line of a newsletter's notes in the prompt. Indented, so no
+// line of the notes starts at the margin the labelled fact lines ("Agenda URL: ...") start at.
+const newsletterNotesLineMarker = "\n  - "
+
+// factLines renders multi-line text one line per item, each trimmed, its inner whitespace
+// collapsed and prefixed by newsletterNotesLineMarker; blank lines are dropped. It returns ""
+// when there is nothing to render, or when the rendered form would exceed bound runes.
+func factLines(value string, bound int) string {
+	var b strings.Builder
+	for _, line := range strings.FieldsFunc(value, func(r rune) bool { return r == '\n' || r == '\r' || r == ' ' || r == ' ' || r == '\u0085' }) {
+		if line = strings.TrimSpace(collapseFactWhitespace(line)); line != "" {
+			b.WriteString(newsletterNotesLineMarker)
+			b.WriteString(line)
+		}
+	}
+	if b.Len() == 0 || utf8.RuneCountInString(b.String()) > bound {
+		return ""
+	}
+	return b.String()
+}
+
+// factsBlock renders the block around an already-rendered source document (see eventFactsBlock
+// for the rules every line follows).
+func (d emailCopyEventDetails) factsBlock(sourceDocument string) string {
 	lines := make([]string, 0, 10)
 	// used counts the rendered block so far, its leading newline included. A line that would take
 	// it past maxEventFactsBlockRunes is OMITTED whole rather than cut: a fact cut mid-value is
@@ -400,7 +449,7 @@ func (d emailCopyEventDetails) eventFactsBlock() string {
 	// description. Rendered first, it is never what the bound leaves out. Empty on every event
 	// brief, so their block is unchanged. Labelled as the source DOCUMENT, not as a fact about an
 	// event: the survey stage prompts refer to it by that name.
-	add("Source document", factText(d.SourceText, maxFactSourceTextRunes))
+	add("Source document", sourceDocument)
 	// URLs first, each through the same validator the registration URL goes through. The UI already
 	// verified that the event page literally links to each of these, but event_details is an opaque
 	// blob this service does not own, so it validates rather than trusts -- see factURL.
@@ -681,6 +730,16 @@ Call-to-action strategy: %s
 		tpl.SubjectPattern, tpl.PreviewPattern,
 		strings.Join(tpl.CTAStrategy, "; "), tpl.FooterNote)
 
+	// The two link rules in the shared block above are written for an event email: they send a
+	// button to the Registration URL and inline links to the four labelled event URLs, and say to
+	// write plain text when none is given. A newsletter brief gives none of those, so read alone
+	// they tell the model to write an issue with no links in it. This states where a newsletter's
+	// links DO come from, in the system prompt, where it outranks nothing and contradicts nothing:
+	// it names the shared rules it replaces. enforceSourceLinks holds the model to it afterwards.
+	if emailstage.IsNewsletterStage(vars.stage) {
+		systemPrompt += newsletterLinkRule
+	}
+
 	// The urgency/FOMO variant restructures THIS stage's copy toward deadline pressure and social
 	// proof; it does not replace the stage's purpose above -- a CFP Launch draft with this variant
 	// is still about the CFP, just framed more urgently. Appended, not swapped in, for the same
@@ -859,6 +918,18 @@ tracks or the organisation running it.`
 		extra += "\n\nStyle reference from past sent emails (match tone and structure only; " +
 			"never copy facts, names, dates, prices or links from them):\n" + ref
 	}
+	// A newsletter issue has no venue and no dates. Printed anyway, the two lines read
+	// "Location:" with nothing after it and "Dates: Date TBD": a blank the model is invited to
+	// fill and a placeholder it may print. They are left out, as every unsupplied fact is. The
+	// "Event Name" label stays, because the newsletter specification refers to it by that name.
+	if emailstage.IsNewsletterStage(vars.stage) {
+		userPrompt = fmt.Sprintf(`Write one issue of this newsletter:
+Event Name: %s%s
+
+%s`,
+			vars.eventName, extra, tpl.ContentPrompt)
+		return systemPrompt, userPrompt
+	}
 	userPrompt = fmt.Sprintf(`Generate email copy for this event:
 Event Name: %s
 Location: %s
@@ -869,6 +940,21 @@ Dates: %s%s%s
 
 	return systemPrompt, userPrompt
 }
+
+// newsletterLinkRule is the newsletter stage's link rule, appended to the system prompt. Kept
+// beside enforceSourceLinks' contract in words the code enforces: an address is kept only when
+// the notes carry it.
+const newsletterLinkRule = `
+
+NEWSLETTER LINKS -- for this stage these replace the "Links" and "Secondary links" rules above:
+- The Source document is the only place a link may come from. Each of its lines is one item, and
+  an address on a line belongs to that line's item.
+- Link an item with an inline <a href="..."> inside the rich_text section about it, the address
+  copied from the Source document character for character, and link text that names what the
+  reader gets ("read the guide", never the bare address).
+- An item whose line carries no address is written without a link.
+- Every link is checked against the Source document after you answer. One that is not there
+  exactly is removed and its words left as dead text, so never guess, shorten or repair one.`
 
 // resolveRegistrationURL picks the destination the generated call-to-action should link to.
 //
@@ -1305,11 +1391,21 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 		// ordinary stage-based copy rather than an error.
 		segment: strVal(p.Segment),
 	}
+	// A newsletter's source document is the operator's notes, one item per line; they keep their
+	// lines in the prompt (see newsletterFactsBlock).
+	isNewsletter := emailstage.IsNewsletterStage(promptVars.stage)
+	if isNewsletter {
+		promptVars.eventFacts = details.newsletterFactsBlock()
+	}
 	// BEST-EFFORT reference-email lookup, never a hard dependency: a project with no HubSpot
 	// connection, no published emails, or an unreachable portal still gets copy generated, just
 	// without style mirroring. See EmailReferenceSource for why this cannot fail the request.
 	if ref := s.snapshotEmailReferenceSource(); ref != nil {
-		promptVars.referenceBlock = ref.BuildReferenceBlock(ctx, brief.ProjectID)
+		if ids := details.ReferenceEmailIDs; len(ids) > 0 {
+			promptVars.referenceBlock = ref.BuildReferenceBlockFromIDs(ctx, brief.ProjectID, ids)
+		} else {
+			promptVars.referenceBlock = ref.BuildReferenceBlock(ctx, brief.ProjectID)
+		}
 	}
 	// Enforce a bound on the prompt size to prevent unbounded input-token cost and large
 	// allocations. Four strings reach the prompt — eventName, location, the formatted dates
@@ -1510,6 +1606,17 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 		return nil, &briefs.ConnServiceUnavailableError{
 			Code:    "503",
 			Message: "the AI platform returned an unreadable response",
+		}
+	}
+
+	// A newsletter's links are held to the notes, in code: the prompt asks for it, and this is
+	// what makes it true. A link the notes do not carry loses its href and keeps its words, so
+	// the issue is still returned; the count is logged because a model that invents links is a
+	// prompt regression worth seeing.
+	if isNewsletter {
+		if dropped := enforceSourceLinks(copy, details.SourceText); dropped > 0 {
+			slog.WarnContext(ctx, "email copy generation: removed newsletter links that are not in the brief's notes",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "links_removed", dropped)
 		}
 	}
 

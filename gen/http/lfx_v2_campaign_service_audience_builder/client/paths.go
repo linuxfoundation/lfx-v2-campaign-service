@@ -34,6 +34,16 @@ func GetAudienceLastSentLfxV2CampaignServiceAudienceBuilderPath(projectID string
 	return fmt.Sprintf("/projects/%v/audience-builder/last-sent", projectID)
 }
 
+// GetAudienceNewsletterBrandsLfxV2CampaignServiceAudienceBuilderPath returns the URL path to the lfx-v2-campaign-service-audience-builder service get-audience-newsletter-brands HTTP endpoint.
+func GetAudienceNewsletterBrandsLfxV2CampaignServiceAudienceBuilderPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/audience-builder/newsletter-brands", projectID)
+}
+
+// GetAudienceBrandNewslettersLfxV2CampaignServiceAudienceBuilderPath returns the URL path to the lfx-v2-campaign-service-audience-builder service get-audience-brand-newsletters HTTP endpoint.
+func GetAudienceBrandNewslettersLfxV2CampaignServiceAudienceBuilderPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/audience-builder/brand-newsletters", projectID)
+}
+
 // GetExistingAudienceMasterListsLfxV2CampaignServiceAudienceBuilderPath returns the URL path to the lfx-v2-campaign-service-audience-builder service get-existing-audience-master-lists HTTP endpoint.
 func GetExistingAudienceMasterListsLfxV2CampaignServiceAudienceBuilderPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/audience-builder/existing-master-lists", projectID)
@@ -42,6 +52,11 @@ func GetExistingAudienceMasterListsLfxV2CampaignServiceAudienceBuilderPath(proje
 // PreviewAudienceCountLfxV2CampaignServiceAudienceBuilderPath returns the URL path to the lfx-v2-campaign-service-audience-builder service preview-audience-count HTTP endpoint.
 func PreviewAudienceCountLfxV2CampaignServiceAudienceBuilderPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/audience-builder/preview-count", projectID)
+}
+
+// DescribeAudienceListsLfxV2CampaignServiceAudienceBuilderPath returns the URL path to the lfx-v2-campaign-service-audience-builder service describe-audience-lists HTTP endpoint.
+func DescribeAudienceListsLfxV2CampaignServiceAudienceBuilderPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/audience-builder/lists/describe", projectID)
 }
 
 // ComposeAudienceMasterLfxV2CampaignServiceAudienceBuilderPath returns the URL path to the lfx-v2-campaign-service-audience-builder service compose-audience-master HTTP endpoint.

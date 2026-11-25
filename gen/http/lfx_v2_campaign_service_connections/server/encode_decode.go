@@ -12285,20 +12285,38 @@ func DecodeListHubspotEmailsRequest(mux goahttp.Muxer, decoder func(*http.Reques
 		var (
 			projectID   string
 			q           *string
+			match       []string
 			bearerToken *string
+			err         error
 
 			params = mux.Vars(r)
 		)
 		projectID = params["project_id"]
-		qRaw := r.URL.Query().Get("q")
+		qp := r.URL.Query()
+		qRaw := qp.Get("q")
 		if qRaw != "" {
 			q = &qRaw
+		}
+		match = qp["match"]
+		if len(match) > 8 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("match", match, len(match), 8, false))
+		}
+		for _, e := range match {
+			if utf8.RuneCountInString(e) < 1 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("match[*]", e, utf8.RuneCountInString(e), 1, true))
+			}
+			if utf8.RuneCountInString(e) > 120 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("match[*]", e, utf8.RuneCountInString(e), 120, false))
+			}
 		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
 		}
-		payload = NewListHubspotEmailsPayload(projectID, q, bearerToken)
+		if err != nil {
+			return payload, err
+		}
+		payload = NewListHubspotEmailsPayload(projectID, q, match, bearerToken)
 		if payload.BearerToken != nil {
 			cred := *payload.BearerToken
 			if index := strings.IndexByte(string(cred), ' '); index >= 0 {

@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
@@ -80,6 +81,12 @@ type AudienceExplorer struct {
 	// unconfirmed (findOrCreateStanding). Injected so tests do not wait; never nil after
 	// construction.
 	sleep func(ctx context.Context, d time.Duration) error
+	// brandsCache holds each project's newsletter-brand listing for newsletterBrandsTTL: the
+	// listing walks the portal's whole marketing-email history (tens of seconds on the LF
+	// portal) and backs a dropdown that is opened far more often than a brand starts a
+	// newsletter. Zero value is ready to use.
+	brandsMu    sync.Mutex
+	brandsCache map[string]cachedNewsletterBrands
 }
 
 // sleepCtx waits d, or until ctx is done.

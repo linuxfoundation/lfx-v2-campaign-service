@@ -126,6 +126,23 @@ upstream create, so it fails loud instead. Replacing a brief's
 content resets it to `draft` (re-approval required). Optimistic concurrency is enforced via
 version/If-Match (`428` when missing, `412` on mismatch).
 
+**A reused campaign whose upstream object is gone.** On a platform whose slot takes no new
+version (`model.ProviderSupportsSlotVersions` false; today the HubSpot email channel) the fast-path
+reuse was permanent: a draft deleted in HubSpot came back from every later create as `reused`,
+with an id that no longer resolves, and the brief could never stage another (observed live: a draft
+staged on 2026-10-22 and since deleted was reported as staged on 2026-11-25). Before that reuse,
+`retireIfGoneUpstream` asks the dispatcher through the optional `UpstreamPresenceChecker`
+capability (bounded by `upstreamPresenceTimeout`, 15s). Only a definite "gone" retires the row,
+with the same soft delete as the delete-campaign endpoint (`CampaignRepository.DeleteCampaign`,
+which keeps the upstream id for the audit trail and co-commits a `deleted` index message); the
+row's slot version is then claimed afresh and dispatched like a slot never used. Every doubt keeps
+the reuse: a dispatcher without the capability, a check that errs, or a retirement that fails (a
+version race, a toggle holding the row). A duplicate is the failure reuse exists to prevent, so
+nothing short of a definite absence frees the slot. Slot-versioned platforms are never checked:
+they have `new_version` for a deliberate second campaign. The claim-lost reuse is not checked
+either, since its row was completed by a concurrent worker moments before. Tests:
+`orchestrator_upstream_gone_test.go`.
+
 **A deliberate second campaign (`new_version`).** Reuse is right for a retry and wrong for an
 operator who asks for another campaign on a platform the brief already has one on — the service
 used to hand back the first campaign as a success. `create-campaigns` now takes `new_version`,
@@ -1693,6 +1710,16 @@ connection is already scoped to the portal its private-app token authenticates a
 is no account to choose. What has no default is `hubspotConfig.SourceEmailID`, which campaign
 create requires — without this endpoint the email channel cannot be driven from the UI at all.
 
+**`match` -- the brand-and-event scope (2026-11-25).** With one or more `match` phrases the handler
+runs `Orchestrator.SearchEmailsAnyPhrase` instead of `SearchEmails`: an email is returned when ANY
+phrase appears in its name or subject as whole words, in one walk (see the `EmailPhraseSearcher`
+capability). `match` with a non-blank `q` is a 400, as is a phrase set that normalises to nothing
+(`hubspot.NormalizeSearchPhrases`), which would otherwise run as the unfiltered listing. Both
+searches now share `emailSearchCallTimeout` (40s) rather than `accountsCallTimeout` (20s): a full
+filtered walk is 20 sequential pages and measured 15-16s on the LF portal, so the shared 20s
+ceiling failed real searches whenever HubSpot was slow. The BFF gives this route a 45s budget so
+the service answers first.
+
 The STATUS MAPPING is shared with discovery. `classifyDiscoveryError` was lifted out of
 `listAccounts` unchanged and both callers pass it a descriptor, so 400/404/500/503 cannot drift
 between the two; only the operation noun differs. One arm is not shared: a dispatcher with no
@@ -2125,6 +2152,11 @@ results onto the generated Goa types, and it turns failures into the statuses th
 declares. Everything about WHICH lists an audience is made of lives in
 [internal/audience](internal-audience.md), and everything that calls HubSpot lives in
 [internal/dispatch](internal-dispatch.md).
+
+`DescribeAudienceLists` (2026-11-25) serves `POST .../audience-builder/lists/describe`: it maps
+`AudienceExplorer.DescribeLists`' plain-English descriptions onto the generated type, sending an
+unreported size as ABSENT rather than 0 (a list HubSpot did not size is not an empty list), and
+routes a whole-batch failure through `audienceExploreErr` like every other read here.
 
 `audience_custom.go` adds the three custom-audience handlers (`interpret-custom-audience`,
 `preview-custom-audience`, `create-custom-audience`). `customErr` maps this path's 400s with the
@@ -2701,6 +2733,46 @@ the operator pasted — rendered into the prompt's facts block as `Source docume
 promoted asset, so it flows through `resolveRegistrationURL` unchanged. The prompts are ported from
 the LF Research survey/report tool and reproduce its specification verbatim, including the 100-word
 body cap and the anti-invention rule.
+
+### The newsletter delivery surface
+
+`newsletter` is a fourth `delivery_type` (migration `000059`), for one issue of a brand's recurring
+HubSpot newsletter. `emailstage` gains a third taxonomy with a single stage, `Newsletter`
+(`NewsletterNames()`/`NewsletterTemplates`/`ResolveNewsletter`/`IsNewsletterStage`); issues are told
+apart by `event_slug`, not by stage. `briefIdentityPairProblem`, `deliveryChannelKind` (it rides the
+email channel) and `resolveStageTemplate` all gained the newsletter arm.
+
+A newsletter brief's facts are the operator's notes in `event_details.sourceText`, rendered as
+`Source document` exactly as a survey's are. Its style reference is NOT the automatic most-recent
+lookup: `event_details.referenceEmailIds` carries the brand's previous issues the operator chose
+(from `get-audience-brand-newsletters`), and `EmailReferenceSource.BuildReferenceBlockFromIDs`
+reads exactly those, in order, with the FIRST as the structural template. Unlike
+`BuildReferenceBlock` it runs on the shared LF connection, because reading emails a person picked by
+name is not the portal-wide sweep that one refuses. The newsletter prompt keeps facts to the notes
+and takes only structure and voice from the past issues.
+
+Three things are particular to how a newsletter's copy is generated (`email_copy.go`):
+
+- **The notes keep their lines.** Every other source document is collapsed to one line
+  (`factText`), which made eight items read as one run-on sentence with eight addresses in it.
+  `newsletterFactsBlock` renders the notes one item per line (`factLines`, each line marked and
+  indented so none starts at the margin the labelled fact lines start at), and falls back to the
+  collapsed form when the per-line markers would not fit the bound, so the notes are never what
+  the block leaves out.
+- **The prompt says where links come from.** The shared link rules send a button to the
+  Registration URL and inline links to the four labelled event URLs, and say to write plain text
+  when none is given; a newsletter brief gives none, so read alone they ask for an issue with no
+  links. `newsletterLinkRule` is appended to the system prompt for the newsletter stage and names
+  the rules it replaces. The user prompt also drops the `Location:` and `Dates:` lines, which a
+  newsletter printed as a blank and as "Date TBD".
+- **The rule is enforced on the answer.** `enforceSourceLinks` (`email_source_links.go`) keeps an
+  anchor's `href`, and a button's `url`, only when the address is one the notes carry. The
+  comparison is on the whole address (`normalizeLinkForMatch`: scheme and host lower-cased, no
+  fragment, no trailing slash), not its host: a host rule passes an invented path on a real site,
+  which is the link a model writes when it wants one. A removed link keeps its words, the issue
+  is still returned, and the count is logged.
+
+Tests: `email_source_links_test.go`.
 
 ### The send workflow (`CreateSendWorkflow`)
 

@@ -914,15 +914,18 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/send-workflows", true},
 		// --- accepted: audience builder (LFXV2-2770) ---
 		// Another sibling of /briefs that inherits nothing, and unlike fetch-event-url it is
-		// a family of thirteen leaves rather than one path. Each leaf is enumerated on BOTH
+		// a family of fifteen leaves rather than one path. Each leaf is enumerated on BOTH
 		// sides deliberately (no free ** or (/.*)? tail) because compose-master and
 		// custom/create create real contact lists in a production portal and are not
 		// idempotent. Five of them are two segments deep, which the rows below pin explicitly.
 		{"/projects/p1/audience-builder/capabilities", true},
 		{"/projects/p1/audience-builder/discover", true},
 		{"/projects/p1/audience-builder/lists/search", true},
+		{"/projects/p1/audience-builder/lists/describe", true},
 		{"/projects/p1/audience-builder/suppression-lists", true},
 		{"/projects/p1/audience-builder/last-sent", true},
+		{"/projects/p1/audience-builder/brand-newsletters", true},
+		{"/projects/p1/audience-builder/newsletter-brands", true},
 		{"/projects/p1/audience-builder/existing-master-lists", true},
 		{"/projects/p1/audience-builder/preview-count", true},
 		{"/projects/p1/audience-builder/compose-master", true},
@@ -976,6 +979,8 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/audience-builder/custom", false},
 		{"/projects/p1/audience-builder/custom/delete", false},
 		{"/projects/p1/audience-builder/custom/create/anything", false},
+		{"/projects/p1/audience-builder/lists", false},
+		{"/projects/p1/audience-builder/lists/describe/anything", false},
 		// --- rejected: missing projectId segment / not project-nested ---
 		{"/projects//briefs", false},
 		{"/briefs/b-1", false},

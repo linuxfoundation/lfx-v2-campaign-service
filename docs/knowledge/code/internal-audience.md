@@ -634,3 +634,27 @@ counts suppression lists the send applies as well as the list's own `NOT_IN_LIST
 lists (and lists attached without a composed master) carry no suppression by design, so before
 this every one of them failed QA despite going out suppressed.
 
+
+## Plain-English list descriptions (`describe.go`, 2026-11-25)
+
+An operator choosing who an email goes to sees list NAMES, and a name is a claim, not a
+description. `DescribeRules` renders a list's filter tree (as `GetList` returns it) into
+`RuleGroup`s of plain-English conditions -- a contact is in the list when it satisfies EVERY
+condition of ANY group, which is HubSpot's OR-root-of-AND-branches shape -- and `DescribeList`
+adds a one-sentence summary and a status (`described`, `static` for MANUAL/SNAPSHOT lists, which
+have no rules, `unreadable` for a tree that does not parse). It is DETERMINISTIC: no model is
+involved, so each sentence says what one filter does and can be trusted as far as the filter.
+
+- It reads exactly what this package writes: the tests feed it `CurrentRegistrantsFilter`,
+  `MasterListWithSuppressionsFilter` and `CustomListFilter` output, so a write-shape change the
+  describer cannot follow fails there. Registration and education branches read as "Registered for
+  an event where event name is ..." / "Enrolled in a course where ...".
+- Names come from `DescribeLabels` (list names, contact-property labels with enumeration option
+  labels, event-type labels, email subscription names), filled by the caller within a budget. A missing label falls back to
+  the id ("list #123") or a humanised internal name, never to an error. `CollectDescribeRefs` says
+  what to look up; properties under an event or association branch are not contact properties
+  and are not looked up.
+- A rule this code does not model is LISTED generically ("Matches a HubSpot survey monkey rule")
+  and sets `Complete` false, rather than being dropped: a description that silently omits a rule
+  overstates who is in the list. An event branch's count or time refinement is named, not
+  rendered, for the same reason.

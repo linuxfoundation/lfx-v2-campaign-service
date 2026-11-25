@@ -494,6 +494,49 @@ func (d *HubSpotDispatcher) ReadMetrics(ctx context.Context, projectID string, p
 	return metrics, nil
 }
 
+// UpstreamGone implements service.UpstreamPresenceChecker: whether the email a completed HubSpot
+// campaign row points at has been deleted in HubSpot. The orchestrator asks before it reuses the
+// row, because a HubSpot slot takes no new version and a draft deleted in HubSpot otherwise left
+// its brief unable to stage another.
+//
+// Only a definite 404, read in the portal the email was CREATED in, is "gone". The id is a bare
+// number that means nothing outside its portal, so the same provenance guard as ReadMetrics
+// applies: a row that does not record its creating portal, or a token that now authenticates into
+// a different one, cannot be judged -- a 404 there says "not in this portal", not "deleted" -- and
+// is returned as an error, which keeps the row reused. So is every other failure: cloning a second
+// draft beside one that still exists is the duplicate the reuse is there to prevent.
+func (d *HubSpotDispatcher) UpstreamGone(ctx context.Context, projectID string, c *model.Campaign) (bool, error) {
+	if c == nil || strings.TrimSpace(c.PlatformCampaignID) == "" {
+		return false, nil
+	}
+	created := hubSpotCreationPortalID(c)
+	if created == "" {
+		return false, fmt.Errorf("hubspot email %s: the campaign does not record which portal it was created in, so its absence cannot be judged: %w",
+			c.PlatformCampaignID, domain.ErrCampaignProvenanceUnknown)
+	}
+	client, err := d.ResolveEmailClient(ctx, projectID)
+	if err != nil {
+		return false, err
+	}
+	portalCtx, cancelPortal := context.WithTimeout(ctx, portalLookupTimeout)
+	current, perr := client.AuthenticatedPortalID(portalCtx)
+	cancelPortal()
+	if perr != nil {
+		return false, fmt.Errorf("hubspot email %s: cannot establish which portal this token authenticates against: %w", c.PlatformCampaignID, perr)
+	}
+	if created != current {
+		return false, fmt.Errorf("hubspot email %s was created in portal %s but this project's token authenticates against portal %s: %w",
+			c.PlatformCampaignID, created, current, domain.ErrCampaignAccountMismatch)
+	}
+	if _, gerr := client.GetEmail(ctx, c.PlatformCampaignID); gerr != nil {
+		if hubspot.IsNotFound(gerr) {
+			return true, nil
+		}
+		return false, fmt.Errorf("hubspot email %s: %w", c.PlatformCampaignID, gerr)
+	}
+	return false, nil
+}
+
 // Dispatch implements service.PlatformDispatcher for the HubSpot email channel. It clones the
 // caller's template email and sets its send list to the brief's built audience. The returned
 // campaign's PlatformCampaignID is the cloned email's HubSpot id.
@@ -605,12 +648,27 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// already exists, so ANY failure here is a PARTIAL application — return the campaign (with
 	// the clone id) so the orchestrator retains the claim and the email is reconcilable, and
 	// surface the error so the caller verifies rather than reporting a clean success.
-	if _, serr := client.SetSendList(ctx, email.ID, sendListIDs, suppressionIDs); serr != nil {
+	//
+	// A NEWSLETTER issue also states its previous issue's two recipient settings in this write
+	// (newsletterSendSettings says why); every other email leaves them to HubSpot, as before.
+	isNewsletter := brief.DeliveryType == model.DeliveryNewsletter
+	var sendSettings hubspot.SendSettings
+	var sendSettingsWarning string
+	if isNewsletter {
+		sendSettings, sendSettingsWarning = newsletterSendSettings(ctx, client, cfg.SourceEmailID)
+	}
+	_, reportedSettings, serr := client.SetSendListWithSettings(ctx, email.ID, sendListIDs, suppressionIDs, sendSettings)
+	if serr != nil {
 		// Assigns the NAMED return, not a local: the deferred stampProvenance reads `camp`,
 		// and a local here would leave the named return nil for any later edit that turns this
 		// into a bare `return` or inserts a statement before it.
 		camp = campaignFromHubSpot(ctx, email, cfg, portalID, nil, nil, false)
 		return camp, fmt.Errorf("hubspot email %s cloned but setting its send list failed (verify before retrying): %w", email.ID, serr)
+	}
+	if sendSettingsWarning == "" && !sendSettingsKept(sendSettings, reportedSettings) {
+		slog.WarnContext(ctx, "hubspot answered the send-list write with recipient settings other than the previous issue's",
+			"email_id", email.ID, "source_email_id", cfg.SourceEmailID)
+		sendSettingsWarning = newsletterSendSettingsNotKeptWarning
 	}
 
 	// STEP 3 (mutating, BEST-EFFORT): apply generated copy to the draft via a FULL content
@@ -650,7 +708,43 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		checkedCopy += "\n" + cfg.BodyHTMLB
 	}
 	warnings = append(warnings, surveyCopyWarnings(brief, checkedCopy)...)
-	contentStaged := applyEmailContentWithHero(ctx, client, email.ID, cfg.Subject, cfg.BodyHTML, hostedHeroURL, cfg.HeroLinkURL, cfg.HeroImageAlt, cfg.ButtonText, cfg.ButtonURL, sponsors, cfg.SentByOrg, cfg.PreviewText, layout)
+	if sendSettingsWarning != "" {
+		warnings = append(warnings, sendSettingsWarning)
+	}
+	heroLinkURL, heroImageAlt := cfg.HeroLinkURL, cfg.HeroImageAlt
+	// A NEWSLETTER issue is written into its clone BETWEEN the previous issue's own header and
+	// footer (applyNewsletterContent), not by the full rebuild every other email gets. The rebuild
+	// replaces the whole widget tree and writes the standard Linux Foundation Events footer, which
+	// put LF's social links and "sent by" line under another brand's newsletter and dropped the
+	// brand's own footer module.
+	//
+	// keptChrome says that path ran. tagOnly then limits UTM tagging to the modules this dispatch
+	// wrote: the brand's footer links (its subscription-help form, its social follow links) are
+	// the previous issue's own and are not this send's to rewrite.
+	var contentStaged, keptChrome bool
+	var tagOnly func(widgetKey string) bool
+	if isNewsletter && strings.TrimSpace(cfg.BodyHTML) != "" {
+		staged, newsletterWarnings, ok := applyNewsletterContent(ctx, client, email.ID, cfg)
+		warnings = append(warnings, newsletterWarnings...)
+		if ok {
+			contentStaged, keptChrome, tagOnly = staged, true, isStagedWidgetKey
+		}
+	}
+	if !keptChrome {
+		// The fallback for a newsletter whose clone has no footer to keep, and for a newsletter
+		// staged without copy: the content rebuild replaces the clone's whole widget tree, so the
+		// previous issue's logo header would be dropped. Keep it as the hero: it is already hosted
+		// in HubSpot. Best-effort; a failed read stages the draft without a header.
+		if isNewsletter && hostedHeroURL == "" {
+			if header, found, herr := client.LeadingHeaderImage(ctx, email.ID); herr != nil {
+				slog.WarnContext(ctx, "could not read the newsletter template's header image; the draft is staged without one",
+					"email_id", email.ID, "error", herr)
+			} else if found {
+				hostedHeroURL, heroLinkURL, heroImageAlt = header.Src, header.Link, header.Alt
+			}
+		}
+		contentStaged = applyEmailContentWithHero(ctx, client, email.ID, cfg.Subject, cfg.BodyHTML, hostedHeroURL, heroLinkURL, heroImageAlt, cfg.ButtonText, cfg.ButtonURL, sponsors, cfg.SentByOrg, cfg.PreviewText, layout)
+	}
 
 	// STEP 3B (mutating, BEST-EFFORT, OPT-IN): create a native A/B test variant of the clone and
 	// apply the variant's own copy to it. Ordered AFTER the clone's own content (STEP 3) and
@@ -663,8 +757,14 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// missed optimization, not a failed campaign. It never turns a successful dispatch into an
 	// error, and it never blocks on ABTestEnabled being false (the common case costs nothing).
 	var abVariant *hubspot.Email
-	if cfg.ABTestEnabled {
-		abVariant = createABTestVariantWithHero(ctx, client, email.ID, cloneName, cfg.SubjectB, cfg.BodyHTMLB, hostedHeroURL, cfg.HeroLinkURL, cfg.HeroImageAlt, cfg.ButtonText, cfg.ButtonURL, sponsors, cfg.SentByOrg, cfg.PreviewTextB, layout)
+	switch {
+	case cfg.ABTestEnabled && keptChrome:
+		// The variant's content goes through the full rebuild, which would give variant B the
+		// standard footer the clone was just spared. The newsletter surface offers no A/B control,
+		// so this is a direct request: say so rather than stage a variant under another footer.
+		warnings = append(warnings, "No A/B variant was created: a newsletter issue is staged as a single email that keeps the previous issue's header and footer.")
+	case cfg.ABTestEnabled:
+		abVariant = createABTestVariantWithHero(ctx, client, email.ID, cloneName, cfg.SubjectB, cfg.BodyHTMLB, hostedHeroURL, heroLinkURL, heroImageAlt, cfg.ButtonText, cfg.ButtonURL, sponsors, cfg.SentByOrg, cfg.PreviewTextB, layout)
 	}
 
 	// STEP 4 (mutating, BEST-EFFORT): tag the draft's links with UTM parameters so email
@@ -672,14 +772,24 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// already cloned and pointed at the right audience, so it is a working campaign. An
 	// untagged email is a reporting gap; failing here would turn that gap into a failed send
 	// and leave a configured draft behind anyway.
-	tagEmailLinks(ctx, client, email.ID, cloneName, cfg.UTMCampaign)
+	//
+	// NOT for a newsletter issue, unless the caller named a campaign. The parameters this adds are
+	// the LF Events email convention (utm_source=email, utm_medium=LF-Events), which the warehouse's
+	// channel reporting keys on: applied to a brand's newsletter it would file every click under LF
+	// Events. The brands' own issues carry their own medium where they tag at all (openssf,
+	// pytorch, LFNewsletter), and no rule here can pick it. So a newsletter's links are staged
+	// exactly as the operator wrote them in the notes, tracking parameters included, and an
+	// explicit utmCampaign is still honoured as the deliberate request it is.
+	if !isNewsletter || strings.TrimSpace(cfg.UTMCampaign) != "" {
+		tagEmailLinks(ctx, client, email.ID, cloneName, cfg.UTMCampaign, tagOnly)
+	}
 	if abVariant != nil {
 		// The variant is a DIFFERENT email id with its own link set — tagging the clone above does
 		// not touch it. Untagged variant traffic would be invisible in the warehouse even though
 		// the clone's half of the test reports correctly, which is a worse trap than an untagged
 		// single email: an operator who checks attribution and sees rows assumes both variants are
 		// covered.
-		tagEmailLinks(ctx, client, abVariant.ID, cloneName, cfg.UTMCampaign)
+		tagEmailLinks(ctx, client, abVariant.ID, cloneName, cfg.UTMCampaign, nil)
 	}
 
 	return campaignFromHubSpot(ctx, email, cfg, portalID, abVariant, warnings, contentStaged), nil
@@ -765,15 +875,7 @@ func heroFailureReason(err error) string {
 // campaign result) so a caller that sends the draft without review -- a send workflow -- can
 // refuse one that still holds another campaign's copy.
 func applyEmailContentWithHero(ctx context.Context, client *hubspot.Client, emailID, subject, bodyHTML, hostedHeroURL, heroLinkURL, heroImageAlt, buttonText, buttonURL string, sponsors []hubspot.Sponsor, sentByOrg, previewText string, layout hubspot.EmailLayout) (contentStaged bool) {
-	subjectStaged := false
-	if subject = strings.TrimSpace(subject); subject != "" {
-		if _, err := client.PatchEmailSettings(ctx, emailID, hubspot.EmailSettings{Subject: &subject}); err != nil {
-			slog.WarnContext(ctx, "could not set the generated subject on the email draft; it keeps the template's subject",
-				"email_id", emailID, "error", err)
-		} else {
-			subjectStaged = true
-		}
-	}
+	subjectStaged := patchEmailSubject(ctx, client, emailID, subject)
 
 	bodyHTML = strings.TrimSpace(bodyHTML)
 	hostedHeroURL = strings.TrimSpace(hostedHeroURL)
@@ -879,7 +981,12 @@ func createABTestVariantWithHero(ctx context.Context, client *hubspot.Client, pa
 //
 // campaignUTM is the value configured on the brief's platform config, when set; otherwise the
 // campaign is derived from the deterministic email name.
-func tagEmailLinks(ctx context.Context, client *hubspot.Client, emailID, emailName, campaignUTM string) {
+//
+// only, when set, names the rich-text blocks to tag by widget key; every other block is left
+// exactly as it is. nil tags every block, which is right whenever the whole draft is this
+// dispatch's own content. A newsletter that kept its previous issue's footer passes
+// isStagedWidgetKey, so that footer's links are not rewritten.
+func tagEmailLinks(ctx context.Context, client *hubspot.Client, emailID, emailName, campaignUTM string, only func(widgetKey string) bool) {
 	res := utm.Resolve(campaignUTM, emailName)
 
 	blocks, err := client.GetEmailHTMLWidgets(ctx, emailID)
@@ -887,6 +994,15 @@ func tagEmailLinks(ctx context.Context, client *hubspot.Client, emailID, emailNa
 		slog.WarnContext(ctx, "could not read the email draft to tag its links; the email will send untagged",
 			"email_id", emailID, "error", err)
 		return
+	}
+	if only != nil {
+		own := blocks[:0:0]
+		for _, block := range blocks {
+			if only(block.Key) {
+				own = append(own, block)
+			}
+		}
+		blocks = own
 	}
 
 	// Blocks arrive in the layout's READING ORDER, and the link count is carried across them, so
@@ -1153,13 +1269,32 @@ func hubSpotCreationPortalID(campaign *model.Campaign) string {
 // archived rows. Nothing here can surface them, and `State` could not express their absence
 // even if it tried.
 func (d *HubSpotDispatcher) SearchEmails(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.MarketingEmail, error) {
+	return d.searchEmailsWith(ctx, projectID, platform, func(client *hubspot.Client) ([]hubspot.Email, error) {
+		return client.SearchEmails(ctx, query)
+	})
+}
+
+// SearchEmailsAnyPhrase implements service.EmailPhraseSearcher: the emails whose name or
+// subject contains ANY of phrases as whole words, in one walk (see
+// hubspot.Client.SearchEmailsAnyPhrase). It is the template picker's brand-and-event scope, and
+// it shares SearchEmails' connection resolution, permission tagging and result mapping
+// exactly, so the two answer identically for the same failure.
+func (d *HubSpotDispatcher) SearchEmailsAnyPhrase(ctx context.Context, projectID string, platform model.Provider, phrases []string) ([]model.MarketingEmail, error) {
+	return d.searchEmailsWith(ctx, projectID, platform, func(client *hubspot.Client) ([]hubspot.Email, error) {
+		return client.SearchEmailsAnyPhrase(ctx, phrases)
+	})
+}
+
+// searchEmailsWith is the body SearchEmails and SearchEmailsAnyPhrase share: resolve the
+// connection, run the caller's walk, tag a permission rejection, and map the rows.
+func (d *HubSpotDispatcher) searchEmailsWith(ctx context.Context, projectID string, platform model.Provider, walk func(*hubspot.Client) ([]hubspot.Email, error)) ([]model.MarketingEmail, error) {
 	// WithCreds for the same reason as SearchCampaigns: the permission arm below fires after a
 	// clean resolution, so the origin cannot be re-derived once the status is visible.
 	client, res, err := d.resolveHubSpotClientWithCreds(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}
-	emails, err := client.SearchEmails(ctx, query)
+	emails, err := walk(client)
 	if err != nil {
 		// A 401/403 is tagged HERE, where the status is still visible -- the same treatment
 		// SearchCampaigns gives it, and for the same reason. Wrapped bare, it reached

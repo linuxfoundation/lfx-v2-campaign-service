@@ -16618,6 +16618,9 @@ func EncodeListHubspotEmailsRequest(encoder func(*http.Request) goahttp.Encoder)
 		if p.Q != nil {
 			values.Add("q", *p.Q)
 		}
+		for _, value := range p.Match {
+			values.Add("match", value)
+		}
 		req.URL.RawQuery = values.Encode()
 		return nil
 	}

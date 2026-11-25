@@ -301,8 +301,11 @@ spec:
           - path: /projects/:projectId/audience-builder/capabilities
           - path: /projects/:projectId/audience-builder/discover
           - path: /projects/:projectId/audience-builder/lists/search
+          - path: /projects/:projectId/audience-builder/lists/describe
           - path: /projects/:projectId/audience-builder/suppression-lists
           - path: /projects/:projectId/audience-builder/last-sent
+          - path: /projects/:projectId/audience-builder/brand-newsletters
+          - path: /projects/:projectId/audience-builder/newsletter-brands
           - path: /projects/:projectId/audience-builder/existing-master-lists
           - path: /projects/:projectId/audience-builder/preview-count
           - path: /projects/:projectId/audience-builder/compose-master

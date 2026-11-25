@@ -17726,10 +17726,11 @@ func NewListRedditAdsAccountsPayload(projectID string, bearerToken *string) *lfx
 
 // NewListHubspotEmailsPayload builds a lfx-v2-campaign-service-connections
 // service list-hubspot-emails endpoint payload.
-func NewListHubspotEmailsPayload(projectID string, q *string, bearerToken *string) *lfxv2campaignserviceconnections.ListHubspotEmailsPayload {
+func NewListHubspotEmailsPayload(projectID string, q *string, match []string, bearerToken *string) *lfxv2campaignserviceconnections.ListHubspotEmailsPayload {
 	v := &lfxv2campaignserviceconnections.ListHubspotEmailsPayload{}
 	v.ProjectID = projectID
 	v.Q = q
+	v.Match = match
 	v.BearerToken = bearerToken
 
 	return v

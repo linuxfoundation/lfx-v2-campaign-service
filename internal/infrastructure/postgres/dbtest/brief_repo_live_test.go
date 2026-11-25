@@ -1088,3 +1088,45 @@ func TestLivePairCheckMatchesSurveyStageNames(t *testing.T) {
 			got, emailstage.SurveyNames())
 	}
 }
+
+// TestLivePairCheckMatchesNewsletterStageNames is the newsletter arm's copy of the survey test
+// above, added with 000059. The arm holds one stage, which Postgres renders as a plain equality
+// rather than an ARRAY, so this reads the arm up to the next `OR` rather than the next ARRAY.
+func TestLivePairCheckMatchesNewsletterStageNames(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+
+	var def string
+	err := pool.QueryRow(ctx,
+		`SELECT pg_get_constraintdef(oid) FROM pg_constraint
+		 WHERE conname = 'campaign_briefs_delivery_stage_pair_valid'`).Scan(&def)
+	if err != nil {
+		t.Fatalf("read the pair constraint from the live schema: %v", err)
+	}
+
+	marker := strings.Index(def, "'newsletter'::text")
+	if marker < 0 {
+		t.Fatalf("the live pair CHECK has no newsletter arm: migration 000059 has not run against "+
+			"this database, so every newsletter brief fails its write as a 500 while the API enum "+
+			"accepts it. constraint: %s", def)
+	}
+	arm := def[marker:]
+	if end := strings.Index(arm, " OR "); end >= 0 {
+		arm = arm[:end]
+	}
+	// The first quoted value is the delivery type itself; the rest are the arm's stages.
+	inSchema := regexp.MustCompile(`'([^']*)'`).FindAllStringSubmatch(arm, -1)
+	var got []string
+	for _, m := range inSchema[1:] {
+		got = append(got, m[1])
+	}
+	want := emailstage.NewsletterNames()
+	if len(got) != len(want) {
+		t.Fatalf("the live pair CHECK's newsletter arm names stages %v, want %v. constraint: %s", got, want, def)
+	}
+	for _, stage := range want {
+		if !strings.Contains(arm, "'"+stage+"'") {
+			t.Errorf("the live pair CHECK's newsletter arm omits %q. constraint: %s", stage, def)
+		}
+	}
+}

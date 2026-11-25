@@ -115,24 +115,7 @@ func (r *EmailReferenceSource) BuildReferenceBlock(ctx context.Context, projectI
 		candidates = candidates[:referenceCandidateLimit]
 	}
 
-	type excerpt struct {
-		subject string
-		text    string
-	}
-	excerpts := make([]excerpt, 0, len(candidates))
-	for _, e := range candidates {
-		blocks, berr := client.GetEmailHTMLWidgets(ctx, e.ID)
-		if berr != nil {
-			slog.DebugContext(ctx, "email reference lookup: skipping one candidate",
-				"project_id", projectID, "email_id", e.ID, "error", berr)
-			continue
-		}
-		text := plainTextFromBlocks(blocks)
-		if text == "" {
-			continue
-		}
-		excerpts = append(excerpts, excerpt{subject: e.Subject, text: text})
-	}
+	excerpts := referenceExcerpts(ctx, client, projectID, candidates)
 	if len(excerpts) == 0 {
 		return ""
 	}
@@ -146,7 +129,93 @@ func (r *EmailReferenceSource) BuildReferenceBlock(ctx context.Context, projectI
 			primary = i
 		}
 	}
+	return renderReferenceBlock(excerpts, primary)
+}
 
+// BuildReferenceBlockFromIDs is BuildReferenceBlock over emails the OPERATOR chose, in their
+// order: the first readable one is the primary structural template, whatever its length, because
+// on the newsletter surface it is the issue the new one is cloned from. At most
+// referenceCandidateLimit ids are read; blank and repeated ids are skipped.
+//
+// It is allowed on the shared LF connection, unlike BuildReferenceBlock, because the reason that
+// one refuses does not apply. BuildReferenceBlock searches the WHOLE portal and so would pull
+// other projects' emails in unasked. These ids were picked by name from the brand-newsletter or
+// template listing, which show the same shared portal's emails to every project already; reading
+// the ones a person chose is not a portal-wide sweep.
+//
+// Best-effort like BuildReferenceBlock: every failure yields "" or skips the one email.
+func (r *EmailReferenceSource) BuildReferenceBlockFromIDs(ctx context.Context, projectID string, ids []string) string {
+	wanted := make([]string, 0, referenceCandidateLimit)
+	seen := map[string]struct{}{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		wanted = append(wanted, id)
+		if len(wanted) == referenceCandidateLimit {
+			break
+		}
+	}
+	if len(wanted) == 0 {
+		return ""
+	}
+	client, _, err := r.resolveClient(ctx, projectID)
+	if err != nil {
+		slog.DebugContext(ctx, "chosen email reference lookup skipped: could not resolve a hubspot client",
+			"project_id", projectID, "error", err)
+		return ""
+	}
+	candidates := make([]hubspot.Email, 0, len(wanted))
+	for _, id := range wanted {
+		e, gerr := client.GetEmail(ctx, id)
+		if gerr != nil {
+			slog.DebugContext(ctx, "chosen email reference lookup: skipping one email",
+				"project_id", projectID, "email_id", id, "error", gerr)
+			continue
+		}
+		candidates = append(candidates, *e)
+	}
+	excerpts := referenceExcerpts(ctx, client, projectID, candidates)
+	if len(excerpts) == 0 {
+		return ""
+	}
+	return renderReferenceBlock(excerpts, 0)
+}
+
+// referenceExcerpt is one reference email's subject and extracted plain text.
+type referenceExcerpt struct {
+	subject string
+	text    string
+}
+
+// referenceExcerpts reads each candidate's body as plain text, in order, skipping any that fail
+// or carry no text.
+func referenceExcerpts(ctx context.Context, client *hubspot.Client, projectID string, candidates []hubspot.Email) []referenceExcerpt {
+	excerpts := make([]referenceExcerpt, 0, len(candidates))
+	for _, e := range candidates {
+		blocks, berr := client.GetEmailHTMLWidgets(ctx, e.ID)
+		if berr != nil {
+			slog.DebugContext(ctx, "email reference lookup: skipping one candidate",
+				"project_id", projectID, "email_id", e.ID, "error", berr)
+			continue
+		}
+		text := plainTextFromBlocks(blocks)
+		if text == "" {
+			continue
+		}
+		excerpts = append(excerpts, referenceExcerpt{subject: e.Subject, text: text})
+	}
+	return excerpts
+}
+
+// renderReferenceBlock lays out the primary template and the style corpus, bounded by
+// maxReferenceBlockRunes.
+func renderReferenceBlock(excerpts []referenceExcerpt, primary int) string {
 	var b strings.Builder
 	b.WriteString("Primary structural template (subject: \"")
 	b.WriteString(excerpts[primary].subject)

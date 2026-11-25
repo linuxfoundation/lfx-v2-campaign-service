@@ -49,10 +49,10 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    RuleSet and the regex ever disagree, in either direction —
    `briefs` [+ nested campaigns], `jobs`, `google-ads/keywords|audience|campaign-ref|geo-targets`, `microsoft-ads/keywords|audience|campaign-ref` (LFXV2-2665), `(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience` and `reddit-ads/keywords` (LFXV2-2665), `(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref` (LFXV2-2665), `hubspot`, the single-path siblings of `briefs` (`fetch-event-url`, and `send-workflows`
    for a survey send series, each its own entry because `/briefs/**` does not cover a sibling),
-   and the thirteen
+   and the sixteen
    `audience-builder/*` leaves). The audience-builder family (LFXV2-2770) is enumerated
-   entry by entry rather than covered by an `audience-builder/**` wildcard: five of its
-   leaves are two segments deep (`lists/search`, `qa/run`, `custom/interpret`,
+   entry by entry rather than covered by an `audience-builder/**` wildcard: six of its
+   leaves are two segments deep (`lists/search`, `lists/describe`, `qa/run`, `custom/interpret`,
    `custom/preview`, `custom/create`) so a single-segment capture
    would miss them, and `compose-master` and `custom/create` write real contact lists into a
    production HubSpot portal and are not idempotent, so a `**` that also authorized the bare base and

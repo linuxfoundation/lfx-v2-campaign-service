@@ -38,6 +38,14 @@ type Client struct {
 	// get-audience-last-sent endpoint.
 	GetAudienceLastSentDoer goahttp.Doer
 
+	// GetAudienceNewsletterBrands Doer is the HTTP client used to make requests to
+	// the get-audience-newsletter-brands endpoint.
+	GetAudienceNewsletterBrandsDoer goahttp.Doer
+
+	// GetAudienceBrandNewsletters Doer is the HTTP client used to make requests to
+	// the get-audience-brand-newsletters endpoint.
+	GetAudienceBrandNewslettersDoer goahttp.Doer
+
 	// GetExistingAudienceMasterLists Doer is the HTTP client used to make requests
 	// to the get-existing-audience-master-lists endpoint.
 	GetExistingAudienceMasterListsDoer goahttp.Doer
@@ -45,6 +53,10 @@ type Client struct {
 	// PreviewAudienceCount Doer is the HTTP client used to make requests to the
 	// preview-audience-count endpoint.
 	PreviewAudienceCountDoer goahttp.Doer
+
+	// DescribeAudienceLists Doer is the HTTP client used to make requests to the
+	// describe-audience-lists endpoint.
+	DescribeAudienceListsDoer goahttp.Doer
 
 	// ComposeAudienceMaster Doer is the HTTP client used to make requests to the
 	// compose-audience-master endpoint.
@@ -96,8 +108,11 @@ func NewClient(
 		SearchAudienceListsDoer:            doer,
 		GetAudienceSuppressionListsDoer:    doer,
 		GetAudienceLastSentDoer:            doer,
+		GetAudienceNewsletterBrandsDoer:    doer,
+		GetAudienceBrandNewslettersDoer:    doer,
 		GetExistingAudienceMasterListsDoer: doer,
 		PreviewAudienceCountDoer:           doer,
+		DescribeAudienceListsDoer:          doer,
 		ComposeAudienceMasterDoer:          doer,
 		AttachExistingAudienceDoer:         doer,
 		RunAudienceQaDoer:                  doer,
@@ -237,6 +252,56 @@ func (c *Client) GetAudienceLastSent() goa.Endpoint {
 	}
 }
 
+// GetAudienceNewsletterBrands returns an endpoint that makes HTTP requests to
+// the lfx-v2-campaign-service-audience-builder service
+// get-audience-newsletter-brands server.
+func (c *Client) GetAudienceNewsletterBrands() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeGetAudienceNewsletterBrandsRequest(c.encoder)
+		decodeResponse = DecodeGetAudienceNewsletterBrandsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildGetAudienceNewsletterBrandsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.GetAudienceNewsletterBrandsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-audience-builder", "get-audience-newsletter-brands", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// GetAudienceBrandNewsletters returns an endpoint that makes HTTP requests to
+// the lfx-v2-campaign-service-audience-builder service
+// get-audience-brand-newsletters server.
+func (c *Client) GetAudienceBrandNewsletters() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeGetAudienceBrandNewslettersRequest(c.encoder)
+		decodeResponse = DecodeGetAudienceBrandNewslettersResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildGetAudienceBrandNewslettersRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.GetAudienceBrandNewslettersDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-audience-builder", "get-audience-brand-newsletters", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
 // GetExistingAudienceMasterLists returns an endpoint that makes HTTP requests
 // to the lfx-v2-campaign-service-audience-builder service
 // get-existing-audience-master-lists server.
@@ -282,6 +347,31 @@ func (c *Client) PreviewAudienceCount() goa.Endpoint {
 		resp, err := c.PreviewAudienceCountDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-audience-builder", "preview-audience-count", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// DescribeAudienceLists returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-audience-builder service describe-audience-lists
+// server.
+func (c *Client) DescribeAudienceLists() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeDescribeAudienceListsRequest(c.encoder)
+		decodeResponse = DecodeDescribeAudienceListsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildDescribeAudienceListsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.DescribeAudienceListsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-audience-builder", "describe-audience-lists", err)
 		}
 		return decodeResponse(resp)
 	}

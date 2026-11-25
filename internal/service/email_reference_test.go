@@ -424,3 +424,72 @@ func (nilConnReader) Get(context.Context, string, model.Provider) (*model.Connec
 func (nilConnReader) Disconnected(context.Context, string, model.Provider) (bool, error) {
 	return false, nil
 }
+
+// chosenEmailServer answers GetEmail (GET /marketing/v3/emails/{id}) from subjects and
+// GetEmailHTMLWidgets (GET .../{id}/draft) from drafts; an id in neither is a 404.
+func chosenEmailServer(t *testing.T, subjects map[string]string, drafts map[string][]string) *httptest.Server {
+	t.Helper()
+	draftSrv := emailDraftServer(t, `{"results":[]}`, drafts)
+	t.Cleanup(draftSrv.Close)
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/draft") {
+			draftSrv.Config.Handler.ServeHTTP(w, r)
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/marketing/v3/emails/")
+		subject, ok := subjects[id]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"not found"}`))
+			return
+		}
+		_, _ = w.Write([]byte(mustMarshalJSON(t, map[string]string{"id": id, "subject": subject, "state": "PUBLISHED"})))
+	}))
+}
+
+// TestBuildReferenceBlockFromIDs_FirstChosenIsTheTemplate pins the newsletter surface's rule: the
+// first chosen email is the structural template even when a later one is longer, because it is
+// the issue the new one is cloned from. Unreadable and repeated ids are skipped.
+func TestBuildReferenceBlockFromIDs_FirstChosenIsTheTemplate(t *testing.T) {
+	srv := chosenEmailServer(t,
+		map[string]string{"10": "October issue", "9": "September issue"},
+		map[string][]string{
+			"10": {"Short October lead"},
+			"9":  {"A much longer September issue with many items and links to read"},
+		},
+	)
+	defer srv.Close()
+
+	src := NewEmailReferenceSource(
+		fakeConnReader{byProject: map[string]*model.Connection{"proj-1": activeConn(t, "tok")}},
+		identityEncryptor{},
+		hubspot.WithBaseURL(srv.URL),
+	)
+	got := src.BuildReferenceBlockFromIDs(context.Background(), "proj-1", []string{"10", " ", "10", "missing", "9"})
+	if !strings.Contains(got, `subject: "October issue"`) {
+		t.Fatalf("the first chosen email must be the primary template, got: %s", got)
+	}
+	if !strings.Contains(got, "A much longer September issue") {
+		t.Errorf("the second chosen email must be in the style samples, got: %s", got)
+	}
+}
+
+// TestBuildReferenceBlockFromIDs_ReadsChosenEmailsOnTheSharedConnection pins the deliberate
+// difference from BuildReferenceBlock: chosen ids are read on the shared LF connection, because
+// they are not a portal-wide sweep.
+func TestBuildReferenceBlockFromIDs_ReadsChosenEmailsOnTheSharedConnection(t *testing.T) {
+	srv := chosenEmailServer(t, map[string]string{"7": "Brand newsletter"}, map[string][]string{"7": {"Issue body"}})
+	defer srv.Close()
+
+	src := NewEmailReferenceSource(
+		fakeConnReader{byProject: map[string]*model.Connection{model.SystemProjectID: activeConn(t, "system-tok")}},
+		identityEncryptor{},
+		hubspot.WithBaseURL(srv.URL),
+	)
+	if got := src.BuildReferenceBlockFromIDs(context.Background(), "proj-no-own-connection", []string{"7"}); !strings.Contains(got, "Issue body") {
+		t.Errorf("a chosen email on the shared connection was not read: %q", got)
+	}
+	if got := src.BuildReferenceBlockFromIDs(context.Background(), "proj-1", nil); got != "" {
+		t.Errorf("no ids must yield an empty block, got %q", got)
+	}
+}

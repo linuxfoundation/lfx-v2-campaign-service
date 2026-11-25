@@ -3232,6 +3232,22 @@ result, so there is no row to carry a state. Anyone looking for one will not fin
 the endpoint has no way to say why — which is the honest limit of this contract rather than
 something `state` can express.
 
+**Phrase search (2026-11-25).** `SearchEmailsAnyPhrase` implements `service.EmailPhraseSearcher`
+over `hubspot.Client.SearchEmailsAnyPhrase`: the template picker's brand-and-event scope, any of
+several whole-word phrases in one walk. It shares `SearchEmails`' body (`searchEmailsWith`), so
+connection resolution, the permission tag and the row mapping are identical by construction.
+
+**List descriptions (`audience_describe.go`, 2026-11-25).** `AudienceExplorer.DescribeLists` reads
+each requested list with its filters and renders it through `audience.DescribeList`. It names what
+the rules reference within per-request budgets (`describeListNameBudget` 20 referenced-list names
+via `listName`, `describePropertyBudget` 20 contact properties via `GetContactProperty`, and one
+`ListEventDefinitions` read only when an event type outside `audience.KnownEventLabels` is
+referenced, and one `SubscriptionDefinitionNames` read only when a rule filters on subscription
+status); past a budget, or when a lookup fails, a rule renders with an id instead. A list that 404s is described as
+`not_found` and any other read failure as `unreadable`, without failing the batch; the call
+returns an error only when NO list could be read and a failure was not a 404, because then the
+answer is about the connection.
+
 ## Channel kinds: paid ads vs email
 
 `model.ChannelKind` classifies each provider as **`paid-ads`** or **`email`** (`Provider.Kind()`,
@@ -3323,6 +3339,64 @@ Widget identity is the **presence of the `body.html` key**, not a non-empty valu
 divider module decodes into the same body struct with an empty HTML string, so counting
 object-bodied modules made the ordinary template — one rich-text block plus a header image —
 report two widgets and decline the write.
+
+### A newsletter issue keeps its previous issue's header and footer
+
+A `newsletter` brief does not get the full rebuild. Its clone source is the brand's previous
+issue, and the rebuild replaces the whole widget tree and writes the standard Linux Foundation
+Events footer, so another brand's newsletter came out with LF's social links, LF's "sent by" line
+and the stock footer module in place of its own. `applyNewsletterContent`
+(`hubspot_newsletter.go`) writes the issue with `hubspot.Client.ReplaceEmailBodyKeepingChrome`
+instead, which keeps the header and the footer run and replaces only what sits between them.
+
+Five things follow from that, each decided in `Dispatch`:
+
+- **No footer to keep is a fallback, said out loud.** When the clone places neither a social nor a
+  footer module, the replace returns `hubspot.ErrNoBrandChrome` having written nothing, the issue
+  is applied by the full rebuild (the leading header image re-used as the hero, as before), and the
+  job result carries a warning that the draft has the standard footer.
+- **A kept header that looks issue-specific is a warning, never a drop.** `headerLooksIssueSpecific`
+  flags a header image whose alt text, file name or link names a month or a year (a monthly banner
+  linking to that month's post). The image is kept either way: a wrong guess must not remove a
+  brand's logo. HubSpot's own upload timestamp in a file name is not counted as a date.
+- **Links are staged as written.** `tagEmailLinks` is skipped for a newsletter unless the config
+  names a `utmCampaign`. The parameters it adds are the LF Events convention
+  (`utm_medium=LF-Events`), which the warehouse's channel reporting keys on; applied to a brand's
+  newsletter it would file its clicks under LF Events. With a named campaign it tags only the
+  modules this dispatch wrote (`isStagedWidgetKey`), never the kept footer's links.
+- **No A/B variant.** A variant's content goes through the full rebuild, so a request for one on
+  a newsletter that kept its footer is declined with a warning rather than staged under another.
+- **The previous issue's recipient settings are stated, not left to HubSpot.** Beside its lists
+  an email keeps two settings: "Don't send to unengaged contacts" (`to.suppressGraymail`) and the
+  send-frequency cap (`to.limitSendFrequency`). A clone starts with HubSpot's default for the
+  first (on), and the send-list write is a complete `to` object, so every staged draft had it on.
+  Each of the five brand newsletters read in the LF portal on 2026-11-25 was sent with it OFF: the
+  next issue, on the same lists, would have reached fewer subscribers than the one before, with
+  nothing on the page to say so. `newsletterSendSettings` reads the two from the issue being
+  cloned (`hubspot.Client.GetEmailSendSettings`) and `Dispatch` writes them in the same PATCH as
+  the lists (`SetSendListWithSettings`). A setting the previous issue does not report is not
+  written. Best-effort, with a warning in the job result in two cases: the read failed (the draft
+  is staged on HubSpot's defaults), or HubSpot's answer to the write reports a different value
+  than the one stated (`sendSettingsKept`). Every other email leaves both to HubSpot, as before:
+  its template is some earlier send, not a statement about this one.
+
+A newsletter staged WITHOUT copy still takes the old path, and the UI does not allow it: the clone
+would be last issue's newsletter under this issue's name.
+
+Tests: `hubspot_newsletter_test.go` (the kept layout, the event-email control, the fallback, the
+header warning, the A/B refusal, the link tagging in both directions, and the recipient settings:
+kept, not invented, the event-email control, the unreadable read, the answer that disagrees).
+
+### Which sent emails are a brand's newsletter issues
+
+`BrandNewsletters` and `NewsletterBrands` (`audience_newsletters.go`) count an email only when
+`isSentIssue` holds: LastSent's gates (a state that means it went out, not a future send), and
+neither of the two other things the LF portal also names "newsletter". An AUTOMATED email is a
+sign-up form's follow-up ("... - Newsletter Form - Thank You"); two of them listed "LF Standards"
+and "Zephyr" as newsletter brands, and such an email has no send list to reuse. A send whose own
+name marks it as a test, in brackets ("(Marketing Ops Test)", "[TEST]"), was published to a test
+list; as a brand's latest issue it would have made that list the next issue's audience. "A/B test"
+outside brackets is a real issue and still counts. Test: `audience_newsletters_issue_test.go`.
 
 ### A/B test pre-check (`PreflightCreate`)
 
@@ -4659,6 +4733,24 @@ default is the safe direction for a non-idempotent write, and
 `TestHubSpot_CreateCampaignTagsDomainSentinels` pins it with a 500 case — because a translation
 that silently stopped happening would leave the service's own tests passing against sentinels
 nothing produces.
+
+## HubSpot: is a staged draft still there? (`UpstreamGone`)
+
+`HubSpotDispatcher` implements `service.UpstreamPresenceChecker`, which the orchestrator asks
+before it reuses a completed HubSpot email row (see `internal-service.md`, "A reused campaign whose
+upstream object is gone"). A HubSpot slot takes no new version, so without it a draft deleted in
+HubSpot was reused by every later Stage and the brief could never stage another.
+
+`UpstreamGone` is `(true, nil)` only for a definite 404 on `GET /marketing/v3/emails/{id}`, read
+in the portal the email was CREATED in. The id is a bare number that means nothing outside its
+portal, so it applies the same provenance guard as `ReadMetrics`, and refuses before the read: a
+row whose Result records no `portalId` (`ErrCampaignProvenanceUnknown`), and a token that now
+authenticates into another portal (`ErrCampaignAccountMismatch`). A 404 there would say "not in
+this portal", not "deleted". Every other answer (a refusal, a 5xx, an unreadable connection) is
+an error, which keeps the reuse. A row with no `PlatformCampaignID` never reached HubSpot, so it is
+`(false, nil)` without a request. The capability is asserted at compile time in
+`hubspot_upstream_gone_test.go`, because a signature drift would otherwise make the orchestrator's
+type assertion fail silently and bring the bug back.
 
 ## Microsoft keyword levers (LFXV2-2665)
 

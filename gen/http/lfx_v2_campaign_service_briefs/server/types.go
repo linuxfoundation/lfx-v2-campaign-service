@@ -11940,13 +11940,13 @@ func ValidateBriefInputRequestBody(body *BriefInputRequestBody) (err error) {
 		}
 	}
 	if body.DeliveryType != nil {
-		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email" || *body.DeliveryType == "survey") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email", "survey"}))
+		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email" || *body.DeliveryType == "survey" || *body.DeliveryType == "newsletter") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email", "survey", "newsletter"}))
 		}
 	}
 	if body.Stage != nil {
-		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Survey Reminder" || *body.Stage == "Survey Closing" || *body.Stage == "Report Promo") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo"}))
+		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Survey Reminder" || *body.Stage == "Survey Closing" || *body.Stage == "Report Promo" || *body.Stage == "Newsletter") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo", "Newsletter"}))
 		}
 	}
 	return
@@ -11972,13 +11972,13 @@ func validateBriefInputRequestBody(body *BriefInputRequestBody, path string) (er
 		}
 	}
 	if body.DeliveryType != nil {
-		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email" || *body.DeliveryType == "survey") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".delivery_type", *body.DeliveryType, []any{"paid-marketing", "email", "survey"}))
+		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email" || *body.DeliveryType == "survey" || *body.DeliveryType == "newsletter") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".delivery_type", *body.DeliveryType, []any{"paid-marketing", "email", "survey", "newsletter"}))
 		}
 	}
 	if body.Stage != nil {
-		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Survey Reminder" || *body.Stage == "Survey Closing" || *body.Stage == "Report Promo") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo"}))
+		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Survey Reminder" || *body.Stage == "Survey Closing" || *body.Stage == "Report Promo" || *body.Stage == "Newsletter") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo", "Newsletter"}))
 		}
 	}
 	return
