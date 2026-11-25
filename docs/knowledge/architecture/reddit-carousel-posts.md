@@ -37,7 +37,7 @@ The same legacy `POST /profiles/{account}/posts` the image and video paths use
 {"data": {"type": "CAROUSEL", "headline": "...", "allow_comments": false,
           "content": [{"media_url": "<signed image URL>", "caption": "<card headline>",
                        "call_to_action": "Sign Up",
-                       "destination_url": "<card destinationUrl + the post's UTM parameters>"}, ...]}}
+                       "destination_url": "<card destinationUrl + UTM, utm_content=card-<k>>"}, ...]}}
 ```
 
 From `components_schema_post`: `media_url` is "required for image, video and carousel posts",
@@ -45,8 +45,11 @@ From `components_schema_post`: `media_url` is "required for image, video and car
 caption" with `maxLength` 180, which is the card headline's limit here. The schema allows up to
 40 content entries; 2 to 6 is Reddit's carousel ad specification and the range #661 asks for. No
 `thumbnail_url` is sent (the schema requires it only for video). The post headline and the CTA
-follow the image post's rules, and each card's destination gets the same UTM parameters as the
-registration URL (`buildRedditUTMURLFrom`, `utm_content=variant-1`). A carousel create is one
+follow the image post's rules. Each card's destination gets the post's UTM parameters with
+`utm_content=card-<k>`, the card's 1-based position (`carouselCardUTM`), so a registration
+attributes to the card that drove it. A carousel is one post, so the post-level `variant-1` would
+say nothing; the plain `card-<k>` form was chosen on 2026-11-25 (owner decision) after checking
+that nothing in this service, the LFX One BFF or lf-dbt parses the `variant-` prefix. A carousel create is one
 post and one ad: while `REDDIT_AD_PER_VARIANT_ENABLED` is on, a carousel with two or more
 variants is a 400. The structured-post endpoint's `CarouselCreative` is the other documented
 shape; it is not used, as for images and video.

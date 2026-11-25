@@ -3442,15 +3442,15 @@ func redditUTMParams(in CampaignInput, variantIndex int) map[string]string {
 
 // buildRedditUTMURL mirrors buildRedditUtmUrl.
 func buildRedditUTMURL(in CampaignInput, variantIndex int) string {
-	return buildRedditUTMURLFrom(in.RegistrationURL, in, variantIndex)
+	return buildRedditUTMURLFrom(in.RegistrationURL, redditUTMParams(in, variantIndex))
 }
 
-// buildRedditUTMURLFrom is buildRedditUTMURL for any destination: a carousel card's own
-// destinationUrl (#661) gets the same UTM parameters as the registration URL.
-func buildRedditUTMURLFrom(rawBase string, in CampaignInput, variantIndex int) string {
+// buildRedditUTMURLFrom is buildRedditUTMURL for any destination and UTM set: a carousel card's
+// own destinationUrl (#661) gets the post's UTM parameters with a per-card utm_content
+// (carouselCardUTM).
+func buildRedditUTMURLFrom(rawBase string, utm map[string]string) string {
 	// TrimSpace mirrors validateRegistrationURL, which accepts padded input.
 	base := strings.TrimSpace(rawBase)
-	utm := redditUTMParams(in, variantIndex)
 
 	// Parse FIRST, then trim a trailing slash from the PATH only. Trimming the
 	// raw URL string would corrupt a value like .../reg?next=/ (dropping the

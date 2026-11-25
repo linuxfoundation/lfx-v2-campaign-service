@@ -405,7 +405,8 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 		"with 400 \"invalid campaign config: redditConfig.variants...: ...\" before any job exists. "+
 		"REDDIT CAROUSEL (#661): redditConfig.carouselCards is 2 to 6 cards, each {imageAssetId (a stored "+
 		"PNG or JPEG of this brief), headline (at most 180 characters, the card's caption), destinationUrl "+
-		"(an absolute http or https URL, sent with the post's UTM parameters)}, authored as one CAROUSEL "+
+		"(an absolute http or https URL, sent with the post's UTM parameters and utm_content=card-<k>, the "+
+		"card's 1-based position)}, authored as one CAROUSEL "+
 		"post and one ad whose images Reddit fetches from short-lived signed URLs. Never with postUrl, "+
 		"imageUrl, imageAssetId, videoAssetId or thumbnailAssetId, nor with two or more variants while "+
 		"REDDIT_AD_PER_VARIANT_ENABLED is on. OFF unless REDDIT_CAROUSEL_ENABLED is exactly \"true\": the "+

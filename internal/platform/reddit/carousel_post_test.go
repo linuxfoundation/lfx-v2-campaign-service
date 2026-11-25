@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -81,7 +82,8 @@ func TestCreateCampaign_AuthorsACarouselPost(t *testing.T) {
 			t.Fatalf("card %d = %v, want its headline as caption and the Buy Tickets CTA", i+1, item)
 		}
 		dest, _ := item["destination_url"].(string)
-		if !strings.HasPrefix(dest, fmt.Sprintf("https://events.example.org/s%d?", i+1)) || !strings.Contains(dest, "utm_source=reddit") {
+		if !strings.HasPrefix(dest, fmt.Sprintf("https://events.example.org/s%d?", i+1)) || !strings.Contains(dest, "utm_source=reddit") ||
+			!strings.Contains(dest, fmt.Sprintf("utm_content=card-%d", i+1)) {
 			t.Fatalf("card %d destination_url = %q, want the card URL with the UTM parameters", i+1, dest)
 		}
 	}
@@ -206,6 +208,55 @@ func TestCreateCampaign_CarouselInputsRefusedBeforeAnyMutation(t *testing.T) {
 			}
 			if msg := err.Error(); strings.Contains(msg, "sig=") || strings.Contains(msg, "%zz") || strings.Contains(msg, "éé") {
 				t.Fatalf("error echoes caller input: %v", err)
+			}
+		})
+	}
+}
+
+// TestCarouselCardDestinations_TagEachCard pins #661's attribution decision: every card's
+// destination carries the post's UTM parameters with utm_content=card-<k> (1-based), never the
+// post-level variant-1, and keeps the card's own path, query and fragment.
+func TestCarouselCardDestinations_TagEachCard(t *testing.T) {
+	cases := []struct {
+		name, dest, wantPrefix, wantKeep string
+	}{
+		{"plain", "https://events.example.org/speakers/a", "https://events.example.org/speakers/a?", ""},
+		{"existing query kept", "https://events.example.org/s?track=ai", "https://events.example.org/s?", "track=ai"},
+		{"fragment stays last", "https://events.example.org/s#tickets", "https://events.example.org/s?", "#tickets"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := lateSourceInput()
+			in.CarouselCards = make([]CarouselCard, 4)
+			for i := range in.CarouselCards {
+				in.CarouselCards[i] = CarouselCard{
+					ImageURLSource: func(context.Context) (string, error) { return lateThumb, nil },
+					Headline:       "Card",
+					DestinationURL: tc.dest,
+				}
+			}
+			cards, err := resolveCarouselCards(context.Background(), in)
+			if err != nil {
+				t.Fatalf("resolveCarouselCards: %v", err)
+			}
+			for k, c := range cards {
+				u, perr := url.Parse(c.DestinationURL)
+				if perr != nil {
+					t.Fatalf("card %d destination %q does not parse: %v", k+1, c.DestinationURL, perr)
+				}
+				q := u.Query()
+				if got, want := q.Get("utm_content"), fmt.Sprintf("card-%d", k+1); got != want {
+					t.Fatalf("card %d utm_content = %q, want %q", k+1, got, want)
+				}
+				if q.Get("utm_source") != "reddit" || q.Get("utm_medium") != "paid-social" || q.Get("utm_campaign") == "" {
+					t.Fatalf("card %d lost the post's UTM parameters: %q", k+1, c.DestinationURL)
+				}
+				if !strings.HasPrefix(c.DestinationURL, tc.wantPrefix) || (tc.wantKeep != "" && !strings.Contains(c.DestinationURL, tc.wantKeep)) {
+					t.Fatalf("card %d destination = %q, want prefix %q keeping %q", k+1, c.DestinationURL, tc.wantPrefix, tc.wantKeep)
+				}
+				if tc.wantKeep == "#tickets" && !strings.HasSuffix(c.DestinationURL, "#tickets") {
+					t.Fatalf("card %d fragment is not last: %q", k+1, c.DestinationURL)
+				}
 			}
 		})
 	}

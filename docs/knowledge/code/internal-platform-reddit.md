@@ -1195,8 +1195,8 @@ see [Reddit Video Posts](../architecture/reddit-video-posts.md).
 When `CarouselCards` is non-empty, and `PostURL`, `ImageURL`, `ImageURLSource` and the video
 sources are all empty, Step 1.5 authors a **CAROUSEL** post (`carousel.go`): `"type":"CAROUSEL"`
 with one content entry per card (`media_url`, `caption` = the card headline, the post's
-`call_to_action`, and the card's `destination_url` with the UTM parameters, via
-`buildRedditUTMURLFrom`). `validateCarouselInput` checks 2 to 6 cards, each with a source, a
+`call_to_action`, and the card's `destination_url` with the post's UTM parameters and
+`utm_content=card-<k>`, via `carouselCardUTM` and `buildRedditUTMURLFrom`). `validateCarouselInput` checks 2 to 6 cards, each with a source, a
 headline of at most 180 characters and an absolute http(s) destination without userinfo, before any
 request; `resolveCarouselCards` mints every card URL late, in order. Outcomes are the video post's,
 including the partial result after a campaign refusal; the success step reads "Authored promoted

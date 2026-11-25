@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -20,7 +21,8 @@ import (
 // (components_schema_post): each entry's media_url (the card's image, "required for image, video
 // and carousel posts"), caption (the card's headline, "a carousel image's caption", at most 180
 // characters), destination_url ("required for image and carousel posts") and the post's
-// call_to_action. The post's own headline is the image post's.
+// call_to_action. The post's own headline is the image post's. Each card's destination is tagged
+// utm_content=card-<k> (carouselCardUTM).
 //
 // The shape is from Reddit's public v3 OpenAPI document and has NOT been sent to a live account;
 // REDDIT_CAROUSEL_ENABLED keeps it off until a paused probe in a test account confirms it.
@@ -134,7 +136,18 @@ func resolveCarouselCards(ctx context.Context, in CampaignInput) ([]carouselCont
 		if err != nil {
 			return nil, err
 		}
-		out[i] = carouselContent{MediaURL: mediaURL, Caption: h, DestinationURL: buildRedditUTMURLFrom(d, in, 0)}
+		out[i] = carouselContent{MediaURL: mediaURL, Caption: h, DestinationURL: buildRedditUTMURLFrom(d, carouselCardUTM(in, i))}
 	}
 	return out, nil
+}
+
+// carouselCardUTM is the UTM set for card index (0-based): the post's parameters with
+// utm_content=card-<k> (1-based), so a registration attributes to the card that drove it. A
+// carousel is one post, so the post-level variant-1 would say nothing; no consumer in this
+// service, the LFX One BFF or lf-dbt parses the variant- prefix (checked 2026-11-25), so the
+// card tag replaces it rather than extending it.
+func carouselCardUTM(in CampaignInput, index int) map[string]string {
+	utm := redditUTMParams(in, 0)
+	utm["utm_content"] = "card-" + strconv.Itoa(index+1)
+	return utm
 }

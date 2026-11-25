@@ -82,12 +82,18 @@ func TestRedditCarousel_AuthorsACarouselPostFromSignedURLs(t *testing.T) {
 			t.Fatalf("card %d caption = %q", i+1, c.Caption)
 		}
 		if !strings.HasPrefix(c.DestinationURL, fmt.Sprintf("https://events.example.org/s%d?", i+1)) ||
-			!strings.Contains(c.DestinationURL, "token=SECRET") || !strings.Contains(c.DestinationURL, "utm_source=reddit") {
-			t.Fatalf("card %d destination_url = %q, want the card URL with its query and the UTM parameters", i+1, c.DestinationURL)
+			!strings.Contains(c.DestinationURL, "token=SECRET") || !strings.Contains(c.DestinationURL, "utm_source=reddit") ||
+			!strings.Contains(c.DestinationURL, fmt.Sprintf("utm_content=card-%d", i+1)) {
+			t.Fatalf("card %d destination_url = %q, want the card URL with its query, the UTM parameters and utm_content=card-%d", i+1, c.DestinationURL, i+1)
 		}
 	}
 	if strings.Contains(string(camp.ConfigSnapshot), "SECRET") {
 		t.Fatalf("a card destination's query leaked into the snapshot: %s", camp.ConfigSnapshot)
+	}
+	// The snapshot records the caller's card URL (reduced to scheme+host), never the tagged URL
+	// sent to Reddit: the per-card utm_content is derived at send time and is not replayed.
+	if strings.Contains(string(camp.ConfigSnapshot), "utm_content") {
+		t.Fatalf("the snapshot stored a tagged card destination: %s", camp.ConfigSnapshot)
 	}
 	if !strings.Contains(string(camp.ConfigSnapshot), rcCards[2]) {
 		t.Fatalf("snapshot should record the card asset ids, got %s", camp.ConfigSnapshot)
