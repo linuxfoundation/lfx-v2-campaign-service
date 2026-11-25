@@ -104,6 +104,10 @@ type Client struct {
 	// (videos.go). Defaults set in NewClient; WithVideoPolling overrides them.
 	videoPollInterval     time.Duration
 	videoAvailabilityWait time.Duration
+	// documentPollInterval and documentAvailabilityWait bound the Documents API availability
+	// poll (documents.go, #665). Defaults set in NewClient; WithDocumentPolling overrides them.
+	documentPollInterval     time.Duration
+	documentAvailabilityWait time.Duration
 }
 
 // Option customizes a Client.
@@ -204,6 +208,9 @@ func NewClient(creds Credentials, cfg RuntimeConfig, opts ...Option) *Client {
 		imageAvailabilityWait: defaultImageAvailabilityWait,
 		videoPollInterval:     defaultVideoPollInterval,
 		videoAvailabilityWait: defaultVideoAvailabilityWait,
+
+		documentPollInterval:     defaultDocumentPollInterval,
+		documentAvailabilityWait: defaultDocumentAvailabilityWait,
 	}
 	for _, o := range opts {
 		o(c)
@@ -283,11 +290,15 @@ type CampaignInput struct {
 	// MAX_CLICK; a positive value is a manual max CPC under WEBSITE_CONVERSION. The objective and
 	// the campaign name's Objective segment follow the choice. See campaignBidding.
 	ManualCPCBid float64
-	// Objective is the requested objectiveType (#582): "" lets ManualCPCBid decide, as above;
+	// Objective is the requested objectiveType (#582): "" lets ManualCPCBid decide, as above,
+	// except for FormatDocument (#665), where "" becomes ObjectiveEngagement (MAX_REACH, automatic
+	// only) and only ObjectiveEngagement or ObjectiveLeadGeneration is accepted (documentObjective);
+	// ObjectiveEngagement is refused for every other format;
 	// ObjectiveWebsiteVisit is automatic only; ObjectiveWebsiteConversion with ManualCPCBid 0 is
 	// automatic bidding for conversions (MAX_CONVERSION, costType CPM) and requires Conversions,
 	// because LinkedIn will not activate a MAX_CONVERSION campaign without an associated
-	// conversion. See campaignBidding.
+	// conversion; ObjectiveLeadGeneration (#664) is automatic only (MAX_LEAD) and requires LeadGen.
+	// See campaignBidding.
 	Objective string
 	// Images holds the stored image for every ImageAssetID a variant names, keyed by that
 	// id. Each distinct key is uploaded ONCE per CreateCampaign however many variants share it.
@@ -327,6 +338,19 @@ type CampaignInput struct {
 	Format string
 	// TextAds are the Text Ad creatives of a FormatText create; refused under any other format.
 	TextAds []TextAd
+	// CarouselCards and CarouselIntroText are a FormatCarousel create's cards and post commentary
+	// (#665); refused under any other format. Each card's ImageAssetID is a key into Images. See
+	// carousel.go.
+	CarouselCards     []CarouselCard
+	CarouselIntroText string
+	// Document, DocumentAssetID, DocumentTitle and DocumentIntroText are a FormatDocument create's
+	// stored PDF, its asset id (recorded on the result), the post's media title and its
+	// commentary (#665); refused under any other format. A document create's Objective is ""
+	// (ObjectiveEngagement) or ObjectiveLeadGeneration. See documents.go.
+	Document          *DocumentUpload
+	DocumentAssetID   string
+	DocumentTitle     string
+	DocumentIntroText string
 	// JobFunctions replace the default job functions (urn:li:function:8, 13 and 16) in the
 	// profile's own jobFunctions clause (#585). Nil means the default. Not read with Targeting,
 	// which brings its own. CreateCampaign runs ValidateJobFunctions on it before any request.
@@ -336,6 +360,10 @@ type CampaignInput struct {
 	// create has always sent: offsiteDeliveryEnabled false and no audienceExpansionEnabled.
 	// CreateCampaign runs ValidateDeliveryOptions on it before any request. See delivery_options.go.
 	DeliveryOptions DeliveryOptions
+	// LeadGen is a lead generation create's form and button label (#664), with Objective
+	// ObjectiveLeadGeneration; nil otherwise. Every creative carries it as leadgenCallToAction.
+	// CreateCampaign runs ValidateLeadGen on it and reads the form before any POST. See lead_gen.go.
+	LeadGen *LeadGen
 }
 
 // CampaignResult is the outcome of CreateCampaign. Mirrors
@@ -367,6 +395,10 @@ type CampaignResult struct {
 	// Videos API (#586) — including one that then failed to upload or process. Omitted when no
 	// variant named a stored video.
 	VideoURNs map[string]string `json:"videoUrns,omitempty"`
+	// DocumentURNs records, per stored asset id, the urn:li:document this run minted through the
+	// Documents API (#665) — including one that then failed to upload or process. Omitted when the
+	// create named no document.
+	DocumentURNs map[string]string `json:"documentUrns,omitempty"`
 	// BidApplied reports that THIS run created the campaign, which carries the bidding
 	// (LFXV2-2665). A campaign reused by name keeps its existing bidding, so the dispatcher records
 	// the strategy and starting bid only when this is true. Set only on the successful result.
@@ -529,6 +561,12 @@ type responseElement struct {
 	Account                string `json:"account"`
 	ApproximateMemberCount *int64 `json:"approximateMemberCount"`
 	Enabled                *bool  `json:"enabled"`
+	// State and Owner are a Lead Gen Form's (#664): DRAFT, PUBLISHED or ARCHIVED, and the
+	// sponsored account that owns it. See ListLeadForms.
+	State string `json:"state"`
+	Owner *struct {
+		SponsoredAccount string `json:"sponsoredAccount"`
+	} `json:"owner"`
 }
 
 // pathValidRE allow-lists the characters a built request path may contain. `%` is included
@@ -1614,11 +1652,11 @@ func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, n
 		// videos and post the dark posts before LinkedIn refused the first creative. Refused here,
 		// before any upload. An unreported format cannot contradict: a campaign with no creative
 		// yet takes its format from the first one.
-		if el.Format != "" && campaignType == campaignTypeSponsoredUpdates &&
-			(el.Format == campaignFormatSingleVideo) != (campaignFormat == campaignFormatSingleVideo) {
+		// A CAROUSEL campaign (#665) is told apart the same way: it takes only carousel creatives.
+		if el.Format != "" && campaignType == campaignTypeSponsoredUpdates && sponsoredFormatKind(el.Format) != sponsoredFormatKind(campaignFormat) {
 			want := "an image format"
-			if campaignFormat == campaignFormatSingleVideo {
-				want = campaignFormatSingleVideo
+			if campaignFormat != "" {
+				want = campaignFormat
 			}
 			return false, fmt.Errorf("campaign %q already exists in this campaign group with format %s, not %s — aborting rather than reuse it or create a duplicate", el.Name, el.Format, want)
 		}
@@ -1820,6 +1858,7 @@ var preEncodedParams = map[string]struct{}{
 	"campaigns": {}, // listCreativeURNs — the creatives finder's campaign List()
 	"accounts":  {}, // ListAdSegments — the ad segments finder's account List() (#552)
 	"query":     {}, // SearchTargetingEntities — the typeahead text, %20 not "+" (#585)
+	"owner":     {}, // ListLeadForms — the lead form finder's (sponsoredAccount:urn) owner (#664)
 }
 
 // buildRawQuery renders params as a query string, percent-encoding every value
@@ -2342,7 +2381,9 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 	if bidding.objectiveType != "" {
 		body["objectiveType"] = bidding.objectiveType
 	}
-	if format != "" {
+	// A document campaign's format is never sent: LinkedIn documents no campaign format for it and
+	// takes the format from the first creative (#665, documents.go).
+	if format != "" && format != campaignFormatDocument {
 		body["format"] = format
 	}
 	for k, v := range targeting {
@@ -2589,11 +2630,23 @@ func nameToken(s string) string {
 //
 // Unexported by design (see findOrCreateCampaignGroup): accountID is trusted to
 // have passed resolveAccountID in CreateCampaign.
-func (c *Client) createCreative(ctx context.Context, accountID, campaignID, shareURN, adName string) (string, error) {
+func (c *Client) createCreative(ctx context.Context, accountID, campaignID, shareURN, adName string, leadGen *LeadGen) (string, error) {
+	return c.postCreative(ctx, accountID, campaignID, map[string]any{"reference": shareURN}, adName, leadGen)
+}
+
+// postCreative POSTs a DRAFT creative with the given content block — {"reference": <post>} for an
+// article, image, video or carousel post, {"documentAd": {"reference": <post>}} for a document
+// (#665) — and returns its URN. createCreative's contract applies to both.
+func (c *Client) postCreative(ctx context.Context, accountID, campaignID string, content map[string]any, adName string, leadGen *LeadGen) (string, error) {
 	body := map[string]any{
 		"campaign":       "urn:li:sponsoredCampaign:" + campaignID,
 		"intendedStatus": "DRAFT",
-		"content":        map[string]any{"reference": shareURN},
+		"content":        content,
+	}
+	// A lead generation creative's button opens the form (#664). It can be set only while the
+	// creative is DRAFT, which is how every creative here is created.
+	if leadGen != nil {
+		body["leadgenCallToAction"] = leadGen.leadgenCallToAction()
 	}
 	if adName != "" {
 		if len([]rune(adName)) > 255 {
@@ -2642,6 +2695,12 @@ func (c *Client) createCreative(ctx context.Context, accountID, campaignID, shar
 // and it only removes a literal, unencoded trailing "/". Query and fragment are
 // preserved.
 func BuildUTMURL(baseURL, hsToken, campaignName string, variantIndex int) string {
+	return buildUTMURLWithContent(baseURL, hsToken, campaignName, fmt.Sprintf("variant-%d", variantIndex))
+}
+
+// buildUTMURLWithContent is BuildUTMURL with the utm_content value given: "variant-<n>" for a
+// variant, "card-<k>" for a carousel card (#665).
+func buildUTMURLWithContent(baseURL, hsToken, campaignName, content string) string {
 	term := strings.ReplaceAll(campaignName, " | ", "_")
 	term = strings.Join(strings.Fields(term), "-")
 	term = strings.ToLower(term)
@@ -2655,7 +2714,7 @@ func BuildUTMURL(baseURL, hsToken, campaignName string, variantIndex int) string
 		if strings.Contains(baseURL, "?") {
 			sep = "&"
 		}
-		return trimmed + sep + utmValues(hsToken, term, variantIndex).Encode()
+		return trimmed + sep + utmValues(hsToken, term, content).Encode()
 	}
 
 	// Strip one literal trailing slash from the path, mirroring the TS source.
@@ -2671,7 +2730,7 @@ func BuildUTMURL(baseURL, hsToken, campaignName string, variantIndex int) string
 	}
 
 	q := u.Query()
-	for k, vals := range utmValues(hsToken, term, variantIndex) {
+	for k, vals := range utmValues(hsToken, term, content) {
 		for _, val := range vals {
 			q.Set(k, val)
 		}
@@ -2681,7 +2740,7 @@ func BuildUTMURL(baseURL, hsToken, campaignName string, variantIndex int) string
 }
 
 // utmValues builds the LinkedIn UTM query parameters.
-func utmValues(hsToken, term string, variantIndex int) url.Values {
+func utmValues(hsToken, term, content string) url.Values {
 	v := url.Values{}
 	v.Set("utm_source", "linkedin")
 	v.Set("utm_medium", "paid-social")
@@ -2689,7 +2748,7 @@ func utmValues(hsToken, term string, variantIndex int) url.Values {
 		v.Set("utm_campaign", hsToken)
 	}
 	v.Set("utm_term", term)
-	v.Set("utm_content", fmt.Sprintf("variant-%d", variantIndex))
+	v.Set("utm_content", content)
 	return v
 }
 
@@ -2822,9 +2881,16 @@ func (c *Client) validatePrerequisites(accountID, profile string) error {
 // it up front keeps CreateCampaign side-effect-free on invalid input. The URL
 // must parse, be absolute, and use an http/https scheme.
 func validateRegistrationURL(raw string) error {
+	return validateLandingURL(raw, "registration URL")
+}
+
+// validateLandingURL holds validateRegistrationURL's rules for any landing page; what names the
+// URL in each refusal ("registration URL", or a carousel card's destinationUrl, #665), and no
+// refusal quotes the URL.
+func validateLandingURL(raw, what string) error {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return fmt.Errorf("registration URL is required")
+		return fmt.Errorf("%s is required", what)
 	}
 	u, err := url.Parse(trimmed)
 	if err != nil {
@@ -2833,12 +2899,12 @@ func validateRegistrationURL(raw string) error {
 		// userinfo or query string, and this error is logged/persisted. Report a
 		// generic message. Mirrors the Reddit client (validateRegistrationURL), which
 		// never surfaces the raw URL.
-		return fmt.Errorf("registration URL is not a valid URL")
+		return fmt.Errorf("%s is not a valid URL", what)
 	}
 	// Require a real host: url.Parse accepts "https://:443/path" (Host=":443")
 	// where Hostname() is empty, so check Hostname() not just Host.
 	if !u.IsAbs() || u.Hostname() == "" {
-		return fmt.Errorf("registration URL must be absolute (include scheme and host)")
+		return fmt.Errorf("%s must be absolute (include scheme and host)", what)
 	}
 	// url.Parse does NOT validate percent-encoding in the query. A URL like
 	// ".../reg?ticket=%zz" parses fine here, but u.Query() (used by BuildUTMURL)
@@ -2846,13 +2912,13 @@ func validateRegistrationURL(raw string) error {
 	// different destination than the caller supplied. Reject a malformed query up
 	// front, before any mutating call. Mirrors the Reddit client.
 	if _, qerr := url.ParseQuery(u.RawQuery); qerr != nil {
-		return fmt.Errorf("registration URL has a malformed query string")
+		return fmt.Errorf("%s has a malformed query string", what)
 	}
 	// Reject embedded userinfo (user[:password]@host): an ad destination never
 	// needs URL credentials, and BuildUTMURL would otherwise forward the password
 	// to LinkedIn and echo it downstream, leaking it. Mirrors the Reddit client.
 	if u.User != nil {
-		return fmt.Errorf("registration URL must not contain embedded credentials (userinfo)")
+		return fmt.Errorf("%s must not contain embedded credentials (userinfo)", what)
 	}
 	switch strings.ToLower(u.Scheme) {
 	case "http", "https":
@@ -2860,7 +2926,7 @@ func validateRegistrationURL(raw string) error {
 	default:
 		// Do NOT echo the raw URL or the scheme value (a bespoke scheme could itself
 		// reflect caller material); report a generic message.
-		return fmt.Errorf("registration URL must use an http or https scheme")
+		return fmt.Errorf("%s must use an http or https scheme", what)
 	}
 }
 
@@ -2992,8 +3058,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Validate the registration URL BEFORE any POST so an empty/relative/malformed
 	// URL is rejected up front rather than after the campaign group and campaign
 	// (permanent resources) already exist.
-	if err := validateRegistrationURL(reg); err != nil {
-		return nil, err
+	//
+	// A document create (#665) is the exception: its post carries the PDF and no landing page, and
+	// a gated one opens a Lead Gen Form, so nothing reads the registration URL and a brief without
+	// one may still run a document ad. Every other format sends it (an article link, a text ad's or a
+	// video's landing page, a carousel card's default destination), so it stays required there.
+	if f, ferr := NormalizeFormat(in.Format); ferr != nil || f != FormatDocument {
+		if err := validateRegistrationURL(reg); err != nil {
+			return nil, err
+		}
 	}
 
 	// Validate the budget BEFORE any POST. BudgetUSD is formatted straight into
@@ -3021,6 +3094,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// The bidding fields, resolved BEFORE any POST: a manual bid that is not a whole number of cents
 	// is refused here, with nothing created, rather than after the campaign group exists. The plan
 	// also decides the objective and the campaign name's Objective segment.
+	// A document create's objective (#665): ENGAGEMENT by default, LEAD_GENERATION as asked, and
+	// nothing else; ENGAGEMENT is created for a document only.
+	if f, ferr := NormalizeFormat(in.Format); ferr == nil && f == FormatDocument {
+		if in.Objective, err = documentObjective(in.Objective); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+	} else if in.Objective == ObjectiveEngagement {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: objective %s is created for format %q only", ErrFormatInvalid, ObjectiveEngagement, FormatDocument))
+	}
 	bidding, err := campaignBidding(in.ManualCPCBid, in.Objective)
 	if err != nil {
 		// ValidateBidAmount's sentences are service-authored and numeric-only (issue #208), and
@@ -3052,6 +3134,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err := ValidateDeliveryOptions(in.DeliveryOptions, format); err != nil {
 		return nil, domain.WrapPreflightRefusal(err)
 	}
+	// Lead generation (#664): the form, its label, and what a lead gen campaign cannot be (text,
+	// the Audience Network, a post-level call to action), before the first POST.
+	if in.LeadGen, err = ValidateLeadGen(in.LeadGen, bidding.objectiveType, format, in.DeliveryOptions, in.Variants); err != nil {
+		return nil, domain.WrapPreflightRefusal(err)
+	}
 	if format == FormatText {
 		if in.ManualCPCBid == 0 {
 			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: a text create requires manual bidding: LinkedIn Text Ads support only a manual bid (optimizationTargetType NONE)", ErrFormatInvalid))
@@ -3077,11 +3164,50 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	} else if len(in.TextAds) > 0 {
 		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: textAds are accepted only with format %q", ErrFormatInvalid, FormatText))
 	}
+	// A carousel create (#665) takes its one creative from CarouselCards: every card an image
+	// this create uploads, checked here against the carousel image rules before any POST.
+	if format == FormatCarousel {
+		if len(in.Variants) > 0 {
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: a carousel create takes its creative from carouselCards, not variants", ErrFormatInvalid))
+		}
+		if err := ValidateCarousel(in.CarouselCards, in.CarouselIntroText); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+		for i, card := range in.CarouselCards {
+			img, ok := in.Images[card.ImageAssetID]
+			if !ok {
+				return nil, domain.PreflightRefusalf("carousel card %d names stored image asset %s, which was not supplied", i+1, domain.CallerValue(card.ImageAssetID))
+			}
+			if err := ValidateCarouselImage(img); err != nil {
+				return nil, domain.WrapPreflightRefusal(fmt.Errorf("carousel card %d image asset %s: %w", i+1, domain.CallerValue(card.ImageAssetID), err))
+			}
+		}
+	} else if len(in.CarouselCards) > 0 || in.CarouselIntroText != "" {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: carouselCards and carouselIntroText are accepted only with format %q", ErrFormatInvalid, FormatCarousel))
+	}
+	// A document create (#665) takes its one creative from the stored PDF, checked here before
+	// any POST; its objective was resolved with the bidding above.
+	if format == FormatDocument {
+		if len(in.Variants) > 0 || len(in.CarouselCards) > 0 {
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: a document create takes its creative from the document, not variants or carouselCards", ErrFormatInvalid))
+		}
+		if err := ValidateDocumentFields(in.DocumentAssetID, in.DocumentTitle, in.DocumentIntroText); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+		if in.Document == nil {
+			return nil, domain.PreflightRefusalf("the document create names stored document asset %s, which was not supplied", domain.CallerValue(in.DocumentAssetID))
+		}
+		if err := ValidateDocument(*in.Document); err != nil {
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("document asset %s: %w", domain.CallerValue(in.DocumentAssetID), err))
+		}
+	} else if in.Document != nil || in.DocumentAssetID != "" || in.DocumentTitle != "" || in.DocumentIntroText != "" {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: a document is accepted only with format %q", ErrFormatInvalid, FormatDocument))
+	}
 
 	// Refuse to create a campaign with no creatives: LinkedIn campaign-group and
 	// campaign creation are permanent side effects, so an empty variant set would
 	// leave an orphaned, un-adorned campaign upstream.
-	if format != FormatText && len(in.Variants) == 0 {
+	if format == FormatSingleImage && len(in.Variants) == 0 {
 		return nil, domain.PreflightRefusalf("at least one creative variant is required")
 	}
 
@@ -3151,6 +3277,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	campaignFormat := ""
 	if isVideoInput(in) {
 		campaignFormat = campaignFormatSingleVideo
+	}
+	if format == FormatCarousel {
+		campaignFormat = campaignFormatCarousel
+	}
+	// A document campaign is created without a format (documents.go); campaignFormatDocument is
+	// what the reuse lookup expects LinkedIn to report for one.
+	if format == FormatDocument {
+		campaignFormat = campaignFormatDocument
 	}
 
 	// The optional call to action and creative name (#588, #589) are checked here too: an
@@ -3259,6 +3393,26 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, domain.PreflightRefusalf("campaign name is %d characters, exceeds the %d-character limit; shorten the event name or project", n, maxNameLen)
 	}
 
+	// Each carousel card's tagged landing page (#665) is composed now, against the final campaign
+	// name, so one over LinkedIn's length limit is refused before the campaign group exists.
+	var carouselLanding []string
+	if format == FormatCarousel {
+		if carouselLanding, err = carouselLandingPages(in.CarouselCards, reg, in.HSToken, campaignName); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+	}
+
+	// The lead gen form (#664) is read before the campaign group exists: a form of another
+	// account, an archived one or a wrong id is refused with nothing created.
+	if in.LeadGen != nil {
+		if err := c.checkLeadForm(ctx, accountID, *in.LeadGen); err != nil {
+			if errors.Is(err, ErrLeadGenInvalid) {
+				return nil, domain.WrapPreflightRefusal(err)
+			}
+			return nil, fmt.Errorf("%w; nothing was created", err)
+		}
+	}
+
 	// Hold the event's group from its find-or-create through the campaign POST (#584). Between a
 	// create's group check and its campaign existing, another create of the same event could
 	// otherwise widen the group: a daily-capped campaign has no end of its own, so a widening that
@@ -3270,7 +3424,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// group's schedule. Other replicas are not covered (LFXV2-2665).
 	releaseGroup, err := eventGroupLocks.acquire(ctx, c.baseURL+"\x00"+accountID+"\x00"+groupName)
 	if err != nil {
-		return nil, fmt.Errorf("campaign group %q: waiting for another create of this event was aborted before any LinkedIn request; nothing was created: %w", groupName, err)
+		return nil, fmt.Errorf("campaign group %q: waiting for another create of this event was aborted before any LinkedIn write; nothing was created: %w", groupName, err)
 	}
 	groupHeld := true
 	unlockGroup := func() {
@@ -3501,6 +3655,30 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		return result
 	}
+	if format == FormatDocument {
+		count, docURN, docSteps, derr := c.createDocumentAd(ctx, accountID, campaignID, eventName, in)
+		steps = append(steps, docSteps...)
+		withDocument := func(r *CampaignResult) *CampaignResult {
+			if docURN != "" {
+				r.DocumentURNs = map[string]string{in.DocumentAssetID: docURN}
+			}
+			return r
+		}
+		if derr != nil {
+			return withDocument(withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, count, steps))),
+				fmt.Errorf("%w — group %q and campaign %q already exist", derr, groupID, campaignID)
+		}
+		return withDocument(finish(count)), nil
+	}
+	if format == FormatCarousel {
+		count, carouselSteps, cerr := c.createCarousel(ctx, accountID, campaignID, eventName, in, carouselLanding, imageURNs)
+		steps = append(steps, carouselSteps...)
+		if cerr != nil {
+			return withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, count, steps)),
+				fmt.Errorf("%w — group %q and campaign %q already exist", cerr, groupID, campaignID)
+		}
+		return finish(count), nil
+	}
 	if format == FormatText {
 		count, textSteps, terr := c.createTextAds(ctx, accountID, campaignID, campaignName, eventName, reg, in, imageURNs)
 		steps = append(steps, textSteps...)
@@ -3554,7 +3732,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Dark post variant-%d: %s", i+1, shareURN))
 
 		adName := creativeName(eventName, i, variant)
-		creativeID, err := c.createCreative(ctx, accountID, campaignID, shareURN, adName)
+		creativeID, err := c.createCreative(ctx, accountID, campaignID, shareURN, adName, in.LeadGen)
 		if err != nil {
 			// The creative failed but this variant's dark post (shareURN) was
 			// already created. Report it explicitly: a blind retry would duplicate

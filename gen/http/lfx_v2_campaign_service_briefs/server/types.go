@@ -510,7 +510,7 @@ type UploadCreativeAssetOKResponseBody struct {
 	// Parent brief
 	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
 	// Stored MIME type, as verified from the bytes (not merely the declared
-	// header). video/mp4 since #586.
+	// header). video/mp4 since #586, application/pdf since #665.
 	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
 	// Size of the stored image in bytes
 	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
@@ -562,7 +562,7 @@ type GetCreativeAssetResponseBody struct {
 	// Parent brief
 	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
 	// Stored MIME type, as verified from the bytes (not merely the declared
-	// header). video/mp4 since #586.
+	// header). video/mp4 since #586, application/pdf since #665.
 	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
 	// Size of the stored image in bytes
 	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
@@ -4928,7 +4928,7 @@ type CreativeAssetResponseBody struct {
 	// Parent brief
 	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
 	// Stored MIME type, as verified from the bytes (not merely the declared
-	// header). video/mp4 since #586.
+	// header). video/mp4 since #586, application/pdf since #665.
 	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
 	// Size of the stored image in bytes
 	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
@@ -5080,14 +5080,16 @@ type CampaignSettingsFieldResponseBody struct {
 	// LinkedIn's `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the
 	// currency is not reported, never a bare number) are upstream-only, and
 	// `objective_type` is compared against the objective the recorded bidding
-	// strategy implies (automatic WEBSITE_VISIT, manual WEBSITE_CONVERSION;
-	// `unknown` when none is recorded); `audience_expansion_enabled` and
-	// `offsite_delivery_enabled` (#667: LinkedIn's audienceExpansionEnabled and
-	// offsiteDeliveryEnabled, `true` or `false`, absent when not reported) are
-	// upstream-only; a campaign reporting both a daily and a total budget, neither
-	// (as under a campaign group's shared budget), or a non-USD amount reads both
-	// budget fields `unknown`. The vocabulary is per-platform and may grow, so a
-	// consumer must render an unrecognised field name rather than dropping it.
+	// strategy implies (automatic WEBSITE_VISIT, or the WEBSITE_CONVERSION,
+	// LEAD_GENERATION (#664) or ENGAGEMENT (#665, a document create) the create
+	// recorded; manual WEBSITE_CONVERSION; `unknown` when none is recorded);
+	// `audience_expansion_enabled` and `offsite_delivery_enabled` (#667:
+	// LinkedIn's audienceExpansionEnabled and offsiteDeliveryEnabled, `true` or
+	// `false`, absent when not reported) are upstream-only; a campaign reporting
+	// both a daily and a total budget, neither (as under a campaign group's shared
+	// budget), or a non-USD amount reads both budget fields `unknown`. The
+	// vocabulary is per-platform and may grow, so a consumer must render an
+	// unrecognised field name rather than dropping it.
 	Field string `form:"field" json:"field" xml:"field"`
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.
@@ -5759,123 +5761,141 @@ type CampaignCreateInputRequestBody struct {
 	// so conversions also require global_marketing_ops on the project (403; 503
 	// when the check cannot be made). LINKEDIN OBJECTIVE (#582): linkedInConfig
 	// takes an optional `objective`, "traffic" or "conversions" (exact,
-	// lowercase). Omitted, the bidding strategy decides as before (automatic:
-	// objectiveType WEBSITE_VISIT, optimizationTargetType MAX_CLICK; manual:
-	// WEBSITE_CONVERSION with a manual CPC). "traffic" is WEBSITE_VISIT /
-	// MAX_CLICK / costType CPM and is offered with automatic bidding only.
-	// "conversions" is objectiveType WEBSITE_CONVERSION: with manual bidding it is
-	// the manual create unchanged (optimizationTargetType NONE, costType CPC,
-	// unitCost = bidAmount); with automatic bidding (LinkedIn's Maximum delivery)
-	// it is optimizationTargetType MAX_CONVERSION with costType CPM and no
-	// unitCost, and REQUIRES a non-empty linkedInConfig.conversions, because
-	// LinkedIn will not activate a MAX_CONVERSION campaign until a conversion is
-	// associated with it: the campaign is created PAUSED and the conversions
-	// associated right after it, so it inherits the conversions gates
-	// (LINKEDIN_ADS_CONVERSIONS_ENABLED and global_marketing_ops). If an
-	// association then fails the campaign is created_degraded with the step to
-	// associate the conversion in Campaign Manager before activating. Both
-	// conversions shapes have the Conversions name segment; a same-name campaign
-	// of the other bidding mode (manual NONE / ENHANCED_CONVERSION versus
-	// automated) is never reused. update-campaign-bid answers 409 for an automatic
-	// conversions campaign, as for MAX_CLICK: it has no manual bid. Refused with a
-	// 400 before any job exists: an objective that is not one of the two strings
-	// (an explicit null, "", a number, another word or casing), "traffic" with
-	// manual bidding, and "conversions" with automatic bidding and no conversions.
-	// LINKEDIN DAILY CAP (#584): with lifetimeBudget true, linkedInConfig takes an
-	// optional `dailyCapUsd` (USD), sent as the campaign's dailyBudget beside its
-	// totalBudget, on LinkedIn's continuous schedule (no campaign end; the event's
-	// campaign group carries it, and a create that cannot keep the shared group
-	// ending at the campaign's end is refused). Refused with a 400 before any job
-	// exists when it is set without lifetimeBudget, is not a number (null
-	// included), is not above zero, is under LinkedIn's $10 daily minimum, or is
-	// more than the lifetime budget. LINKEDIN AUDIENCE EXPANSION AND AUDIENCE
-	// NETWORK (#667): linkedInConfig takes optional booleans
-	// `audienceExpansionEnabled` and `offsiteDeliveryEnabled`, sent as the
-	// campaign's fields of the same names on a campaign the create makes (a
-	// campaign reused by name keeps its own, with a warning step). Omitted, the
-	// create sends offsiteDeliveryEnabled false and no audienceExpansionEnabled
-	// (LinkedIn's default, off), as it always has. Refused with a 400 before any
-	// job exists: a value that is not a boolean (null reads as omitted),
-	// offsiteDeliveryEnabled true with format "text" (the Audience Network serves
-	// Sponsored Content only), and either field, false included, while the
-	// deployment has not set LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED to "true". The
-	// settings readback reports both as audience_expansion_enabled and
-	// offsite_delivery_enabled. REDDIT CONVERSION EVENT (#549):
-	// redditConfig.conversionEvent names the pixel event a conversions campaign
-	// optimizes toward, sent as the campaign's and the ad group's
-	// optimization_goal: PURCHASE, SIGN_UP, LEAD, PAGE_VISIT, VIEW_CONTENT,
-	// ADD_TO_CART, ADD_TO_WISHLIST or SEARCH, case-insensitive. Omitted means
-	// PURCHASE, as before. It is accepted only with objective conversions (also
-	// the default when objective is omitted) and only while the deployment sets
-	// REDDIT_CONVERSION_EVENT_ENABLED to "true". An unknown value, another
-	// objective, an explicit null, an empty or non-string value, a case variant of
-	// the key, or the field while the flag is off is refused synchronously with
-	// 400 "invalid campaign config: redditConfig.conversionEvent: ..." before any
-	// job exists. REDDIT EXCLUSIONS (#549): redditConfig takes
-	// `excludedSubreddits` (subreddit names, an optional r/ prefix stripped, each
-	// 2-21 letters, digits or underscores, at most 100, case-insensitive
-	// duplicates dropped) and `excludedGeoTargets` (ISO 3166-1 alpha-2 country
-	// codes, at most 50, uppercased and de-duplicated), sent as the ad group's
-	// targeting.excluded_communities and targeting.excluded_geolocations on every
-	// ad-group attempt (the retry that drops rejected communities and interests
-	// keeps them). A name also in `subreddits`, or a code also targeted
-	// (geoTargets, or the US default when geoTargets is empty), is refused. Both
-	// are OFF unless REDDIT_TARGETING_EXCLUSIONS_ENABLED is exactly "true" on the
-	// deployment. A blank or invalid entry, an overlap, a list over its cap, a
-	// value that is not an array of strings (null reads as absent), or either list
-	// while the flag is off, is refused with 400 "invalid campaign config:
-	// redditConfig.<field>: ..." before any job exists. REDDIT PLACEMENTS (#549):
-	// redditConfig takes `placements` (FEED, COMMENTS_PAGE), `platforms` (DESKTOP,
-	// MOBILE_NATIVE, MOBILE_WEB) and `expandTargeting` (boolean), sent as the ad
-	// group's targeting.locations, targeting.platforms and
-	// targeting.expand_targeting on every ad-group attempt. Values are
-	// case-insensitive, de-duplicated and sent upper-case in that fixed order.
-	// Omitted (or an empty list) keeps the long-standing default: both placements,
-	// platforms ALL, expansion true; ALL is not an accepted entry. All three are
-	// OFF unless REDDIT_PLACEMENT_TARGETING_ENABLED is exactly "true". A blank or
-	// unknown entry, a list that is not an array of strings or an expandTargeting
-	// that is not a boolean (null reads as absent), or any of the three set while
-	// the flag is off (expandTargeting: true included), is refused with 400
-	// "invalid campaign config: redditConfig.<field>: ..." before any job exists.
-	// REDDIT DAILY BUDGET (#549): redditConfig.budgetType is the pacing of
-	// budgetUsd: "lifetime" (the default, goal_type LIFETIME_SPEND, as before) or
-	// "daily" (goal_type DAILY_SPEND, so budgetUsd is a per-day cap),
-	// case-insensitive; the campaign row records the same budget_type. It is
-	// accepted only while the deployment sets REDDIT_DAILY_BUDGET_ENABLED to
-	// "true". An unknown value, an explicit null, an empty or non-string value, a
-	// case variant of the key, or the field (either value) while the flag is off
-	// is refused synchronously with 400 "invalid campaign config:
-	// redditConfig.budgetType: ..." before any job exists. REDDIT GENDER, LANGUAGE
-	// AND DAYPARTING (#549): redditConfig.gender ("female" or "male", sent as the
-	// ad group's targeting.gender), redditConfig.languages (ISO 639-1 codes from
-	// Reddit's enum, sent as targeting.languages) and redditConfig.schedule
-	// ([{startDay, startHour, endDay, endHour}], days 0-6 from Sunday and hours
-	// 0-23, at most 50 windows, sent as the campaign's schedule, which replaces
-	// every ad group's under campaign budget optimization) are accepted only while
-	// the deployment sets REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED to "true". A
-	// wrong JSON type, an unknown or blank value, a schedule window that is
-	// incomplete, out of range, starts where it ends or repeats another, or any of
-	// the three while the flag is off is refused synchronously with 400 "invalid
+	// lowercase), or "lead_generation" (#664, see LINKEDIN LEAD GEN FORMS).
+	// Omitted, the bidding strategy decides as before (automatic: objectiveType
+	// WEBSITE_VISIT, optimizationTargetType MAX_CLICK; manual: WEBSITE_CONVERSION
+	// with a manual CPC). "traffic" is WEBSITE_VISIT / MAX_CLICK / costType CPM
+	// and is offered with automatic bidding only. "conversions" is objectiveType
+	// WEBSITE_CONVERSION: with manual bidding it is the manual create unchanged
+	// (optimizationTargetType NONE, costType CPC, unitCost = bidAmount); with
+	// automatic bidding (LinkedIn's Maximum delivery) it is optimizationTargetType
+	// MAX_CONVERSION with costType CPM and no unitCost, and REQUIRES a non-empty
+	// linkedInConfig.conversions, because LinkedIn will not activate a
+	// MAX_CONVERSION campaign until a conversion is associated with it: the
+	// campaign is created PAUSED and the conversions associated right after it, so
+	// it inherits the conversions gates (LINKEDIN_ADS_CONVERSIONS_ENABLED and
+	// global_marketing_ops). If an association then fails the campaign is
+	// created_degraded with the step to associate the conversion in Campaign
+	// Manager before activating. Both conversions shapes have the Conversions name
+	// segment; a same-name campaign of the other bidding mode (manual NONE /
+	// ENHANCED_CONVERSION versus automated) is never reused. update-campaign-bid
+	// answers 409 for an automatic conversions campaign, as for MAX_CLICK: it has
+	// no manual bid. Refused with a 400 before any job exists: an objective that
+	// is not one of the two strings (an explicit null, "", a number, another word
+	// or casing), "traffic" with manual bidding, and "conversions" with automatic
+	// bidding and no conversions. LINKEDIN DAILY CAP (#584): with lifetimeBudget
+	// true, linkedInConfig takes an optional `dailyCapUsd` (USD), sent as the
+	// campaign's dailyBudget beside its totalBudget, on LinkedIn's continuous
+	// schedule (no campaign end; the event's campaign group carries it, and a
+	// create that cannot keep the shared group ending at the campaign's end is
+	// refused). Refused with a 400 before any job exists when it is set without
+	// lifetimeBudget, is not a number (null included), is not above zero, is under
+	// LinkedIn's $10 daily minimum, or is more than the lifetime budget. LINKEDIN
+	// LEAD GEN FORMS (#664): linkedInConfig.objective "lead_generation" creates a
+	// LEAD_GENERATION campaign with automatic bidding (MAX_LEAD; a manual bid is
+	// refused) whose creatives open the Lead Gen Form `leadGenForm` names
+	// (required: the form's numeric id or urn:li:adForm:<id>, built in Campaign
+	// Manager on the create's ad account; list-linkedin-ads-lead-forms lists
+	// them), sent as each creative's leadgenCallToAction with the button label
+	// `leadGenCallToAction` (optional, default REGISTER; one of APPLY, DOWNLOAD,
+	// VIEW_QUOTE, LEARN_MORE, SIGN_UP, SUBSCRIBE, REGISTER, REQUEST_DEMO, JOIN,
+	// ATTEND, UNLOCK_FULL_DOCUMENT, SHOP_NOW, BUY_NOW, SEE_MORE). leadGenForm
+	// names a resource of the ad account, so it requires global_marketing_ops of
+	// the project. Refused with a 400 before any job exists: any of the three
+	// while the deployment has not set LINKEDIN_ADS_LEAD_GEN_ENABLED to "true";
+	// lead_generation without leadGenForm, or leadGenForm or leadGenCallToAction
+	// without lead_generation; a leadGenForm that is not a string of a positive
+	// integer id; an unknown label; format "text"; offsiteDeliveryEnabled true;
+	// and a variants[].callToAction (the form's button is the call to action). The
+	// create reads the form before anything is created and fails the job, with
+	// nothing created, when it is not the ad account's own or is archived.
+	// LINKEDIN AUDIENCE EXPANSION AND AUDIENCE NETWORK (#667): linkedInConfig
+	// takes optional booleans `audienceExpansionEnabled` and
+	// `offsiteDeliveryEnabled`, sent as the campaign's fields of the same names on
+	// a campaign the create makes (a campaign reused by name keeps its own, with a
+	// warning step). Omitted, the create sends offsiteDeliveryEnabled false and no
+	// audienceExpansionEnabled (LinkedIn's default, off), as it always has.
+	// Refused with a 400 before any job exists: a value that is not a boolean
+	// (null reads as omitted), offsiteDeliveryEnabled true with format "text" (the
+	// Audience Network serves Sponsored Content only), and either field, false
+	// included, while the deployment has not set
+	// LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED to "true". The settings readback
+	// reports both as audience_expansion_enabled and offsite_delivery_enabled.
+	// REDDIT CONVERSION EVENT (#549): redditConfig.conversionEvent names the pixel
+	// event a conversions campaign optimizes toward, sent as the campaign's and
+	// the ad group's optimization_goal: PURCHASE, SIGN_UP, LEAD, PAGE_VISIT,
+	// VIEW_CONTENT, ADD_TO_CART, ADD_TO_WISHLIST or SEARCH, case-insensitive.
+	// Omitted means PURCHASE, as before. It is accepted only with objective
+	// conversions (also the default when objective is omitted) and only while the
+	// deployment sets REDDIT_CONVERSION_EVENT_ENABLED to "true". An unknown value,
+	// another objective, an explicit null, an empty or non-string value, a case
+	// variant of the key, or the field while the flag is off is refused
+	// synchronously with 400 "invalid campaign config:
+	// redditConfig.conversionEvent: ..." before any job exists. REDDIT EXCLUSIONS
+	// (#549): redditConfig takes `excludedSubreddits` (subreddit names, an
+	// optional r/ prefix stripped, each 2-21 letters, digits or underscores, at
+	// most 100, case-insensitive duplicates dropped) and `excludedGeoTargets` (ISO
+	// 3166-1 alpha-2 country codes, at most 50, uppercased and de-duplicated),
+	// sent as the ad group's targeting.excluded_communities and
+	// targeting.excluded_geolocations on every ad-group attempt (the retry that
+	// drops rejected communities and interests keeps them). A name also in
+	// `subreddits`, or a code also targeted (geoTargets, or the US default when
+	// geoTargets is empty), is refused. Both are OFF unless
+	// REDDIT_TARGETING_EXCLUSIONS_ENABLED is exactly "true" on the deployment. A
+	// blank or invalid entry, an overlap, a list over its cap, a value that is not
+	// an array of strings (null reads as absent), or either list while the flag is
+	// off, is refused with 400 "invalid campaign config: redditConfig.<field>:
+	// ..." before any job exists. REDDIT PLACEMENTS (#549): redditConfig takes
+	// `placements` (FEED, COMMENTS_PAGE), `platforms` (DESKTOP, MOBILE_NATIVE,
+	// MOBILE_WEB) and `expandTargeting` (boolean), sent as the ad group's
+	// targeting.locations, targeting.platforms and targeting.expand_targeting on
+	// every ad-group attempt. Values are case-insensitive, de-duplicated and sent
+	// upper-case in that fixed order. Omitted (or an empty list) keeps the
+	// long-standing default: both placements, platforms ALL, expansion true; ALL
+	// is not an accepted entry. All three are OFF unless
+	// REDDIT_PLACEMENT_TARGETING_ENABLED is exactly "true". A blank or unknown
+	// entry, a list that is not an array of strings or an expandTargeting that is
+	// not a boolean (null reads as absent), or any of the three set while the flag
+	// is off (expandTargeting: true included), is refused with 400 "invalid
 	// campaign config: redditConfig.<field>: ..." before any job exists. REDDIT
-	// ONE AD PER VARIANT (#549): while the deployment sets
-	// REDDIT_AD_PER_VARIANT_ENABLED to "true", a create that authors its post
-	// (redditConfig.imageUrl or imageAssetId, no postUrl) with 2 to 5
-	// redditConfig.variants authors one promoted post (that variant's headline,
-	// utm_content=variant-N) and one ad per variant; the campaign result records
-	// every ad id as adIds (adId stays the first) and variantAds, a failed variant
-	// leaves the others in place and marks the campaign created_degraded with a
-	// step naming the failed variants, and the status toggle cascades over every
-	// ad. More than 5 variants, or a blank or over-300-character variant headline,
-	// is refused synchronously with 400 "invalid campaign config:
-	// redditConfig.variants...: ..." before any job exists. REDDIT CAROUSEL
-	// (#661): redditConfig.carouselCards is 2 to 6 cards, each {imageAssetId (a
-	// stored PNG or JPEG of this brief), headline (at most 180 characters, the
-	// card's caption), destinationUrl (an absolute http or https URL, sent with
-	// the post's UTM parameters and utm_content=card-<k>, the card's 1-based
-	// position)}, authored as one CAROUSEL post and one ad whose images Reddit
-	// fetches from short-lived signed URLs. Never with postUrl, imageUrl,
-	// imageAssetId, videoAssetId or thumbnailAssetId, nor with two or more
-	// variants while REDDIT_AD_PER_VARIANT_ENABLED is on. OFF unless
+	// DAILY BUDGET (#549): redditConfig.budgetType is the pacing of budgetUsd:
+	// "lifetime" (the default, goal_type LIFETIME_SPEND, as before) or "daily"
+	// (goal_type DAILY_SPEND, so budgetUsd is a per-day cap), case-insensitive;
+	// the campaign row records the same budget_type. It is accepted only while the
+	// deployment sets REDDIT_DAILY_BUDGET_ENABLED to "true". An unknown value, an
+	// explicit null, an empty or non-string value, a case variant of the key, or
+	// the field (either value) while the flag is off is refused synchronously with
+	// 400 "invalid campaign config: redditConfig.budgetType: ..." before any job
+	// exists. REDDIT GENDER, LANGUAGE AND DAYPARTING (#549): redditConfig.gender
+	// ("female" or "male", sent as the ad group's targeting.gender),
+	// redditConfig.languages (ISO 639-1 codes from Reddit's enum, sent as
+	// targeting.languages) and redditConfig.schedule ([{startDay, startHour,
+	// endDay, endHour}], days 0-6 from Sunday and hours 0-23, at most 50 windows,
+	// sent as the campaign's schedule, which replaces every ad group's under
+	// campaign budget optimization) are accepted only while the deployment sets
+	// REDDIT_GENDER_LANGUAGE_DAYPARTING_ENABLED to "true". A wrong JSON type, an
+	// unknown or blank value, a schedule window that is incomplete, out of range,
+	// starts where it ends or repeats another, or any of the three while the flag
+	// is off is refused synchronously with 400 "invalid campaign config:
+	// redditConfig.<field>: ..." before any job exists. REDDIT ONE AD PER VARIANT
+	// (#549): while the deployment sets REDDIT_AD_PER_VARIANT_ENABLED to "true", a
+	// create that authors its post (redditConfig.imageUrl or imageAssetId, no
+	// postUrl) with 2 to 5 redditConfig.variants authors one promoted post (that
+	// variant's headline, utm_content=variant-N) and one ad per variant; the
+	// campaign result records every ad id as adIds (adId stays the first) and
+	// variantAds, a failed variant leaves the others in place and marks the
+	// campaign created_degraded with a step naming the failed variants, and the
+	// status toggle cascades over every ad. More than 5 variants, or a blank or
+	// over-300-character variant headline, is refused synchronously with 400
+	// "invalid campaign config: redditConfig.variants...: ..." before any job
+	// exists. REDDIT CAROUSEL (#661): redditConfig.carouselCards is 2 to 6 cards,
+	// each {imageAssetId (a stored PNG or JPEG of this brief), headline (at most
+	// 180 characters, the card's caption), destinationUrl (an absolute http or
+	// https URL, sent with the post's UTM parameters and utm_content=card-<k>, the
+	// card's 1-based position)}, authored as one CAROUSEL post and one ad whose
+	// images Reddit fetches from short-lived signed URLs. Never with postUrl,
+	// imageUrl, imageAssetId, videoAssetId or thumbnailAssetId, nor with two or
+	// more variants while REDDIT_AD_PER_VARIANT_ENABLED is on. OFF unless
 	// REDDIT_CAROUSEL_ENABLED is exactly "true": the post shape is from Reddit's
 	// public schema and has not been sent live. The flag off, a wrong JSON type, a
 	// card count or field outside those limits, a non-UUID id or signed asset URLs
@@ -11592,8 +11612,8 @@ func ValidateUploadCreativeAssetRequestBody(body *UploadCreativeAssetRequestBody
 		err = goa.MergeErrors(err, goa.MissingFieldError("bytes", "body"))
 	}
 	if body.ContentType != nil {
-		if !(*body.ContentType == "image/png" || *body.ContentType == "image/jpeg" || *body.ContentType == "video/mp4") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.content_type", *body.ContentType, []any{"image/png", "image/jpeg", "video/mp4"}))
+		if !(*body.ContentType == "image/png" || *body.ContentType == "image/jpeg" || *body.ContentType == "video/mp4" || *body.ContentType == "application/pdf") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.content_type", *body.ContentType, []any{"image/png", "image/jpeg", "video/mp4", "application/pdf"}))
 		}
 	}
 	if body.Bytes != nil {

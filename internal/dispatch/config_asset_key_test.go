@@ -21,9 +21,11 @@ const snapshotAssetIDKey = "imageassetid"
 // reason: a LinkedIn video variant, a Reddit video post (#549) and a Meta video variant (#550) name
 // their stored MP4 under it.
 // snapshotThumbnailAssetIDKey is postgres's third key: a Reddit video post's stored thumbnail.
+// snapshotDocumentAssetIDKey is postgres's fourth key: a LinkedIn document ad's PDF (#665).
 const (
 	snapshotVideoAssetIDKey     = "videoassetid"
 	snapshotThumbnailAssetIDKey = "thumbnailassetid"
+	snapshotDocumentAssetIDKey  = "documentassetid"
 )
 
 // TestPlatformConfigsNameTheirAssetUnderOneKey pins the assumption the campaign repo's
@@ -62,6 +64,10 @@ func TestPlatformConfigsNameTheirAssetUnderOneKey(t *testing.T) {
 		// The Meta video variant (#550) names its asset under the second key.
 		"meta-video": metaConfig{Variants: []meta.AdVariant{{VideoAssetID: assetID}}},
 		"linkedin":   linkedinConfig{Variants: []linkedin.CreativeVariant{{ImageAssetID: assetID}}},
+		// A LinkedIn carousel card (#665) names its image under the first key.
+		"linkedin-carousel": linkedinConfig{CarouselCards: []linkedin.CarouselCard{{ImageAssetID: assetID}}},
+		// A LinkedIn document ad (#665) names its PDF under the fourth key.
+		"linkedin-document": linkedinConfig{DocumentAssetID: assetID},
 		// EVERY Google slot, not one of them: they are separate fields on several structs,
 		// and one more slot declared as a bare []string would carry no key on its elements
 		// at all.
@@ -84,7 +90,7 @@ func TestPlatformConfigsNameTheirAssetUnderOneKey(t *testing.T) {
 		}
 		for _, k := range keys {
 			if !strings.EqualFold(k, snapshotAssetIDKey) && !strings.EqualFold(k, snapshotVideoAssetIDKey) &&
-				!strings.EqualFold(k, snapshotThumbnailAssetIDKey) {
+				!strings.EqualFold(k, snapshotThumbnailAssetIDKey) && !strings.EqualFold(k, snapshotDocumentAssetIDKey) {
 				t.Errorf("%s: asset id is marshalled under %q, which postgres.snapshotAssetIDs will not extract; "+
 					"either tag the field `json:\"imageAssetId\"` or widen snapshotAssetIDKey", name, k)
 			}

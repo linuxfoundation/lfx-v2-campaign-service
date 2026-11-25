@@ -36,9 +36,9 @@ const (
 // LEGAL upload — 30 MiB of image — arrives as 41,943,040 base64 characters, which is
 // 40 MiB to the byte. Only two fields ride in the body — content_type and bytes;
 // project_id and brief_id are PATH parameters — so the JSON envelope adds just 39
-// bytes for the shorter enum value ("image/png") and 40 for the longer
-// ("image/jpeg"), putting the worst case at 41,943,080. A 40 MiB cap would therefore
-// reject every maximum-size image by those 40 bytes. 42 MiB clears it with ~2 MiB of
+// bytes for the shortest enum value ("image/png") and 45 for the longest
+// ("application/pdf", #665), putting the worst case at 41,943,085. A 40 MiB cap would
+// therefore reject every maximum-size upload by those bytes. 42 MiB clears it with ~2 MiB of
 // headroom, while still bounding the read at a fixed, modest multiple of the largest
 // thing the contract admits.
 //

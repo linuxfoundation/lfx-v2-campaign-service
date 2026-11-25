@@ -789,6 +789,24 @@ const (
 	// the upload from create first. See docs/knowledge/architecture/linkedin-video-ads.md.
 	EnvLinkedInAdsVideoEnabled = "LINKEDIN_ADS_VIDEO_ENABLED"
 
+	// EnvLinkedInAdsCarouselEnabled opts a deployment IN to linkedInConfig.format "carousel"
+	// (#665): a SPONSORED_UPDATES campaign of format CAROUSEL whose one creative is a dark post
+	// carrying linkedInConfig.carouselCards (2 to 10 stored images of the brief, each with its own
+	// headline and destination) under linkedInConfig.carouselIntroText. Only the exact value "true"
+	// enables it; unset or any other value fails closed, and a create naming it is refused before
+	// a job exists. The carousel post shape comes from LinkedIn's documentation and has not been
+	// exercised against a live account; see docs/knowledge/architecture/linkedin-carousel-ads.md.
+	EnvLinkedInAdsCarouselEnabled = "LINKEDIN_ADS_CAROUSEL_ENABLED"
+
+	// EnvLinkedInAdsDocumentEnabled opts a deployment IN to linkedInConfig.format "document"
+	// (#665): a document ad whose one creative is a dark post carrying a stored PDF
+	// (linkedInConfig.documentAssetId) uploaded through LinkedIn's Documents API, ENGAGEMENT by
+	// default or LEAD_GENERATION with a Lead Gen Form. Only the exact value "true" enables it;
+	// unset or any other value fails closed, and a create naming it is refused before a job
+	// exists. The Documents API upload and the document post have not been exercised against a
+	// live account; see docs/knowledge/architecture/linkedin-document-ads.md.
+	EnvLinkedInAdsDocumentEnabled = "LINKEDIN_ADS_DOCUMENT_ENABLED"
+
 	// EnvLinkedInAdsCallToActionEnabled opts a deployment IN to linkedInConfig.variants[].callToAction
 	// (#588): the dark post's contentCallToActionLabel, sent with contentLandingPage. Only the exact
 	// value "true" enables it; unset or any other value fails closed, and a create naming one is
@@ -805,6 +823,14 @@ const (
 	// always has. It keeps both fields, sent as true, off the live ad account until the probe in
 	// the field's docs passes.
 	EnvLinkedInAdsDeliveryOptionsEnabled = "LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED"
+
+	// EnvLinkedInAdsLeadGenEnabled opts a deployment IN to LinkedIn Lead Gen Form campaigns (#664):
+	// linkedInConfig.objective "lead_generation" with linkedInConfig.leadGenForm (and the optional
+	// linkedInConfig.leadGenCallToAction), and the lead form picker read. Only the exact value
+	// "true" enables them; unset or any other value fails closed, and a create naming any of them
+	// is refused before a job exists. It keeps LEAD_GENERATION campaigns and leadgenCallToAction
+	// creatives off the live ad account until the paused probe in the PR passes.
+	EnvLinkedInAdsLeadGenEnabled = "LINKEDIN_ADS_LEAD_GEN_ENABLED"
 
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,

@@ -1020,6 +1020,41 @@ headers for the ETag. `createVideoDarkPost` shares `darkPostEnvelope`/`postDarkP
 `createDarkPost`. URNs go to `CampaignResult.VideoURNs`. See
 [LinkedIn Video Sponsored Content](../architecture/linkedin-video-ads.md).
 
+## Carousel creates (`carousel.go`, #665)
+
+`CampaignInput.Format` `FormatCarousel` with `CarouselCards` and `CarouselIntroText` creates a
+`SPONSORED_UPDATES` campaign of format `CAROUSEL` (`campaignFormatCarousel`, Ad Format segment
+`Carousel`) with ONE creative. `CreateCampaign` refuses, before any request: variants beside the
+cards, cards or intro text under another format, what `ValidateCarousel` refuses (2 to 10 cards,
+headline at most 45, intro at most 255, destination per `validateLandingURL`, the rules
+`validateRegistrationURL` now delegates to, at most 2,000 characters), a card image not supplied or
+refused by `ValidateCarouselImage` (PNG/JPEG, at most 10 MB, at most 4320x4320, exactly square), a lead generation
+carousel (`ValidateLeadGen`), and a tagged landing page over 2,000 characters
+(`carouselLandingPages`, against the final campaign name). `uploadVariantImages` uploads each
+distinct card image; `createCarousel` posts the dark post (`createCarouselDarkPost`: cards in
+order, each `landingPage` tagged `utm_content=card-<k>` by `buildUTMURLWithContent`, which
+`BuildUTMURL` now wraps; `contentLandingPage` card 1's) and the creative. `findCampaignByNameInGroup`
+compares `sponsoredFormatKind`, so image, video and carousel campaigns never reuse one another. See
+[LinkedIn Carousel Sponsored Content](../architecture/linkedin-carousel-ads.md).
+
+## Document creates (`documents.go`, #665)
+
+`CampaignInput.Format` `FormatDocument` with `Document` (a `DocumentUpload`), `DocumentAssetID`,
+`DocumentTitle` and `DocumentIntroText` creates a document ad with ONE creative. Before any request
+`CreateCampaign` resolves the objective through `documentObjective` (ENGAGEMENT by default,
+LEAD_GENERATION as asked, anything else refused; ENGAGEMENT refused for every other format) and
+`campaignBidding` gives ENGAGEMENT `MAX_REACH` / `CPM`, automatic only, name segment `Engagement`;
+it refuses variants or carousel cards beside the document, what `ValidateDocumentFields` (title at
+most 70, intro at most 600) and `ValidateDocument` (`application/pdf`, `%PDF-`, at most 100 MB)
+refuse, and document fields under another format. The campaign is created without `format`
+(`createSponsoredCampaign` never sends `campaignFormatDocument`), which `sponsoredFormatKind` uses
+for the reuse check. `createDocumentAd` runs `uploadDocument` (initializeUpload, the PUT to a
+trusted LinkedIn URL, `awaitMediaAvailable` with `documentMedia`; `WithDocumentPolling`, default
+60 s), `createDocumentDarkPost` (`content.media`, no landing page) and `createDocumentCreative`
+(`content.documentAd.reference`, through `postCreative`, which `createCreative` now shares; with the
+lead gen form). The URN goes to `CampaignResult.DocumentURNs`. See
+[LinkedIn Document Ads](../architecture/linkedin-document-ads.md).
+
 ## Create-time bidding (`CampaignInput.ManualCPCBid`, `campaignBidding`, LFXV2-2665)
 
 **Bug fixed**: the create body used to send `WEBSITE_CONVERSION`, `costType` `CPC` and NO
@@ -1330,6 +1365,23 @@ every create sent before. `ValidateDeliveryOptions` refuses `offsiteDeliveryEnab
 runs it before the campaign group. A campaign reused by name keeps its settings, and the result
 gets a warning step. `GetCampaignSettings` reads both into `CampaignSettings`, nil when not
 reported. Neither has been sent as `true` to a live account.
+
+## Lead Gen Form campaigns (`lead_gen.go`, #664)
+
+`CampaignInput.LeadGen` (a form id and a button label) with `Objective` `ObjectiveLeadGeneration`
+makes a lead gen create. `campaignBidding` plans it as `LEAD_GENERATION` / `MAX_LEAD` / `CPM` with
+name segment `Leads`, automatic only. `ValidateLeadGen` runs before any POST: it normalises the
+form (`<id>` or `urn:li:adForm:<id>`, a canonical positive int64), defaults the label to `REGISTER`
+and checks it against `LeadGenCallToActionLabels`, and refuses a text format, the Audience Network,
+a variant `CallToAction`, and the objective and form without each other. `checkLeadForm` then
+reads `GET /rest/leadForms/{id}` before the campaign group: a form whose
+`owner.sponsoredAccount` is not the account, an `ARCHIVED` one, or a 404 is a pre-flight
+refusal; any other failure a plain error, nothing created. `createCreative` adds
+`leadgenCallToAction: {destination: urn:li:adForm:<id>, label}` to every DRAFT creative.
+`ListLeadForms` walks the owner finder (`q=owner&owner=(sponsoredAccount:<urn>)`, `owner` in
+`preEncodedParams`) with `offsetWalk`, leaves out archived forms, fails on a form of another owner,
+and sorts by name then id. All shapes are from the li-lms-2026-11 docs; none has been sent to a
+live account.
 
 ## Variant name, call to action and description (`variants.go`, #588, #589)
 

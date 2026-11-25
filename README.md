@@ -822,6 +822,39 @@ openssl rand -base64 32
   The chart sets it to `"false"`
   (`app.environment.LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once the probe passes.
+- `LINKEDIN_ADS_LEAD_GEN_ENABLED` (default unset, i.e. OFF) — opts a deployment
+  IN to LinkedIn Lead Gen Form campaigns (#664): `linkedInConfig.objective`
+  `"lead_generation"` with `linkedInConfig.leadGenForm` (and the optional
+  `linkedInConfig.leadGenCallToAction`), and the form picker
+  `GET /projects/{project_id}/linkedin-ads/lead-forms`. Only the exact value
+  `true` enables them; anything else fails closed: a create naming any of them
+  is refused with a 400 before a job exists, and the picker answers 400. The
+  chart sets it to `"false"`
+  (`app.environment.LINKEDIN_ADS_LEAD_GEN_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once the paused probe passes.
+- `LINKEDIN_ADS_CAROUSEL_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `linkedInConfig.format: "carousel"` (#665), a LinkedIn
+  CAROUSEL campaign whose one creative is a carousel dark post built from
+  `linkedInConfig.carouselCards` (2 to 10 stored images of the brief, each
+  with a headline and an optional destination) and
+  `linkedInConfig.carouselIntroText`. Only the exact value `true` enables it;
+  anything else fails closed, and a create naming it is refused with a 400
+  before a job exists. The default single-image create is unaffected. The
+  chart sets it to `"false"`
+  (`app.environment.LINKEDIN_ADS_CAROUSEL_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once the paused probe passes.
+- `LINKEDIN_ADS_DOCUMENT_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `linkedInConfig.format: "document"` (#665), a LinkedIn
+  document ad whose one creative is a dark post carrying a stored PDF
+  (`linkedInConfig.documentAssetId`, uploaded with content_type
+  `application/pdf`) sent through LinkedIn's Documents API. The campaign is
+  ENGAGEMENT by default, or LEAD_GENERATION with `objective:
+  "lead_generation"` and a Lead Gen Form (a gated document); Website Visits and
+  Website Conversions are refused. Only the exact value `true` enables it;
+  anything else fails closed, and a create naming it is refused with a 400
+  before a job exists. The chart sets it to `"false"`
+  (`app.environment.LINKEDIN_ADS_DOCUMENT_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once the paused probe passes.
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request
   names no `source_workflow_url`. Unset or empty selects the in-code

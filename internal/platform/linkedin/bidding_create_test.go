@@ -333,7 +333,7 @@ func TestCreateCampaign_ObjectiveRefusalsSendNothing(t *testing.T) {
 	}{
 		"automatic conversions without a conversion": {0, ObjectiveWebsiteConversion, "requires at least one conversion rule"},
 		"manual traffic":    {4.5, ObjectiveWebsiteVisit, "manual max CPC bid is created under objective WEBSITE_CONVERSION only"},
-		"unknown objective": {0, "LEAD_GENERATION", "is not one this service creates"},
+		"unknown objective": {0, "BRAND_AWARENESS", "is not one this service creates"},
 	} {
 		t.Run(label, func(t *testing.T) {
 			srv, _, posts := biddingCreateServer(t)

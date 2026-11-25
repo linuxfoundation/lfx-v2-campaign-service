@@ -233,8 +233,8 @@ func (d *RedditDispatcher) checkRedditAsset(ctx context.Context, brief *model.Ca
 	// A video would pass every check above, and the signed route would then refuse to serve it
 	// as an image only when Reddit fetched it at promoted-post time — after the campaign and ad
 	// group already exist, leaving a partial campaign. Refuse it here, before any Reddit request.
-	if meta.MimeType == model.MimeTypeMP4 {
-		return domain.PreflightRefusalf("creative asset %s is a video, not an image; redditConfig.imageAssetId accepts PNG or JPEG", assetID)
+	if !model.IsImageMimeType(meta.MimeType) {
+		return domain.PreflightRefusalf("creative asset %s is %s, not an image; redditConfig.imageAssetId accepts PNG or JPEG", assetID, model.AssetKindPhrase(meta.MimeType))
 	}
 	if err := assetsign.ValidateIDs(brief.ProjectID, brief.ID, assetID); err != nil {
 		return fmt.Errorf("reddit: creative asset %s cannot be served at a signed URL: %w", assetID, err)

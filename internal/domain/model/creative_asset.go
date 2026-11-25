@@ -9,7 +9,7 @@ import (
 )
 
 // Creative-asset MIME types. These mirror the CHECK constraint on
-// creative_assets.mime_type (migrations 000028 and 000057) and the upload contract's Enum.
+// creative_assets.mime_type (migrations 000028, 000057 and 000059) and the upload contract's Enum.
 // All must move together: each is the same allow-list enforced at a different layer
 // (contract decode, handler validation, database).
 const (
@@ -24,7 +24,31 @@ const (
 	// (metaConfig.variants[].videoAssetId, #550) consume it; every image consumer refuses an
 	// asset of this type.
 	MimeTypeMP4 = "video/mp4"
+	// MimeTypePDF is the verified content type of a PDF document upload (#665). Only a LinkedIn
+	// document ad (linkedInConfig.documentAssetId) consumes it; every image and video consumer
+	// refuses an asset of this type.
+	MimeTypePDF = "application/pdf"
 )
+
+// IsImageMimeType reports whether mimeType is one an image slot accepts (PNG or JPEG). Every
+// image consumer refuses anything else — a video or a document — before any platform request.
+func IsImageMimeType(mimeType string) bool {
+	return mimeType == MimeTypePNG || mimeType == MimeTypeJPEG
+}
+
+// AssetKindPhrase names what a stored asset of mimeType is, for a refusal ("a video", "a PDF
+// document", "an image"); anything unknown is "of an unsupported type".
+func AssetKindPhrase(mimeType string) string {
+	switch mimeType {
+	case MimeTypeMP4:
+		return "a video"
+	case MimeTypePDF:
+		return "a PDF document"
+	case MimeTypePNG, MimeTypeJPEG:
+		return "an image"
+	}
+	return "of an unsupported type"
+}
 
 // Per-brief creative-asset quota. Both ceilings apply, and neither is redundant: a count
 // cap alone still admits that many maximum-sized images (100 × 30 MiB = 3 GiB of BYTEA in

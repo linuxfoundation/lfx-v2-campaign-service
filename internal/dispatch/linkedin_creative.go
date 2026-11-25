@@ -163,6 +163,11 @@ func (d *LinkedInDispatcher) resolveLinkedInImages(ctx context.Context, brief *m
 	for i := range cfg.TextAds {
 		refs = append(refs, imageRef{fmt.Sprintf("textAds[%d]", i), &cfg.TextAds[i].ImageAssetID, cfg.TextAds[i].ImageURN})
 	}
+	// A carousel create (#665) carries its images on carouselCards, under the carousel image
+	// rules; like a text create it has no variants.
+	for i := range cfg.CarouselCards {
+		refs = append(refs, imageRef{fmt.Sprintf("carouselCards[%d]", i), &cfg.CarouselCards[i].ImageAssetID, ""})
+	}
 	for _, ref := range refs {
 		raw := strings.TrimSpace(*ref.assetID)
 		if raw == "" {
@@ -189,8 +194,11 @@ func (d *LinkedInDispatcher) resolveLinkedInImages(ctx context.Context, brief *m
 	// The refusals below name the field the assets came from: a text create references them
 	// from textAds[].imageAssetId and may not carry variants at all.
 	adKind, field := "single image ads", "variants"
-	if cfg.Format == linkedin.FormatText {
+	switch cfg.Format {
+	case linkedin.FormatText:
 		adKind, field = "text ads", "textAds"
+	case linkedin.FormatCarousel:
+		adKind, field = "carousel ads", "carouselCards"
 	}
 	all := append(append([]string{}, order...), videoOrder...)
 	if len(all) == 0 {
@@ -254,7 +262,10 @@ func (d *LinkedInDispatcher) resolveLinkedInImages(ctx context.Context, brief *m
 		}
 		if isVideo[assetID] {
 			if asset.MimeType != model.MimeTypeMP4 {
-				return nil, nil, noop, domain.PreflightRefusalf("linkedInConfig.variants name creative asset %s as videoAssetId, but it is an image; name it as imageAssetId", assetID)
+				if model.IsImageMimeType(asset.MimeType) {
+					return nil, nil, noop, domain.PreflightRefusalf("linkedInConfig.variants name creative asset %s as videoAssetId, but it is an image; name it as imageAssetId", assetID)
+				}
+				return nil, nil, noop, domain.PreflightRefusalf("linkedInConfig.variants name creative asset %s as videoAssetId, but it is %s; a video is an MP4", assetID, model.AssetKindPhrase(asset.MimeType))
 			}
 			vid := linkedin.VideoUpload{Data: asset.Bytes, MimeType: asset.MimeType}
 			if err := linkedin.ValidateVideo(vid); err != nil {
@@ -267,10 +278,14 @@ func (d *LinkedInDispatcher) resolveLinkedInImages(ctx context.Context, brief *m
 			continue
 		}
 		if asset.MimeType == model.MimeTypeMP4 {
-			if cfg.Format == linkedin.FormatText {
-				return nil, nil, noop, domain.PreflightRefusalf("linkedInConfig.textAds name creative asset %s as imageAssetId, but it is a video; a text ad image is a PNG or JPEG", assetID)
+			if cfg.Format == linkedin.FormatText || cfg.Format == linkedin.FormatCarousel {
+				return nil, nil, noop, domain.PreflightRefusalf("linkedInConfig.%s name creative asset %s as imageAssetId, but it is a video; a %s image is a PNG or JPEG", field, assetID, strings.TrimSuffix(adKind, "s"))
 			}
 			return nil, nil, noop, domain.PreflightRefusalf("linkedInConfig.variants name creative asset %s as imageAssetId, but it is a video; name it as videoAssetId", assetID)
+		}
+		// A PDF document (#665) is never an image: it is named only by documentAssetId.
+		if !model.IsImageMimeType(asset.MimeType) {
+			return nil, nil, noop, domain.PreflightRefusalf("linkedInConfig.%s name creative asset %s as imageAssetId, but it is %s; an image is a PNG or JPEG", field, assetID, model.AssetKindPhrase(asset.MimeType))
 		}
 		img := linkedin.ImageUpload{Data: asset.Bytes, MimeType: asset.MimeType}
 		if err := linkedin.ValidateImageForFormat(cfg.Format, img); err != nil {

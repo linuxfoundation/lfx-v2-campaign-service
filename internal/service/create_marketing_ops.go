@@ -435,7 +435,8 @@ func metaMarketingOpsForbiddenMessage(fields []string) string {
 // resource on the connected LinkedIn ad account, so that only global_marketing_ops may send them
 // (#552): audienceMatchingSegments and dynamicSegments (matched and retargeting audiences) in any
 // targeting.include clause ("linkedInConfig.targeting.include[1].dynamicSegments") or in
-// targeting.exclude, and conversions, the conversion rules associated with the campaign. Ad
+// targeting.exclude, conversions, the conversion rules associated with the campaign, and
+// leadGenForm (#664), the Lead Gen Form its creatives open. Ad
 // segments and conversion rules belong to the ad account, and the LF system account is the
 // fallback connection of every project without its own, so one foundation's executive director
 // could otherwise target, exclude or attach resources built for another — the same decision as
@@ -465,6 +466,7 @@ func LinkedInMarketingOpsInputs(config json.RawMessage) []string {
 		} `json:"targeting"`
 		Conversions []string `json:"conversions"`
 		AdAccountID string   `json:"adAccountId"`
+		LeadGenForm string   `json:"leadGenForm"`
 	}
 	_ = json.Unmarshal(raw, &cfg) // see above: a partial decode is still inspected
 	var set []string
@@ -480,6 +482,11 @@ func LinkedInMarketingOpsInputs(config json.RawMessage) []string {
 	}
 	if len(cfg.Conversions) > 0 {
 		set = append(set, "linkedInConfig.conversions")
+	}
+	// leadGenForm (#664) names a Lead Gen Form of the ad account, like conversions a resource
+	// another foundation may have built in the shared LF account, so it is ops-only too.
+	if strings.TrimSpace(cfg.LeadGenForm) != "" {
+		set = append(set, "linkedInConfig.leadGenForm")
 	}
 	if cfg.Targeting == nil {
 		return set

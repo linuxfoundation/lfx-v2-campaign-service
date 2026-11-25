@@ -1007,6 +1007,30 @@ app:
     LINKEDIN_ADS_VIDEO_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to linkedInConfig.format "carousel" (#665): a
+    # CAROUSEL campaign whose one creative is a carousel dark post of
+    # linkedInConfig.carouselCards (2 to 10 stored images of the brief, each with
+    # a headline and an optional destination tagged utm_content=card-<k>). The
+    # campaign and post shapes come from LinkedIn's documentation and have not
+    # been exercised against a live account. Set it to exactly "true" in
+    # lfx-v2-argocd once the paused probe in the PR passes. While off, a create
+    # naming it is refused before a job exists. Any value other than "true" is
+    # treated as off, so a typo fails closed.
+    LINKEDIN_ADS_CAROUSEL_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to linkedInConfig.format "document" (#665): a
+    # document ad whose one creative is a dark post carrying a stored PDF
+    # (linkedInConfig.documentAssetId) uploaded through LinkedIn's Documents
+    # API. ENGAGEMENT by default; objective "lead_generation" with a Lead Gen
+    # Form makes it a gated document. The upload and the post have not been
+    # exercised against a live account. Set it to exactly "true" in
+    # lfx-v2-argocd once the paused probe in the PR passes. While off, a create
+    # naming it is refused before a job exists. Any value other than "true" is
+    # treated as off, so a typo fails closed.
+    LINKEDIN_ADS_DOCUMENT_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to linkedInConfig.variants[].callToAction (#588):
     # the dark post's contentCallToActionLabel, sent with contentLandingPage. No
     # call to action on an article dark post has been sent to a live LinkedIn
@@ -1026,6 +1050,18 @@ app:
     # off, a create naming either (false included) is refused before a job
     # exists. Any value other than "true" is treated as off.
     LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to LinkedIn Lead Gen Form campaigns (#664):
+    # linkedInConfig.objective "lead_generation" with linkedInConfig.leadGenForm
+    # (and leadGenCallToAction), and the lead form picker
+    # (/projects/{project_id}/linkedin-ads/lead-forms). No LEAD_GENERATION
+    # campaign or leadgenCallToAction creative has been created on a live
+    # LinkedIn account. Set it to exactly "true" in lfx-v2-argocd once the
+    # paused probe in the PR passes. While off, a create naming any of them is
+    # refused before a job exists and the picker answers 400. Any value other
+    # than "true" is treated as off.
+    LINKEDIN_ADS_LEAD_GEN_ENABLED:
       value: "false"
 
     # Opts this deployment IN to the X (Twitter) Ads ACCOUNT MONITOR

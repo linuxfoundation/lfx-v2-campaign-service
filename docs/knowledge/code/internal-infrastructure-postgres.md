@@ -591,6 +591,13 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   - Pinned by `TestLinkedInGrantsReplaceIsVersionGatedAndReadBack` (under `dbtest/`) and
     `TestLiveMigrationsGoDownAndUpAgain`.
 
+- `000059` — `creative_assets.mime_type` admits `application/pdf` (#665): replaces the
+  `creative_assets_mime_type_check` from `000057` with one listing `image/png`, `image/jpeg`,
+  `video/mp4`, `application/pdf`, with no `IF EXISTS` on the up's DROP for `000057`'s reason. A PDF
+  stores NULL `width`/`height`. The down restores `000057`'s list as a validated CHECK, so a rollback
+  refuses while any PDF row is stored. `snapshotAssetIDs` also extracts ids under a `documentAssetId`
+  key (`snapshotDocumentAssetIDKey`), so a LinkedIn document ad's PDF is guarded like an image.
+
 ## Terminal-job retention (`JobRepo.PruneTerminalJobs`)
 
 `campaign_jobs` is append-only — nothing else in the service deletes a row — so it

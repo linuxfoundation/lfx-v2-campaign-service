@@ -319,6 +319,11 @@ func ListLinkedinAdsConversionsLfxV2CampaignServiceConnectionsPath(projectID str
 	return fmt.Sprintf("/projects/%v/linkedin-ads/conversions", projectID)
 }
 
+// ListLinkedinAdsLeadFormsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-linkedin-ads-lead-forms HTTP endpoint.
+func ListLinkedinAdsLeadFormsLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/linkedin-ads/lead-forms", projectID)
+}
+
 // ListLinkedinAdsAdoptableCampaignsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-linkedin-ads-adoptable-campaigns HTTP endpoint.
 func ListLinkedinAdsAdoptableCampaignsLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/linkedin-ads/adoptable-campaigns", projectID)
