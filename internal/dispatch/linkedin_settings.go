@@ -26,6 +26,10 @@ const (
 	// settingsFieldUnitCostCurrency is unitCost.currencyCode: unit_cost is never shown without it.
 	settingsFieldUnitCostCurrency = "unit_cost_currency"
 	settingsFieldObjectiveType    = "objective_type"
+	// settingsFieldAudienceExpansion and settingsFieldOffsiteDelivery are audienceExpansionEnabled
+	// and offsiteDeliveryEnabled (#667), "true" or "false" as LinkedIn reports them.
+	settingsFieldAudienceExpansion = "audience_expansion_enabled"
+	settingsFieldOffsiteDelivery   = "offsite_delivery_enabled"
 )
 
 // ReadSettings implements service.SettingsReader for LinkedIn: one account-scoped GET of the
@@ -41,7 +45,8 @@ const (
 //     platform), bidding_strategy_type (optimizationTargetType), cost_type, unit_cost (the bid
 //     amount, in whole units of its currency), unit_cost_currency (that currency — unit_cost is
 //     absent whenever it is not reported). The create path records none of these, so each
-//     reads `unknown`.
+//     reads `unknown`. audience_expansion_enabled and offsite_delivery_enabled (#667) are
+//     upstream-only too, "true" or "false" and absent when LinkedIn does not report them.
 //   - objective_type is COMPARED since LFXV2-2665: the create path's objective follows the
 //     bidding strategy it records (manual → WEBSITE_CONVERSION; automatic → the objectiveType the
 //     create recorded in the result blob, #582, and WEBSITE_VISIT for a row written before it;
@@ -153,6 +158,8 @@ func (d *LinkedInDispatcher) ReadSettings(ctx context.Context, projectID string,
 		model.CompareSettingsField(settingsFieldUnitCost, nil, unitCost),
 		model.CompareSettingsField(settingsFieldUnitCostCurrency, nil, unitCostCurrency),
 		model.CompareSettingsField(settingsFieldObjectiveType, linkedinRecordedObjective(ctx, campaign), settings.ObjectiveType),
+		model.CompareSettingsField(settingsFieldAudienceExpansion, nil, boolToStrPtr(settings.AudienceExpansionEnabled)),
+		model.CompareSettingsField(settingsFieldOffsiteDelivery, nil, boolToStrPtr(settings.OffsiteDeliveryEnabled)),
 	}
 	rb.SummariseSettings()
 	return rb, nil

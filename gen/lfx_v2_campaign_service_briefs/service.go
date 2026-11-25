@@ -1524,7 +1524,19 @@ type CampaignCreateInput struct {
 	// ending at the campaign's end is refused). Refused with a 400 before any job
 	// exists when it is set without lifetimeBudget, is not a number (null
 	// included), is not above zero, is under LinkedIn's $10 daily minimum, or is
-	// more than the lifetime budget. REDDIT CONVERSION EVENT (#549):
+	// more than the lifetime budget. LINKEDIN AUDIENCE EXPANSION AND AUDIENCE
+	// NETWORK (#667): linkedInConfig takes optional booleans
+	// `audienceExpansionEnabled` and `offsiteDeliveryEnabled`, sent as the
+	// campaign's fields of the same names on a campaign the create makes (a
+	// campaign reused by name keeps its own, with a warning step). Omitted, the
+	// create sends offsiteDeliveryEnabled false and no audienceExpansionEnabled
+	// (LinkedIn's default, off), as it always has. Refused with a 400 before any
+	// job exists: a value that is not a boolean (null reads as omitted),
+	// offsiteDeliveryEnabled true with format "text" (the Audience Network serves
+	// Sponsored Content only), and either field, false included, while the
+	// deployment has not set LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED to "true". The
+	// settings readback reports both as audience_expansion_enabled and
+	// offsite_delivery_enabled. REDDIT CONVERSION EVENT (#549):
 	// redditConfig.conversionEvent names the pixel event a conversions campaign
 	// optimizes toward, sent as the campaign's and the ad group's
 	// optimization_goal: PURCHASE, SIGN_UP, LEAD, PAGE_VISIT, VIEW_CONTENT,
@@ -2185,11 +2197,13 @@ type CampaignSettingsField struct {
 	// currency is not reported, never a bare number) are upstream-only, and
 	// `objective_type` is compared against the objective the recorded bidding
 	// strategy implies (automatic WEBSITE_VISIT, manual WEBSITE_CONVERSION;
-	// `unknown` when none is recorded); a campaign reporting both a daily and a
-	// total budget, neither (as under a campaign group's shared budget), or a
-	// non-USD amount reads both budget fields `unknown`. The vocabulary is
-	// per-platform and may grow, so a consumer must render an unrecognised field
-	// name rather than dropping it.
+	// `unknown` when none is recorded); `audience_expansion_enabled` and
+	// `offsite_delivery_enabled` (#667: LinkedIn's audienceExpansionEnabled and
+	// offsiteDeliveryEnabled, `true` or `false`, absent when not reported) are
+	// upstream-only; a campaign reporting both a daily and a total budget, neither
+	// (as under a campaign group's shared budget), or a non-USD amount reads both
+	// budget fields `unknown`. The vocabulary is per-platform and may grow, so a
+	// consumer must render an unrecognised field name rather than dropping it.
 	Field string
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.

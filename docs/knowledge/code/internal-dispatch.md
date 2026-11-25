@@ -5846,6 +5846,18 @@ variant's `<event> | variant-N` default; `PreflightCreate` takes the event name 
 `linkedinSnapshotConfig` redacts `Name` and `Description` like `IntroText`; `CallToAction` is an
 enum and kept.
 
+**LinkedIn Audience Expansion and Audience Network (#667).** `linkedin_delivery_options.go`.
+`checkDeliveryOptionsShape` refuses an `audienceExpansionEnabled` or `offsiteDeliveryEnabled` that
+is not a JSON boolean (null reads as omitted); `Dispatch` runs it before the strict decode, like
+`checkAdAccountIDShape`, so a mistyped value is the config refusal rather than a decode error.
+`linkedinDeliveryOptions` refuses either field, `false` included, while
+`LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED` is off, then runs `linkedin.ValidateDeliveryOptions`
+(the Audience Network on a text create). `PreflightCreate` (synchronous 400) and `Dispatch`
+(not-created refusal, after the format) both run them; the result reaches the client as
+`CampaignInput.DeliveryOptions`. `ReadSettings` reports both fields upstream-only
+(`audience_expansion_enabled`, `offsite_delivery_enabled`) through `boolToStrPtr`, so an
+unreported value is absent, not `"false"`.
+
 **Meta video variants (#550 gap 9).** `checkMetaVideoVariants` (gate `META_VIDEO_ENABLED`, uuid
 shape, no image alongside) runs in `PreflightCreate` and `Dispatch`. `resolveVariantAssets` resolves
 each variant's image slot and video slot through one `resolveSlot` closure (shared dedupe cache and
