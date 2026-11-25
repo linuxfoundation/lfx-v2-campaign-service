@@ -343,6 +343,8 @@ type CampaignInput struct {
 	// Format is the campaign format (#586): "" or FormatSingleImage creates today's
 	// SPONSORED_UPDATES campaign from Variants; FormatText creates a TEXT_AD campaign from
 	// TextAds, which requires a manual bid (ManualCPCBid > 0) and no Variants. See text_ads.go.
+	// FormatBoost (#673) creates a SPONSORED_UPDATES campaign whose one creative sponsors
+	// BoostPost, with no Variants or TextAds. See boost.go.
 	Format string
 	// TextAds are the Text Ad creatives of a FormatText create; refused under any other format.
 	TextAds []TextAd
@@ -359,6 +361,9 @@ type CampaignInput struct {
 	DocumentAssetID   string
 	DocumentTitle     string
 	DocumentIntroText string
+	// BoostPost is the existing organization post a FormatBoost create sponsors (#673):
+	// urn:li:share:<id> or urn:li:ugcPost:<id>. Refused under any other format. See boost.go.
+	BoostPost string
 	// JobFunctions replace the default job functions (urn:li:function:8, 13 and 16) in the
 	// profile's own jobFunctions clause (#585). Nil means the default. Not read with Targeting,
 	// which brings its own. CreateCampaign runs ValidateJobFunctions on it before any request.
@@ -431,6 +436,9 @@ type CampaignResult struct {
 	// kept), never created_degraded, which the orchestrator would reuse as complete. Set only on
 	// that path's partial, which is always returned with an error.
 	TargetingNotApplied bool `json:"targetingNotApplied,omitempty"`
+	// BoostedPostURN is the existing post a boost create's creative sponsors (#673), recorded once
+	// that creative exists (created or found on the reused campaign). Empty on every other create.
+	BoostedPostURN string `json:"boostedPostUrn,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -1045,6 +1053,14 @@ const maxCreativesPageSize = 100
 // returns each element's id (a sponsoredCreative URN). The campaign id is Rest.li-encoded
 // inside the List(...) so it can't break out of the literal.
 func (c *Client) listCreativeURNs(ctx context.Context, accountID, campaignID string) ([]string, error) {
+	return c.findCreativeURNs(ctx, accountID, campaignID, "")
+}
+
+// findCreativeURNs is listCreativeURNs narrowed, when contentRef is not empty, to the creatives
+// whose content.reference is that post URN (the finder's contentReferences filter, #673).
+// contentRef is trusted to be a validated share/ugcPost URN; it is Rest.li-encoded like the
+// campaign.
+func (c *Client) findCreativeURNs(ctx context.Context, accountID, campaignID, contentRef string) ([]string, error) {
 	nestedPath := fmt.Sprintf("adAccounts/%s/creatives", accountID)
 	campaignURN := "urn:li:sponsoredCampaign:" + campaignID
 	var urns []string
@@ -1059,6 +1075,9 @@ func (c *Client) listCreativeURNs(ctx context.Context, accountID, campaignID str
 			// larger value (e.g. 1000) makes discovery fail with a 4xx, which would abort
 			// BOTH status cascades. We request the max (100) and follow pageToken.
 			"pageSize": strconv.Itoa(maxCreativesPageSize),
+		}
+		if contentRef != "" {
+			params["contentReferences"] = "List(" + restliEncode(contentRef) + ")"
 		}
 		if pageToken != "" {
 			params["pageToken"] = pageToken
@@ -1875,9 +1894,11 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 var preEncodedParams = map[string]struct{}{
 	"search":    {}, // findMatch — the name filter
 	"campaigns": {}, // listCreativeURNs — the creatives finder's campaign List()
-	"accounts":  {}, // ListAdSegments — the ad segments finder's account List() (#552)
-	"query":     {}, // SearchTargetingEntities — the typeahead text, %20 not "+" (#585)
-	"owner":     {}, // ListLeadForms — the lead form finder's (sponsoredAccount:urn) owner (#664)
+	// findCreativeURNs — the creatives finder's contentReferences List() (#673)
+	"contentReferences": {},
+	"accounts":          {}, // ListAdSegments — the ad segments finder's account List() (#552)
+	"query":             {}, // SearchTargetingEntities — the typeahead text, %20 not "+" (#585)
+	"owner":             {}, // ListLeadForms — the lead form finder's (sponsoredAccount:urn) owner (#664)
 }
 
 // buildRawQuery renders params as a query string, percent-encoding every value
@@ -3228,6 +3249,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	} else if in.Document != nil || in.DocumentAssetID != "" || in.DocumentTitle != "" || in.DocumentIntroText != "" {
 		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: a document is accepted only with format %q", ErrFormatInvalid, FormatDocument))
 	}
+	// A boost (#673) sponsors one existing post: a well-formed post URN, and no creative of its
+	// own to author. Whether LinkedIn will sponsor that post is read below, before any POST.
+	if format == FormatBoost {
+		if len(in.Variants) > 0 {
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: a boost create sponsors boostPost and takes no variants", ErrFormatInvalid))
+		}
+		if err := ValidateBoostPostURN(in.BoostPost); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+	} else if in.BoostPost != "" {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: boostPost is accepted only with format %q", ErrFormatInvalid, FormatBoost))
+	}
 
 	// Refuse to create a campaign with no creatives: LinkedIn campaign-group and
 	// campaign creation are permanent side effects, so an empty variant set would
@@ -3460,6 +3493,22 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	defer unlockGroup()
 
+	// A boost (#673) reads its post before the campaign group exists: a post LinkedIn would refuse
+	// to sponsor from this account fails the creative POST only after the group and the campaign
+	// exist. The read creates nothing, so any failure here returns (nil, err). It runs under the
+	// group lock, after every local check, so a refused input costs no request. The post's
+	// content also decides the campaign format (SINGLE_VIDEO for a video post).
+	if format == FormatBoost {
+		orgURN, err := c.orgURN(accountID)
+		if err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+		if campaignFormat, err = c.verifyBoostPost(ctx, accountID, orgURN, in.BoostPost); err != nil {
+			return nil, err
+		}
+		steps = append(steps, fmt.Sprintf("Boost post %s verified: published by %s, public, organic, sponsorable", in.BoostPost, orgURN))
+	}
+
 	groupID, groupReused, err := c.findOrCreateCampaignGroup(ctx, accountID, groupName, in.StartDate, endMs)
 	if err != nil {
 		// An AMBIGUOUS failure (transport/timeout after send, a 5xx, or an
@@ -3522,9 +3571,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// it, so a retry spanning the change reuses that campaign instead of creating a second one
 	// beside it. A new group cannot hold one, so it needs no lookup. A failed lookup returns
 	// (nil, err): the group existed before this call and nothing was created.
-	// A text or video campaign (#586) postdates #587, so none can carry the legacy name (always
-	// Static): skip the lookup, which could otherwise bind it to a single-image campaign.
-	if groupReused && format != FormatText && campaignFormat == "" {
+	// A text or video campaign (#586), or a boost (#673), postdates #587, so none can carry the
+	// legacy name (always Static): skip the lookup, which could otherwise bind it to a
+	// single-image campaign.
+	if groupReused && format != FormatText && format != FormatBoost && campaignFormat == "" {
 		if legacy := legacyCampaignName(eventName, bidding.nameObjective, project, in); legacy != campaignName {
 			found, err := c.findCampaignByNameInGroup(ctx, fmt.Sprintf("adAccounts/%s/adCampaigns", accountID), legacy, groupID, bidding.objectiveType, bidding.optimizationTarget, campaignTypeFor(format), campaignFormat)
 			if err != nil {
@@ -3680,6 +3730,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			result.TargetCost = bidding.targetCost
 		}
 		return result
+	}
+	if format == FormatBoost {
+		return c.finishBoost(ctx, accountID, groupName, groupID, campaignName, campaignID, campaignReused, eventName, in.BoostPost, steps, withImages, finish)
 	}
 	if format == FormatDocument {
 		count, docURN, docSteps, derr := c.createDocumentAd(ctx, accountID, campaignID, eventName, in)

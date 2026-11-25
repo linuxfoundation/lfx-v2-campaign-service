@@ -6002,6 +6002,19 @@ each `destinationUrl` (`sanitizeSnapshotURL`). `TestPlatformConfigsNameTheirAsse
 covers the card's `imageAssetId`. See
 [LinkedIn Carousel Sponsored Content](../architecture/linkedin-carousel-ads.md).
 
+**LinkedIn boost (#673).** `linkedinConfig.BoostPost` (`linkedin_boost.go`): `checkFormatShape`
+refuses a non-string `boostPost` (null included) and lists `"boost"` among the formats;
+`linkedinFormat` refuses `boostPost` under any other format and hands `format: "boost"` to
+`linkedinBoostFormat`, gated by `linkedinBoostPostEnabled` (`LINKEDIN_ADS_BOOST_POST_ENABLED`,
+exact `"true"`, off by default), which refuses variants, a missing post and a URN
+`linkedin.ValidateBoostPostURN` refuses. `PreflightCreate` and `Dispatch` both run it; `Dispatch`
+stores `"boost"`, skips the empty-variant refusal for it, and passes `BoostPost` to the client,
+which reads the post in the job (a refused post fails the job not-created, with
+`linkedin.ErrBoostPostIneligible`). `linkedinFormat` checks `boostPost` before the document and
+carousel fields (#665), and a boost with either is refused as under any other format.
+`linkedinCreativeCount` is 1 for a boost; the snapshot keeps `format` and `boostPost` and the
+result `boostedPostUrn`.
+
 **LinkedIn video variants (#586).** `checkLinkedInVideoVariants` (gate `LINKEDIN_ADS_VIDEO_ENABLED`,
 uuid shape, no image alongside, all-or-none) runs in `PreflightCreate` and `Dispatch`.
 `resolveLinkedInImages` now resolves images AND videos under one `AssetReserver` reservation and

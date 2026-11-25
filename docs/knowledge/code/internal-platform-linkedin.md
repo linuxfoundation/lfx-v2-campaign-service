@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding whose objective follows the strategy (automatic WEBSITE_VISIT + MAX_CLICK + CPM, manual WEBSITE_CONVERSION + CPC/NONE/unitCost) unless the caller asks for automatic website conversions (WEBSITE_CONVERSION + MAX_CONVERSION + CPM, only with a conversion to associate) or a manual bid on website visits (WEBSITE_VISIT + CPC/NONE/unitCost), either automatic one optionally with a target cost sent as unitCost, where the create once sent no optimizationTargetType, and optional single-flight access-token refresh."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding whose objective follows the strategy (automatic WEBSITE_VISIT + MAX_CLICK + CPM, manual WEBSITE_CONVERSION + CPC/NONE/unitCost) unless the caller asks for automatic website conversions (WEBSITE_CONVERSION + MAX_CONVERSION + CPM, only with a conversion to associate) or a manual bid on website visits (WEBSITE_VISIT + CPC/NONE/unitCost), either automatic one optionally with a target cost sent as unitCost, where the create once sent no optimizationTargetType, a boost create whose one creative references an existing organization post read and checked before the campaign group, and optional single-flight access-token refresh."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -1249,6 +1249,42 @@ with the same do-not-retry and UNCONFIRMED wording as the single-image loop. The
 metrics and monitor read campaigns and creatives by id only, so they are format-agnostic
 (`TestUpdateCampaignAndCreativesStatus_TextAdCreatives`).
 
+## Boost an existing post (`boost.go`, #673)
+
+`FormatBoost` ("boost") creates the ordinary group and SPONSORED_UPDATES campaign — bidding,
+objective, targeting, conversions unchanged — and ONE DRAFT creative whose
+`content.reference` is `CampaignInput.BoostPost`, an existing post of the organization the ad
+account serves, instead of a dark post. `ValidateBoostPostURN` accepts exactly `postURNRe`
+(`urn:li:share:<digits>` or `urn:li:ugcPost:<digits>`); variants, text ads, carousel cards or a
+document (#665) beside it, a lead generation objective (`ValidateLeadGen`: the creative is created
+with no `leadgenCallToAction`), and a `BoostPost` under another format, are refused before any
+request.
+
+`verifyBoostPost` reads the post once (`doEntityGET` on `posts/<encodeURNForPath(urn)>`, the
+single-entity GET the settings readback uses; `identityjson.Check` on the body) after every local
+check and before `findOrCreateCampaignGroup`, under the event's group lock. It refuses, as an
+`ErrBoostPostIneligible` pre-flight refusal with nothing created: an `author` other than
+`orgURN(accountID)`; `lifecycleState` other than `PUBLISHED`; `visibility` other than `PUBLIC`; a
+`reshareContext`; `feedDistribution` other than `MAIN_FEED` (a dark or container post); content
+other than none, `article`, or `media` with an `urn:li:image:`/`urn:li:video:` id (poll,
+multiImage and celebration named as unsponsorable). A 404 and a 403 are refusals of the post; an
+`id` that is not the requested URN, a body `identityjson` refuses, and any other read failure
+are plain errors (a 401 keeps `ErrCredentialsExpired`). Every quoted value passes through
+`domain.CallerValue`. Sources (li-lms-2026-11, consulted 2026-11-26): the Posts API GET and
+content table, and the Creatives API error table (`UGC_RESHARE_CANNOT_BE_SPONSORED`,
+`UGC_INVALID_VISIBILITY_SETTING`, `UGC_INVALID_FEED_DISTRIBUTION`,
+`REFERENCE_MEDIA_CATEGORY_AND_CAMPAIGN_FORMAT_MISMATCH`), cited in `boost.go`. A video post's
+campaign gets `format: SINGLE_VIDEO` (the campaign format the post's media needs); otherwise
+none is sent.
+
+The name's Ad Format segment is `Boost` (`adFormatNameSegment`); a boost skips the pre-#587
+legacy-name lookup. `finishBoost` attaches the creative through `ensureBoostCreative`: on a
+campaign found by name it first calls `findCreativeURNs` (the creatives finder narrowed by
+`contentReferences=List(<post>)`, a new `preEncodedParams` key; `listCreativeURNs` is the
+unfiltered call) and reuses a creative already referencing the post, so a retry does not add a
+second ad. A failed creative POST returns the partial with the group and campaign, UNCONFIRMED
+when ambiguous. `CampaignResult.BoostedPostURN` records the post once its creative exists.
+
 ## Profile targeting shape (`targeting.go`, #585)
 
 `buildTargetingCriteria(profile, geoURNs, jobFns)` sends `include.and` as locations, then
@@ -1410,7 +1446,8 @@ reported. Neither has been sent as `true` to a live account.
 makes a lead gen create. `campaignBidding` plans it as `LEAD_GENERATION` / `MAX_LEAD` / `CPM` with
 name segment `Leads`, automatic only. `ValidateLeadGen` runs before any POST: it normalises the
 form (`<id>` or `urn:li:adForm:<id>`, a canonical positive int64), defaults the label to `REGISTER`
-and checks it against `LeadGenCallToActionLabels`, and refuses a text format, the Audience Network,
+and checks it against `LeadGenCallToActionLabels`, and refuses a text format, a carousel or boost
+(#673: the boost creative carries no form) format, the Audience Network,
 a variant `CallToAction`, and the objective and form without each other. `checkLeadForm` then
 reads `GET /rest/leadForms/{id}` before the campaign group: a form whose
 `owner.sponsoredAccount` is not the account, an `ARCHIVED` one, or a 404 is a pre-flight

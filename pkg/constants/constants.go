@@ -787,6 +787,14 @@ const (
 	// the shared ad account until a paused probe create passes.
 	EnvLinkedInAdsTrafficManualBidEnabled = "LINKEDIN_ADS_TRAFFIC_MANUAL_BID_ENABLED"
 
+	// EnvLinkedInAdsBoostPostEnabled opts a deployment IN to linkedInConfig.format "boost"
+	// (#673): the campaign's one creative sponsors linkedInConfig.boostPost, an existing post of
+	// the organization the ad account serves, instead of a dark post per variant. Only the exact
+	// value "true" enables it; unset or any other value fails closed, and a create naming it is
+	// refused before a job exists. Off until a paused live probe confirms the post read (scope
+	// r_organization_social) and the content.reference creative on the shared ad account.
+	EnvLinkedInAdsBoostPostEnabled = "LINKEDIN_ADS_BOOST_POST_ENABLED"
+
 	// EnvLinkedInAdsVideoEnabled opts a deployment IN to LinkedIn video Sponsored Content (#586):
 	// linkedInConfig.variants[].videoAssetId, a stored MP4 uploaded through the Videos API and
 	// posted as a SINGLE_VIDEO campaign's dark post. Only the exact value "true" enables it; unset

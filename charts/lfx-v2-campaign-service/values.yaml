@@ -1004,6 +1004,18 @@ app:
     LINKEDIN_ADS_TRAFFIC_MANUAL_BID_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to linkedInConfig.format "boost" (#673): the
+    # campaign's one creative sponsors linkedInConfig.boostPost, an existing
+    # post of the organization the ad account serves (content.reference),
+    # instead of a dark post per variant. The post read (Posts API, scope
+    # r_organization_social) and the reference creative have not been
+    # exercised against a live LinkedIn account. Set it to exactly "true" in
+    # lfx-v2-argocd once a paused probe create passes. While off, a create
+    # naming format "boost" is refused before a job exists. Any value other
+    # than "true" is treated as off, so a typo fails closed.
+    LINKEDIN_ADS_BOOST_POST_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to LinkedIn video Sponsored Content (#586):
     # linkedInConfig.variants[].videoAssetId names a stored MP4 that is uploaded
     # through LinkedIn's Videos API and posted as the dark post of a SINGLE_VIDEO

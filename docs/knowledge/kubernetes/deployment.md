@@ -226,6 +226,14 @@ exactly `"true"` enables it; off, a create naming it is refused with a 400 befor
 has not yet created that pairing on a live account. Only exactly `"true"` enables it; off, the
 create is refused with a 400 before a job exists, as before #675. Not role-gated.
 
+`LINKEDIN_ADS_BOOST_POST_ENABLED` defaults to `"false"` (#673) and gates
+`linkedInConfig.format: "boost"`: the campaign's one creative sponsors `linkedInConfig.boostPost`,
+an existing post of the organization the ad account serves, after the job has read the post
+(Posts API, which needs `r_organization_social` on the connection) and checked LinkedIn would
+sponsor it. Neither the read nor the reference creative has been exercised against a live account
+from this service. Only exactly `"true"` enables it; off, a create naming it is refused with a 400
+before a job exists. Not role-gated.
+
 `LINKEDIN_ADS_VIDEO_ENABLED` defaults to `"false"` (#586) and gates LinkedIn video Sponsored
 Content: `linkedInConfig.variants[].videoAssetId` uploads a stored MP4 through the Videos API and
 posts it in a `SINGLE_VIDEO` campaign, none of which has been exercised against a live LinkedIn

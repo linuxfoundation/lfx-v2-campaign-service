@@ -218,8 +218,9 @@ type linkedinConfig struct {
 	// LINKEDIN_ADS_TEXT_ADS_ENABLED, is a TEXT_AD campaign built from TextAds; "carousel", behind
 	// LINKEDIN_ADS_CAROUSEL_ENABLED (#665), is a CAROUSEL campaign built from CarouselCards;
 	// "document", behind LINKEDIN_ADS_DOCUMENT_ENABLED (#665), is a document ad built from
-	// DocumentAssetID. Dispatch stores "text", "carousel", "document" or nothing (the default).
-	// See linkedinFormat.
+	// DocumentAssetID; "boost" (#673), behind LINKEDIN_ADS_BOOST_POST_ENABLED, is a
+	// SPONSORED_UPDATES campaign whose one creative sponsors BoostPost. Dispatch stores "text",
+	// "carousel", "document", "boost" or nothing (the default). See linkedinFormat.
 	Format string `json:"format,omitempty"`
 	// TextAds are the Text Ad creatives of a "text" create (#586); refused with any other format.
 	TextAds []linkedin.TextAd `json:"textAds,omitempty"`
@@ -234,6 +235,10 @@ type linkedinConfig struct {
 	DocumentAssetID   string `json:"documentAssetId,omitempty"`
 	DocumentTitle     string `json:"documentTitle,omitempty"`
 	DocumentIntroText string `json:"documentIntroText,omitempty"`
+	// BoostPost is the existing organization post a "boost" create sponsors (#673), behind
+	// LINKEDIN_ADS_BOOST_POST_ENABLED: exactly urn:li:share:<id> or urn:li:ugcPost:<id>. Refused
+	// with any other format, and a "boost" create takes no variants. See linkedinBoostFormat.
+	BoostPost string `json:"boostPost,omitempty"`
 	// Objective is the campaign's optimisation goal (#582): "traffic" or "conversions", exactly, or
 	// "lead_generation" (#664: LEAD_GENERATION / MAX_LEAD, automatic only, requires LeadGenForm).
 	// Omitted, the bidding strategy decides as before (automatic → WEBSITE_VISIT / MAX_CLICK,
@@ -1265,6 +1270,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		DocumentAssetID:   cfg.DocumentAssetID,
 		DocumentTitle:     cfg.DocumentTitle,
 		DocumentIntroText: cfg.DocumentIntroText,
+		BoostPost:         cfg.BoostPost,
 		JobFunctions:      cfg.JobFunctions,
 		DeliveryOptions:   delivery,
 		LeadGen:           leadGen,
