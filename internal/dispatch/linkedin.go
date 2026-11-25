@@ -213,8 +213,9 @@ type linkedinConfig struct {
 	Conversions []string `json:"conversions,omitempty"`
 	// Format selects the campaign format (#586): omitted or "single_image" is the
 	// SPONSORED_UPDATES campaign built from Variants; "text", behind
-	// LINKEDIN_ADS_TEXT_ADS_ENABLED, is a TEXT_AD campaign built from TextAds. Dispatch stores
-	// "text" or nothing (the default). See linkedinFormat.
+	// LINKEDIN_ADS_TEXT_ADS_ENABLED, is a TEXT_AD campaign built from TextAds; "carousel", behind
+	// LINKEDIN_ADS_CAROUSEL_ENABLED (#665), is a CAROUSEL campaign built from CarouselCards.
+	// Dispatch stores "text", "carousel" or nothing (the default). See linkedinFormat.
 	Format string `json:"format,omitempty"`
 	// TextAds are the Text Ad creatives of a "text" create (#586); refused with any other format.
 	TextAds []linkedin.TextAd `json:"textAds,omitempty"`

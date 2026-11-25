@@ -1772,7 +1772,7 @@ account, so it requires `global_marketing_ops` like `conversions`. Refused with 
 before any job exists: any of them while the flag is not exactly `"true"`; `lead_generation`
 without `leadGenForm`, or `leadGenForm`/`leadGenCallToAction` without it; a manual bid; a
 `leadGenForm` or `leadGenCallToAction` that is not a JSON string; an id that is not a canonical
-positive integer; an unknown label; `format: "text"`; `offsiteDeliveryEnabled: true` (LinkedIn:
+positive integer; an unknown label; `format: "text"` or `"carousel"`; `offsiteDeliveryEnabled: true` (LinkedIn:
 "You cannot set offsiteDeliveryEnabled to True when using Lead Gen"); and a
 `variants[].callToAction` (on a lead gen creative the form's button is the call to action).
 Dispatch repeats every check, and the client then reads the form (`GET /rest/leadForms/{id}`)
@@ -1888,7 +1888,7 @@ creatives finder discovers text ads like any creative) and the bid and budget le
 text campaign as on a single-image one.
 
 Refused with a synchronous `400 invalid campaign config: linkedInConfig: …` before any job exists:
-a `format` other than `"single_image"` or `"text"` (or not a string); `textAds` without
+a `format` other than `"single_image"`, `"text"` or `"carousel"` (or not a string); `textAds` without
 `format: "text"`; `format: "text"` with automatic or omitted bidding, with `variants`, with no
 `textAds` or more than 100; a `textAds` that is not an array of objects whose fields are the four
 strings above (`null`, a number, an unknown key such as a misspelled `description`); a headline or

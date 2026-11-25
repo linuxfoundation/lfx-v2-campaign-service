@@ -138,11 +138,6 @@ func TestLinkedInCarousel_RefusedBeforeAnythingIsCreated(t *testing.T) {
 			a.assets[liCarouselAssetB] = &model.CreativeAsset{ID: liCarouselAssetB, MimeType: model.MimeTypeMP4, Bytes: liTestMP4(liVideoSize)}
 			return a
 		}, false},
-		{"image over 4320 pixels", "true", false, liCarouselConfig("", two...), func(t *testing.T) *multiCreativeAssets {
-			a := liCarouselAssets(t)
-			a.assets[liCarouselAssetB] = &model.CreativeAsset{ID: liCarouselAssetB, MimeType: model.MimeTypePNG, Bytes: msTestPNG(t, 4400, 10)}
-			return a
-		}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -176,6 +171,30 @@ func TestLinkedInCarousel_RefusedBeforeAnythingIsCreated(t *testing.T) {
 				rel()
 			}
 		})
+	}
+}
+
+// TestLinkedInCarousel_ImageRefusedByTheCarouselRule: a 4400x2000 PNG passes the single-image
+// rules (up to 7680x4320) and fails only the carousel's 4320x4320 ceiling, so the refusal proves
+// the card image was checked under the carousel rules, before any LinkedIn request.
+func TestLinkedInCarousel_ImageRefusedByTheCarouselRule(t *testing.T) {
+	t.Setenv(constants.EnvLinkedInAdsCarouselEnabled, "true")
+	api := newLIImageAPI(t)
+	assets := liCarouselAssets(t)
+	assets.assets[liCarouselAssetB] = &model.CreativeAsset{ID: liCarouselAssetB, MimeType: model.MimeTypePNG, Bytes: msTestPNG(t, 4400, 2000)}
+	d := newLIImageDispatcher(api, assets, nil)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds,
+		liCarouselConfig("", liCard(msAssetID, ""), liCard(liCarouselAssetB, "")))
+	if camp != nil || !isNoUpstreamCreate(err) || !strings.Contains(err.Error(), "carousel ads accept at most 4320x4320") {
+		t.Fatalf("want the carousel image refusal before any create, got camp=%v err=%v", camp, err)
+	}
+	// Decided by the dispatcher's asset check (resolveLinkedInImages), not left to the client's
+	// own pre-request backstop.
+	if strings.Contains(err.Error(), "before any upstream create") || !strings.Contains(err.Error(), "creative asset "+liCarouselAssetB) {
+		t.Errorf("err = %v; want the dispatcher's asset refusal naming %s", err, liCarouselAssetB)
+	}
+	if n := api.count(""); n != 0 {
+		t.Errorf("%d request(s) reached LinkedIn", n)
 	}
 }
 
