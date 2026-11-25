@@ -226,6 +226,12 @@ type linkedinConfig struct {
 	// JobFunctions replace the default job functions in the profile's jobFunctions clause
 	// (#585). Not read with Targeting. See linkedin.ValidateJobFunctions.
 	JobFunctions []string `json:"jobFunctions,omitempty"`
+	// AudienceExpansionEnabled and OffsiteDeliveryEnabled are the campaign's Audience Expansion
+	// and LinkedIn Audience Network choices (#667), behind LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED.
+	// Omitted, the create sends offsiteDeliveryEnabled false and no audienceExpansionEnabled. See
+	// linkedinDeliveryOptions.
+	AudienceExpansionEnabled *bool `json:"audienceExpansionEnabled,omitempty"`
+	OffsiteDeliveryEnabled   *bool `json:"offsiteDeliveryEnabled,omitempty"`
 }
 
 // checkJobFunctionsShape refuses a linkedInConfig.jobFunctions that is not a JSON array of
@@ -714,7 +720,11 @@ func derefFloat(p *float64) float64 {
 //   - daily cap: a `dailyCapUsd` that is not a JSON number (checkDailyCapShape), or one
 //     linkedinDailyCap refuses (linkedin.ValidateDailyCap) (#584);
 //   - lifetime floor: an uncapped lifetime budget under max($100, $10 × flight days)
-//     (linkedinLifetimeFloor, #633).
+//     (linkedinLifetimeFloor, #633);
+//   - delivery options (#667): an `audienceExpansionEnabled` or `offsiteDeliveryEnabled` that is
+//     not a JSON boolean (checkDeliveryOptionsShape; null reads as omitted), or one
+//     linkedinDeliveryOptions refuses (the deployment gate off, or the Audience Network on a text
+//     create).
 //
 // It never calls LinkedIn (adAccountId needs only the database read a create's resolution makes),
 // so every other outcome is ErrPreflightNotApplicable; a config that does not decode is otherwise
@@ -817,6 +827,13 @@ func (d *LinkedInDispatcher) PreflightCreate(ctx context.Context, projectID stri
 	if _, err := linkedinJobFunctions(cfg); err != nil {
 		return err
 	}
+	// Audience Expansion and the Audience Network (#667) likewise, a wrong JSON type included.
+	if err := checkDeliveryOptionsShape(config); err != nil {
+		return err
+	}
+	if _, err := linkedinDeliveryOptions(cfg); err != nil {
+		return err
+	}
 	return domain.ErrPreflightNotApplicable
 }
 
@@ -893,6 +910,10 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 
 	// A wrong-typed adAccountId fails with PreflightCreate's sentence, not the strict decode's.
 	if err := checkAdAccountIDShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	// So does a wrong-typed audienceExpansionEnabled or offsiteDeliveryEnabled (#667).
+	if err := checkDeliveryOptionsShape(config); err != nil {
 		return nil, notCreated(err)
 	}
 	var cfg linkedinConfig
@@ -987,6 +1008,13 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if cfg.JobFunctions, err = linkedinJobFunctions(cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// Audience Expansion and the Audience Network (#667), gated and validated before any upstream
+	// call, after the format so a text create's Audience Network is refused. Their JSON type is
+	// checked before the strict decode, above.
+	delivery, err := linkedinDeliveryOptions(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
 	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
 	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
@@ -1077,6 +1105,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		Format:           cfg.Format,
 		TextAds:          cfg.TextAds,
 		JobFunctions:     cfg.JobFunctions,
+		DeliveryOptions:  delivery,
 
 		// The name labels of the CLAIMED row (multi-campaign cs-4): its stored funnel stage and
 		// tactic (model.DispatchLabels) and its slot version, never the request's. Slot 2 on gets

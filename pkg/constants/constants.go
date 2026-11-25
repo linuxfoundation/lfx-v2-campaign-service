@@ -784,6 +784,15 @@ const (
 	// refused label fails the dark post after the campaign group and campaign exist.
 	EnvLinkedInAdsCallToActionEnabled = "LINKEDIN_ADS_CALL_TO_ACTION_ENABLED"
 
+	// EnvLinkedInAdsDeliveryOptionsEnabled opts a deployment IN to linkedInConfig.audienceExpansionEnabled
+	// and linkedInConfig.offsiteDeliveryEnabled (#667): the campaign's Audience Expansion and LinkedIn
+	// Audience Network choices. Only the exact value "true" enables them; unset or any other value
+	// fails closed, and a create naming either (false included) is refused before a job exists.
+	// Off, every create sends offsiteDeliveryEnabled false and no audienceExpansionEnabled, as it
+	// always has. It keeps both fields, sent as true, off the live ad account until the probe in
+	// the field's docs passes.
+	EnvLinkedInAdsDeliveryOptionsEnabled = "LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED"
+
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,
 	// so every campaign authenticates as the marketing-ops account regardless of any

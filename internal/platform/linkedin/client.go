@@ -331,6 +331,11 @@ type CampaignInput struct {
 	// profile's own jobFunctions clause (#585). Nil means the default. Not read with Targeting,
 	// which brings its own. CreateCampaign runs ValidateJobFunctions on it before any request.
 	JobFunctions []string
+	// DeliveryOptions are the caller's Audience Expansion and Audience Network choices (#667),
+	// written only into the body of a campaign this run creates. The zero value sends what every
+	// create has always sent: offsiteDeliveryEnabled false and no audienceExpansionEnabled.
+	// CreateCampaign runs ValidateDeliveryOptions on it before any request. See delivery_options.go.
+	DeliveryOptions DeliveryOptions
 }
 
 // CampaignResult is the outcome of CreateCampaign. Mirrors
@@ -2231,7 +2236,7 @@ func (c *Client) readCampaignGroupEnd(ctx context.Context, path, groupID string)
 // format is the campaign's ad format: empty (LinkedIn sets it from the first creative, the
 // behaviour every image campaign has always had) or campaignFormatSingleVideo for a video
 // campaign, which LinkedIn requires to be set at creation (#586).
-func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, jobFns []string, custom *Targeting, lifetimeBudget bool, bidding campaignBiddingPlan, dailyCap, campaignType, format string) (id string, reused bool, err error) {
+func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, jobFns []string, custom *Targeting, lifetimeBudget bool, bidding campaignBiddingPlan, dailyCap, campaignType, format string, delivery DeliveryOptions) (id string, reused bool, err error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
 	// Scope the idempotency lookup to the resolved campaign group: the campaign
@@ -2300,15 +2305,15 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 		// WEBSITE_CONVERSION + NONE + unitCost for manual. Before LFXV2-2665 this body sent
 		// WEBSITE_CONVERSION, costType CPC and NO optimizationTargetType, which LinkedIn defaults
 		// to NONE — manual bidding — with unitCost 0, under which "the campaign does not deliver".
-		"locale": map[string]any{"country": "US", "language": "en"},
-		// false keeps delivery on LinkedIn itself. true opts the campaign into the
-		// LinkedIn Audience Network — placements beyond the feed, on third-party
-		// sites — which is a media-buying decision nobody makes in our UI, so it
-		// must not be switched on by default.
-		"offsiteDeliveryEnabled": false,
-		"politicalIntent":        "NOT_POLITICAL",
-		budgetField:              map[string]any{"amount": amount, "currencyCode": "USD"},
+		"locale":          map[string]any{"country": "US", "language": "en"},
+		"politicalIntent": "NOT_POLITICAL",
+		budgetField:       map[string]any{"amount": amount, "currencyCode": "USD"},
 	}
+	// offsiteDeliveryEnabled false keeps delivery on LinkedIn itself; true opts the campaign into
+	// the LinkedIn Audience Network (placements on third-party sites). It is a media-buying
+	// decision, so it is sent false unless the caller chose it (#667), and audienceExpansionEnabled
+	// is sent only when chosen. See delivery_options.go.
+	delivery.apply(body)
 	runSchedule := map[string]any{"start": startMs, "end": endMs}
 	body["runSchedule"] = runSchedule
 	// A lifetime budget may also carry a daily cap (#584). dailyCap is ValidateDailyCap's wire
@@ -3042,6 +3047,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, domain.WrapPreflightRefusal(err)
 	}
 	in.Format = format
+	// Delivery options (#667): the Audience Network is refused on a Text Ad campaign here, before
+	// the first POST, rather than by LinkedIn after the campaign group exists.
+	if err := ValidateDeliveryOptions(in.DeliveryOptions, format); err != nil {
+		return nil, domain.WrapPreflightRefusal(err)
+	}
 	if format == FormatText {
 		if in.ManualCPCBid == 0 {
 			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: a text create requires manual bidding: LinkedIn Text Ads support only a manual bid (optimizationTargetType NONE)", ErrFormatInvalid))
@@ -3348,7 +3358,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
-	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, jobFns, targeting, in.LifetimeBudget, bidding, dailyCap, campaignTypeFor(format), campaignFormat)
+	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, jobFns, targeting, in.LifetimeBudget, bidding, dailyCap, campaignTypeFor(format), campaignFormat, in.DeliveryOptions)
 	unlockGroup()
 	if err != nil {
 		// findOrCreateCampaignGroup may have just created a PERMANENT campaign group
@@ -3393,6 +3403,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// The campaign carries its own bidding (objectiveType, optimizationTargetType, costType,
 		// unitCost) and a reused one keeps what it had (LFXV2-2665).
 		steps = append(steps, fmt.Sprintf("Warning: bid NOT applied to reused campaign %s; its existing bidding is unchanged — verify its bidding in Campaign Manager", campaignID))
+		// Audience Expansion and the Audience Network (#667) are create-time body fields too.
+		if in.DeliveryOptions.Set() {
+			steps = append(steps, fmt.Sprintf("Warning: %s and %s NOT applied to reused campaign %s; its existing settings are unchanged — verify them in Campaign Manager", FieldAudienceExpansionEnabled, FieldOffsiteDeliveryEnabled, campaignID))
+		}
 	}
 
 	// Caller targeting (#552) is written only into the body of a campaign THIS RUN creates. A

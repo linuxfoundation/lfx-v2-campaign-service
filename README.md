@@ -802,6 +802,16 @@ openssl rand -base64 32
   before a job exists. The chart sets it to `"false"`
   (`app.environment.LINKEDIN_ADS_CALL_TO_ACTION_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once the probe passes.
+- `LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `linkedInConfig.audienceExpansionEnabled` and
+  `linkedInConfig.offsiteDeliveryEnabled` (#667), the campaign's Audience
+  Expansion and LinkedIn Audience Network choices. Only the exact value `true`
+  enables them; anything else fails closed, and a create naming either (`false`
+  included) is refused with a 400 before a job exists. Off, every create sends
+  `offsiteDeliveryEnabled: false` and no `audienceExpansionEnabled`, as before.
+  The chart sets it to `"false"`
+  (`app.environment.LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once the probe passes.
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request
   names no `source_workflow_url`. Unset or empty selects the in-code

@@ -25,12 +25,14 @@ const (
 )
 
 // liCampaignJSON is a campaign this service created: CPC, manual (NONE), a daily USD budget,
-// and the flight the create path sends (start 00:00 UTC, end 23:59:59.999 UTC).
+// the flight the create path sends (start 00:00 UTC, end 23:59:59.999 UTC), Audience Expansion on
+// and the Audience Network off (#667).
 func liCampaignJSON(mutate ...func(string) string) string {
 	s := `{"id":777,"account":"urn:li:sponsoredAccount:123456789","campaignGroup":"urn:li:sponsoredCampaignGroup:42",` +
 		`"name":"KubeCon EU","status":"ACTIVE","objectiveType":"WEBSITE_CONVERSION","optimizationTargetType":"NONE",` +
 		`"costType":"CPC","unitCost":{"amount":"5.25","currencyCode":"USD"},` +
-		`"dailyBudget":{"amount":"100.00","currencyCode":"USD"},"runSchedule":{"start":1785542400000,"end":1786924799999}}`
+		`"dailyBudget":{"amount":"100.00","currencyCode":"USD"},"runSchedule":{"start":1785542400000,"end":1786924799999},` +
+		`"audienceExpansionEnabled":true,"offsiteDeliveryEnabled":false}`
 	for _, m := range mutate {
 		s = m(s)
 	}
@@ -74,19 +76,62 @@ func TestLinkedIn_ReadSettings_ComparesTheCampaign(t *testing.T) {
 		t.Errorf("ids = %+v", rb)
 	}
 	assertSettingsFields(t, rb, map[string]fieldWant{
-		settingsFieldBudgetAmount:     {"100.00", "100.00", model.SettingsMatch},
-		settingsFieldBudgetType:       {"daily", "daily", model.SettingsMatch},
-		settingsFieldName:             {"KubeCon EU", "KubeCon EU", model.SettingsMatch},
-		settingsFieldStatus:           {"", "ACTIVE", model.SettingsUnknown},
-		settingsFieldStartDate:        {"2026-08-01", "2026-08-01", model.SettingsMatch},
-		settingsFieldEndDate:          {"2026-08-16", "2026-08-16", model.SettingsMatch},
-		settingsFieldBiddingStrategy:  {"", "NONE", model.SettingsUnknown},
-		settingsFieldCostType:         {"", "CPC", model.SettingsUnknown},
-		settingsFieldUnitCost:         {"", "5.25", model.SettingsUnknown},
-		settingsFieldUnitCostCurrency: {"", "USD", model.SettingsUnknown},
-		settingsFieldObjectiveType:    {"", "WEBSITE_CONVERSION", model.SettingsUnknown},
+		settingsFieldBudgetAmount:      {"100.00", "100.00", model.SettingsMatch},
+		settingsFieldBudgetType:        {"daily", "daily", model.SettingsMatch},
+		settingsFieldName:              {"KubeCon EU", "KubeCon EU", model.SettingsMatch},
+		settingsFieldStatus:            {"", "ACTIVE", model.SettingsUnknown},
+		settingsFieldStartDate:         {"2026-08-01", "2026-08-01", model.SettingsMatch},
+		settingsFieldEndDate:           {"2026-08-16", "2026-08-16", model.SettingsMatch},
+		settingsFieldBiddingStrategy:   {"", "NONE", model.SettingsUnknown},
+		settingsFieldCostType:          {"", "CPC", model.SettingsUnknown},
+		settingsFieldUnitCost:          {"", "5.25", model.SettingsUnknown},
+		settingsFieldUnitCostCurrency:  {"", "USD", model.SettingsUnknown},
+		settingsFieldObjectiveType:     {"", "WEBSITE_CONVERSION", model.SettingsUnknown},
+		settingsFieldAudienceExpansion: {"", "true", model.SettingsUnknown},
+		settingsFieldOffsiteDelivery:   {"", "false", model.SettingsUnknown},
 	})
 	assertSettingsReadOnly(t, api.requests(), "")
+}
+
+// TestLinkedIn_ReadSettings_DeliveryOptions pins the two upstream-only fields #667 adds: each is
+// LinkedIn's boolean rendered "true" or "false", and ABSENT (never "false") when not reported.
+func TestLinkedIn_ReadSettings_DeliveryOptions(t *testing.T) {
+	cases := []struct {
+		name               string
+		mutate             func(string) string
+		expansion, offsite string // "" = absent upstream side
+	}{
+		{"both reported", nil, "true", "false"},
+		{"audience network on", replace(`"offsiteDeliveryEnabled":false`, `"offsiteDeliveryEnabled":true`), "true", "true"},
+		{"neither reported", replace(`,"audienceExpansionEnabled":true,"offsiteDeliveryEnabled":false`, ``), "", ""},
+		{"expansion not reported", replace(`"audienceExpansionEnabled":true,`, ``), "", "false"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mutate []func(string) string
+			if tc.mutate != nil {
+				mutate = append(mutate, tc.mutate)
+			}
+			d, _ := liLeverDispatcher(t, map[string]settingsRoute{liCampaignPath: {status: 200, body: liCampaignJSON(mutate...)}})
+			rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderLinkedInAds, liRow())
+			if err != nil {
+				t.Fatalf("ReadSettings: %v", err)
+			}
+			for field, want := range map[string]string{settingsFieldAudienceExpansion: tc.expansion, settingsFieldOffsiteDelivery: tc.offsite} {
+				got := settingsField(t, rb, field)
+				if got.Recorded != nil || got.Comparison != model.SettingsUnknown {
+					t.Errorf("%s = %+v, want upstream-only and `unknown`", field, got)
+				}
+				if want == "" {
+					if got.Upstream != nil {
+						t.Errorf("%s upstream = %q, want absent", field, *got.Upstream)
+					}
+				} else if derefOr(got.Upstream) != want {
+					t.Errorf("%s upstream = %q, want %q", field, derefOr(got.Upstream), want)
+				}
+			}
+		})
+	}
 }
 
 func TestLinkedIn_ReadSettings_BudgetIsComparedOnlyWhenItsShapeIsUnambiguous(t *testing.T) {
