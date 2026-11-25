@@ -2631,10 +2631,17 @@ func nameToken(s string) string {
 // Unexported by design (see findOrCreateCampaignGroup): accountID is trusted to
 // have passed resolveAccountID in CreateCampaign.
 func (c *Client) createCreative(ctx context.Context, accountID, campaignID, shareURN, adName string, leadGen *LeadGen) (string, error) {
+	return c.postCreative(ctx, accountID, campaignID, map[string]any{"reference": shareURN}, adName, leadGen)
+}
+
+// postCreative POSTs a DRAFT creative with the given content block — {"reference": <post>} for an
+// article, image, video or carousel post, {"documentAd": {"reference": <post>}} for a document
+// (#665) — and returns its URN. createCreative's contract applies to both.
+func (c *Client) postCreative(ctx context.Context, accountID, campaignID string, content map[string]any, adName string, leadGen *LeadGen) (string, error) {
 	body := map[string]any{
 		"campaign":       "urn:li:sponsoredCampaign:" + campaignID,
 		"intendedStatus": "DRAFT",
-		"content":        map[string]any{"reference": shareURN},
+		"content":        content,
 	}
 	// A lead generation creative's button opens the form (#664). It can be set only while the
 	// creative is DRAFT, which is how every creative here is created.

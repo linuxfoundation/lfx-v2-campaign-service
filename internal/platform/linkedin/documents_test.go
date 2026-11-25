@@ -225,6 +225,12 @@ func TestCreateCampaign_DocumentWireBodies(t *testing.T) {
 		t.Errorf("not a dark post: %v", dist)
 	}
 	cr := s.creatives[0]
+	// A document creative nests the post under content.documentAd ("Document Ads API").
+	content2, _ := cr["content"].(map[string]any)
+	docAd, _ := content2["documentAd"].(map[string]any)
+	if docAd["reference"] != "urn:li:share:300" || content2["reference"] != nil || cr["intendedStatus"] != "DRAFT" {
+		t.Errorf("creative = %v, want DRAFT with content.documentAd.reference = the post and no content.reference", cr)
+	}
 	if name, _ := cr["name"].(string); name != "KubeCon | document-1" {
 		t.Errorf("creative name = %q", name)
 	}
@@ -259,6 +265,10 @@ func TestCreateCampaign_DocumentLeadGen(t *testing.T) {
 	}
 	if s.campaign["objectiveType"] != ObjectiveLeadGeneration || s.campaign["optimizationTargetType"] != OptimizationTargetMaxLead || res.CreativeCount != 1 {
 		t.Errorf("campaign %v, result %+v", s.campaign, res)
+	}
+	content, _ := s.creatives[0]["content"].(map[string]any)
+	if docAd, _ := content["documentAd"].(map[string]any); docAd["reference"] != "urn:li:share:300" {
+		t.Errorf("gated creative content = %v, want content.documentAd.reference", content)
 	}
 	cta, _ := s.creatives[0]["leadgenCallToAction"].(map[string]any)
 	if cta["destination"] != "urn:li:adForm:123" {

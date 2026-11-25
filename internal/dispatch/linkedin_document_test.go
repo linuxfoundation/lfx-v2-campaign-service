@@ -153,6 +153,10 @@ func TestLinkedInDocument_DispatchEndToEnd(t *testing.T) {
 	if media, _ := content["media"].(map[string]any); media["id"] != "urn:li:document:DOC1" {
 		t.Errorf("post content = %v", content)
 	}
+	crContent, _ := api.creatives[0]["content"].(map[string]any)
+	if docAd, _ := crContent["documentAd"].(map[string]any); docAd["reference"] != "urn:li:share:300" {
+		t.Errorf("creative content = %v, want content.documentAd.reference", crContent)
+	}
 	snap := string(camp.ConfigSnapshot)
 	if !strings.Contains(snap, `"documentAssetId":"`+liDocumentAssetID+`"`) {
 		t.Errorf("snapshot must store the canonical asset id under documentAssetId: %s", snap)

@@ -31,6 +31,11 @@ import (
 //     is {"media": {"title": ..., "id": "urn:li:document:..."}}. For an organization owner "the
 //     caller must have ADMIN or DSC permissions for the company page" — the dark post's own
 //     requirement, so the upload adds none.
+//   - "Document Ads API"
+//     (https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads/advertising-targeting/version/document-ads?view=li-lms-2026-11):
+//     the post's content is {"media": {"title", "id": <DocumentUrn>}}, and "For Document Ads, the
+//     content field requires a documentAd object" — the creative's content is {"documentAd":
+//     {"reference": <post>}}, with an optional gatedLeadgenPreviewPageCount for lead gen content.
 //   - "Campaign Objectives": the document format (SPONSORED_UPDATE_NATIVE_DOCUMENT) is listed under
 //     Brand Awareness and Engagement (optimisation goal Reach: MAX_REACH, CPM) and Lead Generation
 //     (MAX_LEAD, CPM), and NOT under Website Visits or Website Conversions. "Create and Manage
@@ -230,6 +235,16 @@ func (c *Client) createDocumentDarkPost(ctx context.Context, accountID, introTex
 	return c.postDarkPost(ctx, body)
 }
 
+// createDocumentCreative creates the DRAFT creative of a document ad. Unlike an article, image or
+// video creative, whose content is {"reference": <post>}, a document creative's content is
+// {"documentAd": {"reference": <post>}} ("Document Ads API", li-lms-2026-11: "For Document Ads, the
+// content field requires a documentAd object"). A gated document carries the Lead Gen Form as
+// leadgenCallToAction like any lead generation creative; gatedLeadgenPreviewPageCount is optional
+// and not sent, so LinkedIn's default preview applies.
+func (c *Client) createDocumentCreative(ctx context.Context, accountID, campaignID, shareURN, adName string, leadGen *LeadGen) (string, error) {
+	return c.postCreative(ctx, accountID, campaignID, map[string]any{"documentAd": map[string]any{"reference": shareURN}}, adName, leadGen)
+}
+
 // createDocumentAd uploads the document, then creates the dark post and the one DRAFT creative
 // (carrying the Lead Gen Form on a lead generation create). It returns how many creatives were
 // created (0 or 1), the minted document URN, the Steps and the first failure. NOT idempotent, as
@@ -248,7 +263,7 @@ func (c *Client) createDocumentAd(ctx context.Context, accountID, campaignID, ev
 		return 0, urn, steps, fmt.Errorf("document dark post failed: %w; inspect the returned partial result", err)
 	}
 	steps = append(steps, fmt.Sprintf("Document dark post: %s", shareURN))
-	creativeID, err := c.createCreative(ctx, accountID, campaignID, shareURN, fmt.Sprintf("%s | document-1", eventName), in.LeadGen)
+	creativeID, err := c.createDocumentCreative(ctx, accountID, campaignID, shareURN, fmt.Sprintf("%s | document-1", eventName), in.LeadGen)
 	if err != nil {
 		if createOutcomeAmbiguous(err) {
 			steps = append(steps, fmt.Sprintf("Document creative outcome UNCONFIRMED (timeout, server error, or an in-flight cancellation); it may have been created — verify before recreating (orphaned dark post: %s)", shareURN))

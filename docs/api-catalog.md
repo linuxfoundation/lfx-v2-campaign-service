@@ -2002,10 +2002,12 @@ POST /rest/documents?action=initializeUpload  {"initializeUploadRequest":{"owner
 PUT  <uploadUrl>  (the PDF, application/pdf)
 GET  /rest/documents/<urn>  until AVAILABLE (shared 60 s wait)
 POST /rest/posts  {..."commentary":"<documentIntroText>","content":{"media":{"title":"<documentTitle>","id":"urn:li:document:…"}}}
-POST /rest/adAccounts/<acct>/creatives  {"campaign":…,"intendedStatus":"DRAFT","name":"<event> | document-1","content":{"reference":"<post urn>"}[,"leadgenCallToAction":{…}]}
+POST /rest/adAccounts/<acct>/creatives  {"campaign":…,"intendedStatus":"DRAFT","name":"<event> | document-1","content":{"documentAd":{"reference":"<post urn>"}}[,"leadgenCallToAction":{…}]}
 ```
 
-A document has no landing page, so no UTM parameters are sent and the brief needs no registration
+Unlike every other creative, a document creative nests the post under `content.documentAd`
+(LinkedIn's Document Ads API). `gatedLeadgenPreviewPageCount` is not sent, so a gated document gets
+LinkedIn's default preview. A document has no landing page, so no UTM parameters are sent and the brief needs no registration
 URL (every other format still requires one). The minted URN is recorded on the
 result (`documentUrns`); a failure after the campaign exists leaves it `created_degraded` with the
 claim retained. The snapshot keeps the canonical `documentAssetId` (so the asset-deletion guard

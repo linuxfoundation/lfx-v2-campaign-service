@@ -57,7 +57,9 @@ are refused. The client refuses ENGAGEMENT for any other format.
    LinkedIn upload URL, `GET /rest/documents/{urn}` until AVAILABLE within a shared 60 s wait.
 3. ONE dark post with `content.media {title, id: urn:li:document:…}` and no landing page, so a
    document create skips the registration URL check every other format applies.
-4. ONE DRAFT creative named `<event> | document-1`, with `leadgenCallToAction` on a gated document.
+4. ONE DRAFT creative named `<event> | document-1` whose content is `{"documentAd": {"reference":
+   <post>}}` (the Document Ads API; every other creative sends `{"reference": <post>}`), with
+   `leadgenCallToAction` on a gated document. `gatedLeadgenPreviewPageCount` is not sent.
 
 The minted URN is recorded (`documentUrns`); a failure after the campaign exists returns the partial
 (claim retained), and an ambiguous post or creative failure is UNCONFIRMED. The snapshot keeps the

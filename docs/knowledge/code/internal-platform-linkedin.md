@@ -1050,7 +1050,8 @@ refuse, and document fields under another format. The campaign is created withou
 (`createSponsoredCampaign` never sends `campaignFormatDocument`), which `sponsoredFormatKind` uses
 for the reuse check. `createDocumentAd` runs `uploadDocument` (initializeUpload, the PUT to a
 trusted LinkedIn URL, `awaitMediaAvailable` with `documentMedia`; `WithDocumentPolling`, default
-60 s), `createDocumentDarkPost` (`content.media`, no landing page) and `createCreative` (with the
+60 s), `createDocumentDarkPost` (`content.media`, no landing page) and `createDocumentCreative`
+(`content.documentAd.reference`, through `postCreative`, which `createCreative` now shares; with the
 lead gen form). The URN goes to `CampaignResult.DocumentURNs`. See
 [LinkedIn Document Ads](../architecture/linkedin-document-ads.md).
 
