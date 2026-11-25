@@ -623,6 +623,12 @@ func checkObjectiveShape(config json.RawMessage) error {
 //     association that fails after the create leaves the campaign PAUSED and created_degraded with
 //     the step to associate it in Campaign Manager before activating (#552's degraded path).
 func linkedinObjective(cfg linkedinConfig, plan bidPlan) (string, error) {
+	// #674: a target cost is sent as unitCost beside MAX_CLICK or MAX_CONVERSION only. A lead gen
+	// campaign (MAX_LEAD) or a document campaign (MAX_REACH by default) is another automated target
+	// nobody has checked unitCost against, so it is refused rather than sent.
+	if plan.targetCost > 0 && (cfg.Objective == linkedinObjectiveLeadGeneration || cfg.Format == linkedin.FormatDocument) {
+		return "", biddingInvalid(linkedinConfigKey, "targetAmount is accepted only for website visits (objective \"traffic\" or omitted) or website conversions (objective \"conversions\"), not for lead generation or document ads; remove targetAmount")
+	}
 	switch cfg.Objective {
 	case "":
 		return "", nil

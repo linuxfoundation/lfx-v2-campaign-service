@@ -564,7 +564,10 @@ synchronous `400` before any job exists, each as `invalid campaign config: linke
 to "true"; …` while the flag is off (named before any amount problem); `targetAmount is only
 accepted with automatic bidding; a manual campaign's bid is bidAmount, …` with `"manual"`; `null`,
 a string or another JSON type; and `targetAmount: the target cost …` for an amount that is not
-finite and above zero, exceeds 1,000,000, or is not a whole number of cents (never rounded). The
+finite and above zero, exceeds 1,000,000, or is not a whole number of cents (never rounded); and
+`targetAmount is accepted only for website visits … or website conversions …` with objective
+`"lead_generation"` (MAX_LEAD) or format `"document"` (MAX_REACH), whose automated targets were
+never checked with a `unitCost`. The
 campaign is recorded `automatic` with no `max_cpc_bid`, so `PATCH .../bid` answers 409 and never
 rewrites the target (changing a target after create is not offered); the settings readback shows
 it as the upstream-only `unit_cost`. The `targetAmount` key is an unknown field on every other

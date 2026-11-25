@@ -73,6 +73,31 @@ func TestLinkedIn_TargetAmountPreflight(t *testing.T) {
 	}
 }
 
+// TestLinkedIn_TargetAmountRefusedForLeadGenAndDocument (PR #677, after the v1.0.44 rebase): lead
+// gen (MAX_LEAD) and document (MAX_REACH) campaigns are other automated targets, so a target cost is
+// refused there before any job, instead of sending an unchecked unitCost.
+func TestLinkedIn_TargetAmountRefusedForLeadGenAndDocument(t *testing.T) {
+	t.Setenv(constants.EnvLinkedInAdsTargetCostEnabled, "true")
+	t.Setenv(constants.EnvLinkedInAdsLeadGenEnabled, "true")
+	t.Setenv(constants.EnvLinkedInAdsDocumentEnabled, "true")
+	const want = "targetAmount is accepted only for website visits"
+	target := `"bidding":{"strategy":"automatic","targetAmount":10}`
+	for name, cfg := range map[string]json.RawMessage{
+		"lead generation":          linkedInObjectiveConfig(`"objective":"lead_generation","leadGenForm":"12345",` + target),
+		"document":                 liDocumentConfig(target),
+		"lead generation document": liDocumentConfig(`"objective":"lead_generation","leadGenForm":"12345",` + target),
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := NewLinkedInDispatcher(fakeConnReader{}, identityEncryptor{})
+			err := d.PreflightCreate(context.Background(), "cncf", model.ProviderLinkedInAds, cfg)
+			msg, pre := domain.AsPreflightRefusal(err)
+			if !errors.Is(err, domain.ErrCreateConfigInvalid) || !pre || !strings.Contains(msg, want) {
+				t.Fatalf("PreflightCreate = %v, want a pre-flight 400 containing %q", err, want)
+			}
+		})
+	}
+}
+
 // TestBidding_TargetAmountIsLinkedInOnly (#674): every other platform's bidding object refuses
 // targetAmount as an unknown field, exactly as before #674, and Microsoft keeps its own targetCpa.
 func TestBidding_TargetAmountIsLinkedInOnly(t *testing.T) {
