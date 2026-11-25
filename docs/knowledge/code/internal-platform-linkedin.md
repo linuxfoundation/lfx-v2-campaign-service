@@ -1278,7 +1278,9 @@ account, no body) that the pre-checks were skipped, and the create goes on with 
 `format` (step "Boost post … not pre-checked"). Probed 2026-11-26 (LinkedIn-Version 202611, LF
 Events 509430019): such a token gets 403 `ACCESS_DENIED` on the read and 201 on the creative,
 and LinkedIn sets the campaign's format to `STANDARD_UPDATE` itself. LinkedIn's creative POST then
-decides; its refusal comes back through `finishBoost`'s creative-failure path below. Every quoted value passes through
+decides; its refusal comes back through `finishBoost`'s creative-failure path below. Unverified:
+a video post on this path gets no `SINGLE_VIDEO` format (the probe covered a share only), so a
+video boost needs a token with `r_organization_social` until it is probed. Every quoted value passes through
 `domain.CallerValue`, and an author that is not an `urn:li:organization:` (a member's person URN,
 which the caller never supplied) is reported only as "a LinkedIn member". The create body sends
 `content.reference`; LinkedIn reads such a creative back as `content.standardUpdateAd.reference`

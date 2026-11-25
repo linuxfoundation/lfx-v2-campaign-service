@@ -3530,7 +3530,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if checked {
 			steps = append(steps, fmt.Sprintf("Boost post %s verified: published by %s, public, organic, sponsorable", in.BoostPost, orgURN))
 		} else {
-			steps = append(steps, fmt.Sprintf("Boost post %s not pre-checked: this connection cannot read posts (LinkedIn answered 403; it lacks r_organization_social), so LinkedIn decides at the creative whether the post can be sponsored", in.BoostPost))
+			steps = append(steps, fmt.Sprintf("Boost post %s not pre-checked: this connection cannot read posts (LinkedIn answered 403; it lacks r_organization_social), so LinkedIn decides at the creative whether the post can be sponsored; a video post gets no SINGLE_VIDEO format on this path, which is unverified", in.BoostPost))
 		}
 	}
 

@@ -658,3 +658,40 @@ func TestCreateCampaign_BoostConcurrentSameNameCreatesOneCreative(t *testing.T) 
 		t.Errorf("creatives finder queries = %v, want one (the second create's)", s.queries)
 	}
 }
+
+// TestBoostCreativeRefusal covers every branch of the creative-refusal sentence: the top-level
+// code, an input error's and a conditional input error's code, each listed code, an unlisted code
+// (never quoted), an envelope identityjson refuses, a non-JSON body, and a non-API error.
+func TestBoostCreativeRefusal(t *testing.T) {
+	const post, account = "urn:li:share:7", "509430019"
+	apiErr := func(raw string) error { return &apiError{StatusCode: http.StatusBadRequest, raw: []byte(raw)} }
+	tests := []struct {
+		name string
+		err  error
+		want string // "" means no sentence; otherwise the code the sentence must name
+	}{
+		{"top-level UGC_FORBIDDEN", apiErr(`{"status":403,"code":"UGC_FORBIDDEN"}`), "UGC_FORBIDDEN"},
+		{"input error reshare", apiErr(`{"status":400,"errorDetails":{"inputErrors":[{"code":"UGC_RESHARE_CANNOT_BE_SPONSORED"}]}}`), "UGC_RESHARE_CANNOT_BE_SPONSORED"},
+		{"conditional input error visibility", apiErr(`{"status":400,"errorDetails":{"conditionalInputErrors":[{"code":"UGC_INVALID_VISIBILITY_SETTING"}]}}`), "UGC_INVALID_VISIBILITY_SETTING"},
+		{"input error feed distribution", apiErr(`{"status":400,"errorDetails":{"inputErrors":[{"code":"OTHER"},{"code":"UGC_INVALID_FEED_DISTRIBUTION"}]}}`), "UGC_INVALID_FEED_DISTRIBUTION"},
+		{"unlisted code is not quoted", apiErr(`{"status":400,"code":"SOMETHING_ELSE"}`), ""},
+		{"duplicate key envelope is refused", apiErr(`{"code":"UGC_FORBIDDEN","code":"UGC_FORBIDDEN"}`), ""},
+		{"non-JSON body", apiErr(`<html>bad gateway</html>`), ""},
+		{"empty body", apiErr(``), ""},
+		{"not an API error", errors.New("transport"), ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := boostCreativeRefusal(tt.err, post, account)
+			if tt.want == "" {
+				if got != "" {
+					t.Fatalf("boostCreativeRefusal = %q, want no sentence", got)
+				}
+				return
+			}
+			if !strings.Contains(got, "("+tt.want+")") || !strings.Contains(got, boostCreativeCodes[tt.want]) || !strings.Contains(got, account) {
+				t.Fatalf("boostCreativeRefusal = %q, want the %s sentence for account %s", got, tt.want, account)
+			}
+		})
+	}
+}

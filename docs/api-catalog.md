@@ -2175,7 +2175,10 @@ failed image creative; `UGC_FORBIDDEN` reads "LinkedIn refused to sponsor post X
 DIRECT_SPONSORED_CONTENT_POSTER or CONTENT_ADMIN) on the organization page that authored it", and
 the reshare, visibility and feed-distribution `UGC_*` codes get their own sentences. Granting
 `r_organization_social` is optional: it turns those post problems into refusals before anything
-is created instead of a degraded create.
+is created instead of a degraded create. One case is unverified: without the read, a video post's
+campaign is not sent `format: SINGLE_VIDEO` (the post's media is unknown). The 2026-11-26 probe
+covered a share only; until a video post is probed on this path, boost a video post only from a
+connection whose token has `r_organization_social`.
 
 On a campaign found by name (a retry), the creatives finder is asked for a creative of that
 campaign already referencing the post (`contentReferences=List(<post>)`); one found is reused and
