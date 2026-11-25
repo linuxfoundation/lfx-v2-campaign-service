@@ -266,6 +266,42 @@ func TestCreateCampaign_DocumentLeadGen(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_DocumentNeedsNoRegistrationURL: a document post carries no landing page, so a
+// brief without a registration URL still creates a document ad (engagement or gated), while every
+// other format still refuses one before any request.
+func TestCreateCampaign_DocumentNeedsNoRegistrationURL(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		edit    func(*CampaignInput)
+		refused bool
+	}{
+		{"engagement document", func(*CampaignInput) {}, false},
+		{"gated document", func(in *CampaignInput) {
+			in.Objective, in.LeadGen = ObjectiveLeadGeneration, &LeadGen{FormID: "123"}
+		}, false},
+		{"single image still requires it", func(in *CampaignInput) {
+			*in = imageCampaignInput(nil, CreativeVariant{IntroText: "i", Headline: "h"})
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &documentServer{}
+			in := documentInput()
+			tc.edit(&in)
+			in.RegistrationURL = ""
+			res, err := s.client(t).CreateCampaign(context.Background(), in)
+			if tc.refused {
+				if err == nil || res != nil || !strings.Contains(err.Error(), "registration URL is required") || len(s.calls) != 0 {
+					t.Fatalf("res=%v err=%v calls=%v; want the registration URL refusal before any request", res, err, s.calls)
+				}
+				return
+			}
+			if err != nil || res == nil || res.CreativeCount != 1 {
+				t.Fatalf("res=%+v err=%v; want a created document ad", res, err)
+			}
+		})
+	}
+}
+
 // TestCreateCampaign_DocumentRefusedBeforeAnyRequest: every document rule the client owns is decided
 // before the first LinkedIn request.
 func TestCreateCampaign_DocumentRefusedBeforeAnyRequest(t *testing.T) {

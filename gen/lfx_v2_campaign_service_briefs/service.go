@@ -47,9 +47,10 @@ type Service interface {
 	// api-catalog LinkedInConfig variant videos) or a Reddit video post
 	// (redditConfig.videoAssetId, #549, behind REDDIT_VIDEO_ENABLED) consumes it —
 	// every image slot refuses a video asset at dispatch. A PDF (content_type
-	// application/pdf, #665) is likewise checked structurally (the PDF header and
-	// the end-of-file marker in its last 1024 bytes) and stored with no width or
-	// height; only a LinkedIn document ad (linkedInConfig.documentAssetId, format
+	// application/pdf, #665) is likewise checked structurally (the PDF header, and
+	// the file must end with its final end-of-file marker, within its last 1024
+	// bytes and followed only by whitespace) and stored with no width or height;
+	// only a LinkedIn document ad (linkedInConfig.documentAssetId, format
 	// "document", 400 unless LINKEDIN_ADS_DOCUMENT_ENABLED is "true") consumes it
 	// — every image and video slot refuses a PDF at dispatch, and a signed asset
 	// URL never serves one. Re-uploading identical bytes to the same brief returns

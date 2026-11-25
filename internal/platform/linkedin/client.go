@@ -3051,8 +3051,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Validate the registration URL BEFORE any POST so an empty/relative/malformed
 	// URL is rejected up front rather than after the campaign group and campaign
 	// (permanent resources) already exist.
-	if err := validateRegistrationURL(reg); err != nil {
-		return nil, err
+	//
+	// A document create (#665) is the exception: its post carries the PDF and no landing page, and
+	// a gated one opens a Lead Gen Form, so nothing reads the registration URL and a brief without
+	// one may still run a document ad. Every other format sends it (an article link, a text ad's or a
+	// video's landing page, a carousel card's default destination), so it stays required there.
+	if f, ferr := NormalizeFormat(in.Format); ferr != nil || f != FormatDocument {
+		if err := validateRegistrationURL(reg); err != nil {
+			return nil, err
+		}
 	}
 
 	// Validate the budget BEFORE any POST. BudgetUSD is formatted straight into

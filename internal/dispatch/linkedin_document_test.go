@@ -165,6 +165,23 @@ func TestLinkedInDocument_DispatchEndToEnd(t *testing.T) {
 	}
 }
 
+// TestLinkedInDocument_BriefWithoutRegistrationURL: a brief with no registration URL still dispatches
+// a document ad, end to end; the post carries the PDF and no landing page.
+func TestLinkedInDocument_BriefWithoutRegistrationURL(t *testing.T) {
+	t.Setenv(constants.EnvLinkedInAdsDocumentEnabled, "true")
+	api := newLIDocumentAPI(t)
+	d := newLIDocumentDispatcher(api, liDocumentAssets(), nil)
+	brief := testBrief()
+	brief.EventDetails = json.RawMessage(`{"eventName":"KubeCon NA 2026","project":"cncf"}`)
+	camp, err := d.Dispatch(context.Background(), brief, model.ProviderLinkedInAds, liDocumentConfig(""))
+	if err != nil || camp == nil || camp.Status != campaignStatusCreated {
+		t.Fatalf("Dispatch: camp=%v err=%v; want a created document ad", camp, err)
+	}
+	if len(api.posts) != 1 {
+		t.Fatalf("posts = %d, want 1", len(api.posts))
+	}
+}
+
 // TestLinkedInDocument_LeadGen: objective "lead_generation" with a form makes a gated document — a
 // LEAD_GENERATION campaign whose creative carries the form (decision 2026-11-25).
 func TestLinkedInDocument_LeadGen(t *testing.T) {

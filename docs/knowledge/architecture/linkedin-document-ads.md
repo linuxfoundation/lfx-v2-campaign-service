@@ -16,8 +16,9 @@ Sponsor prospectus and report ads on LinkedIn (#665, split from #552 gap 9), the
 ## Storing a PDF
 
 The creative-asset store admits `application/pdf` since migration 000059. The upload is checked
-structurally, not rendered: a `%PDF-` header with a 1.x or 2.x version and `%%EOF` in the last 1024
-bytes. A PDF has no width or height. Every image consumer (Meta, Microsoft, X, Google, Reddit,
+structurally, not rendered: a `%PDF-` header with a 1.x or 2.x version, and the file must end with
+its final `%%EOF` (within the last 1024 bytes, followed only by CR, LF, space, tab or NUL), so an
+incremental update cut off after an earlier revision's marker is refused. A PDF has no width or height. Every image consumer (Meta, Microsoft, X, Google, Reddit,
 LinkedIn) refuses an asset that is not PNG or JPEG through `model.IsImageMimeType`, every video
 consumer one that is not MP4, and the signed asset route never serves a PDF. The upload body cap's
 worst case is now the `application/pdf` envelope (41,943,085 bytes), still under 42 MiB.
@@ -54,7 +55,8 @@ are refused. The client refuses ENGAGEMENT for any other format.
    `SPONSORED_UPDATE_NATIVE_DOCUMENT` and refuses a same-name campaign of another format.
 2. The PDF: `POST /rest/documents?action=initializeUpload` (organization owner), the PUT to the
    LinkedIn upload URL, `GET /rest/documents/{urn}` until AVAILABLE within a shared 60 s wait.
-3. ONE dark post with `content.media {title, id: urn:li:document:…}` and no landing page.
+3. ONE dark post with `content.media {title, id: urn:li:document:…}` and no landing page, so a
+   document create skips the registration URL check every other format applies.
 4. ONE DRAFT creative named `<event> | document-1`, with `leadgenCallToAction` on a gated document.
 
 The minted URN is recorded (`documentUrns`); a failure after the campaign exists returns the partial

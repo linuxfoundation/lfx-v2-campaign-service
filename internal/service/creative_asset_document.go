@@ -14,9 +14,10 @@ import (
 // A stored PDF is the source of a LinkedIn document ad (linkedInConfig.documentAssetId), uploaded
 // through LinkedIn's Documents API at dispatch. Like an MP4 it is checked STRUCTURALLY, not
 // rendered: the bytes must open with the PDF header ("%PDF-" and a 1.x or 2.x version, ISO 32000)
-// and carry the end-of-file marker "%%EOF" in their last pdfTrailerWindow bytes, where a complete
-// file ends (trailing whitespace and a final incremental-update section are tolerated by the
-// window). That refuses a truncated upload and anything else declared as application/pdf; whether
+// and END with the end-of-file marker "%%EOF" — the last marker in the file, within its last
+// pdfTrailerWindow bytes, followed only by trailing whitespace (CR, LF, space, tab, NUL). That
+// refuses a truncated upload, including an incremental update cut off after an earlier
+// revision's marker, and anything else declared as application/pdf; whether
 // LinkedIn can render the document (pages, fonts, the 300-page limit) is LinkedIn's to judge, and
 // a document it cannot use ends PROCESSING_FAILED before any post references it. A PDF is stored
 // with no width or height.
@@ -47,9 +48,12 @@ func pdfStructurally(b []byte) bool {
 	if (b[5] != '1' && b[5] != '2') || b[6] != '.' || b[7] < '0' || b[7] > '9' {
 		return false
 	}
-	tail := b
-	if len(tail) > pdfTrailerWindow {
-		tail = tail[len(tail)-pdfTrailerWindow:]
+	// The FINAL %%EOF must end the file: after it only trailing whitespace (CR, LF, space, tab,
+	// NUL) may follow. An earlier revision's marker followed by a cut-off incremental update is not
+	// a complete file, and neither is a marker more than pdfTrailerWindow bytes from the end.
+	last := bytes.LastIndex(b, []byte("%%EOF"))
+	if last < 0 || len(b)-last > pdfTrailerWindow {
+		return false
 	}
-	return bytes.Contains(tail, []byte("%%EOF"))
+	return len(bytes.TrimRight(b[last+len("%%EOF"):], "\r\n \t\x00")) == 0
 }

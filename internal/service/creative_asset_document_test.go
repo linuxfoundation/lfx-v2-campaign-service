@@ -30,6 +30,12 @@ func TestPDFStructurally(t *testing.T) {
 		{"pdf 1.7", good, true},
 		{"pdf 2.0", append([]byte("%PDF-2.0"), good[8:]...), true},
 		{"trailing whitespace", append(append([]byte{}, good...), "\r\n"...), true},
+		{"trailing tab, space and NUL", append(append([]byte{}, good...), "\t \x00"...), true},
+		// An incremental update appended after the first revision's %%EOF and cut off before its
+		// own: the earlier marker is inside the window, but it is not the end of the file.
+		{"truncated incremental update after an earlier %%EOF", append(append([]byte{}, good...), "2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\nxref\n0 3\n"...), false},
+		{"bytes after the final %%EOF", append(append([]byte{}, good...), "junk"...), false},
+		{"complete incremental update", append(append([]byte{}, good...), "2 0 obj\n<< >>\nendobj\ntrailer\n<< /Prev 9 >>\n%%EOF\n"...), true},
 		{"empty", nil, false},
 		{"too small", []byte("%PDF-1.7\n%%EOF"), false},
 		{"truncated (no %%EOF)", good[:len(good)-7], false},
