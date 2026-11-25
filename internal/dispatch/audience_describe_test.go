@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -150,4 +151,53 @@ func TestDescribeLists_AMissingListDoesNotMaskAnUnreadableConnection(t *testing.
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, audience.DescribeStatusNotFound, got[0].Status)
+}
+
+// TestDescribeLists_ADeadlineBoundsTheWholeBatch: the HubSpot client's timeout is per attempt, so a
+// slow portal could hold the panel for minutes. The request has one deadline; a list it leaves
+// unread is described as unreadable, the lists already read are still described, and a batch in
+// which nothing was read is still an error.
+func TestDescribeLists_ADeadlineBoundsTheWholeBatch(t *testing.T) {
+	prev := describeListsTimeout
+	describeListsTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { describeListsTimeout = prev })
+
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	var calls int32
+	inner := describeServer(t, &calls)
+	defer inner.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/crm/v3/lists/300" {
+			select { // a portal that never answers this read
+			case <-release:
+			case <-r.Context().Done():
+			}
+			return
+		}
+		proxy, _ := http.NewRequestWithContext(r.Context(), r.Method, inner.URL+r.URL.RequestURI(), r.Body)
+		proxy.Header = r.Header
+		resp, err := http.DefaultClient.Do(proxy)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}))
+	defer srv.Close()
+
+	start := time.Now()
+	got, err := describeExplorer(srv.URL).DescribeLists(context.Background(), "proj-1", []string{"200", "300", "404"})
+	require.NoError(t, err)
+	assert.Less(t, time.Since(start), 5*time.Second, "the batch must stop at its deadline")
+	require.Len(t, got, 3)
+	assert.Equal(t, audience.DescribeStatusStatic, got[0].Status)
+	assert.Equal(t, audience.DescribeStatusUnreadable, got[1].Status)
+	assert.Equal(t, audience.DescribeStatusUnreadable, got[2].Status, "a list the deadline left unread is unreadable, not not-found")
+
+	_, err = describeExplorer(srv.URL).DescribeLists(context.Background(), "proj-1", []string{"300", "200"})
+	require.Error(t, err, "nothing read before the deadline is an error, not a batch of unreadable rows")
 }

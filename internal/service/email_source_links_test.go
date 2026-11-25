@@ -26,7 +26,7 @@ func TestSourceDocumentLinks(t *testing.T) {
 	for _, want := range []string{
 		"https://acme.example/blog/guide/",
 		"https://acme.example/events",
-		"https://acme.example/report?year=2026&x=1#top",
+		"https://acme.example/report?x=1&year=2026#top",
 	} {
 		if _, ok := got[want]; !ok {
 			t.Errorf("missing %q in %v", want, got)
@@ -42,22 +42,39 @@ func TestSourceDocumentLinks(t *testing.T) {
 // shorter address the notes never gave; in open prose it is still trimmed.
 func TestSourceDocumentLinks_DelimitedKeepsPunctuation(t *testing.T) {
 	notes := "Download <https://acme.example/d?token=abc!> or \"https://acme.example/q?x=1.\" " +
-		"or 'https://acme.example/s?y=2;', and see https://acme.example/prose."
+		"or 'https://acme.example/s?y=2)', and see https://acme.example/prose."
 	got := sourceDocumentLinks(notes)
-	for _, want := range []string{
+	// Keys are compared in match form (the query in httpURL's encoding, so "!" is "%21").
+	for _, raw := range []string{
 		"https://acme.example/d?token=abc!",
 		"https://acme.example/q?x=1.",
-		"https://acme.example/s?y=2;",
+		"https://acme.example/s?y=2)",
 		"https://acme.example/prose",
 	} {
-		if _, ok := got[want]; !ok {
-			t.Errorf("missing %q in %v", want, got)
+		if _, ok := got[normalizeLinkForMatch(raw)]; !ok {
+			t.Errorf("missing %q in %v", raw, got)
 		}
 	}
 	for _, shortened := range []string{"https://acme.example/d?token=abc", "https://acme.example/q?x=1", "https://acme.example/s?y=2"} {
-		if _, ok := got[shortened]; ok {
+		if _, ok := got[normalizeLinkForMatch(shortened)]; ok {
 			t.Errorf("%q is vouched for, but the notes only give it with its punctuation", shortened)
 		}
+	}
+}
+
+// TestEnforceSourceLinks_UnsortedQuerySurvivesSanitising: the copy is sanitised before the check,
+// and httpURL sorts the query, so an anchor copied exactly from notes whose parameters are not in
+// order must still keep its link. A different value must still lose it.
+func TestEnforceSourceLinks_UnsortedQuerySurvivesSanitising(t *testing.T) {
+	notes := "The report: https://acme.example/report?year=2026&format=pdf"
+	sanitised := hrefAttr([]htmlAttr{{key: "href", val: "https://acme.example/report?year=2026&format=pdf"}})
+	if !strings.Contains(sanitised, "format=pdf&amp;year=2026") {
+		t.Fatalf("httpURL no longer sorts the query (%s); this test's premise is gone", sanitised)
+	}
+	body := `<p><a` + sanitised + `>the report</a> <a href="https://acme.example/report?format=pdf&amp;year=2025">last year</a></p>`
+	got, dropped := unlinkUnvouchedAnchors(body, sourceDocumentLinks(notes))
+	if !strings.Contains(got, `>the report</a>`) || strings.Contains(got, `<a>the report</a>`) || !strings.Contains(got, `<a>last year</a>`) || dropped != 1 {
+		t.Errorf("got %s (%d dropped), want the report kept and last year's dropped", got, dropped)
 	}
 }
 
@@ -84,12 +101,16 @@ func TestNormalizeLinkForMatch(t *testing.T) {
 		"HTTPS://ACME.example/":            "https://acme.example/",
 		// A slash inside the query is the query's, never trimmed: "file=reports/" and
 		// "file=reports" can select different resources.
-		"https://acme.example/download?file=reports/": "https://acme.example/download?file=reports/",
-		"https://acme.example/x?a=1&b=2":              "https://acme.example/x?a=1&b=2",
-		"javascript:alert(1)":                         "",
-		"/relative/path":                              "",
-		"mailto:someone@acme.example":                 "",
-		"":                                            "",
+		"https://acme.example/download?file=reports/": "https://acme.example/download?file=reports%2F",
+		// Parameter order is httpURL's (sorted), so a sanitised anchor matches the notes it came from.
+		"https://acme.example/r?year=2026&format=pdf": "https://acme.example/r?format=pdf&year=2026",
+		// A malformed escape in the query is refused, as httpURL refuses it.
+		"https://acme.example/r?q=%zz":   "",
+		"https://acme.example/x?a=1&b=2": "https://acme.example/x?a=1&b=2",
+		"javascript:alert(1)":            "",
+		"/relative/path":                 "",
+		"mailto:someone@acme.example":    "",
+		"":                               "",
 		// Userinfo is refused: it is a credential in a link every recipient receives, and
 		// "trusted@evil" reads as one site and opens another.
 		"https://user:secret@acme.example/private": "",

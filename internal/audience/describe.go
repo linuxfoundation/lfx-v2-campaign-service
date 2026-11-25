@@ -273,6 +273,13 @@ func DescribeList(listID, name string, size int, processingType, hubspotURL stri
 	case len(groups) == 0 && (pt == "MANUAL" || pt == "SNAPSHOT" || pt == ""):
 		d.Status = DescribeStatusStatic
 		d.Summary = staticSummary(pt)
+	case len(groups) == 0 && rulesAbsent(filterBranch):
+		// A DYNAMIC list always has a filter tree. One that came back without it is rules not
+		// supplied, not rules that are empty: "matches no contacts" would be a confident, false
+		// answer, so it is unreadable instead.
+		d.Status = DescribeStatusUnreadable
+		d.Complete = false
+		d.Summary = "HubSpot did not return this active list's rules, so who it contains cannot be described here. Open it in HubSpot to check."
 	case len(groups) == 0:
 		// A DYNAMIC list with no rules matches nobody; saying so is the useful answer.
 		d.Status = DescribeStatusDescribed
@@ -283,6 +290,13 @@ func DescribeList(listID, name string, size int, processingType, hubspotURL stri
 		d.Summary = rulesSummary(match, groups)
 	}
 	return d
+}
+
+// rulesAbsent reports whether a filter tree was not supplied at all (absent or null), as opposed
+// to supplied and empty ("{}", or a branch with no filters).
+func rulesAbsent(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	return trimmed == "" || trimmed == "null"
 }
 
 // UnreadableListDescription is the description of a list that could not be fetched at all.

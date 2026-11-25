@@ -2794,8 +2794,9 @@ Three things are particular to how a newsletter's copy is generated (`email_copy
   newsletter printed as a blank and as "Date TBD".
 - **The rule is enforced on the answer.** `enforceSourceLinks` (`email_source_links.go`) keeps an
   anchor's `href`, and a button's `url`, only when the address is one the notes carry. The
-  comparison is on the whole address (`normalizeLinkForMatch`: scheme and host lower-cased, and
-  an empty path read as "/"), not its host: a host rule passes an invented path on a real site,
+  comparison is on the whole address (`normalizeLinkForMatch`: scheme and host lower-cased, an
+  empty path read as "/", and the query in `httpURL`'s sorted encoding, because every anchor is
+  sanitised through `httpURL` first and that sorts its parameters), not its host: a host rule passes an invented path on a real site,
   which is the link a model writes when it wants one. A trailing slash, the query and the
   fragment all count: "/report/" can be a different page from "/report", "?file=reports/" a
   different resource from "?file=reports", and an invented "#section" sends the reader somewhere

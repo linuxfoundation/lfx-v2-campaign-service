@@ -730,11 +730,21 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 			contentStaged, keptChrome, tagOnly = staged, true, isStagedWidgetKey
 		}
 	}
-	if !keptChrome {
-		// The fallback for a newsletter whose clone has no footer to keep, and for a newsletter
-		// staged without copy: the content rebuild replaces the clone's whole widget tree, so the
-		// previous issue's logo header would be dropped. Keep it as the hero: it is already hosted
-		// in HubSpot. Best-effort; a failed read stages the draft without a header.
+	switch {
+	case keptChrome:
+	case isNewsletter && strings.TrimSpace(cfg.BodyHTML) == "":
+		// A newsletter staged without copy has nothing to replace the cloned issue with. The full
+		// rebuild below replaces the clone's whole widget tree, so running it (a hero borrowed from
+		// the clone's logo, or a button, is enough to trigger it) would drop the previous issue's
+		// body and swap the brand's footer for the standard one, for nothing. The clone is left
+		// as it is, the subject is still set, and the operator is told the draft is last issue's.
+		patchEmailSubject(ctx, client, email.ID, cfg.Subject)
+		warnings = append(warnings, "The draft still holds the previous issue's content: no newsletter copy was supplied, so nothing replaced it.")
+	default:
+		// The fallback for a newsletter whose clone has no footer to keep: the content rebuild
+		// replaces the clone's whole widget tree, so the previous issue's logo header would be
+		// dropped. Keep it as the hero: it is already hosted in HubSpot. Best-effort; a failed
+		// read stages the draft without a header.
 		if isNewsletter && hostedHeroURL == "" {
 			if header, found, herr := client.LeadingHeaderImage(ctx, email.ID); herr != nil {
 				slog.WarnContext(ctx, "could not read the newsletter template's header image; the draft is staged without one",

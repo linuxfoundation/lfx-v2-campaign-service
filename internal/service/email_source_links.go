@@ -36,7 +36,8 @@ var hrefAttribute = regexp.MustCompile(`(?i)[\s/"']href\s*=`)
 const trailingLinkPunctuation = ".,;:!?)]}>"
 
 // normalizeLinkForMatch is the form two addresses are compared in: scheme and host lower-cased,
-// and an empty path read as "/" (RFC 3986 makes the two the same address). "" for anything that
+// an empty path read as "/" (RFC 3986 makes the two the same address), and the query in httpURL's
+// sorted encoding. "" for anything that
 // is not an absolute http(s) address with a hostname, and for one that carries userinfo. It
 // deliberately keeps the path's case, a trailing slash, the query and the fragment: a server can
 // serve a different page at "/report/" than at "/report", and a fragment the notes did not give
@@ -57,6 +58,19 @@ func normalizeLinkForMatch(raw string) string {
 	u.Scheme, u.Host = scheme, strings.ToLower(u.Host)
 	if u.Path == "" && u.RawPath == "" {
 		u.Path = "/"
+	}
+	// The query in httpURL's encoding. Every generated anchor reaches this check through httpURL
+	// (hrefAttr), which re-encodes the query to escape quotes and so SORTS its parameters: notes
+	// with "?year=2026&format=pdf" would never match the sanitised "?format=pdf&year=2026". Both
+	// sides take the same encoding here, so only parameter order is forgiven; every name and value,
+	// a trailing "/" in one included, still has to match. A query that does not parse is refused,
+	// as httpURL refuses it.
+	if u.RawQuery != "" {
+		q, err := url.ParseQuery(u.RawQuery)
+		if err != nil {
+			return ""
+		}
+		u.RawQuery = q.Encode()
 	}
 	return u.String()
 }

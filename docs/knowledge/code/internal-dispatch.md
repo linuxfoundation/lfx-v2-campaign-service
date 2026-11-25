@@ -3248,7 +3248,10 @@ referenced, and one `SubscriptionDefinitionNames` read only when a rule filters 
 status); past a budget, or when a lookup fails, a rule renders with an id instead. A list that 404s is described as
 `not_found` and any other read failure as `unreadable`, without failing the batch; the call
 returns an error only when NO list could be read and a failure was not a 404, because then the
-answer is about the connection.
+answer is about the connection. One deadline (`describeListsTimeout`, the same 25 s as `previewCountTimeout`)
+bounds the whole request, reads and label lookups together: the client's timeout is per attempt.
+A list the deadline leaves unread is `unreadable`, and a label it leaves unresolved falls back to
+its id.
 
 ## Channel kinds: paid ads vs email
 
@@ -3382,11 +3385,15 @@ Five things follow from that, each decided in `Dispatch`:
   than the one stated (`sendSettingsKept`). Every other email leaves both to HubSpot, as before:
   its template is some earlier send, not a statement about this one.
 
-A newsletter staged WITHOUT copy still takes the old path, and the UI does not allow it: the clone
-would be last issue's newsletter under this issue's name.
+A newsletter staged WITHOUT copy (`bodyHtml` is optional, though the UI does not allow it) is left
+as cloned: only the subject is set, and the job result warns that the draft still holds the
+previous issue's content. It used to fall through to the full rebuild, and borrowing the clone's
+logo as the hero (or a button) was enough to trigger it, which dropped last issue's body and
+replaced the brand's footer with nothing to put in their place.
 
 Tests: `hubspot_newsletter_test.go` (the kept layout, the event-email control, the fallback, the
-header warning, the A/B refusal, the link tagging in both directions, and the recipient settings:
+header warning, the A/B refusal, the link tagging in both directions, the issue staged without
+copy, and the recipient settings:
 kept, not invented, the event-email control, the unreadable read, the answer that disagrees).
 
 ### Which sent emails are a brand's newsletter issues

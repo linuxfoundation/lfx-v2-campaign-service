@@ -5,6 +5,7 @@ package dispatch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -21,6 +22,17 @@ const (
 	describeListNameBudget = 20
 	describePropertyBudget = 20
 )
+
+// describeListsTimeout bounds one whole describe request: up to DescribeMaxLists sequential list
+// reads plus the label lookups. The HubSpot client's timeout is per attempt, and its retry policy
+// alone can outlast any request under throttling, so without this the panel waits for minutes and
+// the gateway answers with a bare 504. Past it, an unread list is described as unreadable and an
+// unresolved label falls back to its id, the same answers a failed read already gives. The same
+// value as previewCountTimeout, for the same reason. A var so a test can shorten it.
+var describeListsTimeout = previewCountTimeout
+
+// errDescribeDeadline is the read error recorded for a list the deadline left unread.
+var errDescribeDeadline = errors.New("hubspot: the describe request ran out of time before this list was read")
 
 // DescribeLists reads each list's filter rules and renders them in plain English (see
 // audience.DescribeRules). Read-only.
@@ -45,6 +57,10 @@ func (x *AudienceExplorer) DescribeLists(ctx context.Context, projectID string, 
 	}
 	defer func() { err = systemScopedHubSpot(err, fromSystem) }()
 
+	// One deadline for the reads AND the label lookups below (describeLabels stops at ctx.Err()).
+	ctx, cancel := context.WithTimeout(ctx, describeListsTimeout)
+	defer cancel()
+
 	type read struct {
 		list     *hubspot.List
 		notFound bool
@@ -57,6 +73,14 @@ func (x *AudienceExplorer) DescribeLists(ctx context.Context, projectID string, 
 	readCount := 0
 	var firstErr error
 	for i, id := range ids {
+		if ctx.Err() != nil {
+			// Out of time: the rest are unread, not refused. Recorded as a failure so a batch in
+			// which nothing was read still returns an error rather than rows that hide it.
+			if firstErr == nil {
+				firstErr = errDescribeDeadline
+			}
+			continue
+		}
 		list, gerr := client.GetList(ctx, id)
 		switch {
 		case gerr == nil && list != nil:

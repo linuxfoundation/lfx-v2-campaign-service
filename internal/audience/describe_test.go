@@ -197,6 +197,21 @@ func TestDescribeList_StaticAndEmpty(t *testing.T) {
 	}
 }
 
+// TestDescribeList_DynamicWithoutRules: an active list whose filter tree did not come back is
+// unreadable, never "matches no contacts"; one whose tree came back empty is the real no-rules case.
+func TestDescribeList_DynamicWithoutRules(t *testing.T) {
+	for _, raw := range []json.RawMessage{nil, json.RawMessage(`null`), json.RawMessage(`  `)} {
+		d := DescribeList("8", "Active", 10, "DYNAMIC", "https://x", raw, DescribeLabels{})
+		if d.Status != DescribeStatusUnreadable || d.Complete || strings.Contains(d.Summary, "matches no contacts") {
+			t.Errorf("rules not supplied (%q) must be unreadable and incomplete: %+v", raw, d)
+		}
+	}
+	d := DescribeList("9", "Active", 0, "DYNAMIC", "https://x", json.RawMessage(`{"filterBranchType":"OR","filters":[],"filterBranches":[]}`), DescribeLabels{})
+	if d.Status != DescribeStatusDescribed || !d.Complete || !strings.Contains(d.Summary, "matches no contacts") {
+		t.Errorf("an empty rule tree is a list with no rules: %+v", d)
+	}
+}
+
 func TestDescribeList_SummaryNamesKinds(t *testing.T) {
 	raw, err := MasterListWithSuppressionsFilter([]string{"101"}, []string{"900"})
 	if err != nil {

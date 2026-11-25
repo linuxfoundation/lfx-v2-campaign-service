@@ -422,3 +422,37 @@ func TestHeaderImageLabel(t *testing.T) {
 		t.Errorf("empty label = %s", got)
 	}
 }
+
+// TestHubSpot_NewsletterWithoutCopyLeavesTheCloneAlone: bodyHtml is optional, and a newsletter
+// staged without it has nothing to replace the cloned issue with. Borrowing the clone's logo as a
+// hero (or a button) used to trigger the full rebuild, which dropped last issue's body and the
+// brand's footer for nothing. The clone stays as it is, the subject is set, and the operator is told.
+func TestHubSpot_NewsletterWithoutCopyLeavesTheCloneAlone(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	seedNewsletter(rec, "Acme Foundation")
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := `{"hubspotConfig":{"sourceEmailId":"555","subject":"Acme Newsletter: November","buttonText":"Read more","buttonUrl":"https://acme.example/november"}}`
+	camp, err := d.Dispatch(context.Background(), newsletterBrief(), model.ProviderHubSpot, json.RawMessage(cfg))
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	layout, bodies := draftState(rec)
+	if got, want := strings.Join(layout, ","), "logo,old_item,social,sent_by,footer"; got != want {
+		t.Errorf("layout = %s, want the clone untouched: %s", got, want)
+	}
+	if !strings.Contains(bodies["old_item"], "October news") {
+		t.Errorf("last issue's body was dropped: %v", bodies)
+	}
+	if subject, _ := rec.snapshotContent(); subject != "Acme Newsletter: November" {
+		t.Errorf("subject = %q, want it still set", subject)
+	}
+	if resultContentStaged(t, camp) {
+		t.Error("contentStaged = true, but no content was written")
+	}
+	warnings := resultWarnings(t, camp)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "previous issue's content") {
+		t.Errorf("warnings = %v, want the one saying the draft is last issue's", warnings)
+	}
+}
