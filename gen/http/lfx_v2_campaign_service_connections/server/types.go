@@ -1111,6 +1111,20 @@ type ListLinkedinAdsConversionsResponseBody struct {
 	ConversionCount int `form:"conversion_count" json:"conversion_count" xml:"conversion_count"`
 }
 
+// ListLinkedinAdsLeadFormsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-lead-forms"
+// endpoint HTTP response body.
+type ListLinkedinAdsLeadFormsResponseBody struct {
+	// The LinkedIn ad account the forms were read from: the account a LinkedIn
+	// create for this project uses
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The account's forms that are not archived, sorted by name (ignoring case),
+	// then id
+	Forms []*LinkedinAdsLeadFormResponseBody `form:"forms" json:"forms" xml:"forms"`
+	// How many forms are in `forms`
+	FormCount int `form:"form_count" json:"form_count" xml:"form_count"`
+}
+
 // ListLinkedinAdsAdoptableCampaignsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-linkedin-ads-adoptable-campaigns" endpoint HTTP response body.
@@ -5529,6 +5543,66 @@ type ListLinkedinAdsConversionsUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListLinkedinAdsLeadFormsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-lead-forms"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListLinkedinAdsLeadFormsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsLeadFormsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-lead-forms"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListLinkedinAdsLeadFormsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsLeadFormsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-lead-forms"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListLinkedinAdsLeadFormsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsLeadFormsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-lead-forms"
+// endpoint HTTP response body for the "NotFound" error.
+type ListLinkedinAdsLeadFormsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsLeadFormsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-lead-forms"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListLinkedinAdsLeadFormsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsLeadFormsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-lead-forms"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListLinkedinAdsLeadFormsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ListLinkedinAdsAdoptableCampaignsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-linkedin-ads-adoptable-campaigns" endpoint HTTP response body for the
@@ -7862,6 +7936,22 @@ type LinkedinAdsConversionRuleResponseBody struct {
 	Enabled bool `form:"enabled" json:"enabled" xml:"enabled"`
 }
 
+// LinkedinAdsLeadFormResponseBody is used to define fields on response body
+// types.
+type LinkedinAdsLeadFormResponseBody struct {
+	// The form's numeric id, in exactly the form linkedInConfig.leadGenForm takes
+	ID string `form:"id" json:"id" xml:"id"`
+	// urn:li:adForm:{id}, the creative's leadgenCallToAction destination;
+	// linkedInConfig.leadGenForm also accepts it
+	Urn string `form:"urn" json:"urn" xml:"urn"`
+	// The form's name in Campaign Manager. Not an identifier; empty when LinkedIn
+	// sent none.
+	Name string `form:"name" json:"name" xml:"name"`
+	// LinkedIn's form state, verbatim: DRAFT or PUBLISHED (ARCHIVED forms are not
+	// listed, and a create refuses one)
+	State string `form:"state" json:"state" xml:"state"`
+}
+
 // LinkedinAdsAdoptableCampaignResponseBody is used to define fields on
 // response body types.
 type LinkedinAdsAdoptableCampaignResponseBody struct {
@@ -9766,6 +9856,29 @@ func NewListLinkedinAdsConversionsResponseBody(res *lfxv2campaignserviceconnecti
 		}
 	} else {
 		body.Conversions = []*LinkedinAdsConversionRuleResponseBody{}
+	}
+	return body
+}
+
+// NewListLinkedinAdsLeadFormsResponseBody builds the HTTP response body from
+// the result of the "list-linkedin-ads-lead-forms" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsLeadFormsResponseBody(res *lfxv2campaignserviceconnections.LinkedinAdsLeadForms) *ListLinkedinAdsLeadFormsResponseBody {
+	body := &ListLinkedinAdsLeadFormsResponseBody{
+		AccountID: res.AccountID,
+		FormCount: res.FormCount,
+	}
+	if res.Forms != nil {
+		body.Forms = make([]*LinkedinAdsLeadFormResponseBody, len(res.Forms))
+		for i, val := range res.Forms {
+			if val == nil {
+				body.Forms[i] = nil
+				continue
+			}
+			body.Forms[i] = marshalLfxv2campaignserviceconnectionsLinkedinAdsLeadFormToLinkedinAdsLeadFormResponseBody(val)
+		}
+	} else {
+		body.Forms = []*LinkedinAdsLeadFormResponseBody{}
 	}
 	return body
 }
@@ -14862,6 +14975,72 @@ func NewListLinkedinAdsConversionsUnauthorizedResponseBody(res *lfxv2campaignser
 	return body
 }
 
+// NewListLinkedinAdsLeadFormsBadRequestResponseBody builds the HTTP response
+// body from the result of the "list-linkedin-ads-lead-forms" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsLeadFormsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListLinkedinAdsLeadFormsBadRequestResponseBody {
+	body := &ListLinkedinAdsLeadFormsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsLeadFormsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "list-linkedin-ads-lead-forms" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsLeadFormsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListLinkedinAdsLeadFormsServiceUnavailableResponseBody {
+	body := &ListLinkedinAdsLeadFormsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsLeadFormsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "list-linkedin-ads-lead-forms" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsLeadFormsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListLinkedinAdsLeadFormsInternalServerErrorResponseBody {
+	body := &ListLinkedinAdsLeadFormsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsLeadFormsNotFoundResponseBody builds the HTTP response
+// body from the result of the "list-linkedin-ads-lead-forms" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsLeadFormsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListLinkedinAdsLeadFormsNotFoundResponseBody {
+	body := &ListLinkedinAdsLeadFormsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsLeadFormsPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "list-linkedin-ads-lead-forms" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsLeadFormsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListLinkedinAdsLeadFormsPayloadTooLargeResponseBody {
+	body := &ListLinkedinAdsLeadFormsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsLeadFormsUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "list-linkedin-ads-lead-forms" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsLeadFormsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListLinkedinAdsLeadFormsUnauthorizedResponseBody {
+	body := &ListLinkedinAdsLeadFormsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewListLinkedinAdsAdoptableCampaignsBadRequestResponseBody builds the HTTP
 // response body from the result of the "list-linkedin-ads-adoptable-campaigns"
 // endpoint of the "lfx-v2-campaign-service-connections" service.
@@ -17510,6 +17689,18 @@ func NewListLinkedinAdsAudiencesPayload(projectID string, accountID *string, bea
 // endpoint payload.
 func NewListLinkedinAdsConversionsPayload(projectID string, accountID *string, bearerToken *string) *lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload {
 	v := &lfxv2campaignserviceconnections.ListLinkedinAdsConversionsPayload{}
+	v.ProjectID = projectID
+	v.AccountID = accountID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListLinkedinAdsLeadFormsPayload builds a
+// lfx-v2-campaign-service-connections service list-linkedin-ads-lead-forms
+// endpoint payload.
+func NewListLinkedinAdsLeadFormsPayload(projectID string, accountID *string, bearerToken *string) *lfxv2campaignserviceconnections.ListLinkedinAdsLeadFormsPayload {
+	v := &lfxv2campaignserviceconnections.ListLinkedinAdsLeadFormsPayload{}
 	v.ProjectID = projectID
 	v.AccountID = accountID
 	v.BearerToken = bearerToken

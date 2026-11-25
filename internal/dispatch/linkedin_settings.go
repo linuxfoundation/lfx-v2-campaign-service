@@ -26,6 +26,10 @@ const (
 	// settingsFieldUnitCostCurrency is unitCost.currencyCode: unit_cost is never shown without it.
 	settingsFieldUnitCostCurrency = "unit_cost_currency"
 	settingsFieldObjectiveType    = "objective_type"
+	// settingsFieldAudienceExpansion and settingsFieldOffsiteDelivery are audienceExpansionEnabled
+	// and offsiteDeliveryEnabled (#667), "true" or "false" as LinkedIn reports them.
+	settingsFieldAudienceExpansion = "audience_expansion_enabled"
+	settingsFieldOffsiteDelivery   = "offsite_delivery_enabled"
 )
 
 // ReadSettings implements service.SettingsReader for LinkedIn: one account-scoped GET of the
@@ -41,7 +45,8 @@ const (
 //     platform), bidding_strategy_type (optimizationTargetType), cost_type, unit_cost (the bid
 //     amount, in whole units of its currency), unit_cost_currency (that currency — unit_cost is
 //     absent whenever it is not reported). The create path records none of these, so each
-//     reads `unknown`.
+//     reads `unknown`. audience_expansion_enabled and offsite_delivery_enabled (#667) are
+//     upstream-only too, "true" or "false" and absent when LinkedIn does not report them.
 //   - objective_type is COMPARED since LFXV2-2665: the create path's objective follows the
 //     bidding strategy it records (manual → WEBSITE_CONVERSION; automatic → the objectiveType the
 //     create recorded in the result blob, #582, and WEBSITE_VISIT for a row written before it;
@@ -153,6 +158,8 @@ func (d *LinkedInDispatcher) ReadSettings(ctx context.Context, projectID string,
 		model.CompareSettingsField(settingsFieldUnitCost, nil, unitCost),
 		model.CompareSettingsField(settingsFieldUnitCostCurrency, nil, unitCostCurrency),
 		model.CompareSettingsField(settingsFieldObjectiveType, linkedinRecordedObjective(ctx, campaign), settings.ObjectiveType),
+		model.CompareSettingsField(settingsFieldAudienceExpansion, nil, boolToStrPtr(settings.AudienceExpansionEnabled)),
+		model.CompareSettingsField(settingsFieldOffsiteDelivery, nil, boolToStrPtr(settings.OffsiteDeliveryEnabled)),
 	}
 	rb.SummariseSettings()
 	return rb, nil
@@ -170,7 +177,8 @@ func linkedinAccountIDUnusable(res *resolved, projectID, op string) error {
 // linkedinRecordedObjective is the objectiveType the create path sent for this row's recorded
 // bidding strategy (LFXV2-2665; linkedin.campaignBidding): manual → WEBSITE_CONVERSION; automatic →
 // the objectiveType the create recorded in the row's result blob (#582: WEBSITE_CONVERSION for
-// Maximum delivery conversions, WEBSITE_VISIT otherwise). nil when no strategy is recorded — a
+// Maximum delivery conversions, LEAD_GENERATION for a lead gen create (#664), WEBSITE_VISIT
+// otherwise). nil when no strategy is recorded — a
 // legacy or adopted row — or when an automatic row's result cannot say, so the field reads
 // `unknown` rather than comparing against a guess (linkedinResultObjective).
 func linkedinRecordedObjective(ctx context.Context, campaign *model.Campaign) *string {
@@ -196,7 +204,7 @@ func linkedinRecordedObjective(ctx context.Context, campaign *model.Campaign) *s
 //
 // A blob with no objectiveType was written before #582 recorded it. Before #582 the only
 // objective an automatic create sent was WEBSITE_VISIT, so that is what such a row was created
-// with. An empty or undecodable blob, or an objectiveType outside the two this service creates,
+// with. An empty or undecodable blob, or an objectiveType outside the three this service creates,
 // is nil: nothing trustworthy was recorded.
 func linkedinResultObjective(ctx context.Context, campaign *model.Campaign) *string {
 	if len(campaign.Result) == 0 {
@@ -215,7 +223,7 @@ func linkedinResultObjective(ctx context.Context, campaign *model.Campaign) *str
 		return strPtr(linkedin.ObjectiveWebsiteVisit)
 	}
 	switch *blob.ObjectiveType {
-	case linkedin.ObjectiveWebsiteVisit, linkedin.ObjectiveWebsiteConversion:
+	case linkedin.ObjectiveWebsiteVisit, linkedin.ObjectiveWebsiteConversion, linkedin.ObjectiveLeadGeneration:
 		return strPtr(*blob.ObjectiveType)
 	}
 	slog.WarnContext(ctx, "linkedin result blob records an objectiveType this service does not create; objective_type has no recorded side",

@@ -266,6 +266,10 @@ type Client struct {
 	// the list-linkedin-ads-conversions endpoint.
 	ListLinkedinAdsConversionsDoer goahttp.Doer
 
+	// ListLinkedinAdsLeadForms Doer is the HTTP client used to make requests to
+	// the list-linkedin-ads-lead-forms endpoint.
+	ListLinkedinAdsLeadFormsDoer goahttp.Doer
+
 	// ListLinkedinAdsAdoptableCampaigns Doer is the HTTP client used to make
 	// requests to the list-linkedin-ads-adoptable-campaigns endpoint.
 	ListLinkedinAdsAdoptableCampaignsDoer goahttp.Doer
@@ -461,6 +465,7 @@ func NewClient(
 		GetLinkedinAdsAudienceDoer:             doer,
 		ListLinkedinAdsAudiencesDoer:           doer,
 		ListLinkedinAdsConversionsDoer:         doer,
+		ListLinkedinAdsLeadFormsDoer:           doer,
 		ListLinkedinAdsAdoptableCampaignsDoer:  doer,
 		GetLinkedinAdsCreateAccountDoer:        doer,
 		SearchLinkedinAdsTargetingEntitiesDoer: doer,
@@ -1994,6 +1999,31 @@ func (c *Client) ListLinkedinAdsConversions() goa.Endpoint {
 		resp, err := c.ListLinkedinAdsConversionsDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-linkedin-ads-conversions", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ListLinkedinAdsLeadForms returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service list-linkedin-ads-lead-forms
+// server.
+func (c *Client) ListLinkedinAdsLeadForms() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeListLinkedinAdsLeadFormsRequest(c.encoder)
+		decodeResponse = DecodeListLinkedinAdsLeadFormsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildListLinkedinAdsLeadFormsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ListLinkedinAdsLeadFormsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-linkedin-ads-lead-forms", err)
 		}
 		return decodeResponse(resp)
 	}

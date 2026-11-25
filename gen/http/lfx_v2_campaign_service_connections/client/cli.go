@@ -2383,6 +2383,45 @@ func BuildListLinkedinAdsConversionsPayload(lfxV2CampaignServiceConnectionsListL
 	return v, nil
 }
 
+// BuildListLinkedinAdsLeadFormsPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-linkedin-ads-lead-forms endpoint
+// from CLI flags.
+func BuildListLinkedinAdsLeadFormsPayload(lfxV2CampaignServiceConnectionsListLinkedinAdsLeadFormsProjectID *string, lfxV2CampaignServiceConnectionsListLinkedinAdsLeadFormsAccountID *string, lfxV2CampaignServiceConnectionsListLinkedinAdsLeadFormsBearerToken *string) (*lfxv2campaignserviceconnections.ListLinkedinAdsLeadFormsPayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsListLinkedinAdsLeadFormsProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsListLinkedinAdsLeadFormsProjectID
+	}
+	var accountID *string
+	{
+		if lfxV2CampaignServiceConnectionsListLinkedinAdsLeadFormsAccountID != nil {
+			accountID = lfxV2CampaignServiceConnectionsListLinkedinAdsLeadFormsAccountID
+			err = goa.MergeErrors(err, goa.ValidatePattern("account_id", *lfxV2CampaignServiceConnectionsListLinkedinAdsLeadFormsAccountID, "^[0-9]+$"))
+			if utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsListLinkedinAdsLeadFormsAccountID) > 64 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", *lfxV2CampaignServiceConnectionsListLinkedinAdsLeadFormsAccountID, utf8.RuneCountInString(*lfxV2CampaignServiceConnectionsListLinkedinAdsLeadFormsAccountID), 64, false))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListLinkedinAdsLeadFormsBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsListLinkedinAdsLeadFormsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListLinkedinAdsLeadFormsPayload{}
+	v.ProjectID = projectID
+	v.AccountID = accountID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildListLinkedinAdsAdoptableCampaignsPayload builds the payload for the
 // lfx-v2-campaign-service-connections list-linkedin-ads-adoptable-campaigns
 // endpoint from CLI flags.

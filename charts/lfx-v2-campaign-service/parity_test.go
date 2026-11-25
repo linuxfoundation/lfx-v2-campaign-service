@@ -202,13 +202,15 @@ const microsoftConversionGoalsPath = "/projects/:projectId/microsoft-ads/convers
 const (
 	linkedInAudiencesPath   = "/projects/:projectId/linkedin-ads/audiences"
 	linkedInConversionsPath = "/projects/:projectId/linkedin-ads/conversions"
+	// linkedInLeadFormsPath lists the Lead Gen Forms of the same account (#664).
+	linkedInLeadFormsPath = "/projects/:projectId/linkedin-ads/lead-forms"
 	// linkedInAdoptablePath lists every foundation's campaigns in an account the LF system
 	// LinkedIn row addresses (#581), so it is ruled by marketing-ops-api only.
 	linkedInAdoptablePath = "/projects/:projectId/linkedin-ads/adoptable-campaigns"
 )
 
 // marketingOpsPaths is every path the marketing-ops-api rule must hold, in order, and nothing else.
-var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, redditCustomAudiencesPath, redditPixelsPath, twitterCustomAudiencesPath, microsoftRemarketingListsPath, microsoftConversionGoalsPath, linkedInAudiencesPath, linkedInConversionsPath, linkedInAdoptablePath, metaCustomAudiencesPath, metaLeadFormsPath}
+var marketingOpsPaths = []string{conversionActionsPath, googleAudiencesPath, userListsPath, redditCustomAudiencesPath, redditPixelsPath, twitterCustomAudiencesPath, microsoftRemarketingListsPath, microsoftConversionGoalsPath, linkedInAudiencesPath, linkedInConversionsPath, linkedInLeadFormsPath, linkedInAdoptablePath, metaCustomAudiencesPath, metaLeadFormsPath}
 
 // ruleBlock isolates one rendered Heimdall rule (from its `- id: "<id>"` line up to
 // the next `- id:` or EOF) so path/authorizer extraction is scoped to a SINGLE rule.
@@ -331,6 +333,7 @@ func TestGoogleAudiencesIsAMarketingOpsRead(t *testing.T) {
 func TestLinkedInPickersAreMarketingOpsReads(t *testing.T) {
 	assertMarketingOpsRead(t, linkedInAudiencesPath, "/projects/p1/linkedin-ads/audiences")
 	assertMarketingOpsRead(t, linkedInConversionsPath, "/projects/p1/linkedin-ads/conversions")
+	assertMarketingOpsRead(t, linkedInLeadFormsPath, "/projects/p1/linkedin-ads/lead-forms")
 }
 
 // TestLinkedInAdoptableCampaignsIsAMarketingOpsRead pins the #581 adoption candidate list: it
@@ -884,6 +887,8 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/linkedin-ads/adoptable-campaigns/x", false},
 		{"/projects/p1/linkedin-ads/audiences/x", false},
 		{"/projects/p1/linkedin-ads/conversions/x", false},
+		{"/projects/p1/linkedin-ads/lead-forms", true},
+		{"/projects/p1/linkedin-ads/lead-forms/x", false},
 		// The LinkedIn targeting typeahead (#585): a campaign_manager read at the base path only.
 		{"/projects/p1/linkedin-ads/targeting-entities", true},
 		{"/projects/p1/linkedin-ads/targeting-entities/x", false},

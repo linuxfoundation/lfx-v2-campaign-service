@@ -1111,6 +1111,20 @@ type ListLinkedinAdsConversionsResponseBody struct {
 	ConversionCount *int `form:"conversion_count,omitempty" json:"conversion_count,omitempty" xml:"conversion_count,omitempty"`
 }
 
+// ListLinkedinAdsLeadFormsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-lead-forms"
+// endpoint HTTP response body.
+type ListLinkedinAdsLeadFormsResponseBody struct {
+	// The LinkedIn ad account the forms were read from: the account a LinkedIn
+	// create for this project uses
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The account's forms that are not archived, sorted by name (ignoring case),
+	// then id
+	Forms []*LinkedinAdsLeadFormResponseBody `form:"forms,omitempty" json:"forms,omitempty" xml:"forms,omitempty"`
+	// How many forms are in `forms`
+	FormCount *int `form:"form_count,omitempty" json:"form_count,omitempty" xml:"form_count,omitempty"`
+}
+
 // ListLinkedinAdsAdoptableCampaignsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-linkedin-ads-adoptable-campaigns" endpoint HTTP response body.
@@ -5529,6 +5543,66 @@ type ListLinkedinAdsConversionsUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListLinkedinAdsLeadFormsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-lead-forms"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListLinkedinAdsLeadFormsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListLinkedinAdsLeadFormsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-lead-forms"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListLinkedinAdsLeadFormsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListLinkedinAdsLeadFormsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-lead-forms"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListLinkedinAdsLeadFormsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListLinkedinAdsLeadFormsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-lead-forms"
+// endpoint HTTP response body for the "NotFound" error.
+type ListLinkedinAdsLeadFormsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListLinkedinAdsLeadFormsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-lead-forms"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListLinkedinAdsLeadFormsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListLinkedinAdsLeadFormsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-lead-forms"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListLinkedinAdsLeadFormsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ListLinkedinAdsAdoptableCampaignsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "list-linkedin-ads-adoptable-campaigns" endpoint HTTP response body for the
@@ -7860,6 +7934,22 @@ type LinkedinAdsConversionRuleResponseBody struct {
 	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
 	// Whether the rule is enabled; false when LinkedIn did not say
 	Enabled *bool `form:"enabled,omitempty" json:"enabled,omitempty" xml:"enabled,omitempty"`
+}
+
+// LinkedinAdsLeadFormResponseBody is used to define fields on response body
+// types.
+type LinkedinAdsLeadFormResponseBody struct {
+	// The form's numeric id, in exactly the form linkedInConfig.leadGenForm takes
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// urn:li:adForm:{id}, the creative's leadgenCallToAction destination;
+	// linkedInConfig.leadGenForm also accepts it
+	Urn *string `form:"urn,omitempty" json:"urn,omitempty" xml:"urn,omitempty"`
+	// The form's name in Campaign Manager. Not an identifier; empty when LinkedIn
+	// sent none.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// LinkedIn's form state, verbatim: DRAFT or PUBLISHED (ARCHIVED forms are not
+	// listed, and a create refuses one)
+	State *string `form:"state,omitempty" json:"state,omitempty" xml:"state,omitempty"`
 }
 
 // LinkedinAdsAdoptableCampaignResponseBody is used to define fields on
@@ -14663,6 +14753,99 @@ func NewListLinkedinAdsConversionsUnauthorized(body *ListLinkedinAdsConversionsU
 	return v
 }
 
+// NewListLinkedinAdsLeadFormsLinkedinAdsLeadFormsOK builds a
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-lead-forms"
+// endpoint result from a HTTP "OK" response.
+func NewListLinkedinAdsLeadFormsLinkedinAdsLeadFormsOK(body *ListLinkedinAdsLeadFormsResponseBody) *lfxv2campaignserviceconnections.LinkedinAdsLeadForms {
+	v := &lfxv2campaignserviceconnections.LinkedinAdsLeadForms{
+		AccountID: *body.AccountID,
+		FormCount: *body.FormCount,
+	}
+	v.Forms = make([]*lfxv2campaignserviceconnections.LinkedinAdsLeadForm, len(body.Forms))
+	for i, val := range body.Forms {
+		if val == nil {
+			v.Forms[i] = nil
+			continue
+		}
+		v.Forms[i] = unmarshalLinkedinAdsLeadFormResponseBodyToLfxv2campaignserviceconnectionsLinkedinAdsLeadForm(val)
+	}
+
+	return v
+}
+
+// NewListLinkedinAdsLeadFormsBadRequest builds a
+// lfx-v2-campaign-service-connections service list-linkedin-ads-lead-forms
+// endpoint BadRequest error.
+func NewListLinkedinAdsLeadFormsBadRequest(body *ListLinkedinAdsLeadFormsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListLinkedinAdsLeadFormsServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service list-linkedin-ads-lead-forms
+// endpoint ServiceUnavailable error.
+func NewListLinkedinAdsLeadFormsServiceUnavailable(body *ListLinkedinAdsLeadFormsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListLinkedinAdsLeadFormsInternalServerError builds a
+// lfx-v2-campaign-service-connections service list-linkedin-ads-lead-forms
+// endpoint InternalServerError error.
+func NewListLinkedinAdsLeadFormsInternalServerError(body *ListLinkedinAdsLeadFormsInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListLinkedinAdsLeadFormsNotFound builds a
+// lfx-v2-campaign-service-connections service list-linkedin-ads-lead-forms
+// endpoint NotFound error.
+func NewListLinkedinAdsLeadFormsNotFound(body *ListLinkedinAdsLeadFormsNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListLinkedinAdsLeadFormsPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service list-linkedin-ads-lead-forms
+// endpoint PayloadTooLarge error.
+func NewListLinkedinAdsLeadFormsPayloadTooLarge(body *ListLinkedinAdsLeadFormsPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListLinkedinAdsLeadFormsUnauthorized builds a
+// lfx-v2-campaign-service-connections service list-linkedin-ads-lead-forms
+// endpoint Unauthorized error.
+func NewListLinkedinAdsLeadFormsUnauthorized(body *ListLinkedinAdsLeadFormsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewListLinkedinAdsAdoptableCampaignsLinkedinAdsAdoptableCampaignsOK builds a
 // "lfx-v2-campaign-service-connections" service
 // "list-linkedin-ads-adoptable-campaigns" endpoint result from a HTTP "OK"
@@ -18638,6 +18821,28 @@ func ValidateListLinkedinAdsConversionsResponseBody(body *ListLinkedinAdsConvers
 	for _, e := range body.Conversions {
 		if e != nil {
 			if err2 := validateLinkedinAdsConversionRuleResponseBody(e, "body.conversions[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateListLinkedinAdsLeadFormsResponseBody runs the validations defined on
+// ListLinkedinAdsLeadFormsResponseBody
+func ValidateListLinkedinAdsLeadFormsResponseBody(body *ListLinkedinAdsLeadFormsResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.Forms == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("forms", "body"))
+	}
+	if body.FormCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("form_count", "body"))
+	}
+	for _, e := range body.Forms {
+		if e != nil {
+			if err2 := validateLinkedinAdsLeadFormResponseBody(e, "body.forms[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -24276,6 +24481,79 @@ func ValidateListLinkedinAdsConversionsUnauthorizedResponseBody(body *ListLinked
 	return
 }
 
+// ValidateListLinkedinAdsLeadFormsBadRequestResponseBody runs the validations
+// defined on ListLinkedinAdsLeadFormsBadRequestResponseBody
+func ValidateListLinkedinAdsLeadFormsBadRequestResponseBody(body *ListLinkedinAdsLeadFormsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListLinkedinAdsLeadFormsServiceUnavailableResponseBody runs the
+// validations defined on ListLinkedinAdsLeadFormsServiceUnavailableResponseBody
+func ValidateListLinkedinAdsLeadFormsServiceUnavailableResponseBody(body *ListLinkedinAdsLeadFormsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListLinkedinAdsLeadFormsInternalServerErrorResponseBody runs the
+// validations defined on
+// ListLinkedinAdsLeadFormsInternalServerErrorResponseBody
+func ValidateListLinkedinAdsLeadFormsInternalServerErrorResponseBody(body *ListLinkedinAdsLeadFormsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListLinkedinAdsLeadFormsNotFoundResponseBody runs the validations
+// defined on ListLinkedinAdsLeadFormsNotFoundResponseBody
+func ValidateListLinkedinAdsLeadFormsNotFoundResponseBody(body *ListLinkedinAdsLeadFormsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListLinkedinAdsLeadFormsPayloadTooLargeResponseBody runs the
+// validations defined on ListLinkedinAdsLeadFormsPayloadTooLargeResponseBody
+func ValidateListLinkedinAdsLeadFormsPayloadTooLargeResponseBody(body *ListLinkedinAdsLeadFormsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListLinkedinAdsLeadFormsUnauthorizedResponseBody runs the
+// validations defined on ListLinkedinAdsLeadFormsUnauthorizedResponseBody
+func ValidateListLinkedinAdsLeadFormsUnauthorizedResponseBody(body *ListLinkedinAdsLeadFormsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateListLinkedinAdsAdoptableCampaignsBadRequestResponseBody runs the
 // validations defined on
 // ListLinkedinAdsAdoptableCampaignsBadRequestResponseBody
@@ -27488,6 +27766,42 @@ func validateLinkedinAdsConversionRuleResponseBody(body *LinkedinAdsConversionRu
 	}
 	if body.Enabled == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("enabled", path))
+	}
+	return
+}
+
+// ValidateLinkedinAdsLeadFormResponseBody runs the validations defined on
+// linkedin-ads-lead-form
+func ValidateLinkedinAdsLeadFormResponseBody(body *LinkedinAdsLeadFormResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Urn == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("urn", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.State == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("state", "body"))
+	}
+	return
+}
+
+// validateLinkedinAdsLeadFormResponseBody checks linkedin-ads-lead-form and
+// reports errors using the path supplied by its caller
+func validateLinkedinAdsLeadFormResponseBody(body *LinkedinAdsLeadFormResponseBody, path string) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", path))
+	}
+	if body.Urn == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("urn", path))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	if body.State == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("state", path))
 	}
 	return
 }

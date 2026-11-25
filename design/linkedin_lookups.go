@@ -64,6 +64,27 @@ var LinkedInAdsConversionRules = Type("linkedin-ads-conversion-rules", func() {
 	Required("account_id", "conversions", "conversion_count")
 })
 
+// LinkedInAdsLeadForm is one Lead Gen Form of the lead form picker read (#664).
+var LinkedInAdsLeadForm = Type("linkedin-ads-lead-form", func() {
+	Attribute("id", String, "The form's numeric id, in exactly the form linkedInConfig.leadGenForm takes", func() { Example("6755260984438374400") })
+	Attribute("urn", String, "urn:li:adForm:{id}, the creative's leadgenCallToAction destination; linkedInConfig.leadGenForm also accepts it", func() {
+		Example("urn:li:adForm:6755260984438374400")
+	})
+	Attribute("name", String, "The form's name in Campaign Manager. Not an identifier; empty when LinkedIn sent none.", func() { Example("KubeCon NA CFP interest") })
+	Attribute("state", String, "LinkedIn's form state, verbatim: DRAFT or PUBLISHED (ARCHIVED forms are not listed, and a create refuses one)", func() {
+		Example("PUBLISHED")
+	})
+	Required("id", "urn", "name", "state")
+})
+
+// LinkedInAdsLeadForms is the lead form picker read (#664).
+var LinkedInAdsLeadForms = Type("linkedin-ads-lead-forms", func() {
+	Attribute("account_id", String, "The LinkedIn ad account the forms were read from: the account a LinkedIn create for this project uses", func() { Example("512345678") })
+	Attribute("forms", ArrayOf(LinkedInAdsLeadForm), "The account's forms that are not archived, sorted by name (ignoring case), then id")
+	Attribute("form_count", Int, "How many forms are in `forms`", func() { Example(1) })
+	Required("account_id", "forms", "form_count")
+})
+
 // linkedInTypeaheadFacets are the facets search-linkedin-ads-targeting-entities serves: the
 // linkedInConfig.targeting facets LinkedIn's typeahead finder supports, plus locations for
 // linkedInConfig.geoTargets. Mirrors linkedin.TypeaheadFacetKeys, which a service test pins.
@@ -212,6 +233,35 @@ func linkedInAdsLookupMethods() {
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
 			GET("/projects/{project_id}/linkedin-ads/conversions")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("account_id")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("list-linkedin-ads-lead-forms", func() {
+		Description("List the Lead Gen Forms on the LinkedIn ad account a create for this project uses, live from " +
+			"LinkedIn's Lead Forms owner finder (GET /rest/leadForms?q=owner), for picking linkedInConfig.leadGenForm " +
+			"on a linkedInConfig.objective \"lead_generation\" create (#664). Forms are built in Campaign Manager; " +
+			"ARCHIVED forms are left out. Off (400) unless the deployment sets LINKEDIN_ADS_LEAD_GEN_ENABLED to " +
+			"\"true\", the flag that gates linkedInConfig.leadGenForm. " + linkedInLookupCommon)
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			linkedInLookupAccountAttr()
+			Required("project_id")
+		})
+		Result(LinkedInAdsLeadForms)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/linkedin-ads/lead-forms")
 			Header("bearer_token:Authorization")
 			connectionAuthErrorResponses()
 			Param("account_id")

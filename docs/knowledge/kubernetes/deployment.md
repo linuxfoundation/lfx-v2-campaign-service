@@ -231,6 +231,23 @@ a job exists. Not role-gated.
 sent to a live LinkedIn account. Only exactly `"true"` enables it; off, a create naming one is
 refused with a 400 before a job exists.
 
+`LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED` defaults to `"false"` (#667) and is the same kind of gate
+for `linkedInConfig.audienceExpansionEnabled` and `linkedInConfig.offsiteDeliveryEnabled`, the
+campaign's Audience Expansion and LinkedIn Audience Network choices. Off, every create sends
+`offsiteDeliveryEnabled: false` and no `audienceExpansionEnabled`, as before; a create naming
+either (`false` included) is refused with a 400 before a job exists.
+
+`LINKEDIN_ADS_LEAD_GEN_ENABLED` defaults to `"false"` (#664) and gates LinkedIn Lead Gen Form
+campaigns: `linkedInConfig.objective` `"lead_generation"`, `linkedInConfig.leadGenForm` and
+`linkedInConfig.leadGenCallToAction`, and the `linkedin-ads/lead-forms` picker. Off, a create
+naming any of them is refused with a 400 before a job exists and the picker answers 400; nothing
+else changes.
+
+`LINKEDIN_ADS_CAROUSEL_ENABLED` defaults to `"false"` (#665) and gates `linkedInConfig.format`
+`"carousel"` with `linkedInConfig.carouselCards` and `carouselIntroText`: a CAROUSEL campaign whose
+carousel dark post has not been exercised against a live LinkedIn account. Only exactly `"true"`
+enables it; off, a create naming it is refused with a 400 before a job exists. Not role-gated.
+
 `SURVEY_SEQUENCE_WORKFLOW_ID` is a plain value defaulting to `""`, which selects the in-code
 default `1841232183`: the LF Research survey-promo workflow a survey send series
 (`send-workflows`) is copied from when a request names none. That id exists only in the LF

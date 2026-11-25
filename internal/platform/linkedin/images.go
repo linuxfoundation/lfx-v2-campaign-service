@@ -213,6 +213,10 @@ func (c *Client) uploadVariantImages(ctx context.Context, accountID string, in C
 	for _, ad := range in.TextAds {
 		assetIDs = append(assetIDs, ad.ImageAssetID)
 	}
+	// A carousel create (#665) carries its images on CarouselCards, likewise never beside variants.
+	for _, card := range in.CarouselCards {
+		assetIDs = append(assetIDs, card.ImageAssetID)
+	}
 	for _, id := range assetIDs {
 		if id == "" || seen[id] {
 			continue

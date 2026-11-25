@@ -117,6 +117,11 @@ type CampaignSettings struct {
 	// RunStart / RunEnd are runSchedule.start / end as UTC instants.
 	RunStart *time.Time
 	RunEnd   *time.Time
+
+	// AudienceExpansionEnabled and OffsiteDeliveryEnabled are the campaign's Audience Expansion
+	// and LinkedIn Audience Network settings (#667); nil when not reported.
+	AudienceExpansionEnabled *bool
+	OffsiteDeliveryEnabled   *bool
 }
 
 // Terminal reports whether the campaign is in a status from which it can never serve again:
@@ -168,6 +173,8 @@ type campaignSettingsWire struct {
 		Start *int64 `json:"start"`
 		End   *int64 `json:"end"`
 	} `json:"runSchedule"`
+	AudienceExpansionEnabled *bool `json:"audienceExpansionEnabled"`
+	OffsiteDeliveryEnabled   *bool `json:"offsiteDeliveryEnabled"`
 }
 
 // decimalRE is the exact decimal shape an amount must have to be read: no sign, no exponent.
@@ -285,12 +292,14 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID string) (*C
 		return nil, fmt.Errorf("linkedin: read campaign %s: the response does not describe the requested campaign, so nothing in it can be trusted", campaignID)
 	}
 	out := &CampaignSettings{
-		CampaignID:             campaignID,
-		Name:                   wire.Name,
-		Status:                 wire.Status,
-		ObjectiveType:          wire.ObjectiveType,
-		OptimizationTargetType: wire.OptimizationTargetType,
-		CostType:               wire.CostType,
+		CampaignID:               campaignID,
+		Name:                     wire.Name,
+		Status:                   wire.Status,
+		ObjectiveType:            wire.ObjectiveType,
+		OptimizationTargetType:   wire.OptimizationTargetType,
+		CostType:                 wire.CostType,
+		AudienceExpansionEnabled: wire.AudienceExpansionEnabled,
+		OffsiteDeliveryEnabled:   wire.OffsiteDeliveryEnabled,
 	}
 	if wire.Account != nil {
 		id, ok := urnTrailingID(*wire.Account, "sponsoredAccount")

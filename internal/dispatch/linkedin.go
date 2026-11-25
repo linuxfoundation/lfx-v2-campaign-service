@@ -213,12 +213,19 @@ type linkedinConfig struct {
 	Conversions []string `json:"conversions,omitempty"`
 	// Format selects the campaign format (#586): omitted or "single_image" is the
 	// SPONSORED_UPDATES campaign built from Variants; "text", behind
-	// LINKEDIN_ADS_TEXT_ADS_ENABLED, is a TEXT_AD campaign built from TextAds. Dispatch stores
-	// "text" or nothing (the default). See linkedinFormat.
+	// LINKEDIN_ADS_TEXT_ADS_ENABLED, is a TEXT_AD campaign built from TextAds; "carousel", behind
+	// LINKEDIN_ADS_CAROUSEL_ENABLED (#665), is a CAROUSEL campaign built from CarouselCards.
+	// Dispatch stores "text", "carousel" or nothing (the default). See linkedinFormat.
 	Format string `json:"format,omitempty"`
 	// TextAds are the Text Ad creatives of a "text" create (#586); refused with any other format.
 	TextAds []linkedin.TextAd `json:"textAds,omitempty"`
-	// Objective is the campaign's optimisation goal (#582): "traffic" or "conversions", exactly.
+	// CarouselCards and CarouselIntroText are a "carousel" create's cards and post commentary
+	// (#665), behind LINKEDIN_ADS_CAROUSEL_ENABLED; refused with any other format. See
+	// linkedinFormat.
+	CarouselCards     []linkedin.CarouselCard `json:"carouselCards,omitempty"`
+	CarouselIntroText string                  `json:"carouselIntroText,omitempty"`
+	// Objective is the campaign's optimisation goal (#582): "traffic" or "conversions", exactly, or
+	// "lead_generation" (#664: LEAD_GENERATION / MAX_LEAD, automatic only, requires LeadGenForm).
 	// Omitted, the bidding strategy decides as before (automatic → WEBSITE_VISIT / MAX_CLICK,
 	// manual → WEBSITE_CONVERSION / NONE). "conversions" with automatic bidding creates
 	// WEBSITE_CONVERSION / MAX_CONVERSION and requires Conversions. See linkedinObjective.
@@ -226,6 +233,17 @@ type linkedinConfig struct {
 	// JobFunctions replace the default job functions in the profile's jobFunctions clause
 	// (#585). Not read with Targeting. See linkedin.ValidateJobFunctions.
 	JobFunctions []string `json:"jobFunctions,omitempty"`
+	// AudienceExpansionEnabled and OffsiteDeliveryEnabled are the campaign's Audience Expansion
+	// and LinkedIn Audience Network choices (#667), behind LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED.
+	// Omitted, the create sends offsiteDeliveryEnabled false and no audienceExpansionEnabled. See
+	// linkedinDeliveryOptions.
+	AudienceExpansionEnabled *bool `json:"audienceExpansionEnabled,omitempty"`
+	OffsiteDeliveryEnabled   *bool `json:"offsiteDeliveryEnabled,omitempty"`
+	// LeadGenForm is the Lead Gen Form (an id, or urn:li:adForm:<id>) a "lead_generation" create's
+	// creatives open, and LeadGenCallToAction their button label (#664), behind
+	// LINKEDIN_ADS_LEAD_GEN_ENABLED. See linkedinLeadGen.
+	LeadGenForm         string `json:"leadGenForm,omitempty"`
+	LeadGenCallToAction string `json:"leadGenCallToAction,omitempty"`
 }
 
 // checkJobFunctionsShape refuses a linkedInConfig.jobFunctions that is not a JSON array of
@@ -554,7 +572,7 @@ func checkObjectiveShape(config json.RawMessage) error {
 		var str string
 		// An empty string decodes like an omitted field and is refused as null is.
 		if isJSONNull(raw) || json.Unmarshal(raw, &str) != nil || str == "" {
-			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.objective must be the string \"traffic\" or \"conversions\"; omit it to let the bidding strategy decide", domain.ErrCreateConfigInvalid))
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.objective must be the string \"traffic\", \"conversions\" or \"lead_generation\"; omit it to let the bidding strategy decide", domain.ErrCreateConfigInvalid))
 		}
 	}
 	return nil
@@ -589,6 +607,14 @@ func linkedinObjective(cfg linkedinConfig, plan bidPlan) (string, error) {
 				domain.ErrCreateConfigInvalid))
 		}
 		return linkedin.ObjectiveWebsiteVisit, nil
+	case linkedinObjectiveLeadGeneration:
+		// #664: automatic bidding (MAX_LEAD) only. The deployment gate and the form are checked
+		// by linkedinLeadGen, which both PreflightCreate and Dispatch run before any call.
+		if plan.manual() {
+			return "", domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.objective \"lead_generation\" is created with automatic bidding (optimising for leads, MAX_LEAD) only; omit the manual bid",
+				domain.ErrCreateConfigInvalid))
+		}
+		return linkedin.ObjectiveLeadGeneration, nil
 	case linkedinObjectiveConversions:
 		if !plan.manual() && len(cfg.Conversions) == 0 {
 			gate := ""
@@ -600,7 +626,7 @@ func linkedinObjective(cfg linkedinConfig, plan bidPlan) (string, error) {
 		}
 		return linkedin.ObjectiveWebsiteConversion, nil
 	}
-	return "", domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.objective must be \"traffic\" or \"conversions\"", domain.ErrCreateConfigInvalid))
+	return "", domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.objective must be \"traffic\", \"conversions\" or \"lead_generation\"", domain.ErrCreateConfigInvalid))
 }
 
 // linkedinBidPlan resolves linkedInConfig's bidding choice. Unless linkedInConfig.objective names
@@ -714,7 +740,11 @@ func derefFloat(p *float64) float64 {
 //   - daily cap: a `dailyCapUsd` that is not a JSON number (checkDailyCapShape), or one
 //     linkedinDailyCap refuses (linkedin.ValidateDailyCap) (#584);
 //   - lifetime floor: an uncapped lifetime budget under max($100, $10 × flight days)
-//     (linkedinLifetimeFloor, #633).
+//     (linkedinLifetimeFloor, #633);
+//   - delivery options (#667): an `audienceExpansionEnabled` or `offsiteDeliveryEnabled` that is
+//     not a JSON boolean (checkDeliveryOptionsShape; null reads as omitted), or one
+//     linkedinDeliveryOptions refuses (the deployment gate off, or the Audience Network on a text
+//     create).
 //
 // It never calls LinkedIn (adAccountId needs only the database read a create's resolution makes),
 // so every other outcome is ErrPreflightNotApplicable; a config that does not decode is otherwise
@@ -799,8 +829,15 @@ func (d *LinkedInDispatcher) PreflightCreate(ctx context.Context, projectID stri
 	if err := checkFormatShape(config); err != nil {
 		return err
 	}
-	if _, err := linkedinFormat(cfg, plan); err != nil {
+	format, err := linkedinFormat(cfg, plan)
+	if err != nil {
 		return err
+	}
+	// A carousel card image whose recorded shape is not square (#665) is a synchronous 400 too.
+	if format == linkedin.FormatCarousel {
+		if err := d.checkCarouselCardShapes(ctx, cfg); err != nil {
+			return err
+		}
 	}
 	// Video variants (#586): the feature gate and the request shape are a synchronous 400 too.
 	if err := checkLinkedInVideoVariants(cfg); err != nil {
@@ -815,6 +852,22 @@ func (d *LinkedInDispatcher) PreflightCreate(ctx context.Context, projectID stri
 		return err
 	}
 	if _, err := linkedinJobFunctions(cfg); err != nil {
+		return err
+	}
+	// Audience Expansion and the Audience Network (#667) likewise, a wrong JSON type included.
+	if err := checkDeliveryOptionsShape(config); err != nil {
+		return err
+	}
+	delivery, err := linkedinDeliveryOptions(cfg)
+	if err != nil {
+		return err
+	}
+	// Lead Gen Form campaigns (#664) likewise, a wrong JSON type included, after the delivery
+	// options so the Audience Network rule sees the validated choice.
+	if err := checkLeadGenShape(config); err != nil {
+		return err
+	}
+	if _, err := linkedinLeadGen(cfg, delivery); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable
@@ -893,6 +946,14 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 
 	// A wrong-typed adAccountId fails with PreflightCreate's sentence, not the strict decode's.
 	if err := checkAdAccountIDShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	// So does a wrong-typed audienceExpansionEnabled or offsiteDeliveryEnabled (#667).
+	if err := checkDeliveryOptionsShape(config); err != nil {
+		return nil, notCreated(err)
+	}
+	// And a wrong-typed leadGenForm or leadGenCallToAction (#664).
+	if err := checkLeadGenShape(config); err != nil {
 		return nil, notCreated(err)
 	}
 	var cfg linkedinConfig
@@ -987,6 +1048,19 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if cfg.JobFunctions, err = linkedinJobFunctions(cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// Audience Expansion and the Audience Network (#667), gated and validated before any upstream
+	// call, after the format so a text create's Audience Network is refused. Their JSON type is
+	// checked before the strict decode, above.
+	delivery, err := linkedinDeliveryOptions(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	// Lead Gen Form campaigns (#664), gated and validated before any upstream call. Their JSON
+	// type is checked before the strict decode, above.
+	leadGen, err := linkedinLeadGen(cfg, delivery)
+	if err != nil {
+		return nil, notCreated(err)
+	}
 	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
 	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
 	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
@@ -1001,7 +1075,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	// input build + upstream round-trip and keeps the claim-release semantics obvious
 	// (a pre-create failure releases the claim). Credential/connection resolution has
 	// already happened above; this only short-circuits the create itself.
-	if cfg.Format != linkedin.FormatText && len(cfg.Variants) == 0 {
+	if cfg.Format == "" && len(cfg.Variants) == 0 {
 		return nil, notCreated(domain.PreflightRefusalf("linkedin campaign creation requires at least one creative variant"))
 	}
 	if err := checkLinkedInVideoVariants(cfg); err != nil {
@@ -1076,7 +1150,12 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		Targeting:        cfg.Targeting,
 		Format:           cfg.Format,
 		TextAds:          cfg.TextAds,
-		JobFunctions:     cfg.JobFunctions,
+		// A carousel create's cards (#665), their asset ids canonicalised by resolveLinkedInImages.
+		CarouselCards:     cfg.CarouselCards,
+		CarouselIntroText: cfg.CarouselIntroText,
+		JobFunctions:      cfg.JobFunctions,
+		DeliveryOptions:   delivery,
+		LeadGen:           leadGen,
 
 		// The name labels of the CLAIMED row (multi-campaign cs-4): its stored funnel stage and
 		// tactic (model.DispatchLabels) and its slot version, never the request's. Slot 2 on gets
@@ -2014,6 +2093,17 @@ func linkedinSnapshotConfig(cfg linkedinConfig) linkedinConfig {
 			snapshot.TextAds[i].Description = sanitizeSnapshotText(cfg.TextAds[i].Description)
 		}
 	}
+	if cfg.CarouselCards != nil {
+		// A card's destination is reduced to scheme and host (sanitizeSnapshotURL): the
+		// path and query are caller text that may carry tokens.
+		snapshot.CarouselCards = make([]linkedin.CarouselCard, len(cfg.CarouselCards))
+		copy(snapshot.CarouselCards, cfg.CarouselCards)
+		for i := range snapshot.CarouselCards {
+			snapshot.CarouselCards[i].Headline = sanitizeSnapshotText(cfg.CarouselCards[i].Headline)
+			snapshot.CarouselCards[i].DestinationURL = sanitizeSnapshotURL(cfg.CarouselCards[i].DestinationURL)
+		}
+	}
+	snapshot.CarouselIntroText = sanitizeSnapshotText(cfg.CarouselIntroText)
 	if cfg.GeoTargets != nil {
 		snapshot.GeoTargets = make([]linkedin.GeoTarget, len(cfg.GeoTargets))
 		copy(snapshot.GeoTargets, cfg.GeoTargets)

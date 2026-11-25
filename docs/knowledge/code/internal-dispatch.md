@@ -5932,6 +5932,23 @@ came from — `linkedInConfig.textAds reference creative asset …` on a text cr
 otherwise; the snapshot redacts text-ad copy like
 variant copy, and `linkedinCreativeCount` gives `campaignFromLinkedIn` the requested creative count.
 
+**LinkedIn carousel creates (#665).** `linkedin_carousel.go`. `checkFormatShape` hands
+`carouselCards` and `carouselIntroText` to `checkCarouselFieldShape` (cards an array of objects of
+the three `CarouselCard` string fields, null fields and unknown keys refused; intro text a string).
+`linkedinFormat` refuses either field under another format and calls `linkedinCarouselFormat`:
+gate `LINKEDIN_ADS_CAROUSEL_ENABLED` first, then no variants or text ads, uuid `imageAssetId`s and
+`linkedin.ValidateCarousel`; it returns `"carousel"`, which `Dispatch` stores. `PreflightCreate`
+(synchronous 400) and `Dispatch` (not-created refusal) both run it. `resolveLinkedInImages`
+resolves `carouselCards[].imageAssetId` under the carousel size and image rules, naming
+`carouselCards` in its refusals; `PreflightCreate` also runs `checkCarouselCardShapes`, which
+reads each card asset's recorded dimensions through the optional `assetMetadataReader`
+(`GetAssetMetadata`, no bytes) and refuses one that is not square (decision 2026-11-25), leaving
+unknown dimensions to Dispatch; `linkedinCreativeCount` is 1 for a carousel;
+`linkedinSnapshotConfig` redacts the headlines and intro text and keeps only the scheme and host of
+each `destinationUrl` (`sanitizeSnapshotURL`). `TestPlatformConfigsNameTheirAssetUnderOneKey`
+covers the card's `imageAssetId`. See
+[LinkedIn Carousel Sponsored Content](../architecture/linkedin-carousel-ads.md).
+
 **LinkedIn video variants (#586).** `checkLinkedInVideoVariants` (gate `LINKEDIN_ADS_VIDEO_ENABLED`,
 uuid shape, no image alongside, all-or-none) runs in `PreflightCreate` and `Dispatch`.
 `resolveLinkedInImages` now resolves images AND videos under one `AssetReserver` reservation and
@@ -5957,6 +5974,30 @@ variant's `<event> | variant-N` default; `PreflightCreate` takes the event name 
 `PreflightCreate` (synchronous 400) and `Dispatch` (not-created refusal) both run the two.
 `linkedinSnapshotConfig` redacts `Name` and `Description` like `IntroText`; `CallToAction` is an
 enum and kept.
+
+**LinkedIn Audience Expansion and Audience Network (#667).** `linkedin_delivery_options.go`.
+`checkDeliveryOptionsShape` refuses an `audienceExpansionEnabled` or `offsiteDeliveryEnabled` that
+is not a JSON boolean (null reads as omitted); `Dispatch` runs it before the strict decode, like
+`checkAdAccountIDShape`, so a mistyped value is the config refusal rather than a decode error.
+`linkedinDeliveryOptions` refuses either field, `false` included, while
+`LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED` is off, then runs `linkedin.ValidateDeliveryOptions`
+(the Audience Network on a text create). `PreflightCreate` (synchronous 400) and `Dispatch`
+(not-created refusal, after the format) both run them; the result reaches the client as
+`CampaignInput.DeliveryOptions`. `ReadSettings` reports both fields upstream-only
+(`audience_expansion_enabled`, `offsite_delivery_enabled`) through `boolToStrPtr`, so an
+unreported value is absent, not `"false"`.
+
+**LinkedIn Lead Gen Form campaigns (#664).** `linkedin_lead_gen.go`. `linkedInConfig.objective`
+`"lead_generation"` resolves in `linkedinObjective` to `linkedin.ObjectiveLeadGeneration`, refused
+with a manual bid. `checkLeadGenShape` refuses a `leadGenForm` or `leadGenCallToAction` that is not a
+JSON string (`Dispatch` runs it before the strict decode); `linkedinLeadGen` refuses all three while
+`LINKEDIN_ADS_LEAD_GEN_ENABLED` is off, a form or label without the objective, then runs
+`linkedin.ValidateLeadGen` (form id shape, label, text format, Audience Network, variant call to
+action) against the validated delivery options. `PreflightCreate` and `Dispatch` both run it, after
+the delivery options; the result reaches the client as `CampaignInput.LeadGen`.
+`ListLinkedInLeadForms` (in `linkedin_lookups.go`) serves the form picker through
+`createLookupClient`, like the segment and conversion pickers. `linkedinResultObjective` accepts a
+recorded `LEAD_GENERATION`, so the settings readback compares it.
 
 **Meta video variants (#550 gap 9).** `checkMetaVideoVariants` (gate `META_VIDEO_ENABLED`, uuid
 shape, no image alongside) runs in `PreflightCreate` and `Dispatch`. `resolveVariantAssets` resolves

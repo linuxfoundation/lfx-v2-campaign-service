@@ -28,6 +28,7 @@ type liImageAPI struct {
 	mu         sync.Mutex
 	calls      []string
 	posts      []map[string]any
+	campaigns  []map[string]any
 	initStatus int
 }
 
@@ -57,6 +58,9 @@ func newLIImageAPI(t *testing.T) *liImageAPI {
 		case strings.Contains(r.URL.Path, "adCampaignGroups"):
 			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
 		case strings.Contains(r.URL.Path, "adCampaigns"):
+			var m map[string]any
+			_ = json.Unmarshal(body, &m)
+			a.campaigns = append(a.campaigns, m)
 			w.Header().Set("x-restli-id", "urn:li:sponsoredCampaign:200")
 			_, _ = io.WriteString(w, `{}`)
 		case strings.Contains(r.URL.Path, "posts"):
