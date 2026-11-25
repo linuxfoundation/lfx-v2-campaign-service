@@ -43,9 +43,10 @@ func TestPublishedStageEnumMatchesEmailStageNames(t *testing.T) {
 	// living in emailstage.Names().
 	want := append([]string{""}, emailstage.Names()...)
 	want = append(want, emailstage.SurveyNames()...)
+	want = append(want, emailstage.NewsletterNames()...)
 
-	if len(want) != 11 {
-		t.Fatalf("expected 6 email stages plus 4 survey stages plus the empty paid stage, got "+
+	if len(want) != 12 {
+		t.Fatalf("expected 6 email stages, 4 survey stages, 1 newsletter stage and the empty paid stage, got "+
 			"%d (%v): this test's premise moved and the design enum needs a deliberate review, "+
 			"not a mechanical update", len(want), want)
 	}
@@ -99,7 +100,7 @@ func TestPublishedStageEnumMatchesEmailStageNames(t *testing.T) {
 			}
 			if !equalStrings(stage.Enum, want) {
 				t.Errorf("%s: BriefInput.stage enum = %v, want %v (the empty paid stage, then "+
-					"emailstage.Names(), then emailstage.SurveyNames())", rel, stage.Enum, want)
+					"emailstage.Names(), then emailstage.SurveyNames(), then emailstage.NewsletterNames())", rel, stage.Enum, want)
 			}
 
 			// The READ enum too, which is a SEPARATE hand-written list in the find-brief query

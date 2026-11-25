@@ -20,8 +20,11 @@ type Client struct {
 	SearchAudienceListsEndpoint            goa.Endpoint
 	GetAudienceSuppressionListsEndpoint    goa.Endpoint
 	GetAudienceLastSentEndpoint            goa.Endpoint
+	GetAudienceNewsletterBrandsEndpoint    goa.Endpoint
+	GetAudienceBrandNewslettersEndpoint    goa.Endpoint
 	GetExistingAudienceMasterListsEndpoint goa.Endpoint
 	PreviewAudienceCountEndpoint           goa.Endpoint
+	DescribeAudienceListsEndpoint          goa.Endpoint
 	ComposeAudienceMasterEndpoint          goa.Endpoint
 	AttachExistingAudienceEndpoint         goa.Endpoint
 	RunAudienceQaEndpoint                  goa.Endpoint
@@ -32,15 +35,18 @@ type Client struct {
 
 // NewClient initializes a "lfx-v2-campaign-service-audience-builder" service
 // client given the endpoints.
-func NewClient(getAudienceBuilderCapabilities, discoverAudienceLists, searchAudienceLists, getAudienceSuppressionLists, getAudienceLastSent, getExistingAudienceMasterLists, previewAudienceCount, composeAudienceMaster, attachExistingAudience, runAudienceQa, interpretCustomAudience, previewCustomAudience, createCustomAudience goa.Endpoint) *Client {
+func NewClient(getAudienceBuilderCapabilities, discoverAudienceLists, searchAudienceLists, getAudienceSuppressionLists, getAudienceLastSent, getAudienceNewsletterBrands, getAudienceBrandNewsletters, getExistingAudienceMasterLists, previewAudienceCount, describeAudienceLists, composeAudienceMaster, attachExistingAudience, runAudienceQa, interpretCustomAudience, previewCustomAudience, createCustomAudience goa.Endpoint) *Client {
 	return &Client{
 		GetAudienceBuilderCapabilitiesEndpoint: getAudienceBuilderCapabilities,
 		DiscoverAudienceListsEndpoint:          discoverAudienceLists,
 		SearchAudienceListsEndpoint:            searchAudienceLists,
 		GetAudienceSuppressionListsEndpoint:    getAudienceSuppressionLists,
 		GetAudienceLastSentEndpoint:            getAudienceLastSent,
+		GetAudienceNewsletterBrandsEndpoint:    getAudienceNewsletterBrands,
+		GetAudienceBrandNewslettersEndpoint:    getAudienceBrandNewsletters,
 		GetExistingAudienceMasterListsEndpoint: getExistingAudienceMasterLists,
 		PreviewAudienceCountEndpoint:           previewAudienceCount,
+		DescribeAudienceListsEndpoint:          describeAudienceLists,
 		ComposeAudienceMasterEndpoint:          composeAudienceMaster,
 		AttachExistingAudienceEndpoint:         attachExistingAudience,
 		RunAudienceQaEndpoint:                  runAudienceQa,
@@ -150,6 +156,46 @@ func (c *Client) GetAudienceLastSent(ctx context.Context, p *GetAudienceLastSent
 	return ires.(*GetAudienceLastSentResult), nil
 }
 
+// GetAudienceNewsletterBrands calls the "get-audience-newsletter-brands"
+// endpoint of the "lfx-v2-campaign-service-audience-builder" service.
+// GetAudienceNewsletterBrands may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) GetAudienceNewsletterBrands(ctx context.Context, p *GetAudienceNewsletterBrandsPayload) (res *GetAudienceNewsletterBrandsResult, err error) {
+	var ires any
+	ires, err = c.GetAudienceNewsletterBrandsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*GetAudienceNewsletterBrandsResult), nil
+}
+
+// GetAudienceBrandNewsletters calls the "get-audience-brand-newsletters"
+// endpoint of the "lfx-v2-campaign-service-audience-builder" service.
+// GetAudienceBrandNewsletters may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) GetAudienceBrandNewsletters(ctx context.Context, p *GetAudienceBrandNewslettersPayload) (res *GetAudienceBrandNewslettersResult, err error) {
+	var ires any
+	ires, err = c.GetAudienceBrandNewslettersEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*GetAudienceBrandNewslettersResult), nil
+}
+
 // GetExistingAudienceMasterLists calls the
 // "get-existing-audience-master-lists" endpoint of the
 // "lfx-v2-campaign-service-audience-builder" service.
@@ -189,6 +235,26 @@ func (c *Client) PreviewAudienceCount(ctx context.Context, p *PreviewAudienceCou
 		return
 	}
 	return ires.(*AudiencePreviewCount), nil
+}
+
+// DescribeAudienceLists calls the "describe-audience-lists" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+// DescribeAudienceLists may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) DescribeAudienceLists(ctx context.Context, p *DescribeAudienceListsPayload) (res *DescribeAudienceListsResult, err error) {
+	var ires any
+	ires, err = c.DescribeAudienceListsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*DescribeAudienceListsResult), nil
 }
 
 // ComposeAudienceMaster calls the "compose-audience-master" endpoint of the

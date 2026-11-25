@@ -29,6 +29,24 @@ type Service interface {
 	// Find the most recent marketing emails for this event family and report the
 	// lists each one targeted.
 	GetAudienceLastSent(context.Context, *GetAudienceLastSentPayload) (res *GetAudienceLastSentResult, err error)
+	// List the brands that have SENT a HubSpot newsletter in this project's
+	// portal, most recently sent first, for the newsletter surface's brand picker.
+	// A brand is read from the email name ("<YY>Q<N> - <Brand> - Newsletter -
+	// <Month>"). Drafts and scheduled sends do not count. The listing reads the
+	// portal's most recently updated emails up to a scan bound, so on a large
+	// portal a brand whose newsletters are all older than that is not listed. A
+	// bounded read that finds no sent newsletter at all is a recoverable failure,
+	// not an empty list. Cached per project for 15 minutes.
+	GetAudienceNewsletterBrands(context.Context, *GetAudienceNewsletterBrandsPayload) (res *GetAudienceNewsletterBrandsResult, err error)
+	// Find the brand's most recently SENT HubSpot newsletters and report the lists
+	// each one targeted. A newsletter is a sent email whose NAME names the brand
+	// the way get-audience-newsletter-brands reads it: the brand parsed from the
+	// name must EQUAL the given brand, ignoring case. It is equality, not
+	// containment, so "LF" does not match an "LF Education" newsletter and
+	// "PyTorch" does not match a "PyTorch Foundation" one; pass a brand exactly as
+	// that listing returned it. The newest is the template a new issue clones; the
+	// rest are content references. Drafts and scheduled sends are never returned.
+	GetAudienceBrandNewsletters(context.Context, *GetAudienceBrandNewslettersPayload) (res *GetAudienceBrandNewslettersResult, err error)
 	// Find master lists already composed for this event family, newest quarter
 	// first.
 	GetExistingAudienceMasterLists(context.Context, *GetExistingAudienceMasterListsPayload) (res *GetExistingAudienceMasterListsResult, err error)
@@ -37,6 +55,15 @@ type Service interface {
 	// double-counts overlap) when it is not, and as no number at all when any
 	// selected list did not report a size. Creates nothing.
 	PreviewAudienceCount(context.Context, *PreviewAudienceCountPayload) (res *AudiencePreviewCount, err error)
+	// Describe in plain English who each list contains, from its HubSpot filter
+	// rules, so an operator can see what an audience means before sending to it.
+	// Read-only: creates and changes nothing. Rules are rendered deterministically
+	// from the filter tree; referenced lists, contact properties and event types
+	// are named from the portal where the lookup budget allows, and fall back to
+	// their ids. A list that cannot be read is reported with status not_found or
+	// unreadable rather than failing the batch; the request fails only when NO
+	// list could be read.
+	DescribeAudienceLists(context.Context, *DescribeAudienceListsPayload) (res *DescribeAudienceListsResult, err error)
 	// Create the master list in the project's HubSpot portal, excluding the
 	// requested suppressions directly through the project's standing standard
 	// suppression list and, when asked, the edition's current-registrants list
@@ -90,7 +117,7 @@ const ServiceName = "lfx-v2-campaign-service-audience-builder"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [13]string{"get-audience-builder-capabilities", "discover-audience-lists", "search-audience-lists", "get-audience-suppression-lists", "get-audience-last-sent", "get-existing-audience-master-lists", "preview-audience-count", "compose-audience-master", "attach-existing-audience", "run-audience-qa", "interpret-custom-audience", "preview-custom-audience", "create-custom-audience"}
+var MethodNames = [16]string{"get-audience-builder-capabilities", "discover-audience-lists", "search-audience-lists", "get-audience-suppression-lists", "get-audience-last-sent", "get-audience-newsletter-brands", "get-audience-brand-newsletters", "get-existing-audience-master-lists", "preview-audience-count", "describe-audience-lists", "compose-audience-master", "attach-existing-audience", "run-audience-qa", "interpret-custom-audience", "preview-custom-audience", "create-custom-audience"}
 
 // AttachExistingAudiencePayload is the payload type of the
 // lfx-v2-campaign-service-audience-builder service attach-existing-audience
@@ -455,6 +482,9 @@ type AudienceLastSentEmail struct {
 	Subject *string
 	// Why this send is listed: event_name, subject, related_words or brand_only
 	MatchReason *string
+	// brand-newsletters only, on the newest issue: the brand site or blog the
+	// issue links to, where the next issue's offers and news are found
+	SourceURL *string
 }
 
 type AudienceListBrief struct {
@@ -479,6 +509,29 @@ type AudienceListBrief struct {
 	HubspotURL *string
 }
 
+type AudienceListDescription struct {
+	// HubSpot list id
+	ListID string
+	// HubSpot list name; empty when the list could not be read
+	Name string
+	// Membership size, when HubSpot reported one
+	Size *int64
+	// HubSpot processingType as reported: DYNAMIC, MANUAL or SNAPSHOT
+	ProcessingType *string
+	// Deep link to the list in the HubSpot UI
+	HubspotURL string
+	// Which outcome this description reports
+	Status string
+	// One plain-English sentence on who the list contains
+	Summary string
+	// How the groups combine: any (a contact in ANY group) or all (in EVERY group)
+	Match string
+	// The list's rules; empty unless status is described
+	Groups []*AudienceRuleGroup
+	// False when some rule is described only generically
+	Complete bool
+}
+
 type AudienceListSearchResult struct {
 	// HubSpot list id
 	ListID string
@@ -499,6 +552,18 @@ type AudienceMasterListBrief struct {
 	Size *int64
 	// Deep link to the list in the HubSpot UI
 	HubspotURL string
+}
+
+type AudienceNewsletterBrand struct {
+	// The brand as its newsletter names spell it
+	Brand string
+	// Name of the brand's most recent sent newsletter
+	LatestEmailName string
+	// When that newsletter was sent, RFC 3339; absent when the portal reported no
+	// date
+	LatestSentAt *string
+	// How many sent newsletters were found for the brand
+	Issues int
 }
 
 // AudiencePreviewCount is the result type of the
@@ -614,6 +679,11 @@ type AudienceQaSuppressionCheck struct {
 	UnverifiedListIds []string
 }
 
+type AudienceRuleGroup struct {
+	// Plain-English conditions; all of them must hold
+	Conditions []string
+}
+
 type AudienceSuppressionList struct {
 	// Stable row key for selection state
 	Key string
@@ -682,6 +752,26 @@ type CreateCustomAudiencePayload struct {
 	Custom *AudienceCustomInput
 }
 
+// DescribeAudienceListsPayload is the payload type of the
+// lfx-v2-campaign-service-audience-builder service describe-audience-lists
+// method.
+type DescribeAudienceListsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Lists to describe, in the order to return them
+	ListIds []string
+}
+
+// DescribeAudienceListsResult is the result type of the
+// lfx-v2-campaign-service-audience-builder service describe-audience-lists
+// method.
+type DescribeAudienceListsResult struct {
+	// One description per requested id, in request order
+	Lists []*AudienceListDescription
+}
+
 // DiscoverAudienceListsPayload is the payload type of the
 // lfx-v2-campaign-service-audience-builder service discover-audience-lists
 // method.
@@ -692,6 +782,28 @@ type DiscoverAudienceListsPayload struct {
 	ProjectID string
 	// Event page URL to read the identity from
 	EventURL string
+}
+
+// GetAudienceBrandNewslettersPayload is the payload type of the
+// lfx-v2-campaign-service-audience-builder service
+// get-audience-brand-newsletters method.
+type GetAudienceBrandNewslettersPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brand as it appears in the newsletter's HubSpot email name
+	Brand string
+	// How many newsletters to report
+	Limit int
+}
+
+// GetAudienceBrandNewslettersResult is the result type of the
+// lfx-v2-campaign-service-audience-builder service
+// get-audience-brand-newsletters method.
+type GetAudienceBrandNewslettersResult struct {
+	// Newsletters, most recently sent first
+	Emails []*AudienceLastSentEmail
 }
 
 // GetAudienceBuilderCapabilitiesPayload is the payload type of the
@@ -726,6 +838,24 @@ type GetAudienceLastSentPayload struct {
 type GetAudienceLastSentResult struct {
 	// Emails, most recently sent first
 	Emails []*AudienceLastSentEmail
+}
+
+// GetAudienceNewsletterBrandsPayload is the payload type of the
+// lfx-v2-campaign-service-audience-builder service
+// get-audience-newsletter-brands method.
+type GetAudienceNewsletterBrandsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// GetAudienceNewsletterBrandsResult is the result type of the
+// lfx-v2-campaign-service-audience-builder service
+// get-audience-newsletter-brands method.
+type GetAudienceNewsletterBrandsResult struct {
+	// Brands, most recently sent first
+	Brands []*AudienceNewsletterBrand
 }
 
 // GetAudienceSuppressionListsPayload is the payload type of the

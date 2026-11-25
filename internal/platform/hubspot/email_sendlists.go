@@ -112,6 +112,57 @@ func (c *Client) GetEmailSendLists(ctx context.Context, emailID string) (*EmailS
 	return out, nil
 }
 
+// SendSettings are the two recipient settings HubSpot keeps on an email beside its lists.
+//
+// A nil field means NOT STATED. On a read, the email did not report it. On a write it is left
+// out of the `to` object, and HubSpot then applies its own default, not the value the clone
+// source had: that is how every draft staged through SetSendList came out with "Don't send to
+// unengaged contacts" on, whatever its template said.
+type SendSettings struct {
+	// SuppressGraymail is "Don't send to unengaged contacts".
+	SuppressGraymail *bool
+	// LimitSendFrequency applies the portal's send-frequency cap to the email.
+	LimitSendFrequency *bool
+}
+
+// GetEmailSendSettings reads one email's recipient settings. Read-only (idempotent).
+//
+// Unlike GetEmailSendLists this does not require the `to` object. A response without one states
+// no settings, which is a usable answer (there is nothing to keep), where for the lists it would
+// be a send that looks as if it targeted nothing.
+func (c *Client) GetEmailSendSettings(ctx context.Context, emailID string) (SendSettings, error) {
+	if emailID = strings.TrimSpace(emailID); emailID == "" {
+		return SendSettings{}, fmt.Errorf("hubspot: GetEmailSendSettings requires a non-empty email id")
+	}
+	raw, err := c.doRequest(ctx, http.MethodGet, emailsPath+"/"+url.PathEscape(emailID), nil, true)
+	if err != nil {
+		return SendSettings{}, err
+	}
+	settings, err := decodeSendSettings(raw)
+	if err != nil {
+		return SendSettings{}, fmt.Errorf("hubspot: decode email %s send settings: %w", emailID, err)
+	}
+	return settings, nil
+}
+
+// decodeSendSettings reads the recipient settings out of an email as HubSpot returns it, from a
+// GET or in answer to a PATCH. An email with no `to` object states none.
+func decodeSendSettings(raw []byte) (SendSettings, error) {
+	var resp struct {
+		To *struct {
+			SuppressGraymail   *bool `json:"suppressGraymail"`
+			LimitSendFrequency *bool `json:"limitSendFrequency"`
+		} `json:"to"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return SendSettings{}, err
+	}
+	if resp.To == nil {
+		return SendSettings{}, nil
+	}
+	return SendSettings{SuppressGraymail: resp.To.SuppressGraymail, LimitSendFrequency: resp.To.LimitSendFrequency}, nil
+}
+
 // idSelection is HubSpot's include/exclude pair. The ids arrive as numbers on the
 // legacy field and as strings on the ILS one, so they are decoded as json.Number.
 type idSelection struct {

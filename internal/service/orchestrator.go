@@ -183,6 +183,20 @@ const bidWriteCallTimeout = budgetWriteCallTimeout
 // with no cascade, so it can use the same ceiling as metrics reads.
 const accountsCallTimeout = 20 * time.Second
 
+// emailSearchCallTimeout bounds the SYNCHRONOUS marketing-email search. It is NOT
+// accountsCallTimeout any more, because the work is not comparable: a filtered search reads up
+// to hubspot's maxFilteredPages (20) pages SEQUENTIALLY, and against the live LF portal that
+// walk measured 15-16s on its own -- so a 20s ceiling failed real searches whenever HubSpot was
+// a little slow (observed: a template search answered 503 "could not be completed" and the
+// identical retry succeeded). 40s leaves the walk room while staying under the BFF's own 45s
+// budget for this route, so the service still answers before the caller gives up.
+const emailSearchCallTimeout = 40 * time.Second
+
+// upstreamPresenceTimeout bounds the one read a reuse makes to ask whether its upstream object
+// still exists (UpstreamPresenceChecker). A reuse used to answer from the database alone, so this
+// is the whole of the latency it adds; past it the row is reused as before.
+const upstreamPresenceTimeout = 15 * time.Second
+
 // adoptLookupTimeout bounds the SYNCHRONOUS pre-bind platform lookup: the same kind of call as
 // metrics and account discovery, so the same ceiling. Far below the dispatch budget because
 // nothing here creates anything upstream for a longer wait to resolve.
@@ -220,6 +234,22 @@ type PlatformDispatcher interface {
 	// Dispatch creates a campaign on the platform and returns the resulting
 	// campaign row (platform_campaign_id, status, result populated).
 	Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error)
+}
+
+// UpstreamPresenceChecker is an OPTIONAL dispatcher capability: say whether the platform object a
+// COMPLETED campaign row points at has been deleted on the platform since it was created.
+//
+// It exists for a platform whose slot takes no new version (model.ProviderSupportsSlotVersions):
+// there a completed row is reused for every later create of the same brief, so an object someone
+// deleted upstream -- a HubSpot email draft removed in HubSpot -- left the brief unable to create
+// another, and every retry answered "reused" with an id that no longer resolves. See
+// retireIfGoneUpstream for how the orchestrator acts on the answer.
+//
+// Only a DEFINITE absence is (true, nil). Anything the platform could not settle -- an unreadable
+// connection, a token for another account, a 5xx or a timeout -- is an error, and the caller keeps
+// reusing the row: a duplicate is the failure the reuse exists to prevent.
+type UpstreamPresenceChecker interface {
+	UpstreamGone(ctx context.Context, projectID string, c *model.Campaign) (bool, error)
 }
 
 // StatusToggler is an OPTIONAL dispatcher capability: pause/resume an existing campaign on
@@ -543,6 +573,17 @@ type EmailSearcher interface {
 	// that fell through a branch, and the two mean opposite things to someone staring at an
 	// empty picker.
 	SearchEmails(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.MarketingEmail, error)
+}
+
+// EmailPhraseSearcher is an OPTIONAL EmailSearcher capability: list the marketing emails whose
+// name or subject contains ANY of several whole-word phrases, in one walk. It is how the
+// template picker scopes itself to an event's brand ("KubeCon", "CloudNativeCon") before an
+// operator has typed anything, without re-reading the portal once per phrase.
+//
+// Discovered by type assertion like EmailSearcher; a dispatcher without it yields
+// ErrEmailSearchUnsupported. The same NON-NIL-slice rule as SearchEmails applies.
+type EmailPhraseSearcher interface {
+	SearchEmailsAnyPhrase(ctx context.Context, projectID string, platform model.Provider, phrases []string) ([]model.MarketingEmail, error)
 }
 
 // CreatePreflighter is an OPTIONAL dispatcher capability: refuse a create request that can
@@ -1945,8 +1986,31 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// re-dispatch can't repair a degraded sub-step). Reuse it idempotently. A
 		// retained partial orphan (group_created/unconfirmed, or an id-less row) is NOT
 		// terminal, so it falls through to the claim/reconcile path below.
-		reuseResult(&res, existing)
-		return res
+		//
+		// Unless its upstream object is GONE: on a slot that takes no new version, the row was
+		// otherwise reused forever, so a HubSpot draft deleted in HubSpot could never be staged
+		// again. Then the row has just been retired, the slot is empty, and its version is
+		// claimed afresh below, exactly as for a brief never dispatched to this platform.
+		outcome, replacement := o.retireIfGoneUpstream(ctx, jobID, brief, p, variant, existing, by)
+		switch outcome {
+		case retireFreed:
+			// The slot is empty: claim it below. Two requests can both get here for the same
+			// deleted draft; the single-flight claim lets exactly one stage the replacement.
+		case retireReplaced:
+			// A concurrent request already staged the replacement. That is this request's
+			// answer too, not the deleted draft's id.
+			reuseResult(&res, replacement)
+			return res
+		case retireInFlight:
+			identifyRow(&res, replacement)
+			res.Skipped = true
+			res.Error = "skipped: this draft was deleted upstream and another request is staging its replacement; retry once it finishes"
+			return res
+		default:
+			reuseResult(&res, existing)
+			return res
+		}
+		slotVersion = existing.SlotVersion
 	case lerr == nil && opts.NewVersion:
 		// A new_version request whose latest campaign is UNFINISHED claims NOTHING. A plain
 		// retry claims the unfinished version (below), but a new_version request cannot: the
@@ -2439,6 +2503,99 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	identifyRow(&res, row)
 	return res
 }
+
+// retireIfGoneUpstream reports whether a COMPLETED campaign's upstream object has been deleted on
+// its platform, and if so soft-deletes the row so the slot can be dispatched again.
+//
+// Only for a platform whose slot takes no new version (model.ProviderSupportsSlotVersions false)
+// and whose dispatcher can check (UpstreamPresenceChecker) -- today HubSpot, where the row is an
+// email DRAFT that anyone may delete in HubSpot. Every later create of that brief reused the row
+// as an idempotent success, so the deleted draft's id came back as "staged" and the brief could
+// never stage another (observed live: a draft staged a month earlier, since deleted, was reported
+// as created). A platform WITH slot versions has new_version for a deliberate second campaign and
+// is not checked.
+//
+// Fails SAFE: any doubt -- the dispatcher cannot check, the platform could not be read, the row
+// could not be retired and is still the live row -- is retireKeep and the caller reuses the row
+// exactly as before. A duplicate is the failure the reuse exists to prevent, so only a definite
+// "not found" frees the slot. The retirement is the same soft delete the delete-campaign endpoint
+// makes, so the row keeps its upstream id for the audit trail and the search index hears that it
+// was deleted.
+//
+// Losing a RACE is not doubt. Two creates can both see the same completed row and both learn its
+// draft is gone; one retires it, and the other's delete then fails as not-found, a stale version
+// or a write in progress. Reusing the row there would report an id this very request has just
+// confirmed deleted as a success. So after such a failure the slot is read again and the answer
+// is whatever it now holds: empty (freed, claim it), a different completed draft (the winner's
+// replacement), or an unfinished row (the winner is mid-stage). Only when the SAME row is still
+// the live one is its state unresolved, and that keeps the reuse.
+func (o *Orchestrator) retireIfGoneUpstream(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, variant string, c *model.Campaign, by *model.Actor) (retireOutcome, *model.Campaign) {
+	if model.ProviderSupportsSlotVersions(p) || c == nil || c.PlatformCampaignID == "" {
+		return retireKeep, nil
+	}
+	checker, ok := o.dispatchers[p].(UpstreamPresenceChecker)
+	if !ok {
+		return retireKeep, nil
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, upstreamPresenceTimeout)
+	gone, err := checker.UpstreamGone(checkCtx, brief.ProjectID, c)
+	cancel()
+	if err != nil {
+		slog.WarnContext(ctx, "could not tell whether a completed campaign still exists upstream; reusing it",
+			"platform", p, "job_id", jobID, "campaign_row_id", c.ID, "platform_campaign_id", c.PlatformCampaignID, "error", err)
+		return retireKeep, nil
+	}
+	if !gone {
+		return retireKeep, nil
+	}
+	derr := o.campaigns.DeleteCampaign(ctx, brief.ProjectID, brief.ID, c.ID, c.Version, by, o.campaignIndexPayload(indexer.ActionDeleted))
+	if derr == nil {
+		slog.InfoContext(ctx, "a completed campaign was deleted upstream; retired its row so the brief can dispatch again",
+			"platform", p, "job_id", jobID, "campaign_row_id", c.ID, "platform_campaign_id", c.PlatformCampaignID)
+		return retireFreed, nil
+	}
+	if !errors.Is(derr, domain.ErrNotFound) && !errors.Is(derr, domain.ErrPreconditionFailed) && !errors.Is(derr, domain.ErrCampaignWriteInProgress) {
+		slog.WarnContext(ctx, "a completed campaign is gone upstream but its row could not be retired; reusing it",
+			"platform", p, "job_id", jobID, "campaign_row_id", c.ID, "platform_campaign_id", c.PlatformCampaignID, "error", derr)
+		return retireKeep, nil
+	}
+	// The row changed under this request: most likely a concurrent create retired it. Ask the
+	// slot what it holds now instead of answering from the row read before the race.
+	latest, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p, variant)
+	switch {
+	case errors.Is(lerr, domain.ErrNotFound):
+		slog.InfoContext(ctx, "a completed campaign was deleted upstream and a concurrent request retired its row; the slot is free",
+			"platform", p, "job_id", jobID, "campaign_row_id", c.ID, "platform_campaign_id", c.PlatformCampaignID)
+		return retireFreed, nil
+	case lerr != nil || latest == nil:
+		slog.WarnContext(ctx, "a completed campaign is gone upstream, its row could not be retired and the slot could not be read again; reusing it",
+			"platform", p, "job_id", jobID, "campaign_row_id", c.ID, "platform_campaign_id", c.PlatformCampaignID, "error", errors.Join(derr, lerr))
+		return retireKeep, nil
+	case latest.ID == c.ID && latest.PlatformCampaignID == c.PlatformCampaignID:
+		slog.WarnContext(ctx, "a completed campaign is gone upstream but its row could not be retired and is still the live one; reusing it",
+			"platform", p, "job_id", jobID, "campaign_row_id", c.ID, "platform_campaign_id", c.PlatformCampaignID, "error", derr)
+		return retireKeep, nil
+	case isReusableCampaign(latest):
+		return retireReplaced, latest
+	default:
+		return retireInFlight, latest
+	}
+}
+
+// retireOutcome is what retireIfGoneUpstream left the slot in.
+type retireOutcome int
+
+const (
+	// retireKeep: the row stands (still upstream, not checkable, or its state is unresolved).
+	// The caller reuses it.
+	retireKeep retireOutcome = iota
+	// retireFreed: the row is retired and the slot is empty. The caller claims it.
+	retireFreed
+	// retireReplaced: a concurrent request already completed a replacement, returned with it.
+	retireReplaced
+	// retireInFlight: a concurrent request is staging the replacement, returned with its row.
+	retireInFlight
+)
 
 // reuseResult reports an existing COMPLETED campaign as this request's result: OK, not created
 // by this request (Reused), and identified by its row so a caller can tell which of a
@@ -3622,17 +3779,16 @@ func (o *Orchestrator) campaignSearcherFor(platform model.Provider) (CampaignSea
 // silently means "the searcher gave up" sends an operator hunting for a permissions problem in
 // their portal that does not exist.
 //
-// It shares `accountsCallTimeout` too, but NOT because the work is equivalent. `SearchEmails`
-// walks cursor pages and can issue up to `maxListPages` (200) SEQUENTIAL HubSpot requests, so
-// the 20s here bounds a whole paginated walk rather than a single read — an earlier version of
-// this comment called it "one bounded upstream read", which describes ReadAccounts and not this.
+// It has its OWN deadline, `emailSearchCallTimeout`, rather than ReadAccounts'
+// `accountsCallTimeout`: `SearchEmails` walks cursor pages SEQUENTIALLY, so the deadline bounds
+// a whole paginated walk rather than a single read. A filtered walk stops at hubspot's
+// maxFilteredPages, and on the live LF portal that full walk takes 15-16s, which the old shared
+// 20s ceiling failed whenever HubSpot was slow.
 //
-// The deadline is shared anyway because what it protects is the same: a request path where the
-// page cannot render until this answers, so the ceiling has to be a human's patience, not the
-// walk's natural length. The consequence is worth stating rather than eliding — a portal large
-// enough to need many pages will hit the deadline MID-WALK and surface as a failure, not as a
-// truncated list. That is the correct direction (a silently short picker is worse than an
-// error), but it means the practical page ceiling is whatever fits in 20s, well under 200.
+// The ceiling still protects a request path where the page cannot render until this answers,
+// so it is a human's patience, not the walk's natural length. A walk that overruns it surfaces
+// as a failure, not as a truncated list -- the correct direction, since a silently short picker
+// is worse than an error.
 func (o *Orchestrator) SearchEmails(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.MarketingEmail, error) {
 	d, ok := o.dispatchers[platform]
 	if !ok {
@@ -3642,7 +3798,7 @@ func (o *Orchestrator) SearchEmails(ctx context.Context, projectID string, platf
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrEmailSearchUnsupported, platform)
 	}
-	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
+	callCtx, cancel := context.WithTimeout(ctx, emailSearchCallTimeout)
 	defer cancel()
 	start := time.Now()
 	emails, serr := searcher.SearchEmails(callCtx, projectID, platform, query)
@@ -3652,6 +3808,33 @@ func (o *Orchestrator) SearchEmails(ctx context.Context, projectID string, platf
 	}
 	if emails == nil {
 		return nil, fmt.Errorf("%s email searcher returned a nil result with no error", platform)
+	}
+	return emails, nil
+}
+
+// SearchEmailsAnyPhrase returns the marketing emails whose name or subject contains ANY of
+// phrases as whole words, most-recently-updated first -- the template picker's brand-and-event
+// scope. Same deadline, metric and nil-result guard as SearchEmails; a dispatcher without the
+// EmailPhraseSearcher capability is ErrEmailSearchUnsupported.
+func (o *Orchestrator) SearchEmailsAnyPhrase(ctx context.Context, projectID string, platform model.Provider, phrases []string) ([]model.MarketingEmail, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrEmailSearchUnsupported, platform)
+	}
+	searcher, ok := d.(EmailPhraseSearcher)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s cannot search by phrase", ErrEmailSearchUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, emailSearchCallTimeout)
+	defer cancel()
+	start := time.Now()
+	emails, serr := searcher.SearchEmailsAnyPhrase(callCtx, projectID, platform, phrases)
+	o.recordUpstream(ctx, platform, opSearchEmails, start, serr)
+	if serr != nil {
+		return nil, serr
+	}
+	if emails == nil {
+		return nil, fmt.Errorf("%s email phrase searcher returned a nil result with no error", platform)
 	}
 	return emails, nil
 }

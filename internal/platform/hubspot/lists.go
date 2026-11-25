@@ -274,6 +274,10 @@ func (c *Client) UpdateListFilters(ctx context.Context, listID string, filterBra
 type EventDefinition struct {
 	FullyQualifiedName string `json:"fullyQualifiedName"`
 	Name               string `json:"name"`
+	// ObjectTypeID is the definition's object type id ("6-48984571"), which is what a list's
+	// UNIFIED_EVENTS branch carries as its eventTypeId -- so it is how a list description
+	// names the event a rule is about.
+	ObjectTypeID string `json:"objectTypeId"`
 	// Labels is HubSpot's nested label object (BehavioralEventTypeDefinitionLabels).
 	Labels struct {
 		Singular string `json:"singular"`

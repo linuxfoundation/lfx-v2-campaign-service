@@ -50,6 +50,10 @@ const (
 	// its stages name the asset and the send (promo, reminder, closing; report promo) rather
 	// than a point on an event's lifecycle -- see emailstage.SurveyNames.
 	DeliverySurvey DeliveryType = "survey"
+	// DeliveryNewsletter is one issue of a brand's recurring HubSpot newsletter. Its brief is
+	// authored from the operator's notes (source_text) and its draft is cloned from the brand's
+	// previous published newsletter; its single stage is emailstage.NewsletterIssue.
+	DeliveryNewsletter DeliveryType = "newsletter"
 )
 
 // Valid reports whether d is a known delivery type.
@@ -66,7 +70,7 @@ const (
 // REAL paid brief's slot and silently filing a typo there aims the write at another brief.
 func (d DeliveryType) Valid() bool {
 	switch d {
-	case DeliveryPaidMarketing, DeliveryEmail, DeliverySurvey:
+	case DeliveryPaidMarketing, DeliveryEmail, DeliverySurvey, DeliveryNewsletter:
 		return true
 	default:
 		return false

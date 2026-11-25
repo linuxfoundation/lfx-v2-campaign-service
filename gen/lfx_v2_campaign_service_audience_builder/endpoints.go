@@ -22,8 +22,11 @@ type Endpoints struct {
 	SearchAudienceLists            goa.Endpoint
 	GetAudienceSuppressionLists    goa.Endpoint
 	GetAudienceLastSent            goa.Endpoint
+	GetAudienceNewsletterBrands    goa.Endpoint
+	GetAudienceBrandNewsletters    goa.Endpoint
 	GetExistingAudienceMasterLists goa.Endpoint
 	PreviewAudienceCount           goa.Endpoint
+	DescribeAudienceLists          goa.Endpoint
 	ComposeAudienceMaster          goa.Endpoint
 	AttachExistingAudience         goa.Endpoint
 	RunAudienceQa                  goa.Endpoint
@@ -43,8 +46,11 @@ func NewEndpoints(s Service) *Endpoints {
 		SearchAudienceLists:            NewSearchAudienceListsEndpoint(s, a.JWTAuth),
 		GetAudienceSuppressionLists:    NewGetAudienceSuppressionListsEndpoint(s, a.JWTAuth),
 		GetAudienceLastSent:            NewGetAudienceLastSentEndpoint(s, a.JWTAuth),
+		GetAudienceNewsletterBrands:    NewGetAudienceNewsletterBrandsEndpoint(s, a.JWTAuth),
+		GetAudienceBrandNewsletters:    NewGetAudienceBrandNewslettersEndpoint(s, a.JWTAuth),
 		GetExistingAudienceMasterLists: NewGetExistingAudienceMasterListsEndpoint(s, a.JWTAuth),
 		PreviewAudienceCount:           NewPreviewAudienceCountEndpoint(s, a.JWTAuth),
+		DescribeAudienceLists:          NewDescribeAudienceListsEndpoint(s, a.JWTAuth),
 		ComposeAudienceMaster:          NewComposeAudienceMasterEndpoint(s, a.JWTAuth),
 		AttachExistingAudience:         NewAttachExistingAudienceEndpoint(s, a.JWTAuth),
 		RunAudienceQa:                  NewRunAudienceQaEndpoint(s, a.JWTAuth),
@@ -62,8 +68,11 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.SearchAudienceLists = m(e.SearchAudienceLists)
 	e.GetAudienceSuppressionLists = m(e.GetAudienceSuppressionLists)
 	e.GetAudienceLastSent = m(e.GetAudienceLastSent)
+	e.GetAudienceNewsletterBrands = m(e.GetAudienceNewsletterBrands)
+	e.GetAudienceBrandNewsletters = m(e.GetAudienceBrandNewsletters)
 	e.GetExistingAudienceMasterLists = m(e.GetExistingAudienceMasterLists)
 	e.PreviewAudienceCount = m(e.PreviewAudienceCount)
+	e.DescribeAudienceLists = m(e.DescribeAudienceLists)
 	e.ComposeAudienceMaster = m(e.ComposeAudienceMaster)
 	e.AttachExistingAudience = m(e.AttachExistingAudience)
 	e.RunAudienceQa = m(e.RunAudienceQa)
@@ -192,6 +201,54 @@ func NewGetAudienceLastSentEndpoint(s Service, authJWTFn security.AuthJWTFunc) g
 	}
 }
 
+// NewGetAudienceNewsletterBrandsEndpoint returns an endpoint function that
+// calls the method "get-audience-newsletter-brands" of service
+// "lfx-v2-campaign-service-audience-builder".
+func NewGetAudienceNewsletterBrandsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*GetAudienceNewsletterBrandsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.GetAudienceNewsletterBrands(ctx, p)
+	}
+}
+
+// NewGetAudienceBrandNewslettersEndpoint returns an endpoint function that
+// calls the method "get-audience-brand-newsletters" of service
+// "lfx-v2-campaign-service-audience-builder".
+func NewGetAudienceBrandNewslettersEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*GetAudienceBrandNewslettersPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.GetAudienceBrandNewsletters(ctx, p)
+	}
+}
+
 // NewGetExistingAudienceMasterListsEndpoint returns an endpoint function that
 // calls the method "get-existing-audience-master-lists" of service
 // "lfx-v2-campaign-service-audience-builder".
@@ -237,6 +294,30 @@ func NewPreviewAudienceCountEndpoint(s Service, authJWTFn security.AuthJWTFunc) 
 			return nil, err
 		}
 		return s.PreviewAudienceCount(ctx, p)
+	}
+}
+
+// NewDescribeAudienceListsEndpoint returns an endpoint function that calls the
+// method "describe-audience-lists" of service
+// "lfx-v2-campaign-service-audience-builder".
+func NewDescribeAudienceListsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*DescribeAudienceListsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.DescribeAudienceLists(ctx, p)
 	}
 }
 

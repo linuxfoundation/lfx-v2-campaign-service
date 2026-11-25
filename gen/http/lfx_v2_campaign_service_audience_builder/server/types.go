@@ -30,6 +30,14 @@ type PreviewAudienceCountRequestBody struct {
 	ListIds []string `form:"list_ids,omitempty" json:"list_ids,omitempty" xml:"list_ids,omitempty"`
 }
 
+// DescribeAudienceListsRequestBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "describe-audience-lists"
+// endpoint HTTP request body.
+type DescribeAudienceListsRequestBody struct {
+	// Lists to describe, in the order to return them
+	ListIds []string `form:"list_ids,omitempty" json:"list_ids,omitempty" xml:"list_ids,omitempty"`
+}
+
 // ComposeAudienceMasterRequestBody is the type of the
 // "lfx-v2-campaign-service-audience-builder" service "compose-audience-master"
 // endpoint HTTP request body.
@@ -150,6 +158,22 @@ type GetAudienceLastSentResponseBody struct {
 	Emails []*AudienceLastSentEmailResponseBody `form:"emails" json:"emails" xml:"emails"`
 }
 
+// GetAudienceNewsletterBrandsResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "get-audience-newsletter-brands" endpoint HTTP response body.
+type GetAudienceNewsletterBrandsResponseBody struct {
+	// Brands, most recently sent first
+	Brands []*AudienceNewsletterBrandResponseBody `form:"brands" json:"brands" xml:"brands"`
+}
+
+// GetAudienceBrandNewslettersResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "get-audience-brand-newsletters" endpoint HTTP response body.
+type GetAudienceBrandNewslettersResponseBody struct {
+	// Newsletters, most recently sent first
+	Emails []*AudienceLastSentEmailResponseBody `form:"emails" json:"emails" xml:"emails"`
+}
+
 // GetExistingAudienceMasterListsResponseBody is the type of the
 // "lfx-v2-campaign-service-audience-builder" service
 // "get-existing-audience-master-lists" endpoint HTTP response body.
@@ -173,6 +197,14 @@ type PreviewAudienceCountResponseBody struct {
 	Estimate int64 `form:"estimate" json:"estimate" xml:"estimate"`
 	// Why the count is exact or bounded
 	Reason string `form:"reason" json:"reason" xml:"reason"`
+}
+
+// DescribeAudienceListsResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "describe-audience-lists"
+// endpoint HTTP response body.
+type DescribeAudienceListsResponseBody struct {
+	// One description per requested id, in request order
+	Lists []*AudienceListDescriptionResponseBody `form:"lists" json:"lists" xml:"lists"`
 }
 
 // ComposeAudienceMasterResponseBody is the type of the
@@ -681,6 +713,166 @@ type GetAudienceLastSentUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetAudienceNewsletterBrandsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "get-audience-newsletter-brands" endpoint HTTP response body for the
+// "BadRequest" error.
+type GetAudienceNewsletterBrandsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAudienceNewsletterBrandsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "get-audience-newsletter-brands" endpoint HTTP response body for the
+// "Conflict" error.
+type GetAudienceNewsletterBrandsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetAudienceNewsletterBrandsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "get-audience-newsletter-brands" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type GetAudienceNewsletterBrandsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAudienceNewsletterBrandsInternalServerErrorResponseBody is the type of
+// the "lfx-v2-campaign-service-audience-builder" service
+// "get-audience-newsletter-brands" endpoint HTTP response body for the
+// "InternalServerError" error.
+type GetAudienceNewsletterBrandsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAudienceNewsletterBrandsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "get-audience-newsletter-brands" endpoint HTTP response body for the
+// "NotFound" error.
+type GetAudienceNewsletterBrandsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAudienceNewsletterBrandsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "get-audience-newsletter-brands" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type GetAudienceNewsletterBrandsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAudienceNewsletterBrandsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "get-audience-newsletter-brands" endpoint HTTP response body for the
+// "Unauthorized" error.
+type GetAudienceNewsletterBrandsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAudienceBrandNewslettersBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "get-audience-brand-newsletters" endpoint HTTP response body for the
+// "BadRequest" error.
+type GetAudienceBrandNewslettersBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAudienceBrandNewslettersConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "get-audience-brand-newsletters" endpoint HTTP response body for the
+// "Conflict" error.
+type GetAudienceBrandNewslettersConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetAudienceBrandNewslettersServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "get-audience-brand-newsletters" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type GetAudienceBrandNewslettersServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAudienceBrandNewslettersInternalServerErrorResponseBody is the type of
+// the "lfx-v2-campaign-service-audience-builder" service
+// "get-audience-brand-newsletters" endpoint HTTP response body for the
+// "InternalServerError" error.
+type GetAudienceBrandNewslettersInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAudienceBrandNewslettersNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "get-audience-brand-newsletters" endpoint HTTP response body for the
+// "NotFound" error.
+type GetAudienceBrandNewslettersNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAudienceBrandNewslettersPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "get-audience-brand-newsletters" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type GetAudienceBrandNewslettersPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetAudienceBrandNewslettersUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "get-audience-brand-newsletters" endpoint HTTP response body for the
+// "Unauthorized" error.
+type GetAudienceBrandNewslettersUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetExistingAudienceMasterListsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-audience-builder" service
 // "get-existing-audience-master-lists" endpoint HTTP response body for the
@@ -828,6 +1020,79 @@ type PreviewAudienceCountPayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-audience-builder" service "preview-audience-count"
 // endpoint HTTP response body for the "Unauthorized" error.
 type PreviewAudienceCountUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DescribeAudienceListsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "describe-audience-lists"
+// endpoint HTTP response body for the "BadRequest" error.
+type DescribeAudienceListsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DescribeAudienceListsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "describe-audience-lists"
+// endpoint HTTP response body for the "Conflict" error.
+type DescribeAudienceListsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// DescribeAudienceListsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "describe-audience-lists"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type DescribeAudienceListsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DescribeAudienceListsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "describe-audience-lists"
+// endpoint HTTP response body for the "InternalServerError" error.
+type DescribeAudienceListsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DescribeAudienceListsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "describe-audience-lists"
+// endpoint HTTP response body for the "NotFound" error.
+type DescribeAudienceListsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DescribeAudienceListsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "describe-audience-lists"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type DescribeAudienceListsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DescribeAudienceListsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "describe-audience-lists"
+// endpoint HTTP response body for the "Unauthorized" error.
+type DescribeAudienceListsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1435,6 +1700,9 @@ type AudienceLastSentEmailResponseBody struct {
 	Subject *string `form:"subject,omitempty" json:"subject,omitempty" xml:"subject,omitempty"`
 	// Why this send is listed: event_name, subject, related_words or brand_only
 	MatchReason *string `form:"match_reason,omitempty" json:"match_reason,omitempty" xml:"match_reason,omitempty"`
+	// brand-newsletters only, on the newest issue: the brand site or blog the
+	// issue links to, where the next issue's offers and news are found
+	SourceURL *string `form:"source_url,omitempty" json:"source_url,omitempty" xml:"source_url,omitempty"`
 }
 
 // AudienceListBriefResponseBody is used to define fields on response body
@@ -1461,6 +1729,20 @@ type AudienceListBriefResponseBody struct {
 	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
 }
 
+// AudienceNewsletterBrandResponseBody is used to define fields on response
+// body types.
+type AudienceNewsletterBrandResponseBody struct {
+	// The brand as its newsletter names spell it
+	Brand string `form:"brand" json:"brand" xml:"brand"`
+	// Name of the brand's most recent sent newsletter
+	LatestEmailName string `form:"latest_email_name" json:"latest_email_name" xml:"latest_email_name"`
+	// When that newsletter was sent, RFC 3339; absent when the portal reported no
+	// date
+	LatestSentAt *string `form:"latest_sent_at,omitempty" json:"latest_sent_at,omitempty" xml:"latest_sent_at,omitempty"`
+	// How many sent newsletters were found for the brand
+	Issues int `form:"issues" json:"issues" xml:"issues"`
+}
+
 // AudienceMasterListBriefResponseBody is used to define fields on response
 // body types.
 type AudienceMasterListBriefResponseBody struct {
@@ -1472,6 +1754,38 @@ type AudienceMasterListBriefResponseBody struct {
 	Size *int64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
 	// Deep link to the list in the HubSpot UI
 	HubspotURL string `form:"hubspot_url" json:"hubspot_url" xml:"hubspot_url"`
+}
+
+// AudienceListDescriptionResponseBody is used to define fields on response
+// body types.
+type AudienceListDescriptionResponseBody struct {
+	// HubSpot list id
+	ListID string `form:"list_id" json:"list_id" xml:"list_id"`
+	// HubSpot list name; empty when the list could not be read
+	Name string `form:"name" json:"name" xml:"name"`
+	// Membership size, when HubSpot reported one
+	Size *int64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
+	// HubSpot processingType as reported: DYNAMIC, MANUAL or SNAPSHOT
+	ProcessingType *string `form:"processing_type,omitempty" json:"processing_type,omitempty" xml:"processing_type,omitempty"`
+	// Deep link to the list in the HubSpot UI
+	HubspotURL string `form:"hubspot_url" json:"hubspot_url" xml:"hubspot_url"`
+	// Which outcome this description reports
+	Status string `form:"status" json:"status" xml:"status"`
+	// One plain-English sentence on who the list contains
+	Summary string `form:"summary" json:"summary" xml:"summary"`
+	// How the groups combine: any (a contact in ANY group) or all (in EVERY group)
+	Match string `form:"match" json:"match" xml:"match"`
+	// The list's rules; empty unless status is described
+	Groups []*AudienceRuleGroupResponseBody `form:"groups" json:"groups" xml:"groups"`
+	// False when some rule is described only generically
+	Complete bool `form:"complete" json:"complete" xml:"complete"`
+}
+
+// AudienceRuleGroupResponseBody is used to define fields on response body
+// types.
+type AudienceRuleGroupResponseBody struct {
+	// Plain-English conditions; all of them must hold
+	Conditions []string `form:"conditions" json:"conditions" xml:"conditions"`
 }
 
 // AudienceComposeRecordedAudienceResponseBody is used to define fields on
@@ -1898,6 +2212,46 @@ func NewGetAudienceLastSentResponseBody(res *lfxv2campaignserviceaudiencebuilder
 	return body
 }
 
+// NewGetAudienceNewsletterBrandsResponseBody builds the HTTP response body
+// from the result of the "get-audience-newsletter-brands" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewGetAudienceNewsletterBrandsResponseBody(res *lfxv2campaignserviceaudiencebuilder.GetAudienceNewsletterBrandsResult) *GetAudienceNewsletterBrandsResponseBody {
+	body := &GetAudienceNewsletterBrandsResponseBody{}
+	if res.Brands != nil {
+		body.Brands = make([]*AudienceNewsletterBrandResponseBody, len(res.Brands))
+		for i, val := range res.Brands {
+			if val == nil {
+				body.Brands[i] = nil
+				continue
+			}
+			body.Brands[i] = marshalLfxv2campaignserviceaudiencebuilderAudienceNewsletterBrandToAudienceNewsletterBrandResponseBody(val)
+		}
+	} else {
+		body.Brands = []*AudienceNewsletterBrandResponseBody{}
+	}
+	return body
+}
+
+// NewGetAudienceBrandNewslettersResponseBody builds the HTTP response body
+// from the result of the "get-audience-brand-newsletters" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewGetAudienceBrandNewslettersResponseBody(res *lfxv2campaignserviceaudiencebuilder.GetAudienceBrandNewslettersResult) *GetAudienceBrandNewslettersResponseBody {
+	body := &GetAudienceBrandNewslettersResponseBody{}
+	if res.Emails != nil {
+		body.Emails = make([]*AudienceLastSentEmailResponseBody, len(res.Emails))
+		for i, val := range res.Emails {
+			if val == nil {
+				body.Emails[i] = nil
+				continue
+			}
+			body.Emails[i] = marshalLfxv2campaignserviceaudiencebuilderAudienceLastSentEmailToAudienceLastSentEmailResponseBody(val)
+		}
+	} else {
+		body.Emails = []*AudienceLastSentEmailResponseBody{}
+	}
+	return body
+}
+
 // NewGetExistingAudienceMasterListsResponseBody builds the HTTP response body
 // from the result of the "get-existing-audience-master-lists" endpoint of the
 // "lfx-v2-campaign-service-audience-builder" service.
@@ -1927,6 +2281,26 @@ func NewPreviewAudienceCountResponseBody(res *lfxv2campaignserviceaudiencebuilde
 		Count:    res.Count,
 		Estimate: res.Estimate,
 		Reason:   res.Reason,
+	}
+	return body
+}
+
+// NewDescribeAudienceListsResponseBody builds the HTTP response body from the
+// result of the "describe-audience-lists" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewDescribeAudienceListsResponseBody(res *lfxv2campaignserviceaudiencebuilder.DescribeAudienceListsResult) *DescribeAudienceListsResponseBody {
+	body := &DescribeAudienceListsResponseBody{}
+	if res.Lists != nil {
+		body.Lists = make([]*AudienceListDescriptionResponseBody, len(res.Lists))
+		for i, val := range res.Lists {
+			if val == nil {
+				body.Lists[i] = nil
+				continue
+			}
+			body.Lists[i] = marshalLfxv2campaignserviceaudiencebuilderAudienceListDescriptionToAudienceListDescriptionResponseBody(val)
+		}
+	} else {
+		body.Lists = []*AudienceListDescriptionResponseBody{}
 	}
 	return body
 }
@@ -2523,6 +2897,162 @@ func NewGetAudienceLastSentUnauthorizedResponseBody(res *lfxv2campaignserviceaud
 	return body
 }
 
+// NewGetAudienceNewsletterBrandsBadRequestResponseBody builds the HTTP
+// response body from the result of the "get-audience-newsletter-brands"
+// endpoint of the "lfx-v2-campaign-service-audience-builder" service.
+func NewGetAudienceNewsletterBrandsBadRequestResponseBody(res *lfxv2campaignserviceaudiencebuilder.BadRequestError) *GetAudienceNewsletterBrandsBadRequestResponseBody {
+	body := &GetAudienceNewsletterBrandsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAudienceNewsletterBrandsConflictResponseBody builds the HTTP response
+// body from the result of the "get-audience-newsletter-brands" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewGetAudienceNewsletterBrandsConflictResponseBody(res *lfxv2campaignserviceaudiencebuilder.ConflictError) *GetAudienceNewsletterBrandsConflictResponseBody {
+	body := &GetAudienceNewsletterBrandsConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetAudienceNewsletterBrandsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "get-audience-newsletter-brands"
+// endpoint of the "lfx-v2-campaign-service-audience-builder" service.
+func NewGetAudienceNewsletterBrandsServiceUnavailableResponseBody(res *lfxv2campaignserviceaudiencebuilder.ConnServiceUnavailableError) *GetAudienceNewsletterBrandsServiceUnavailableResponseBody {
+	body := &GetAudienceNewsletterBrandsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAudienceNewsletterBrandsInternalServerErrorResponseBody builds the
+// HTTP response body from the result of the "get-audience-newsletter-brands"
+// endpoint of the "lfx-v2-campaign-service-audience-builder" service.
+func NewGetAudienceNewsletterBrandsInternalServerErrorResponseBody(res *lfxv2campaignserviceaudiencebuilder.InternalServerError) *GetAudienceNewsletterBrandsInternalServerErrorResponseBody {
+	body := &GetAudienceNewsletterBrandsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAudienceNewsletterBrandsNotFoundResponseBody builds the HTTP response
+// body from the result of the "get-audience-newsletter-brands" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewGetAudienceNewsletterBrandsNotFoundResponseBody(res *lfxv2campaignserviceaudiencebuilder.NotFoundError) *GetAudienceNewsletterBrandsNotFoundResponseBody {
+	body := &GetAudienceNewsletterBrandsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAudienceNewsletterBrandsPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "get-audience-newsletter-brands"
+// endpoint of the "lfx-v2-campaign-service-audience-builder" service.
+func NewGetAudienceNewsletterBrandsPayloadTooLargeResponseBody(res *lfxv2campaignserviceaudiencebuilder.PayloadTooLargeError) *GetAudienceNewsletterBrandsPayloadTooLargeResponseBody {
+	body := &GetAudienceNewsletterBrandsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAudienceNewsletterBrandsUnauthorizedResponseBody builds the HTTP
+// response body from the result of the "get-audience-newsletter-brands"
+// endpoint of the "lfx-v2-campaign-service-audience-builder" service.
+func NewGetAudienceNewsletterBrandsUnauthorizedResponseBody(res *lfxv2campaignserviceaudiencebuilder.UnauthorizedError) *GetAudienceNewsletterBrandsUnauthorizedResponseBody {
+	body := &GetAudienceNewsletterBrandsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAudienceBrandNewslettersBadRequestResponseBody builds the HTTP
+// response body from the result of the "get-audience-brand-newsletters"
+// endpoint of the "lfx-v2-campaign-service-audience-builder" service.
+func NewGetAudienceBrandNewslettersBadRequestResponseBody(res *lfxv2campaignserviceaudiencebuilder.BadRequestError) *GetAudienceBrandNewslettersBadRequestResponseBody {
+	body := &GetAudienceBrandNewslettersBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAudienceBrandNewslettersConflictResponseBody builds the HTTP response
+// body from the result of the "get-audience-brand-newsletters" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewGetAudienceBrandNewslettersConflictResponseBody(res *lfxv2campaignserviceaudiencebuilder.ConflictError) *GetAudienceBrandNewslettersConflictResponseBody {
+	body := &GetAudienceBrandNewslettersConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetAudienceBrandNewslettersServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "get-audience-brand-newsletters"
+// endpoint of the "lfx-v2-campaign-service-audience-builder" service.
+func NewGetAudienceBrandNewslettersServiceUnavailableResponseBody(res *lfxv2campaignserviceaudiencebuilder.ConnServiceUnavailableError) *GetAudienceBrandNewslettersServiceUnavailableResponseBody {
+	body := &GetAudienceBrandNewslettersServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAudienceBrandNewslettersInternalServerErrorResponseBody builds the
+// HTTP response body from the result of the "get-audience-brand-newsletters"
+// endpoint of the "lfx-v2-campaign-service-audience-builder" service.
+func NewGetAudienceBrandNewslettersInternalServerErrorResponseBody(res *lfxv2campaignserviceaudiencebuilder.InternalServerError) *GetAudienceBrandNewslettersInternalServerErrorResponseBody {
+	body := &GetAudienceBrandNewslettersInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAudienceBrandNewslettersNotFoundResponseBody builds the HTTP response
+// body from the result of the "get-audience-brand-newsletters" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewGetAudienceBrandNewslettersNotFoundResponseBody(res *lfxv2campaignserviceaudiencebuilder.NotFoundError) *GetAudienceBrandNewslettersNotFoundResponseBody {
+	body := &GetAudienceBrandNewslettersNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAudienceBrandNewslettersPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "get-audience-brand-newsletters"
+// endpoint of the "lfx-v2-campaign-service-audience-builder" service.
+func NewGetAudienceBrandNewslettersPayloadTooLargeResponseBody(res *lfxv2campaignserviceaudiencebuilder.PayloadTooLargeError) *GetAudienceBrandNewslettersPayloadTooLargeResponseBody {
+	body := &GetAudienceBrandNewslettersPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetAudienceBrandNewslettersUnauthorizedResponseBody builds the HTTP
+// response body from the result of the "get-audience-brand-newsletters"
+// endpoint of the "lfx-v2-campaign-service-audience-builder" service.
+func NewGetAudienceBrandNewslettersUnauthorizedResponseBody(res *lfxv2campaignserviceaudiencebuilder.UnauthorizedError) *GetAudienceBrandNewslettersUnauthorizedResponseBody {
+	body := &GetAudienceBrandNewslettersUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetExistingAudienceMasterListsBadRequestResponseBody builds the HTTP
 // response body from the result of the "get-existing-audience-master-lists"
 // endpoint of the "lfx-v2-campaign-service-audience-builder" service.
@@ -2675,6 +3205,84 @@ func NewPreviewAudienceCountPayloadTooLargeResponseBody(res *lfxv2campaignservic
 // "lfx-v2-campaign-service-audience-builder" service.
 func NewPreviewAudienceCountUnauthorizedResponseBody(res *lfxv2campaignserviceaudiencebuilder.UnauthorizedError) *PreviewAudienceCountUnauthorizedResponseBody {
 	body := &PreviewAudienceCountUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDescribeAudienceListsBadRequestResponseBody builds the HTTP response body
+// from the result of the "describe-audience-lists" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewDescribeAudienceListsBadRequestResponseBody(res *lfxv2campaignserviceaudiencebuilder.BadRequestError) *DescribeAudienceListsBadRequestResponseBody {
+	body := &DescribeAudienceListsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDescribeAudienceListsConflictResponseBody builds the HTTP response body
+// from the result of the "describe-audience-lists" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewDescribeAudienceListsConflictResponseBody(res *lfxv2campaignserviceaudiencebuilder.ConflictError) *DescribeAudienceListsConflictResponseBody {
+	body := &DescribeAudienceListsConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewDescribeAudienceListsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "describe-audience-lists" endpoint of
+// the "lfx-v2-campaign-service-audience-builder" service.
+func NewDescribeAudienceListsServiceUnavailableResponseBody(res *lfxv2campaignserviceaudiencebuilder.ConnServiceUnavailableError) *DescribeAudienceListsServiceUnavailableResponseBody {
+	body := &DescribeAudienceListsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDescribeAudienceListsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "describe-audience-lists" endpoint of
+// the "lfx-v2-campaign-service-audience-builder" service.
+func NewDescribeAudienceListsInternalServerErrorResponseBody(res *lfxv2campaignserviceaudiencebuilder.InternalServerError) *DescribeAudienceListsInternalServerErrorResponseBody {
+	body := &DescribeAudienceListsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDescribeAudienceListsNotFoundResponseBody builds the HTTP response body
+// from the result of the "describe-audience-lists" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewDescribeAudienceListsNotFoundResponseBody(res *lfxv2campaignserviceaudiencebuilder.NotFoundError) *DescribeAudienceListsNotFoundResponseBody {
+	body := &DescribeAudienceListsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDescribeAudienceListsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "describe-audience-lists" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewDescribeAudienceListsPayloadTooLargeResponseBody(res *lfxv2campaignserviceaudiencebuilder.PayloadTooLargeError) *DescribeAudienceListsPayloadTooLargeResponseBody {
+	body := &DescribeAudienceListsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDescribeAudienceListsUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "describe-audience-lists" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewDescribeAudienceListsUnauthorizedResponseBody(res *lfxv2campaignserviceaudiencebuilder.UnauthorizedError) *DescribeAudienceListsUnauthorizedResponseBody {
+	body := &DescribeAudienceListsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -3251,6 +3859,30 @@ func NewGetAudienceLastSentPayload(projectID string, eventName string, brandShor
 	return v
 }
 
+// NewGetAudienceNewsletterBrandsPayload builds a
+// lfx-v2-campaign-service-audience-builder service
+// get-audience-newsletter-brands endpoint payload.
+func NewGetAudienceNewsletterBrandsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceaudiencebuilder.GetAudienceNewsletterBrandsPayload {
+	v := &lfxv2campaignserviceaudiencebuilder.GetAudienceNewsletterBrandsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetAudienceBrandNewslettersPayload builds a
+// lfx-v2-campaign-service-audience-builder service
+// get-audience-brand-newsletters endpoint payload.
+func NewGetAudienceBrandNewslettersPayload(projectID string, brand string, limit int, bearerToken *string) *lfxv2campaignserviceaudiencebuilder.GetAudienceBrandNewslettersPayload {
+	v := &lfxv2campaignserviceaudiencebuilder.GetAudienceBrandNewslettersPayload{}
+	v.ProjectID = projectID
+	v.Brand = brand
+	v.Limit = limit
+	v.BearerToken = bearerToken
+
+	return v
+}
+
 // NewGetExistingAudienceMasterListsPayload builds a
 // lfx-v2-campaign-service-audience-builder service
 // get-existing-audience-master-lists endpoint payload.
@@ -3269,6 +3901,21 @@ func NewGetExistingAudienceMasterListsPayload(projectID string, eventName string
 // endpoint payload.
 func NewPreviewAudienceCountPayload(body *PreviewAudienceCountRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceaudiencebuilder.PreviewAudienceCountPayload {
 	v := &lfxv2campaignserviceaudiencebuilder.PreviewAudienceCountPayload{}
+	v.ListIds = make([]string, len(body.ListIds))
+	for i, val := range body.ListIds {
+		v.ListIds[i] = val
+	}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewDescribeAudienceListsPayload builds a
+// lfx-v2-campaign-service-audience-builder service describe-audience-lists
+// endpoint payload.
+func NewDescribeAudienceListsPayload(body *DescribeAudienceListsRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceaudiencebuilder.DescribeAudienceListsPayload {
+	v := &lfxv2campaignserviceaudiencebuilder.DescribeAudienceListsPayload{}
 	v.ListIds = make([]string, len(body.ListIds))
 	for i, val := range body.ListIds {
 		v.ListIds[i] = val
@@ -3397,6 +4044,21 @@ func ValidatePreviewAudienceCountRequestBody(body *PreviewAudienceCountRequestBo
 	return
 }
 
+// ValidateDescribeAudienceListsRequestBody runs the validations defined on
+// DescribeAudienceListsRequestBody
+func ValidateDescribeAudienceListsRequestBody(body *DescribeAudienceListsRequestBody) (err error) {
+	if body.ListIds == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("list_ids", "body"))
+	}
+	if len(body.ListIds) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ids", body.ListIds, len(body.ListIds), 1, true))
+	}
+	if len(body.ListIds) > 25 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ids", body.ListIds, len(body.ListIds), 25, false))
+	}
+	return
+}
+
 // ValidateComposeAudienceMasterRequestBody runs the validations defined on
 // ComposeAudienceMasterRequestBody
 func ValidateComposeAudienceMasterRequestBody(body *ComposeAudienceMasterRequestBody) (err error) {
@@ -3445,8 +4107,8 @@ func ValidateRunAudienceQaRequestBody(body *RunAudienceQaRequestBody) (err error
 		}
 	}
 	if body.Stage != nil {
-		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Survey Reminder" || *body.Stage == "Survey Closing" || *body.Stage == "Report Promo") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo"}))
+		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Survey Reminder" || *body.Stage == "Survey Closing" || *body.Stage == "Report Promo" || *body.Stage == "Newsletter") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo", "Newsletter"}))
 		}
 	}
 	return

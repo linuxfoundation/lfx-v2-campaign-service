@@ -3058,7 +3058,8 @@ func BuildListRedditAdsAccountsPayload(lfxV2CampaignServiceConnectionsListReddit
 // BuildListHubspotEmailsPayload builds the payload for the
 // lfx-v2-campaign-service-connections list-hubspot-emails endpoint from CLI
 // flags.
-func BuildListHubspotEmailsPayload(lfxV2CampaignServiceConnectionsListHubspotEmailsProjectID *string, lfxV2CampaignServiceConnectionsListHubspotEmailsQ *string, lfxV2CampaignServiceConnectionsListHubspotEmailsBearerToken *string) (*lfxv2campaignserviceconnections.ListHubspotEmailsPayload, error) {
+func BuildListHubspotEmailsPayload(lfxV2CampaignServiceConnectionsListHubspotEmailsProjectID *string, lfxV2CampaignServiceConnectionsListHubspotEmailsQ *string, lfxV2CampaignServiceConnectionsListHubspotEmailsMatch *string, lfxV2CampaignServiceConnectionsListHubspotEmailsBearerToken *string) (*lfxv2campaignserviceconnections.ListHubspotEmailsPayload, error) {
+	var err error
 	var projectID string
 	{
 		if lfxV2CampaignServiceConnectionsListHubspotEmailsProjectID == nil {
@@ -3072,6 +3073,29 @@ func BuildListHubspotEmailsPayload(lfxV2CampaignServiceConnectionsListHubspotEma
 			q = lfxV2CampaignServiceConnectionsListHubspotEmailsQ
 		}
 	}
+	var match []string
+	{
+		if lfxV2CampaignServiceConnectionsListHubspotEmailsMatch != nil {
+			err = json.Unmarshal([]byte(*lfxV2CampaignServiceConnectionsListHubspotEmailsMatch), &match)
+			if err != nil {
+				return nil, fmt.Errorf("invalid JSON for match, \nerror: %s, \nexample of valid JSON:\n%s", err, "'[\n      \"KubeCon\",\n      \"CloudNativeCon\"\n   ]'")
+			}
+			if len(match) > 8 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("match", match, len(match), 8, false))
+			}
+			for _, e := range match {
+				if utf8.RuneCountInString(e) < 1 {
+					err = goa.MergeErrors(err, goa.InvalidLengthError("match[*]", e, utf8.RuneCountInString(e), 1, true))
+				}
+				if utf8.RuneCountInString(e) > 120 {
+					err = goa.MergeErrors(err, goa.InvalidLengthError("match[*]", e, utf8.RuneCountInString(e), 120, false))
+				}
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	var bearerToken *string
 	{
 		if lfxV2CampaignServiceConnectionsListHubspotEmailsBearerToken != nil {
@@ -3081,6 +3105,7 @@ func BuildListHubspotEmailsPayload(lfxV2CampaignServiceConnectionsListHubspotEma
 	v := &lfxv2campaignserviceconnections.ListHubspotEmailsPayload{}
 	v.ProjectID = projectID
 	v.Q = q
+	v.Match = match
 	v.BearerToken = bearerToken
 
 	return v, nil

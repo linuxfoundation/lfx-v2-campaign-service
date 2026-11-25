@@ -221,6 +221,17 @@ var AudienceListBrief = Type("audience-list-brief", func() {
 	Example(audienceIncludedListsExample[0])
 })
 
+// AudienceNewsletterBrand is a brand that has sent at least one HubSpot newsletter.
+var AudienceNewsletterBrand = Type("audience-newsletter-brand", func() {
+	Attribute("brand", String, "The brand as its newsletter names spell it", func() { Example("OpenSSF") })
+	Attribute("latest_email_name", String, "Name of the brand's most recent sent newsletter", func() {
+		Example("26Q2 - OpenSSF - Newsletter - October")
+	})
+	Attribute("latest_sent_at", String, "When that newsletter was sent, RFC 3339; absent when the portal reported no date")
+	Attribute("issues", Int, "How many sent newsletters were found for the brand")
+	Required("brand", "latest_email_name", "issues")
+})
+
 // AudienceLastSentEmail is one previous marketing email, with the audience it targeted.
 var AudienceLastSentEmail = Type("audience-last-sent-email", func() {
 	Attribute("email_id", String, "HubSpot marketing email id")
@@ -243,6 +254,9 @@ var AudienceLastSentEmail = Type("audience-last-sent-email", func() {
 	Attribute("subject", String, "The email's subject line")
 	Attribute("match_reason", String, "Why this send is listed: event_name, subject, related_words or brand_only", func() {
 		Enum("event_name", "subject", "related_words", "brand_only")
+	})
+	Attribute("source_url", String, "brand-newsletters only, on the newest issue: the brand site or blog the issue links to, where the next issue's offers and news are found", func() {
+		Example("https://www.linuxfoundation.org/blog")
 	})
 	Required("email_id", "email_name", "hubspot_url", "included_lists", "suppression_lists")
 	// TYPE-LEVEL so the published example is a possible one. Composed from the attribute
@@ -278,6 +292,59 @@ var AudienceMasterListBrief = Type("audience-master-list-brief", func() {
 	Attribute("size", Int64, "Membership size, when HubSpot reported one")
 	Attribute("hubspot_url", String, "Deep link to the list in the HubSpot UI")
 	Required("list_id", "name", "hubspot_url")
+})
+
+// AudienceRuleGroup is one group of a list's rules: a contact is in the group when EVERY
+// condition holds. Conditions are rendered server-side, deterministically, from the list's
+// HubSpot filter tree -- never by a model -- so they say exactly what the filter does.
+var AudienceRuleGroup = Type("audience-rule-group", func() {
+	Attribute("conditions", ArrayOf(String), "Plain-English conditions; all of them must hold")
+	Required("conditions")
+})
+
+// AudienceListDescription says in plain English who a HubSpot contact list contains, so an
+// operator can see what an audience means before sending to it.
+//
+// status separates the outcomes a caller must render differently:
+//   - described: groups hold the list's rules.
+//   - static: a MANUAL or SNAPSHOT list -- members were added by hand or import, so there are no
+//     rules to describe, and saying "no rules" is the truth rather than a failure.
+//   - not_found: HubSpot holds no list with this id.
+//   - unreadable: the list could not be read (a throttle, a permission, a 5xx); it may exist.
+//
+// complete is false when at least one rule had a shape this service does not model and is
+// described only generically ("a HubSpot FORM_SUBMISSION rule"), so the caller can say the
+// description is partial rather than present it as everything.
+var AudienceListDescription = Type("audience-list-description", func() {
+	Attribute("list_id", String, "HubSpot list id")
+	Attribute("name", String, "HubSpot list name; empty when the list could not be read")
+	Attribute("size", Int64, "Membership size, when HubSpot reported one")
+	Attribute("processing_type", String, "HubSpot processingType as reported: DYNAMIC, MANUAL or SNAPSHOT")
+	Attribute("hubspot_url", String, "Deep link to the list in the HubSpot UI")
+	Attribute("status", String, "Which outcome this description reports", func() {
+		Enum("described", "static", "not_found", "unreadable")
+	})
+	Attribute("summary", String, "One plain-English sentence on who the list contains")
+	Attribute("match", String, "How the groups combine: any (a contact in ANY group) or all (in EVERY group)", func() {
+		Enum("any", "all")
+	})
+	Attribute("groups", ArrayOf(AudienceRuleGroup), "The list's rules; empty unless status is described")
+	Attribute("complete", Boolean, "False when some rule is described only generically")
+	Required("list_id", "name", "hubspot_url", "status", "summary", "match", "groups", "complete")
+	Example(map[string]any{
+		"list_id":         "31764",
+		"name":            "KubeCon + CloudNativeCon North America 2026 - Current Registrants",
+		"size":            914,
+		"processing_type": "DYNAMIC",
+		"hubspot_url":     "https://app.hubspot.com/contacts/8675309/objectLists/31764/filters",
+		"status":          "described",
+		"summary":         "Contacts who registered for KubeCon + CloudNativeCon North America 2026.",
+		"match":           "any",
+		"groups": []map[string]any{
+			{"conditions": []string{"Completed an Event registration where event name is “KubeCon + CloudNativeCon North America 2026”"}},
+		},
+		"complete": true,
+	})
 })
 
 // AudiencePreviewCount is the size of the union of the selected lists.
@@ -830,6 +897,70 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 		})
 	})
 
+	Method("get-audience-newsletter-brands", func() {
+		Description("List the brands that have SENT a HubSpot newsletter in this project's portal, most recently " +
+			"sent first, for the newsletter surface's brand picker. A brand is read from the email name " +
+			"(\"<YY>Q<N> - <Brand> - Newsletter - <Month>\"). Drafts and scheduled sends do not count. " +
+			"The listing reads the portal's most recently updated emails up to a scan bound, so on a large " +
+			"portal a brand whose newsletters are all older than that is not listed. A bounded read that " +
+			"finds no sent newsletter at all is a recoverable failure, not an empty list. Cached per " +
+			"project for 15 minutes.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Required("project_id")
+		})
+		Result(func() {
+			Attribute("brands", ArrayOf(AudienceNewsletterBrand), "Brands, most recently sent first")
+			Required("brands")
+		})
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/audience-builder/newsletter-brands")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("get-audience-brand-newsletters", func() {
+		Description("Find the brand's most recently SENT HubSpot newsletters and report the lists each one targeted. " +
+			"A newsletter is a sent email whose NAME names the brand the way get-audience-newsletter-brands " +
+			"reads it: the brand parsed from the name must EQUAL the given brand, ignoring case. It is " +
+			"equality, not containment, so \"LF\" does not match an \"LF Education\" newsletter and " +
+			"\"PyTorch\" does not match a \"PyTorch Foundation\" one; pass a brand exactly as that listing " +
+			"returned it. The newest is the template a new issue clones; the rest are content " +
+			"references. Drafts and scheduled sends are never returned.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("brand", String, "Brand as it appears in the newsletter's HubSpot email name", func() {
+				MinLength(1)
+				MaxLength(120)
+				Example("OpenSSF")
+			})
+			Attribute("limit", Int, "How many newsletters to report", func() {
+				Minimum(1)
+				Maximum(10)
+				Default(3)
+			})
+			Required("project_id", "brand")
+		})
+		Result(func() {
+			Attribute("emails", ArrayOf(AudienceLastSentEmail), "Newsletters, most recently sent first")
+			Required("emails")
+		})
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/audience-builder/brand-newsletters")
+			Header("bearer_token:Authorization")
+			Param("brand")
+			Param("limit")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
 	Method("get-existing-audience-master-lists", func() {
 		Description("Find master lists already composed for this event family, newest quarter first.")
 		Payload(func() {
@@ -873,6 +1004,39 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 		commonBriefErrors()
 		HTTP(func() {
 			POST("/projects/{project_id}/audience-builder/preview-count")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("describe-audience-lists", func() {
+		Description("Describe in plain English who each list contains, from its HubSpot filter rules, so an operator " +
+			"can see what an audience means before sending to it. Read-only: creates and changes nothing. " +
+			"Rules are rendered deterministically from the filter tree; referenced lists, contact properties and " +
+			"event types are named from the portal where the lookup budget allows, and fall back to their ids. " +
+			"A list that cannot be read is reported with status not_found or unreadable rather than failing the " +
+			"batch; the request fails only when NO list could be read.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			// MaxLength bounds a fan-out, as preview-count's does: one GetList per id plus the
+			// name and label lookups their rules need.
+			Attribute("list_ids", ArrayOf(String), "Lists to describe, in the order to return them", func() {
+				MinLength(1)
+				MaxLength(25)
+			})
+			Required("project_id", "list_ids")
+		})
+		Result(func() {
+			Attribute("lists", ArrayOf(AudienceListDescription), "One description per requested id, in request order")
+			Required("lists")
+		})
+		commonBriefErrors()
+		HTTP(func() {
+			// POST, like preview-count: the ids are a body, not a cache key, and a GET with 25
+			// repeated query params is a URL that proxies log in full.
+			POST("/projects/{project_id}/audience-builder/lists/describe")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			briefErrorResponses()

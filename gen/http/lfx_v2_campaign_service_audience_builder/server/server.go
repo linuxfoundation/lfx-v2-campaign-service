@@ -25,8 +25,11 @@ type Server struct {
 	SearchAudienceLists            http.Handler
 	GetAudienceSuppressionLists    http.Handler
 	GetAudienceLastSent            http.Handler
+	GetAudienceNewsletterBrands    http.Handler
+	GetAudienceBrandNewsletters    http.Handler
 	GetExistingAudienceMasterLists http.Handler
 	PreviewAudienceCount           http.Handler
+	DescribeAudienceLists          http.Handler
 	ComposeAudienceMaster          http.Handler
 	AttachExistingAudience         http.Handler
 	RunAudienceQa                  http.Handler
@@ -68,8 +71,11 @@ func New(
 			{"SearchAudienceLists", "GET", "/projects/{project_id}/audience-builder/lists/search"},
 			{"GetAudienceSuppressionLists", "GET", "/projects/{project_id}/audience-builder/suppression-lists"},
 			{"GetAudienceLastSent", "GET", "/projects/{project_id}/audience-builder/last-sent"},
+			{"GetAudienceNewsletterBrands", "GET", "/projects/{project_id}/audience-builder/newsletter-brands"},
+			{"GetAudienceBrandNewsletters", "GET", "/projects/{project_id}/audience-builder/brand-newsletters"},
 			{"GetExistingAudienceMasterLists", "GET", "/projects/{project_id}/audience-builder/existing-master-lists"},
 			{"PreviewAudienceCount", "POST", "/projects/{project_id}/audience-builder/preview-count"},
+			{"DescribeAudienceLists", "POST", "/projects/{project_id}/audience-builder/lists/describe"},
 			{"ComposeAudienceMaster", "POST", "/projects/{project_id}/audience-builder/compose-master"},
 			{"AttachExistingAudience", "POST", "/projects/{project_id}/audience-builder/attach-existing"},
 			{"RunAudienceQa", "POST", "/projects/{project_id}/audience-builder/qa/run"},
@@ -82,8 +88,11 @@ func New(
 		SearchAudienceLists:            NewSearchAudienceListsHandler(e.SearchAudienceLists, mux, decoder, encoder, errhandler, formatter),
 		GetAudienceSuppressionLists:    NewGetAudienceSuppressionListsHandler(e.GetAudienceSuppressionLists, mux, decoder, encoder, errhandler, formatter),
 		GetAudienceLastSent:            NewGetAudienceLastSentHandler(e.GetAudienceLastSent, mux, decoder, encoder, errhandler, formatter),
+		GetAudienceNewsletterBrands:    NewGetAudienceNewsletterBrandsHandler(e.GetAudienceNewsletterBrands, mux, decoder, encoder, errhandler, formatter),
+		GetAudienceBrandNewsletters:    NewGetAudienceBrandNewslettersHandler(e.GetAudienceBrandNewsletters, mux, decoder, encoder, errhandler, formatter),
 		GetExistingAudienceMasterLists: NewGetExistingAudienceMasterListsHandler(e.GetExistingAudienceMasterLists, mux, decoder, encoder, errhandler, formatter),
 		PreviewAudienceCount:           NewPreviewAudienceCountHandler(e.PreviewAudienceCount, mux, decoder, encoder, errhandler, formatter),
+		DescribeAudienceLists:          NewDescribeAudienceListsHandler(e.DescribeAudienceLists, mux, decoder, encoder, errhandler, formatter),
 		ComposeAudienceMaster:          NewComposeAudienceMasterHandler(e.ComposeAudienceMaster, mux, decoder, encoder, errhandler, formatter),
 		AttachExistingAudience:         NewAttachExistingAudienceHandler(e.AttachExistingAudience, mux, decoder, encoder, errhandler, formatter),
 		RunAudienceQa:                  NewRunAudienceQaHandler(e.RunAudienceQa, mux, decoder, encoder, errhandler, formatter),
@@ -103,8 +112,11 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.SearchAudienceLists = m(s.SearchAudienceLists)
 	s.GetAudienceSuppressionLists = m(s.GetAudienceSuppressionLists)
 	s.GetAudienceLastSent = m(s.GetAudienceLastSent)
+	s.GetAudienceNewsletterBrands = m(s.GetAudienceNewsletterBrands)
+	s.GetAudienceBrandNewsletters = m(s.GetAudienceBrandNewsletters)
 	s.GetExistingAudienceMasterLists = m(s.GetExistingAudienceMasterLists)
 	s.PreviewAudienceCount = m(s.PreviewAudienceCount)
+	s.DescribeAudienceLists = m(s.DescribeAudienceLists)
 	s.ComposeAudienceMaster = m(s.ComposeAudienceMaster)
 	s.AttachExistingAudience = m(s.AttachExistingAudience)
 	s.RunAudienceQa = m(s.RunAudienceQa)
@@ -124,8 +136,11 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountSearchAudienceListsHandler(mux, h.SearchAudienceLists)
 	MountGetAudienceSuppressionListsHandler(mux, h.GetAudienceSuppressionLists)
 	MountGetAudienceLastSentHandler(mux, h.GetAudienceLastSent)
+	MountGetAudienceNewsletterBrandsHandler(mux, h.GetAudienceNewsletterBrands)
+	MountGetAudienceBrandNewslettersHandler(mux, h.GetAudienceBrandNewsletters)
 	MountGetExistingAudienceMasterListsHandler(mux, h.GetExistingAudienceMasterLists)
 	MountPreviewAudienceCountHandler(mux, h.PreviewAudienceCount)
+	MountDescribeAudienceListsHandler(mux, h.DescribeAudienceLists)
 	MountComposeAudienceMasterHandler(mux, h.ComposeAudienceMaster)
 	MountAttachExistingAudienceHandler(mux, h.AttachExistingAudience)
 	MountRunAudienceQaHandler(mux, h.RunAudienceQa)
@@ -415,6 +430,116 @@ func NewGetAudienceLastSentHandler(
 	})
 }
 
+// MountGetAudienceNewsletterBrandsHandler configures the mux to serve the
+// "lfx-v2-campaign-service-audience-builder" service
+// "get-audience-newsletter-brands" endpoint.
+func MountGetAudienceNewsletterBrandsHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/audience-builder/newsletter-brands", f)
+}
+
+// NewGetAudienceNewsletterBrandsHandler creates a HTTP handler which loads the
+// HTTP request and calls the "lfx-v2-campaign-service-audience-builder"
+// service "get-audience-newsletter-brands" endpoint.
+func NewGetAudienceNewsletterBrandsHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeGetAudienceNewsletterBrandsRequest(mux, decoder)
+		encodeResponse = EncodeGetAudienceNewsletterBrandsResponse(encoder)
+		encodeError    = EncodeGetAudienceNewsletterBrandsError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "get-audience-newsletter-brands")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-audience-builder")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountGetAudienceBrandNewslettersHandler configures the mux to serve the
+// "lfx-v2-campaign-service-audience-builder" service
+// "get-audience-brand-newsletters" endpoint.
+func MountGetAudienceBrandNewslettersHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/audience-builder/brand-newsletters", f)
+}
+
+// NewGetAudienceBrandNewslettersHandler creates a HTTP handler which loads the
+// HTTP request and calls the "lfx-v2-campaign-service-audience-builder"
+// service "get-audience-brand-newsletters" endpoint.
+func NewGetAudienceBrandNewslettersHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeGetAudienceBrandNewslettersRequest(mux, decoder)
+		encodeResponse = EncodeGetAudienceBrandNewslettersResponse(encoder)
+		encodeError    = EncodeGetAudienceBrandNewslettersError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "get-audience-brand-newsletters")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-audience-builder")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
 // MountGetExistingAudienceMasterListsHandler configures the mux to serve the
 // "lfx-v2-campaign-service-audience-builder" service
 // "get-existing-audience-master-lists" endpoint.
@@ -502,6 +627,61 @@ func NewPreviewAudienceCountHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "preview-audience-count")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-audience-builder")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountDescribeAudienceListsHandler configures the mux to serve the
+// "lfx-v2-campaign-service-audience-builder" service "describe-audience-lists"
+// endpoint.
+func MountDescribeAudienceListsHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/audience-builder/lists/describe", f)
+}
+
+// NewDescribeAudienceListsHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-audience-builder" service
+// "describe-audience-lists" endpoint.
+func NewDescribeAudienceListsHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeDescribeAudienceListsRequest(mux, decoder)
+		encodeResponse = EncodeDescribeAudienceListsResponse(encoder)
+		encodeError    = EncodeDescribeAudienceListsError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "describe-audience-lists")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-audience-builder")
 		payload, err := decodeRequest(r)
 		if err != nil {

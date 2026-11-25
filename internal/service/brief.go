@@ -2559,7 +2559,7 @@ func deliveryTypeOrPaid(v *string) model.DeliveryType {
 // channel, but this brief was authored for survey" -- after every earlier step had succeeded.
 func deliveryChannelKind(d model.DeliveryType) model.ChannelKind {
 	switch d {
-	case model.DeliveryEmail, model.DeliverySurvey:
+	case model.DeliveryEmail, model.DeliverySurvey, model.DeliveryNewsletter:
 		return model.ChannelEmail
 	default:
 		return model.ChannelPaidAds
@@ -2605,6 +2605,14 @@ func briefIdentityPairProblem(delivery model.DeliveryType, stage string) error {
 		}
 		return fmt.Errorf("%w: a survey brief names the asset it promotes, so its stage must be one of %v, got %q",
 			domain.ErrBriefIdentityPairInvalid, emailstage.SurveyNames(), stage)
+	case model.DeliveryNewsletter:
+		// Its own list for the reason survey has one: `(newsletter, "Final Countdown")` names no
+		// brief the product has. An issue is told apart by its event_slug, not its stage.
+		if slices.Contains(emailstage.NewsletterNames(), stage) {
+			return nil
+		}
+		return fmt.Errorf("%w: a newsletter brief is one issue, so its stage must be one of %v, got %q",
+			domain.ErrBriefIdentityPairInvalid, emailstage.NewsletterNames(), stage)
 	default:
 		// Anything else, INCLUDING the empty string. An earlier revision accepted `""` as paid, to
 		// spare a direct Go caller that leaves the field at its zero value -- but both call sites

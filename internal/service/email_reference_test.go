@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -147,6 +148,7 @@ func TestBuildReferenceBlock_HappyPath(t *testing.T) {
 	src := NewEmailReferenceSource(
 		fakeConnReader{byProject: map[string]*model.Connection{"proj-1": conn}},
 		identityEncryptor{},
+		allowEveryChosenEmail,
 		hubspot.WithBaseURL(srv.URL),
 	)
 
@@ -188,6 +190,7 @@ func TestBuildReferenceBlock_RefusesThePortalWideSearchOnTheSharedConnection(t *
 	src := NewEmailReferenceSource(
 		fakeConnReader{byProject: map[string]*model.Connection{model.SystemProjectID: systemConn}},
 		identityEncryptor{},
+		allowEveryChosenEmail,
 		hubspot.WithBaseURL(srv.URL),
 	)
 
@@ -197,7 +200,7 @@ func TestBuildReferenceBlock_RefusesThePortalWideSearchOnTheSharedConnection(t *
 }
 
 func TestBuildReferenceBlock_NoConnectionAnywhereReturnsEmpty(t *testing.T) {
-	src := NewEmailReferenceSource(fakeConnReader{byProject: map[string]*model.Connection{}}, identityEncryptor{})
+	src := NewEmailReferenceSource(fakeConnReader{byProject: map[string]*model.Connection{}}, identityEncryptor{}, nil)
 	got := src.BuildReferenceBlock(context.Background(), "proj-1")
 	if got != "" {
 		t.Errorf("expected empty block with no connection at all, got: %q", got)
@@ -207,7 +210,7 @@ func TestBuildReferenceBlock_NoConnectionAnywhereReturnsEmpty(t *testing.T) {
 func TestBuildReferenceBlock_InactiveConnectionReturnsEmpty(t *testing.T) {
 	conn := activeConn(t, "tok")
 	conn.Status = "revoked"
-	src := NewEmailReferenceSource(fakeConnReader{byProject: map[string]*model.Connection{"proj-1": conn}}, identityEncryptor{})
+	src := NewEmailReferenceSource(fakeConnReader{byProject: map[string]*model.Connection{"proj-1": conn}}, identityEncryptor{}, nil)
 	got := src.BuildReferenceBlock(context.Background(), "proj-1")
 	if got != "" {
 		t.Errorf("expected empty block for an inactive connection, got: %q", got)
@@ -216,7 +219,7 @@ func TestBuildReferenceBlock_InactiveConnectionReturnsEmpty(t *testing.T) {
 
 func TestBuildReferenceBlock_NoCredentialsReturnsEmpty(t *testing.T) {
 	conn := &model.Connection{Provider: model.ProviderHubSpot, Status: model.StatusActive}
-	src := NewEmailReferenceSource(fakeConnReader{byProject: map[string]*model.Connection{"proj-1": conn}}, identityEncryptor{})
+	src := NewEmailReferenceSource(fakeConnReader{byProject: map[string]*model.Connection{"proj-1": conn}}, identityEncryptor{}, nil)
 	got := src.BuildReferenceBlock(context.Background(), "proj-1")
 	if got != "" {
 		t.Errorf("expected empty block for a connection with no stored credentials, got: %q", got)
@@ -225,7 +228,7 @@ func TestBuildReferenceBlock_NoCredentialsReturnsEmpty(t *testing.T) {
 
 func TestBuildReferenceBlock_DecryptFailureReturnsEmpty(t *testing.T) {
 	conn := activeConn(t, "tok")
-	src := NewEmailReferenceSource(fakeConnReader{byProject: map[string]*model.Connection{"proj-1": conn}}, errDecryptEncryptor{})
+	src := NewEmailReferenceSource(fakeConnReader{byProject: map[string]*model.Connection{"proj-1": conn}}, errDecryptEncryptor{}, nil)
 	got := src.BuildReferenceBlock(context.Background(), "proj-1")
 	if got != "" {
 		t.Errorf("expected empty block when decryption fails, got: %q", got)
@@ -234,7 +237,7 @@ func TestBuildReferenceBlock_DecryptFailureReturnsEmpty(t *testing.T) {
 
 func TestBuildReferenceBlock_EmptyTokenReturnsEmpty(t *testing.T) {
 	conn := activeConn(t, "   ")
-	src := NewEmailReferenceSource(fakeConnReader{byProject: map[string]*model.Connection{"proj-1": conn}}, identityEncryptor{})
+	src := NewEmailReferenceSource(fakeConnReader{byProject: map[string]*model.Connection{"proj-1": conn}}, identityEncryptor{}, nil)
 	got := src.BuildReferenceBlock(context.Background(), "proj-1")
 	if got != "" {
 		t.Errorf("expected empty block for a blank private-app token, got: %q", got)
@@ -252,6 +255,7 @@ func TestBuildReferenceBlock_SearchFailureReturnsEmpty(t *testing.T) {
 	src := NewEmailReferenceSource(
 		fakeConnReader{byProject: map[string]*model.Connection{"proj-1": conn}},
 		identityEncryptor{},
+		allowEveryChosenEmail,
 		hubspot.WithBaseURL(srv.URL),
 	)
 	got := src.BuildReferenceBlock(context.Background(), "proj-1")
@@ -271,6 +275,7 @@ func TestBuildReferenceBlock_NoPublishedEmailsReturnsEmpty(t *testing.T) {
 	src := NewEmailReferenceSource(
 		fakeConnReader{byProject: map[string]*model.Connection{"proj-1": conn}},
 		identityEncryptor{},
+		allowEveryChosenEmail,
 		hubspot.WithBaseURL(srv.URL),
 	)
 	got := src.BuildReferenceBlock(context.Background(), "proj-1")
@@ -296,6 +301,7 @@ func TestBuildReferenceBlock_UnplacedOnlyEmailIsSkipped(t *testing.T) {
 	src := NewEmailReferenceSource(
 		fakeConnReader{byProject: map[string]*model.Connection{"proj-1": conn}},
 		identityEncryptor{},
+		allowEveryChosenEmail,
 		hubspot.WithBaseURL(srv.URL),
 	)
 	got := src.BuildReferenceBlock(context.Background(), "proj-1")
@@ -371,6 +377,7 @@ func TestBuildReferenceBlock_DoesNotFallBackForADisconnectedProject(t *testing.T
 			disconnected: map[string]bool{"proj-opted-out": true},
 		},
 		identityEncryptor{},
+		nil,
 		hubspot.WithBaseURL(srv.URL),
 	)
 
@@ -394,6 +401,7 @@ func TestBuildReferenceBlock_FailsClosedWhenTheDisconnectProbeFails(t *testing.T
 			probeErr:  errors.New("probe unavailable"),
 		},
 		identityEncryptor{},
+		nil,
 		hubspot.WithBaseURL(srv.URL),
 	)
 
@@ -406,7 +414,7 @@ func TestBuildReferenceBlock_FailsClosedWhenTheDisconnectProbeFails(t *testing.T
 // caller cannot absorb: domain.ConnectionReader does not forbid a (nil, nil) return, and
 // dereferencing that takes the whole request down instead of dropping the reference block.
 func TestBuildReferenceBlock_ANilConnectionDoesNotPanic(t *testing.T) {
-	src := NewEmailReferenceSource(nilConnReader{}, identityEncryptor{})
+	src := NewEmailReferenceSource(nilConnReader{}, identityEncryptor{}, nil)
 
 	if got := src.BuildReferenceBlock(context.Background(), "proj-1"); got != "" {
 		t.Errorf("expected an empty block, got %q", got)
@@ -423,4 +431,142 @@ func (nilConnReader) Get(context.Context, string, model.Provider) (*model.Connec
 
 func (nilConnReader) Disconnected(context.Context, string, model.Provider) (bool, error) {
 	return false, nil
+}
+
+// chosenEmailServer answers GetEmail (GET /marketing/v3/emails/{id}) from subjects and
+// GetEmailHTMLWidgets (GET .../{id}/draft) from drafts; an id in neither is a 404.
+func chosenEmailServer(t *testing.T, subjects map[string]string, drafts map[string][]string) *httptest.Server {
+	t.Helper()
+	draftSrv := emailDraftServer(t, `{"results":[]}`, drafts)
+	t.Cleanup(draftSrv.Close)
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/draft") {
+			draftSrv.Config.Handler.ServeHTTP(w, r)
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/marketing/v3/emails/")
+		subject, ok := subjects[id]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"not found"}`))
+			return
+		}
+		_, _ = w.Write([]byte(mustMarshalJSON(t, map[string]string{"id": id, "name": subject, "subject": subject, "state": "PUBLISHED"})))
+	}))
+}
+
+// TestBuildReferenceBlockFromIDs_FirstChosenIsTheTemplate pins the newsletter surface's rule: the
+// first chosen email is the structural template even when a later one is longer, because it is
+// the issue the new one is cloned from. Unreadable and repeated ids are skipped.
+func TestBuildReferenceBlockFromIDs_FirstChosenIsTheTemplate(t *testing.T) {
+	srv := chosenEmailServer(t,
+		map[string]string{"10": "October issue", "9": "September issue"},
+		map[string][]string{
+			"10": {"Short October lead"},
+			"9":  {"A much longer September issue with many items and links to read"},
+		},
+	)
+	defer srv.Close()
+
+	src := NewEmailReferenceSource(
+		fakeConnReader{byProject: map[string]*model.Connection{"proj-1": activeConn(t, "tok")}},
+		identityEncryptor{},
+		allowEveryChosenEmail,
+		hubspot.WithBaseURL(srv.URL),
+	)
+	got := src.BuildReferenceBlockFromIDs(context.Background(), "proj-1", "Acme", []string{"10", " ", "10", "missing", "9"})
+	if !strings.Contains(got, `subject: "October issue"`) {
+		t.Fatalf("the first chosen email must be the primary template, got: %s", got)
+	}
+	if !strings.Contains(got, "A much longer September issue") {
+		t.Errorf("the second chosen email must be in the style samples, got: %s", got)
+	}
+}
+
+// TestBuildReferenceBlockFromIDs_RefusesTheSharedConnection pins the privacy boundary. The brand
+// and the ids are both caller-written, so on the portal every project shares they prove nothing
+// about ownership: nothing is read there, even with a gate that would pass the email. The same
+// email on the project's OWN connection is read.
+func TestBuildReferenceBlockFromIDs_RefusesTheSharedConnection(t *testing.T) {
+	var bodyReads atomic.Int32
+	inner := chosenEmailServer(t, map[string]string{"7": "26Q4 - Acme - Newsletter - October"}, map[string][]string{"7": {"Issue body"}})
+	defer inner.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyReads.Add(1)
+		inner.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	shared := NewEmailReferenceSource(
+		fakeConnReader{byProject: map[string]*model.Connection{model.SystemProjectID: activeConn(t, "system-tok")}},
+		identityEncryptor{},
+		allowEveryChosenEmail,
+		hubspot.WithBaseURL(srv.URL),
+	)
+	if got := shared.BuildReferenceBlockFromIDs(context.Background(), "proj-no-own-connection", "Acme", []string{"7"}); got != "" {
+		t.Fatalf("a chosen email must not be read on the shared connection, got %q", got)
+	}
+	if n := bodyReads.Load(); n != 0 {
+		t.Errorf("the shared portal must not be asked for a chosen email at all, got %d requests", n)
+	}
+
+	own := NewEmailReferenceSource(
+		fakeConnReader{byProject: map[string]*model.Connection{"proj-1": activeConn(t, "tok")}},
+		identityEncryptor{},
+		allowEveryChosenEmail,
+		hubspot.WithBaseURL(srv.URL),
+	)
+	if got := own.BuildReferenceBlockFromIDs(context.Background(), "proj-1", "Acme", []string{"7"}); !strings.Contains(got, "Issue body") {
+		t.Errorf("a chosen email on the project's own connection was not read: %q", got)
+	}
+	if got := own.BuildReferenceBlockFromIDs(context.Background(), "proj-1", "Acme", nil); got != "" {
+		t.Errorf("no ids must yield an empty block, got %q", got)
+	}
+}
+
+// allowEveryChosenEmail is a gate that passes anything, for tests about what happens AFTER the
+// gate. The real rule is dispatch.IsSentBrandIssue, wired in internal/container.
+func allowEveryChosenEmail(hubspot.Email, string) bool { return true }
+
+// TestBuildReferenceBlockFromIDs_ReadsOnlyWhatTheGateAllows pins the second rule, on the project's
+// own connection. The ids are caller-supplied, so an email's body reaches the prompt only when
+// the gate says it is a sent issue of the brief's brand. A refused email's body is not read; no
+// gate or no brand reads nothing.
+func TestBuildReferenceBlockFromIDs_ReadsOnlyWhatTheGateAllows(t *testing.T) {
+	srv := chosenEmailServer(t,
+		map[string]string{"10": "26Q4 - Acme - Newsletter - October", "66": "26Q4 - Acme Board - Update"},
+		map[string][]string{"10": {"Acme October items"}, "66": {"Private board notes"}},
+	)
+	defer srv.Close()
+
+	newSource := func(gate ChosenReferenceGate) *EmailReferenceSource {
+		return NewEmailReferenceSource(
+			fakeConnReader{byProject: map[string]*model.Connection{"proj-1": activeConn(t, "tok")}},
+			identityEncryptor{},
+			gate,
+			hubspot.WithBaseURL(srv.URL),
+		)
+	}
+	var asked []string
+	gated := newSource(func(e hubspot.Email, brand string) bool {
+		asked = append(asked, e.ID+"|"+brand)
+		return strings.Contains(e.Name, "- "+brand+" - Newsletter")
+	})
+	got := gated.BuildReferenceBlockFromIDs(context.Background(), "proj-1", " Acme ", []string{"66", "10"})
+	if strings.Contains(got, "Private board notes") {
+		t.Fatalf("an email the gate refused reached the prompt: %s", got)
+	}
+	if !strings.Contains(got, "Acme October items") {
+		t.Errorf("the brand's own sent issue must still be read, got: %s", got)
+	}
+	if want := []string{"66|Acme", "10|Acme"}; strings.Join(asked, ",") != strings.Join(want, ",") {
+		t.Errorf("the gate must judge every chosen email against the trimmed brand: got %v, want %v", asked, want)
+	}
+
+	if got := gated.BuildReferenceBlockFromIDs(context.Background(), "proj-1", "  ", []string{"10"}); got != "" {
+		t.Errorf("a brief with no brand has nothing to check the ids against and must read nothing, got %q", got)
+	}
+	if got := newSource(nil).BuildReferenceBlockFromIDs(context.Background(), "proj-1", "Acme", []string{"10"}); got != "" {
+		t.Errorf("a source with no gate must read nothing, got %q", got)
+	}
 }

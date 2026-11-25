@@ -24,6 +24,7 @@ func TestDeliveryChannelKind(t *testing.T) {
 		{model.DeliveryPaidMarketing, model.ChannelPaidAds},
 		{model.DeliveryEmail, model.ChannelEmail},
 		{model.DeliverySurvey, model.ChannelEmail},
+		{model.DeliveryNewsletter, model.ChannelEmail},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.delivery), func(t *testing.T) {
@@ -41,7 +42,7 @@ func TestDeliveryChannelKind(t *testing.T) {
 // Iterates the types `Valid()` accepts rather than the three named above, so a fourth surface
 // added to the enum without a mapping fails here instead of at the staging step.
 func TestEverySendSurfaceAcceptsHubSpot(t *testing.T) {
-	for _, d := range []model.DeliveryType{model.DeliveryPaidMarketing, model.DeliveryEmail, model.DeliverySurvey} {
+	for _, d := range []model.DeliveryType{model.DeliveryPaidMarketing, model.DeliveryEmail, model.DeliverySurvey, model.DeliveryNewsletter} {
 		if !d.Valid() {
 			t.Fatalf("%q is listed here but Valid() rejects it; the list has drifted from the enum", d)
 		}

@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -21,9 +22,10 @@ import (
 // from `initial`), and PATCH stores the new content and echoes it back as the
 // email. This exercises the read -> rebuild -> patch -> re-read verification flow
 // end to end, the same way HubSpot's non-merging PATCH behaves.
-func rebuildTestServer(t *testing.T, initial map[string]any) (*Client, *int) {
+func rebuildTestServer(t *testing.T, initial map[string]any) (*Client, *atomic.Int32) {
 	t.Helper()
-	patchCount := 0
+	// Written on the handler goroutine and read by the test: an atomic, not a plain int.
+	patchCount := new(atomic.Int32)
 	content := initial
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/draft") {
@@ -33,7 +35,7 @@ func rebuildTestServer(t *testing.T, initial map[string]any) (*Client, *int) {
 		case http.MethodGet:
 			_ = json.NewEncoder(w).Encode(map[string]any{"content": content})
 		case http.MethodPatch:
-			patchCount++
+			patchCount.Add(1)
 			var body struct {
 				Content map[string]any `json:"content"`
 			}
@@ -46,7 +48,7 @@ func rebuildTestServer(t *testing.T, initial map[string]any) (*Client, *int) {
 			t.Errorf("unexpected method %s", r.Method)
 		}
 	})
-	return c, &patchCount
+	return c, patchCount
 }
 
 func TestRebuildEmailContent_HeroFirstThenBodyThenFooter(t *testing.T) {
@@ -66,8 +68,8 @@ func TestRebuildEmailContent_HeroFirstThenBodyThenFooter(t *testing.T) {
 	if email == nil || email.ID != "email-1" {
 		t.Fatalf("unexpected email result: %+v", email)
 	}
-	if *patchCount != 1 {
-		t.Fatalf("expected exactly one PATCH, got %d", *patchCount)
+	if patchCount.Load() != 1 {
+		t.Fatalf("expected exactly one PATCH, got %d", patchCount.Load())
 	}
 }
 

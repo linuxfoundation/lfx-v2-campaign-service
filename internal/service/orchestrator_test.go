@@ -2900,8 +2900,8 @@ func (d *emailSearcherRecordingDeadline) SearchEmails(ctx context.Context, _ str
 
 // TestOrchestrator_SearchEmailsBoundsThePlatformCall is the email-search half of the pair
 // below, and it matters MORE here rather than less: SearchEmails walks cursor pages, so an
-// unbounded call is not one hung request but up to maxListPages of them, and the shared
-// accountsCallTimeout is the only thing standing between a slow portal and a pinned request
+// unbounded call is not one hung request but up to maxListPages of them, and
+// emailSearchCallTimeout is the only thing standing between a slow portal and a pinned request
 // goroutine. Without this test, deleting the WithTimeout in Orchestrator.SearchEmails leaves
 // every email test green — the mocks ignore the context entirely.
 func TestOrchestrator_SearchEmailsBoundsThePlatformCall(t *testing.T) {
@@ -2925,11 +2925,11 @@ func TestOrchestrator_SearchEmailsBoundsThePlatformCall(t *testing.T) {
 	if !disp.hadDeadline {
 		t.Fatal("the email searcher received a context with NO deadline; a slow portal would pin the request goroutine across every page of the walk")
 	}
-	expectedMin := beforeCall.Add(accountsCallTimeout)
-	expectedMax := afterCall.Add(accountsCallTimeout)
+	expectedMin := beforeCall.Add(emailSearchCallTimeout)
+	expectedMax := afterCall.Add(emailSearchCallTimeout)
 	if disp.gotDeadline.Before(expectedMin) || disp.gotDeadline.After(expectedMax) {
-		t.Errorf("deadline %v not within [%v, %v] (call bracket + accountsCallTimeout=%v)",
-			disp.gotDeadline, expectedMin, expectedMax, accountsCallTimeout)
+		t.Errorf("deadline %v not within [%v, %v] (call bracket + emailSearchCallTimeout=%v)",
+			disp.gotDeadline, expectedMin, expectedMax, emailSearchCallTimeout)
 	}
 }
 

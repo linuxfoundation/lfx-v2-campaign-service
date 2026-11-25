@@ -130,6 +130,18 @@ more often than a substring does, so `ErrSearchIncomplete` is MORE likely on a v
 portal: an event with no prior send in a portal over `maxFilteredScan` emails now yields a
 recoverable failure rather than an empty list, which is the right side of that trade.
 
+`SearchEmailsAnyPhrase` (`email_phrase.go`) is that walk under a WHOLE-WORD, ANY-OF-PHRASES
+predicate: the template picker's brand-and-event scope. One event is named several ways across its
+own templates ("Open Source Summit Japan + AutoLinux + Embedded Linux" ships emails named "OS Summit
+Japan + AutoLinux + ..."), so no single substring finds them all, and one walk serves every phrase
+for the reason above. Matching is on words, not substrings: both sides are lower-cased and every
+run of non-letter, non-digit characters collapses to one space (`normalizePhrase`), and the test is
+`" "+name+" "` containing `" "+phrase+" "` -- so `KubeCon+CloudNativeCon` matches `kubecon`, while
+`KubeConference` and `Open Source Summitry` do not. At most `maxSearchPhrases` (8) phrases; a set
+that normalises to nothing is refused before any request, because walked it would be the
+unfiltered listing presented as a scoped one. Same bounds and `ErrSearchIncomplete` contract as
+`SearchEmails`.
+
 `includedProperties` restricts the projection to `name`, `subject`, `updatedAt`, `state` and
 `publishDate`. The
 list endpoint returns FULL email content by default, which at `limit=100` can exceed the client's
@@ -216,7 +228,13 @@ has TWO shapes** (`List.resolveSize` normalizes both): GET/CREATE
 (`PublicObjectList`) carry a top-level integer `size`; SEARCH hits have no top-level
 size and instead expose `hs_list_size` as a STRING under `additionalProperties`,
 requested explicitly. `ListEventDefinitions` resolves `fullyQualifiedName` for
-BEHAVIORAL_EVENT filters.
+BEHAVIORAL_EVENT filters, and decodes each definition's `objectTypeId` -- the id a list's
+`UNIFIED_EVENTS` branch carries as its `eventTypeId` -- so a list description can name the event
+a rule is about. `SubscriptionDefinitionNames` (`subscriptions.go`, `GET
+/communication-preferences/v3/definitions`) maps email subscription ids to names for the same
+reason -- GDPR and opt-out suppressions are built from subscription-status filters -- and accepts
+the id as a string or a number; it needs the communication-preferences read scope, and its
+caller treats any failure as "no names".
 
 `filterBranch` is passed through as OPAQUE JSON — HubSpot's shape invariants (OR-root
 with AND sub-branches, no nested ORs, `IN_LIST` not `LIST_MEMBERSHIP` in membership
@@ -604,6 +622,21 @@ endpoint.
 rather than a property, so asking for it by name returns an email with an empty selection —
 indistinguishable from a send that targeted nothing.
 
+The same `to` object carries two recipient SETTINGS beside the lists: `suppressGraymail` ("Don't
+send to unengaged contacts") and `limitSendFrequency` (the portal's send-frequency cap).
+`SendSettings` holds them as pointers, nil meaning not stated. `GetEmailSendSettings` reads them
+and, unlike the list read, accepts an email with no `to` object: that states no settings, which is
+a usable answer. `SetSendList` does not write them, so HubSpot's defaults apply.
+`SetSendListWithSettings` writes the ones given in the SAME PATCH as the lists, because `to` is
+written whole and a second PATCH naming only a setting would be a complete `to` with no recipients
+in it; it returns the settings HubSpot reports in its answer. Two things about that answer,
+measured on an unsent clone in the LF portal on 2026-11-25. A clone starts with
+`suppressGraymail` true whatever its source had. And the PATCH lands on the DRAFT buffer
+(`GET .../draft`), which is what the editor shows and what is sent; the base resource
+(`GET /marketing/v3/emails/{id}`) keeps the clone's initial state, the source's subject and
+content included, until the email is published. So a write to a draft is confirmed from the PATCH
+answer or from `.../draft`, never from the base read. Tests: `email_send_settings_test.go`.
+
 That hazard is specific to `to`, and the distinction is what makes the list-row projection above
 safe: `publishDate` is a plain top-level SCALAR, a sibling of `id` and the same shape as `state`,
 so naming it returns it. A NESTED object named in `includedProperties` comes back empty, which is
@@ -618,6 +651,39 @@ cannot preserve the clone's body — writing an empty `staging_body` blanks it, 
 section drops it — so the dispatcher does not call this at all when it has no content to write,
 and a preheader-only change is silently not applied. Preview text has no first-class field on the
 Marketing Emails v3 object, so there is no narrower path for it today.
+
+`ReplaceEmailBodyKeepingChrome` (`content_chrome.go`) is the other content writer, for a draft
+whose own header and footer must survive: a newsletter issue cloned from the brand's previous one.
+It keeps two runs of the layout exactly as they are, section styles included, and replaces
+everything between them:
+
+- The **footer** starts at the first section that places a social (`follow_me_email`) or footer
+  (`email_footer`, stock or custom) module, and reaches back over the sections directly above it
+  that are only its lead-in: a divider, or a short text block that says to follow or connect. A
+  longer text block, an image or a button above the social links is content.
+- The **header** is the leading sections that hold no text, button or divider: a view-in-browser
+  module, and the ONE image the email opens with. A second image section is content.
+
+Modules are told apart by module path first and body shape second (`chromeWidget.kind`), because
+modules placed by older editors carry no path, only a module id and a body. Measured against five
+sent newsletters in the LF portal (LF, OpenSSF, PyTorch Foundation, CNCF, Valkey) on 2026-11-25:
+each ends in the same run, in a different order and under different section backgrounds.
+
+The new content is one rich-text module per top-level `<h2>` (`splitAtTopLevelHeadings`; a
+top-level `<hr>` is a boundary and is dropped), so each item can be moved or deleted on its own in
+the editor. Inline `style` attributes are removed (`stripInlineStyles`): the generated body arrives
+in this service's palette, and inside a brand's newsletter that overrides the brand's fonts and
+link colour, while unstyled tags take the draft's own style settings, as text typed in the editor
+does. Each new module is a copy of the replaced content's first standard rich-text module with its
+html swapped (its padding and module settings), each new section takes that content section's
+style, and a button is a copy of the replaced content's first button with its text and destination
+swapped, so it keeps the brand's colours. `templatePath` and `styleSettings` are sent back
+unchanged, where `RebuildEmailContent` resets the template path.
+
+`ErrNoBrandChrome` is returned, with nothing written, when the layout places no footer module:
+there is then nothing to keep, and the caller decides whether to rebuild instead. The write is
+verified by the same `verifyContentSaved` (every placed key, and this write's marker on
+`staging_body`). Tests: `content_chrome_test.go`.
 
 `RebuildEmailContentInput.HeroImageAlt` (LFXV2-2775 follow-up) sets the hero image's alt text.
 `addHeroSection` trims it and falls back to a generic "Event banner" when blank, replacing the

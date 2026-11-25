@@ -149,6 +149,188 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/audience-builder/brand-newsletters:
+        get:
+            tags:
+                - lfx-v2-campaign-service-audience-builder
+            summary: get-audience-brand-newsletters lfx-v2-campaign-service-audience-builder
+            description: 'Find the brand''s most recently SENT HubSpot newsletters and report the lists each one targeted. A newsletter is a sent email whose NAME names the brand the way get-audience-newsletter-brands reads it: the brand parsed from the name must EQUAL the given brand, ignoring case. It is equality, not containment, so "LF" does not match an "LF Education" newsletter and "PyTorch" does not match a "PyTorch Foundation" one; pass a brand exactly as that listing returned it. The newest is the template a new issue clones; the rest are content references. Drafts and scheduled sends are never returned.'
+            operationId: lfx-v2-campaign-service-audience-builder#get-audience-brand-newsletters
+            parameters:
+                - name: brand
+                  in: query
+                  description: Brand as it appears in the newsletter's HubSpot email name
+                  allowEmptyValue: true
+                  required: true
+                  schema:
+                    type: string
+                    description: Brand as it appears in the newsletter's HubSpot email name
+                    example: OpenSSF
+                    minLength: 1
+                    maxLength: 120
+                  example: OpenSSF
+                - name: limit
+                  in: query
+                  description: How many newsletters to report
+                  allowEmptyValue: true
+                  schema:
+                    type: integer
+                    description: How many newsletters to report
+                    default: 3
+                    example: 9
+                    format: int64
+                    minimum: 1
+                    maximum: 10
+                  example: 9
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/GetAudienceLastSentResponseBody'
+                            example:
+                                emails:
+                                    - email_id: "184312345678"
+                                      email_name: KubeCon NA 2026 - Early Bird
+                                      hubspot_url: https://app.hubspot.com/email/8675309/details/184312345678
+                                      included_lists:
+                                        - hubspot_url: https://app.hubspot.com/contacts/8675309/lists/4821
+                                          list_id: "4821"
+                                          missing: false
+                                          name: KubeCon NA 2025 attendees
+                                          size: 18250
+                                          unresolved: false
+                                      lists_unavailable: false
+                                      sent_at: "2026-09-15T16:00:00Z"
+                                      suppression_lists:
+                                        - hubspot_url: https://app.hubspot.com/contacts/8675309/lists/1022
+                                          list_id: "1022"
+                                          missing: false
+                                          name: Global unsubscribes
+                                          size: 3120
+                                          unresolved: false
+                                    - email_id: "184312345678"
+                                      email_name: KubeCon NA 2026 - Early Bird
+                                      hubspot_url: https://app.hubspot.com/email/8675309/details/184312345678
+                                      included_lists:
+                                        - hubspot_url: https://app.hubspot.com/contacts/8675309/lists/4821
+                                          list_id: "4821"
+                                          missing: false
+                                          name: KubeCon NA 2025 attendees
+                                          size: 18250
+                                          unresolved: false
+                                      lists_unavailable: false
+                                      sent_at: "2026-09-15T16:00:00Z"
+                                      suppression_lists:
+                                        - hubspot_url: https://app.hubspot.com/contacts/8675309/lists/1022
+                                          list_id: "1022"
+                                          missing: false
+                                          name: Global unsubscribes
+                                          size: 3120
+                                          unresolved: false
+                                    - email_id: "184312345678"
+                                      email_name: KubeCon NA 2026 - Early Bird
+                                      hubspot_url: https://app.hubspot.com/email/8675309/details/184312345678
+                                      included_lists:
+                                        - hubspot_url: https://app.hubspot.com/contacts/8675309/lists/4821
+                                          list_id: "4821"
+                                          missing: false
+                                          name: KubeCon NA 2025 attendees
+                                          size: 18250
+                                          unresolved: false
+                                      lists_unavailable: false
+                                      sent_at: "2026-09-15T16:00:00Z"
+                                      suppression_lists:
+                                        - hubspot_url: https://app.hubspot.com/contacts/8675309/lists/1022
+                                          list_id: "1022"
+                                          missing: false
+                                          name: Global unsubscribes
+                                          size: 3120
+                                          unresolved: false
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/audience-builder/capabilities:
         get:
             tags:
@@ -1400,6 +1582,152 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/audience-builder/lists/describe:
+        post:
+            tags:
+                - lfx-v2-campaign-service-audience-builder
+            summary: describe-audience-lists lfx-v2-campaign-service-audience-builder
+            description: 'Describe in plain English who each list contains, from its HubSpot filter rules, so an operator can see what an audience means before sending to it. Read-only: creates and changes nothing. Rules are rendered deterministically from the filter tree; referenced lists, contact properties and event types are named from the portal where the lookup budget allows, and fall back to their ids. A list that cannot be read is reported with status not_found or unreadable rather than failing the batch; the request fails only when NO list could be read.'
+            operationId: lfx-v2-campaign-service-audience-builder#describe-audience-lists
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            requestBody:
+                description: Request body for describe-audience-lists.
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/DescribeAudienceListsRequestBody'
+                        example:
+                            list_ids:
+                                - Placeat nihil adipisci numquam maiores.
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/DescribeAudienceListsResponseBody'
+                            example:
+                                lists:
+                                    - complete: true
+                                      groups:
+                                        - conditions:
+                                            - Completed an Event registration where event name is “KubeCon + CloudNativeCon North America 2026”
+                                      hubspot_url: https://app.hubspot.com/contacts/8675309/objectLists/31764/filters
+                                      list_id: "31764"
+                                      match: any
+                                      name: KubeCon + CloudNativeCon North America 2026 - Current Registrants
+                                      processing_type: DYNAMIC
+                                      size: 914
+                                      status: described
+                                      summary: Contacts who registered for KubeCon + CloudNativeCon North America 2026.
+                                    - complete: true
+                                      groups:
+                                        - conditions:
+                                            - Completed an Event registration where event name is “KubeCon + CloudNativeCon North America 2026”
+                                      hubspot_url: https://app.hubspot.com/contacts/8675309/objectLists/31764/filters
+                                      list_id: "31764"
+                                      match: any
+                                      name: KubeCon + CloudNativeCon North America 2026 - Current Registrants
+                                      processing_type: DYNAMIC
+                                      size: 914
+                                      status: described
+                                      summary: Contacts who registered for KubeCon + CloudNativeCon North America 2026.
+                                    - complete: true
+                                      groups:
+                                        - conditions:
+                                            - Completed an Event registration where event name is “KubeCon + CloudNativeCon North America 2026”
+                                      hubspot_url: https://app.hubspot.com/contacts/8675309/objectLists/31764/filters
+                                      list_id: "31764"
+                                      match: any
+                                      name: KubeCon + CloudNativeCon North America 2026 - Current Registrants
+                                      processing_type: DYNAMIC
+                                      size: 914
+                                      status: described
+                                      summary: Contacts who registered for KubeCon + CloudNativeCon North America 2026.
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/audience-builder/lists/search:
         get:
             tags:
@@ -1453,6 +1781,118 @@ paths:
                                       list_id: Necessitatibus non adipisci.
                                       name: Nam assumenda sit dolorem cupiditate.
                                       size: 3935453728792165491
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/audience-builder/newsletter-brands:
+        get:
+            tags:
+                - lfx-v2-campaign-service-audience-builder
+            summary: get-audience-newsletter-brands lfx-v2-campaign-service-audience-builder
+            description: List the brands that have SENT a HubSpot newsletter in this project's portal, most recently sent first, for the newsletter surface's brand picker. A brand is read from the email name ("<YY>Q<N> - <Brand> - Newsletter - <Month>"). Drafts and scheduled sends do not count. The listing reads the portal's most recently updated emails up to a scan bound, so on a large portal a brand whose newsletters are all older than that is not listed. A bounded read that finds no sent newsletter at all is a recoverable failure, not an empty list. Cached per project for 15 minutes.
+            operationId: lfx-v2-campaign-service-audience-builder#get-audience-newsletter-brands
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/GetAudienceNewsletterBrandsResponseBody'
+                            example:
+                                brands:
+                                    - brand: OpenSSF
+                                      issues: 808311043287841120
+                                      latest_email_name: 26Q2 - OpenSSF - Newsletter - October
+                                      latest_sent_at: Id est illo non aspernatur.
+                                    - brand: OpenSSF
+                                      issues: 808311043287841120
+                                      latest_email_name: 26Q2 - OpenSSF - Newsletter - October
+                                      latest_sent_at: Id est illo non aspernatur.
+                                    - brand: OpenSSF
+                                      issues: 808311043287841120
+                                      latest_email_name: 26Q2 - OpenSSF - Newsletter - October
+                                      latest_sent_at: Id est illo non aspernatur.
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -2018,6 +2458,7 @@ paths:
                         - paid-marketing
                         - email
                         - survey
+                        - newsletter
                   example: email
                 - name: stage
                   in: query
@@ -2040,6 +2481,7 @@ paths:
                         - Survey Reminder
                         - Survey Closing
                         - Report Promo
+                        - Newsletter
                   example: Registration Push
                 - name: project_id
                   in: path
@@ -10538,6 +10980,25 @@ paths:
                     description: 'Substring matched against email name and subject, case-insensitively. A search walks every page, so a match is never missed. Omit to list recent emails instead: that listing is capped at 500 and sorted most-recently-updated first. WHICH 500 depends on the provider, because the walk stops once it has enough — so it is NOT guaranteed to be the 500 newest in the portal, only the newest of what was read. There is no paging; reach an older template by searching for it.'
                     example: KubeCon
                   example: KubeCon
+                - name: match
+                  in: query
+                  description: 'Phrases matched as WHOLE WORDS (case-insensitive, punctuation-insensitive) against email name and subject: an email is returned when ANY phrase appears in either. One walk serves every phrase, with the same scan bound as `q` and the same 503 when the bound is reached with nothing matched. Cannot be combined with `q`.'
+                  allowEmptyValue: true
+                  schema:
+                    type: array
+                    items:
+                        type: string
+                        example: jc
+                        minLength: 1
+                        maxLength: 120
+                    description: 'Phrases matched as WHOLE WORDS (case-insensitive, punctuation-insensitive) against email name and subject: an email is returned when ANY phrase appears in either. One walk serves every phrase, with the same scan bound as `q` and the same 503 when the bound is reached with nothing matched. Cannot be combined with `q`.'
+                    example:
+                        - KubeCon
+                        - CloudNativeCon
+                    maxItems: 8
+                  example:
+                    - KubeCon
+                    - CloudNativeCon
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -21790,6 +22251,10 @@ components:
                     type: string
                     description: When the email was published/sent, RFC 3339
                     example: Non et dolor.
+                source_url:
+                    type: string
+                    description: 'brand-newsletters only, on the newest issue: the brand site or blog the issue links to, where the next issue''s offers and news are found'
+                    example: https://www.linuxfoundation.org/blog
                 subject:
                     type: string
                     description: The email's subject line
@@ -21876,6 +22341,91 @@ components:
                 - name
                 - missing
                 - unresolved
+        AudienceListDescription:
+            type: object
+            properties:
+                complete:
+                    type: boolean
+                    description: False when some rule is described only generically
+                    example: false
+                groups:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AudienceRuleGroup'
+                    description: The list's rules; empty unless status is described
+                    example:
+                        - conditions:
+                            - Maxime explicabo nesciunt sint.
+                            - Iste dolores.
+                        - conditions:
+                            - Maxime explicabo nesciunt sint.
+                            - Iste dolores.
+                        - conditions:
+                            - Maxime explicabo nesciunt sint.
+                            - Iste dolores.
+                hubspot_url:
+                    type: string
+                    description: Deep link to the list in the HubSpot UI
+                    example: Maiores voluptatem incidunt voluptas repellat corporis praesentium.
+                list_id:
+                    type: string
+                    description: HubSpot list id
+                    example: Quia nobis.
+                match:
+                    type: string
+                    description: 'How the groups combine: any (a contact in ANY group) or all (in EVERY group)'
+                    example: all
+                    enum:
+                        - any
+                        - all
+                name:
+                    type: string
+                    description: HubSpot list name; empty when the list could not be read
+                    example: Animi et unde.
+                processing_type:
+                    type: string
+                    description: 'HubSpot processingType as reported: DYNAMIC, MANUAL or SNAPSHOT'
+                    example: Vel harum voluptatem et.
+                size:
+                    type: integer
+                    description: Membership size, when HubSpot reported one
+                    example: 4003417584187921454
+                    format: int64
+                status:
+                    type: string
+                    description: Which outcome this description reports
+                    example: unreadable
+                    enum:
+                        - described
+                        - static
+                        - not_found
+                        - unreadable
+                summary:
+                    type: string
+                    description: One plain-English sentence on who the list contains
+                    example: Iure omnis recusandae aliquid quidem fuga incidunt.
+            example:
+                complete: true
+                groups:
+                    - conditions:
+                        - Completed an Event registration where event name is “KubeCon + CloudNativeCon North America 2026”
+                hubspot_url: https://app.hubspot.com/contacts/8675309/objectLists/31764/filters
+                list_id: "31764"
+                match: any
+                name: KubeCon + CloudNativeCon North America 2026 - Current Registrants
+                processing_type: DYNAMIC
+                size: 914
+                status: described
+                summary: Contacts who registered for KubeCon + CloudNativeCon North America 2026.
+            required:
+                - list_id
+                - name
+                - hubspot_url
+                - status
+                - summary
+                - match
+                - groups
+                - complete
         AudienceListSearchResult:
             type: object
             properties:
@@ -21905,6 +22455,35 @@ components:
                 - list_id
                 - name
                 - hubspot_url
+        AudienceNewsletterBrand:
+            type: object
+            properties:
+                brand:
+                    type: string
+                    description: The brand as its newsletter names spell it
+                    example: OpenSSF
+                issues:
+                    type: integer
+                    description: How many sent newsletters were found for the brand
+                    example: 808311043287841120
+                    format: int64
+                latest_email_name:
+                    type: string
+                    description: Name of the brand's most recent sent newsletter
+                    example: 26Q2 - OpenSSF - Newsletter - October
+                latest_sent_at:
+                    type: string
+                    description: When that newsletter was sent, RFC 3339; absent when the portal reported no date
+                    example: Id est illo non aspernatur.
+            example:
+                brand: OpenSSF
+                issues: 808311043287841120
+                latest_email_name: 26Q2 - OpenSSF - Newsletter - October
+                latest_sent_at: Id est illo non aspernatur.
+            required:
+                - brand
+                - latest_email_name
+                - issues
         AudiencePreviewCount:
             type: object
             properties:
@@ -22405,6 +22984,24 @@ components:
                 - findings
                 - applied_gdpr
                 - applied_opt_out
+        AudienceRuleGroup:
+            type: object
+            properties:
+                conditions:
+                    type: array
+                    items:
+                        type: string
+                        example: Maxime explicabo nesciunt sint.
+                    description: Plain-English conditions; all of them must hold
+                    example:
+                        - Maxime explicabo nesciunt sint.
+                        - Iste dolores.
+            example:
+                conditions:
+                    - Maxime explicabo nesciunt sint.
+                    - Iste dolores.
+            required:
+                - conditions
         AudienceSuppressionList:
             type: object
             properties:
@@ -22540,6 +23137,7 @@ components:
                         - paid-marketing
                         - email
                         - survey
+                        - newsletter
                 event_details:
                     description: Extracted event/course details
                     example: Sint eos perferendis neque.
@@ -22591,6 +23189,7 @@ components:
                         - Survey Reminder
                         - Survey Closing
                         - Report Promo
+                        - Newsletter
                 status:
                     type: string
                     description: Lifecycle status
@@ -22651,6 +23250,7 @@ components:
                         - paid-marketing
                         - email
                         - survey
+                        - newsletter
                 event_details:
                     description: Extracted event/course details
                     example: Aut qui voluptatem omnis.
@@ -22695,6 +23295,7 @@ components:
                         - Survey Reminder
                         - Survey Closing
                         - Report Promo
+                        - Newsletter
                 targeting:
                     description: Targeting recommendation
                     example: Minima itaque.
@@ -24402,6 +25003,110 @@ components:
                 - label
                 - need
                 - reason
+        DescribeAudienceListsRequestBody:
+            type: object
+            properties:
+                list_ids:
+                    type: array
+                    items:
+                        type: string
+                        example: Placeat nihil adipisci numquam maiores.
+                    description: Lists to describe, in the order to return them
+                    example:
+                        - Placeat nihil adipisci numquam maiores.
+                    minItems: 1
+                    maxItems: 25
+            description: Request body for describe-audience-lists.
+            example:
+                list_ids:
+                    - Placeat nihil adipisci numquam maiores.
+            required:
+                - list_ids
+        DescribeAudienceListsResponseBody:
+            type: object
+            properties:
+                lists:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AudienceListDescription'
+                    description: One description per requested id, in request order
+                    example:
+                        - complete: true
+                          groups:
+                            - conditions:
+                                - Completed an Event registration where event name is “KubeCon + CloudNativeCon North America 2026”
+                          hubspot_url: https://app.hubspot.com/contacts/8675309/objectLists/31764/filters
+                          list_id: "31764"
+                          match: any
+                          name: KubeCon + CloudNativeCon North America 2026 - Current Registrants
+                          processing_type: DYNAMIC
+                          size: 914
+                          status: described
+                          summary: Contacts who registered for KubeCon + CloudNativeCon North America 2026.
+                        - complete: true
+                          groups:
+                            - conditions:
+                                - Completed an Event registration where event name is “KubeCon + CloudNativeCon North America 2026”
+                          hubspot_url: https://app.hubspot.com/contacts/8675309/objectLists/31764/filters
+                          list_id: "31764"
+                          match: any
+                          name: KubeCon + CloudNativeCon North America 2026 - Current Registrants
+                          processing_type: DYNAMIC
+                          size: 914
+                          status: described
+                          summary: Contacts who registered for KubeCon + CloudNativeCon North America 2026.
+                        - complete: true
+                          groups:
+                            - conditions:
+                                - Completed an Event registration where event name is “KubeCon + CloudNativeCon North America 2026”
+                          hubspot_url: https://app.hubspot.com/contacts/8675309/objectLists/31764/filters
+                          list_id: "31764"
+                          match: any
+                          name: KubeCon + CloudNativeCon North America 2026 - Current Registrants
+                          processing_type: DYNAMIC
+                          size: 914
+                          status: described
+                          summary: Contacts who registered for KubeCon + CloudNativeCon North America 2026.
+            example:
+                lists:
+                    - complete: true
+                      groups:
+                        - conditions:
+                            - Completed an Event registration where event name is “KubeCon + CloudNativeCon North America 2026”
+                      hubspot_url: https://app.hubspot.com/contacts/8675309/objectLists/31764/filters
+                      list_id: "31764"
+                      match: any
+                      name: KubeCon + CloudNativeCon North America 2026 - Current Registrants
+                      processing_type: DYNAMIC
+                      size: 914
+                      status: described
+                      summary: Contacts who registered for KubeCon + CloudNativeCon North America 2026.
+                    - complete: true
+                      groups:
+                        - conditions:
+                            - Completed an Event registration where event name is “KubeCon + CloudNativeCon North America 2026”
+                      hubspot_url: https://app.hubspot.com/contacts/8675309/objectLists/31764/filters
+                      list_id: "31764"
+                      match: any
+                      name: KubeCon + CloudNativeCon North America 2026 - Current Registrants
+                      processing_type: DYNAMIC
+                      size: 914
+                      status: described
+                      summary: Contacts who registered for KubeCon + CloudNativeCon North America 2026.
+                    - complete: true
+                      groups:
+                        - conditions:
+                            - Completed an Event registration where event name is “KubeCon + CloudNativeCon North America 2026”
+                      hubspot_url: https://app.hubspot.com/contacts/8675309/objectLists/31764/filters
+                      list_id: "31764"
+                      match: any
+                      name: KubeCon + CloudNativeCon North America 2026 - Current Registrants
+                      processing_type: DYNAMIC
+                      size: 914
+                      status: described
+                      summary: Contacts who registered for KubeCon + CloudNativeCon North America 2026.
+            required:
+                - lists
         DiscoverAudienceListsRequestBody:
             type: object
             properties:
@@ -24800,6 +25505,43 @@ components:
                           unresolved: false
             required:
                 - emails
+        GetAudienceNewsletterBrandsResponseBody:
+            type: object
+            properties:
+                brands:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AudienceNewsletterBrand'
+                    description: Brands, most recently sent first
+                    example:
+                        - brand: OpenSSF
+                          issues: 808311043287841120
+                          latest_email_name: 26Q2 - OpenSSF - Newsletter - October
+                          latest_sent_at: Id est illo non aspernatur.
+                        - brand: OpenSSF
+                          issues: 808311043287841120
+                          latest_email_name: 26Q2 - OpenSSF - Newsletter - October
+                          latest_sent_at: Id est illo non aspernatur.
+                        - brand: OpenSSF
+                          issues: 808311043287841120
+                          latest_email_name: 26Q2 - OpenSSF - Newsletter - October
+                          latest_sent_at: Id est illo non aspernatur.
+            example:
+                brands:
+                    - brand: OpenSSF
+                      issues: 808311043287841120
+                      latest_email_name: 26Q2 - OpenSSF - Newsletter - October
+                      latest_sent_at: Id est illo non aspernatur.
+                    - brand: OpenSSF
+                      issues: 808311043287841120
+                      latest_email_name: 26Q2 - OpenSSF - Newsletter - October
+                      latest_sent_at: Id est illo non aspernatur.
+                    - brand: OpenSSF
+                      issues: 808311043287841120
+                      latest_email_name: 26Q2 - OpenSSF - Newsletter - October
+                      latest_sent_at: Id est illo non aspernatur.
+            required:
+                - brands
         GetAudienceSuppressionListsResponseBody:
             type: object
             properties:
@@ -31038,6 +31780,7 @@ components:
                         - Survey Reminder
                         - Survey Closing
                         - Report Promo
+                        - Newsletter
                 targets_ca:
                     type: boolean
                     description: The send targets Canada, so a CASL opt-out suppression is expected

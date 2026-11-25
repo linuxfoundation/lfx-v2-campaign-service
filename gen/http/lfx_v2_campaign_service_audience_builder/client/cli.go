@@ -234,6 +234,91 @@ func BuildGetAudienceLastSentPayload(lfxV2CampaignServiceAudienceBuilderGetAudie
 	return v, nil
 }
 
+// BuildGetAudienceNewsletterBrandsPayload builds the payload for the
+// lfx-v2-campaign-service-audience-builder get-audience-newsletter-brands
+// endpoint from CLI flags.
+func BuildGetAudienceNewsletterBrandsPayload(lfxV2CampaignServiceAudienceBuilderGetAudienceNewsletterBrandsProjectID *string, lfxV2CampaignServiceAudienceBuilderGetAudienceNewsletterBrandsBearerToken *string) (*lfxv2campaignserviceaudiencebuilder.GetAudienceNewsletterBrandsPayload, error) {
+	var projectID string
+	{
+		if lfxV2CampaignServiceAudienceBuilderGetAudienceNewsletterBrandsProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceAudienceBuilderGetAudienceNewsletterBrandsProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceAudienceBuilderGetAudienceNewsletterBrandsBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceAudienceBuilderGetAudienceNewsletterBrandsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceaudiencebuilder.GetAudienceNewsletterBrandsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildGetAudienceBrandNewslettersPayload builds the payload for the
+// lfx-v2-campaign-service-audience-builder get-audience-brand-newsletters
+// endpoint from CLI flags.
+func BuildGetAudienceBrandNewslettersPayload(lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersProjectID *string, lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersBrand *string, lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersLimit string, lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersBearerToken *string) (*lfxv2campaignserviceaudiencebuilder.GetAudienceBrandNewslettersPayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersProjectID
+	}
+	var brand string
+	{
+		if lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersBrand == nil {
+			return nil, fmt.Errorf("missing required flag --brand")
+		}
+		brand = *lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersBrand
+		if utf8.RuneCountInString(brand) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("brand", brand, utf8.RuneCountInString(brand), 1, true))
+		}
+		if utf8.RuneCountInString(brand) > 120 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("brand", brand, utf8.RuneCountInString(brand), 120, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var limit int
+	{
+		var v int64
+		v, err = strconv.ParseInt(lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersLimit, 10, strconv.IntSize)
+		limit = int(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid value for limit, must be INT")
+		}
+		if limit < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("limit", limit, 1, true))
+		}
+		if limit > 10 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("limit", limit, 10, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceaudiencebuilder.GetAudienceBrandNewslettersPayload{}
+	v.ProjectID = projectID
+	v.Brand = brand
+	v.Limit = limit
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildGetExistingAudienceMasterListsPayload builds the payload for the
 // lfx-v2-campaign-service-audience-builder get-existing-audience-master-lists
 // endpoint from CLI flags.
@@ -321,6 +406,61 @@ func BuildPreviewAudienceCountPayload(lfxV2CampaignServiceAudienceBuilderPreview
 		}
 	}
 	v := &lfxv2campaignserviceaudiencebuilder.PreviewAudienceCountPayload{}
+	if body.ListIds != nil {
+		v.ListIds = make([]string, len(body.ListIds))
+		for i, val := range body.ListIds {
+			v.ListIds[i] = val
+		}
+	} else {
+		v.ListIds = []string{}
+	}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildDescribeAudienceListsPayload builds the payload for the
+// lfx-v2-campaign-service-audience-builder describe-audience-lists endpoint
+// from CLI flags.
+func BuildDescribeAudienceListsPayload(lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsBody *string, lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsProjectID *string, lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsBearerToken *string) (*lfxv2campaignserviceaudiencebuilder.DescribeAudienceListsPayload, error) {
+	var err error
+	var body DescribeAudienceListsRequestBody
+	{
+		if lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"list_ids\": [\n         \"Placeat nihil adipisci numquam maiores.\"\n      ]\n   }'")
+		}
+		if body.ListIds == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("list_ids", "body"))
+		}
+		if len(body.ListIds) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ids", body.ListIds, len(body.ListIds), 1, true))
+		}
+		if len(body.ListIds) > 25 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ids", body.ListIds, len(body.ListIds), 25, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var projectID string
+	{
+		if lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceaudiencebuilder.DescribeAudienceListsPayload{}
 	if body.ListIds != nil {
 		v.ListIds = make([]string, len(body.ListIds))
 		for i, val := range body.ListIds {
@@ -459,8 +599,8 @@ func BuildRunAudienceQaPayload(lfxV2CampaignServiceAudienceBuilderRunAudienceQaB
 			}
 		}
 		if body.Stage != nil {
-			if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Survey Reminder" || *body.Stage == "Survey Closing" || *body.Stage == "Report Promo") {
-				err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo"}))
+			if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Survey Reminder" || *body.Stage == "Survey Closing" || *body.Stage == "Report Promo" || *body.Stage == "Newsletter") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo", "Newsletter"}))
 			}
 		}
 		if err != nil {

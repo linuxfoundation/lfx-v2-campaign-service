@@ -2548,6 +2548,12 @@ type ListHubspotEmailsPayload struct {
 	// in the portal, only the newest of what was read. There is no paging; reach
 	// an older template by searching for it.
 	Q *string
+	// Phrases matched as WHOLE WORDS (case-insensitive, punctuation-insensitive)
+	// against email name and subject: an email is returned when ANY phrase appears
+	// in either. One walk serves every phrase, with the same scan bound as `q` and
+	// the same 503 when the bound is reached with nothing matched. Cannot be
+	// combined with `q`.
+	Match []string
 }
 
 // ListHubspotEmailsResult is the result type of the

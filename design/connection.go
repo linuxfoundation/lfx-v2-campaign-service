@@ -2398,6 +2398,19 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Attribute("q", String, "Substring matched against email name and subject, case-insensitively. A search walks every page, so a match is never missed. Omit to list recent emails instead: that listing is capped at 500 and sorted most-recently-updated first. WHICH 500 depends on the provider, because the walk stops once it has enough — so it is NOT guaranteed to be the 500 newest in the portal, only the newest of what was read. There is no paging; reach an older template by searching for it.", func() {
 				Example("KubeCon")
 			})
+			// The template picker's brand-and-event scope. An event is named several ways across
+			// its own templates ("Open Source Summit Japan + AutoLinux + Embedded Linux" ships
+			// emails named "OS Summit Japan + AutoLinux + ..."), so one substring cannot find them
+			// all, and `q` once per phrase would re-read the same pages per phrase. Mutually
+			// exclusive with `q`: the two are different questions, and combining them would make
+			// an empty answer ambiguous about which one found nothing.
+			Attribute("match", ArrayOf(String, func() {
+				MinLength(1)
+				MaxLength(120)
+			}), "Phrases matched as WHOLE WORDS (case-insensitive, punctuation-insensitive) against email name and subject: an email is returned when ANY phrase appears in either. One walk serves every phrase, with the same scan bound as `q` and the same 503 when the bound is reached with nothing matched. Cannot be combined with `q`.", func() {
+				MaxLength(8)
+				Example([]string{"KubeCon", "CloudNativeCon"})
+			})
 			Required("project_id")
 		})
 		Result(func() {
@@ -2415,6 +2428,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		HTTP(func() {
 			GET("/projects/{project_id}/connection-hubspot/emails")
 			Param("q")
+			Param("match")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)

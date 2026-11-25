@@ -149,6 +149,9 @@ type LastSentEmail struct {
 	// ListsUnavailable marks a row whose selection could not be read. Without it the two empty
 	// arrays are indistinguishable from a send that genuinely targeted nothing — false precedent.
 	ListsUnavailable bool
+	// SourceURL is set on a brand newsletter's NEWEST issue only: the brand site or blog the issue
+	// links to, where the next issue's offers and news are found. "" when it could not be read.
+	SourceURL string
 }
 
 // ComposeInput is what a master list is composed from.
@@ -240,4 +243,15 @@ type QaOutcome struct {
 	Checks     QaChecks
 	Findings   []Finding
 	Overall    Verdict
+}
+
+// NewsletterBrand is a brand that has sent at least one HubSpot newsletter: the brand as its
+// newsletter names spell it, and its most recent issue.
+type NewsletterBrand struct {
+	Brand           string
+	LatestEmailName string
+	// LatestSentAt is RFC 3339, or "" when the portal reported no send date.
+	LatestSentAt string
+	// Issues is how many sent newsletters were found for the brand.
+	Issues int
 }

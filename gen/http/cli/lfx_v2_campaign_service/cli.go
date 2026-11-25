@@ -29,7 +29,7 @@ import (
 func UsageCommands() []string {
 	return []string{
 		"lfx-v2-campaign-service-audiences (create-audience|get-audience|list-audiences|update-audience|build-audience)",
-		"lfx-v2-campaign-service-audience-builder (get-audience-builder-capabilities|discover-audience-lists|search-audience-lists|get-audience-suppression-lists|get-audience-last-sent|get-existing-audience-master-lists|preview-audience-count|compose-audience-master|attach-existing-audience|run-audience-qa|interpret-custom-audience|preview-custom-audience|create-custom-audience)",
+		"lfx-v2-campaign-service-audience-builder (get-audience-builder-capabilities|discover-audience-lists|search-audience-lists|get-audience-suppression-lists|get-audience-last-sent|get-audience-newsletter-brands|get-audience-brand-newsletters|get-existing-audience-master-lists|preview-audience-count|describe-audience-lists|compose-audience-master|attach-existing-audience|run-audience-qa|interpret-custom-audience|preview-custom-audience|create-custom-audience)",
 		"lfx-v2-campaign-service-briefs (create-brief|find-brief|get-brief|update-brief|approve-brief|delete-brief|fetch-event-url|upload-creative-asset|list-creative-assets|get-creative-asset|get-asset-plan|delete-creative-asset|create-campaigns|create-send-workflow|adopt-campaign|get-campaign|get-campaign-metrics|get-campaign-settings|get-brief-metrics|generate-email-copy|update-campaign|toggle-campaign-status|update-campaign-budget|update-campaign-bid|apply-keyword-actions|add-negative-keywords|get-keyword-targeting|remove-keyword-targeting|add-keyword-targeting|list-meta-ad-sets|list-meta-ads|toggle-meta-ad-set-status|toggle-meta-ad-status|delete-campaign|get-job|start-email-wizard-plan|plan-email-wizard|generate-wizard-content|update-wizard-sections|clone-wizard-email|set-wizard-send-list|chat-wizard-turn|get-wizard-session)",
 		"lfx-v2-campaign-service-svc (readyz|livez)",
 		"lfx-v2-campaign-service-signed-assets get-signed-creative-asset",
@@ -138,6 +138,16 @@ func ParseEndpoint(
 		lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentLimitFlag       = lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentFlags.String("limit", "3", "")
 		lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentBearerTokenFlag = new(cliStringFlag)
 
+		lfxV2CampaignServiceAudienceBuilderGetAudienceNewsletterBrandsFlags           = flag.NewFlagSet("get-audience-newsletter-brands", flag.ExitOnError)
+		lfxV2CampaignServiceAudienceBuilderGetAudienceNewsletterBrandsProjectIDFlag   = new(cliStringFlag)
+		lfxV2CampaignServiceAudienceBuilderGetAudienceNewsletterBrandsBearerTokenFlag = new(cliStringFlag)
+
+		lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersFlags           = flag.NewFlagSet("get-audience-brand-newsletters", flag.ExitOnError)
+		lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersProjectIDFlag   = new(cliStringFlag)
+		lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersBrandFlag       = new(cliStringFlag)
+		lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersLimitFlag       = lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersFlags.String("limit", "3", "")
+		lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersBearerTokenFlag = new(cliStringFlag)
+
 		lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsFlags           = flag.NewFlagSet("get-existing-audience-master-lists", flag.ExitOnError)
 		lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsProjectIDFlag   = new(cliStringFlag)
 		lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsEventNameFlag   = new(cliStringFlag)
@@ -148,6 +158,11 @@ func ParseEndpoint(
 		lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountBodyFlag        = new(cliStringFlag)
 		lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountProjectIDFlag   = new(cliStringFlag)
 		lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountBearerTokenFlag = new(cliStringFlag)
+
+		lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsFlags           = flag.NewFlagSet("describe-audience-lists", flag.ExitOnError)
+		lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsBodyFlag        = new(cliStringFlag)
+		lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsProjectIDFlag   = new(cliStringFlag)
+		lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsBearerTokenFlag = new(cliStringFlag)
 
 		lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterFlags           = flag.NewFlagSet("compose-audience-master", flag.ExitOnError)
 		lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterBodyFlag        = new(cliStringFlag)
@@ -864,6 +879,7 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsListHubspotEmailsFlags           = flag.NewFlagSet("list-hubspot-emails", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsListHubspotEmailsProjectIDFlag   = new(cliStringFlag)
 		lfxV2CampaignServiceConnectionsListHubspotEmailsQFlag           = new(cliStringFlag)
+		lfxV2CampaignServiceConnectionsListHubspotEmailsMatchFlag       = new(cliStringFlag)
 		lfxV2CampaignServiceConnectionsListHubspotEmailsBearerTokenFlag = new(cliStringFlag)
 
 		lfxV2CampaignServiceConnectionsSearchHubspotCampaignsFlags           = flag.NewFlagSet("search-hubspot-campaigns", flag.ExitOnError)
@@ -954,6 +970,11 @@ func ParseEndpoint(
 	lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentFlags.Var(lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentEventNameFlag, "event-name", "")
 	lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentFlags.Var(lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentBrandShortFlag, "brand-short", "")
 	lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentFlags.Var(lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentBearerTokenFlag, "bearer-token", "")
+	lfxV2CampaignServiceAudienceBuilderGetAudienceNewsletterBrandsFlags.Var(lfxV2CampaignServiceAudienceBuilderGetAudienceNewsletterBrandsProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
+	lfxV2CampaignServiceAudienceBuilderGetAudienceNewsletterBrandsFlags.Var(lfxV2CampaignServiceAudienceBuilderGetAudienceNewsletterBrandsBearerTokenFlag, "bearer-token", "")
+	lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersFlags.Var(lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
+	lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersFlags.Var(lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersBrandFlag, "brand", "")
+	lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersFlags.Var(lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersBearerTokenFlag, "bearer-token", "")
 	lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsFlags.Var(lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsFlags.Var(lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsEventNameFlag, "event-name", "")
 	lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsFlags.Var(lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsBrandShortFlag, "brand-short", "")
@@ -961,6 +982,9 @@ func ParseEndpoint(
 	lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountFlags.Var(lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountBodyFlag, "body", "")
 	lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountFlags.Var(lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountFlags.Var(lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountBearerTokenFlag, "bearer-token", "")
+	lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsFlags.Var(lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsBodyFlag, "body", "")
+	lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsFlags.Var(lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
+	lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsFlags.Var(lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsBearerTokenFlag, "bearer-token", "")
 	lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterFlags.Var(lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterBodyFlag, "body", "")
 	lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterFlags.Var(lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterFlags.Var(lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterBearerTokenFlag, "bearer-token", "")
@@ -1399,6 +1423,7 @@ func ParseEndpoint(
 	lfxV2CampaignServiceConnectionsListRedditAdsAccountsFlags.Var(lfxV2CampaignServiceConnectionsListRedditAdsAccountsBearerTokenFlag, "bearer-token", "")
 	lfxV2CampaignServiceConnectionsListHubspotEmailsFlags.Var(lfxV2CampaignServiceConnectionsListHubspotEmailsProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceConnectionsListHubspotEmailsFlags.Var(lfxV2CampaignServiceConnectionsListHubspotEmailsQFlag, "q", "")
+	lfxV2CampaignServiceConnectionsListHubspotEmailsFlags.Var(lfxV2CampaignServiceConnectionsListHubspotEmailsMatchFlag, "match", "")
 	lfxV2CampaignServiceConnectionsListHubspotEmailsFlags.Var(lfxV2CampaignServiceConnectionsListHubspotEmailsBearerTokenFlag, "bearer-token", "")
 	lfxV2CampaignServiceConnectionsSearchHubspotCampaignsFlags.Var(lfxV2CampaignServiceConnectionsSearchHubspotCampaignsProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceConnectionsSearchHubspotCampaignsFlags.Var(lfxV2CampaignServiceConnectionsSearchHubspotCampaignsQFlag, "q", "")
@@ -1447,8 +1472,11 @@ func ParseEndpoint(
 	lfxV2CampaignServiceAudienceBuilderSearchAudienceListsFlags.Usage = lfxV2CampaignServiceAudienceBuilderSearchAudienceListsUsage
 	lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsFlags.Usage = lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsUsage
 	lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentFlags.Usage = lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentUsage
+	lfxV2CampaignServiceAudienceBuilderGetAudienceNewsletterBrandsFlags.Usage = lfxV2CampaignServiceAudienceBuilderGetAudienceNewsletterBrandsUsage
+	lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersFlags.Usage = lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersUsage
 	lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsFlags.Usage = lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsUsage
 	lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountFlags.Usage = lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountUsage
+	lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsFlags.Usage = lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsUsage
 	lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterFlags.Usage = lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterUsage
 	lfxV2CampaignServiceAudienceBuilderAttachExistingAudienceFlags.Usage = lfxV2CampaignServiceAudienceBuilderAttachExistingAudienceUsage
 	lfxV2CampaignServiceAudienceBuilderRunAudienceQaFlags.Usage = lfxV2CampaignServiceAudienceBuilderRunAudienceQaUsage
@@ -1679,11 +1707,20 @@ func ParseEndpoint(
 			case "get-audience-last-sent":
 				epf = lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentFlags
 
+			case "get-audience-newsletter-brands":
+				epf = lfxV2CampaignServiceAudienceBuilderGetAudienceNewsletterBrandsFlags
+
+			case "get-audience-brand-newsletters":
+				epf = lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersFlags
+
 			case "get-existing-audience-master-lists":
 				epf = lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsFlags
 
 			case "preview-audience-count":
 				epf = lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountFlags
+
+			case "describe-audience-lists":
+				epf = lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsFlags
 
 			case "compose-audience-master":
 				epf = lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterFlags
@@ -2189,12 +2226,21 @@ func ParseEndpoint(
 			case "get-audience-last-sent":
 				endpoint = c.GetAudienceLastSent()
 				data, err = lfxv2campaignserviceaudiencebuilderc.BuildGetAudienceLastSentPayload(lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentProjectIDFlag.value, lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentEventNameFlag.value, lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentBrandShortFlag.value, *lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentLimitFlag, lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentBearerTokenFlag.value)
+			case "get-audience-newsletter-brands":
+				endpoint = c.GetAudienceNewsletterBrands()
+				data, err = lfxv2campaignserviceaudiencebuilderc.BuildGetAudienceNewsletterBrandsPayload(lfxV2CampaignServiceAudienceBuilderGetAudienceNewsletterBrandsProjectIDFlag.value, lfxV2CampaignServiceAudienceBuilderGetAudienceNewsletterBrandsBearerTokenFlag.value)
+			case "get-audience-brand-newsletters":
+				endpoint = c.GetAudienceBrandNewsletters()
+				data, err = lfxv2campaignserviceaudiencebuilderc.BuildGetAudienceBrandNewslettersPayload(lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersProjectIDFlag.value, lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersBrandFlag.value, *lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersLimitFlag, lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersBearerTokenFlag.value)
 			case "get-existing-audience-master-lists":
 				endpoint = c.GetExistingAudienceMasterLists()
 				data, err = lfxv2campaignserviceaudiencebuilderc.BuildGetExistingAudienceMasterListsPayload(lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsProjectIDFlag.value, lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsEventNameFlag.value, lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsBrandShortFlag.value, lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsBearerTokenFlag.value)
 			case "preview-audience-count":
 				endpoint = c.PreviewAudienceCount()
 				data, err = lfxv2campaignserviceaudiencebuilderc.BuildPreviewAudienceCountPayload(lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountBodyFlag.value, lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountProjectIDFlag.value, lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountBearerTokenFlag.value)
+			case "describe-audience-lists":
+				endpoint = c.DescribeAudienceLists()
+				data, err = lfxv2campaignserviceaudiencebuilderc.BuildDescribeAudienceListsPayload(lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsBodyFlag.value, lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsProjectIDFlag.value, lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsBearerTokenFlag.value)
 			case "compose-audience-master":
 				endpoint = c.ComposeAudienceMaster()
 				data, err = lfxv2campaignserviceaudiencebuilderc.BuildComposeAudienceMasterPayload(lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterBodyFlag.value, lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterProjectIDFlag.value, lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterBearerTokenFlag.value)
@@ -2610,7 +2656,7 @@ func ParseEndpoint(
 				data, err = lfxv2campaignserviceconnectionsc.BuildListRedditAdsAccountsPayload(lfxV2CampaignServiceConnectionsListRedditAdsAccountsProjectIDFlag.value, lfxV2CampaignServiceConnectionsListRedditAdsAccountsBearerTokenFlag.value)
 			case "list-hubspot-emails":
 				endpoint = c.ListHubspotEmails()
-				data, err = lfxv2campaignserviceconnectionsc.BuildListHubspotEmailsPayload(lfxV2CampaignServiceConnectionsListHubspotEmailsProjectIDFlag.value, lfxV2CampaignServiceConnectionsListHubspotEmailsQFlag.value, lfxV2CampaignServiceConnectionsListHubspotEmailsBearerTokenFlag.value)
+				data, err = lfxv2campaignserviceconnectionsc.BuildListHubspotEmailsPayload(lfxV2CampaignServiceConnectionsListHubspotEmailsProjectIDFlag.value, lfxV2CampaignServiceConnectionsListHubspotEmailsQFlag.value, lfxV2CampaignServiceConnectionsListHubspotEmailsMatchFlag.value, lfxV2CampaignServiceConnectionsListHubspotEmailsBearerTokenFlag.value)
 			case "search-hubspot-campaigns":
 				endpoint = c.SearchHubspotCampaigns()
 				data, err = lfxv2campaignserviceconnectionsc.BuildSearchHubspotCampaignsPayload(lfxV2CampaignServiceConnectionsSearchHubspotCampaignsProjectIDFlag.value, lfxV2CampaignServiceConnectionsSearchHubspotCampaignsQFlag.value, lfxV2CampaignServiceConnectionsSearchHubspotCampaignsBearerTokenFlag.value)
@@ -2794,8 +2840,11 @@ func lfxV2CampaignServiceAudienceBuilderUsage() {
 	fmt.Fprintln(os.Stderr, `    search-audience-lists: Typeahead over the portal's contact lists, for attaching a list by hand.`)
 	fmt.Fprintln(os.Stderr, `    get-audience-suppression-lists: Resolve the standard suppression terms plus any brand or event-specific suppression lists in the portal.`)
 	fmt.Fprintln(os.Stderr, `    get-audience-last-sent: Find the most recent marketing emails for this event family and report the lists each one targeted.`)
+	fmt.Fprintln(os.Stderr, `    get-audience-newsletter-brands: List the brands that have SENT a HubSpot newsletter in this project's portal, most recently sent first, for the newsletter surface's brand picker. A brand is read from the email name ("<YY>Q<N> - <Brand> - Newsletter - <Month>"). Drafts and scheduled sends do not count. The listing reads the portal's most recently updated emails up to a scan bound, so on a large portal a brand whose newsletters are all older than that is not listed. A bounded read that finds no sent newsletter at all is a recoverable failure, not an empty list. Cached per project for 15 minutes.`)
+	fmt.Fprintln(os.Stderr, `    get-audience-brand-newsletters: Find the brand's most recently SENT HubSpot newsletters and report the lists each one targeted. A newsletter is a sent email whose NAME names the brand the way get-audience-newsletter-brands reads it: the brand parsed from the name must EQUAL the given brand, ignoring case. It is equality, not containment, so "LF" does not match an "LF Education" newsletter and "PyTorch" does not match a "PyTorch Foundation" one; pass a brand exactly as that listing returned it. The newest is the template a new issue clones; the rest are content references. Drafts and scheduled sends are never returned.`)
 	fmt.Fprintln(os.Stderr, `    get-existing-audience-master-lists: Find master lists already composed for this event family, newest quarter first.`)
 	fmt.Fprintln(os.Stderr, `    preview-audience-count: Count the union of the selected lists' memberships — exactly when that is within bounds, as an UPPER-bound estimate (the sum of list sizes, which double-counts overlap) when it is not, and as no number at all when any selected list did not report a size. Creates nothing.`)
+	fmt.Fprintln(os.Stderr, `    describe-audience-lists: Describe in plain English who each list contains, from its HubSpot filter rules, so an operator can see what an audience means before sending to it. Read-only: creates and changes nothing. Rules are rendered deterministically from the filter tree; referenced lists, contact properties and event types are named from the portal where the lookup budget allows, and fall back to their ids. A list that cannot be read is reported with status not_found or unreadable rather than failing the batch; the request fails only when NO list could be read.`)
 	fmt.Fprintln(os.Stderr, `    compose-audience-master: Create the master list in the project's HubSpot portal, excluding the requested suppressions directly through the project's standing standard suppression list and, when asked, the edition's current-registrants list (both found by name and reused), and when brief_id is supplied record the master as that brief's built audience. NOT idempotent.`)
 	fmt.Fprintln(os.Stderr, `    attach-existing-audience: Record lists that already exist in the project's HubSpot portal as a brief's built audience, without composing a new master. Every id is read back from the portal first. When every resolved standard suppression list is supplied they are recorded as the project's standing standard suppression list, and with current_registrants_event the edition's current-registrants list is recorded too; those two lists, found by name and reused, are the only lists HubSpot may create here, so an attach creates at most two. The recorded and returned suppression_list_ids are therefore not the input ids: the standing list's id replaces the standard ids, and the registrants list's id is appended. A list already holding either name that cannot safely be reused is a 409 naming it.`)
 	fmt.Fprintln(os.Stderr, `    run-audience-qa: Audit a composed master list's filters: signal mapping, regulatory suppression, exclusion completeness, and whether this edition's own registrants are included. Creates nothing.`)
@@ -2922,6 +2971,50 @@ func lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentUsage() {
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder get-audience-last-sent --project-id \"cncf\" --event-name \"vo9\" --brand-short \"Repellendus cumque qui.\" --limit 5 --bearer-token \"eyJhbGci...\"")
 }
 
+func lfxV2CampaignServiceAudienceBuilderGetAudienceNewsletterBrandsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-audience-builder get-audience-newsletter-brands", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `List the brands that have SENT a HubSpot newsletter in this project's portal, most recently sent first, for the newsletter surface's brand picker. A brand is read from the email name ("<YY>Q<N> - <Brand> - Newsletter - <Month>"). Drafts and scheduled sends do not count. The listing reads the portal's most recently updated emails up to a scan bound, so on a large portal a brand whose newsletters are all older than that is not listed. A bounded read that finds no sent newsletter at all is a recoverable failure, not an empty list. Cached per project for 15 minutes.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder get-audience-newsletter-brands --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceAudienceBuilderGetAudienceBrandNewslettersUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-audience-builder get-audience-brand-newsletters", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -brand STRING")
+	fmt.Fprint(os.Stderr, " -limit INT")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Find the brand's most recently SENT HubSpot newsletters and report the lists each one targeted. A newsletter is a sent email whose NAME names the brand the way get-audience-newsletter-brands reads it: the brand parsed from the name must EQUAL the given brand, ignoring case. It is equality, not containment, so "LF" does not match an "LF Education" newsletter and "PyTorch" does not match a "PyTorch Foundation" one; pass a brand exactly as that listing returned it. The newest is the template a new issue clones; the rest are content references. Drafts and scheduled sends are never returned.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -brand STRING: `)
+	fmt.Fprintln(os.Stderr, `    -limit INT: `)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder get-audience-brand-newsletters --project-id \"cncf\" --brand \"OpenSSF\" --limit 9 --bearer-token \"eyJhbGci...\"")
+}
+
 func lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsUsage() {
 	// Header with flags
 	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-audience-builder get-existing-audience-master-lists", os.Args[0])
@@ -2966,6 +3059,28 @@ func lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder preview-audience-count --body '{\n      \"list_ids\": [\n         \"Rerum tempora est.\"\n      ]\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceAudienceBuilderDescribeAudienceListsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-audience-builder describe-audience-lists", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Describe in plain English who each list contains, from its HubSpot filter rules, so an operator can see what an audience means before sending to it. Read-only: creates and changes nothing. Rules are rendered deterministically from the filter tree; referenced lists, contact properties and event types are named from the portal where the lookup budget allows, and fall back to their ids. A list that cannot be read is reported with status not_found or unreadable rather than failing the batch; the request fails only when NO list could be read.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder describe-audience-lists --body '{\n      \"list_ids\": [\n         \"Placeat nihil adipisci numquam maiores.\"\n      ]\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterUsage() {
@@ -6154,6 +6269,7 @@ func lfxV2CampaignServiceConnectionsListHubspotEmailsUsage() {
 	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections list-hubspot-emails", os.Args[0])
 	fmt.Fprint(os.Stderr, " -project-id STRING")
 	fmt.Fprint(os.Stderr, " -q STRING")
+	fmt.Fprint(os.Stderr, " -match JSON")
 	fmt.Fprint(os.Stderr, " -bearer-token STRING")
 	fmt.Fprintln(os.Stderr)
 
@@ -6164,11 +6280,12 @@ func lfxV2CampaignServiceConnectionsListHubspotEmailsUsage() {
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
 	fmt.Fprintln(os.Stderr, `    -q STRING: `)
+	fmt.Fprintln(os.Stderr, `    -match JSON: `)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections list-hubspot-emails --project-id \"cncf\" --q \"KubeCon\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections list-hubspot-emails --project-id \"cncf\" --q \"KubeCon\" --match '[\n      \"KubeCon\",\n      \"CloudNativeCon\"\n   ]' --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsSearchHubspotCampaignsUsage() {

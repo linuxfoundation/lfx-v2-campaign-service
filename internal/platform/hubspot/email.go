@@ -669,11 +669,27 @@ func (c *Client) PatchEmailSettings(ctx context.Context, id string, s EmailSetti
 // 2024-10-31 (it's silently non-functional now), so this client never emits it —
 // callers resolve an ILS list id from the Lists v3 API. A COMPLETE `to` object is
 // sent (contactIds cleared) so no stale clone-source recipients remain. MUTATING.
+//
+// The two recipient SETTINGS beside the lists are not stated, so HubSpot applies its own
+// defaults to them. SetSendListWithSettings is for a draft that must keep particular ones.
 func (c *Client) SetSendList(ctx context.Context, id string, ilsListIDs []string, suppressionListIDs []string) (*Email, error) {
+	email, _, err := c.SetSendListWithSettings(ctx, id, ilsListIDs, suppressionListIDs, SendSettings{})
+	return email, err
+}
+
+// SetSendListWithSettings is SetSendList that also STATES the recipient settings given, in the
+// same write. A nil setting is left out, exactly as SetSendList leaves both out.
+//
+// One write rather than two, because the `to` object is written whole: a second PATCH carrying
+// only a setting would be a second complete `to`, with no lists in it.
+//
+// The SendSettings returned are what HubSpot reports on the draft after the write, so a caller
+// can tell a setting that was sent from one that was kept. Nil where the response did not say.
+func (c *Client) SetSendListWithSettings(ctx context.Context, id string, ilsListIDs []string, suppressionListIDs []string, settings SendSettings) (*Email, SendSettings, error) {
 	id = strings.TrimSpace(id)
 	include := uniqueIDs(ilsListIDs)
 	if id == "" || len(include) == 0 {
-		return nil, fmt.Errorf("hubspot: SetSendList requires a non-empty email id and at least one ILS send-list id")
+		return nil, SendSettings{}, fmt.Errorf("hubspot: SetSendList requires a non-empty email id and at least one ILS send-list id")
 	}
 	suppressionIDs := cleanIDs(suppressionListIDs)
 	// HubSpot applies contactIlsLists exclusions AFTER inclusions, so a send-list id
@@ -684,7 +700,7 @@ func (c *Client) SetSendList(ctx context.Context, id string, ilsListIDs []string
 	// send-list assignment. Every include id is checked, not just the first.
 	for _, s := range suppressionIDs {
 		if slices.Contains(include, s) {
-			return nil, fmt.Errorf("hubspot: SetSendList send-list id %q is also in the suppression list — that list would be fully excluded", s)
+			return nil, SendSettings{}, fmt.Errorf("hubspot: SetSendList send-list id %q is also in the suppression list — that list would be fully excluded", s)
 		}
 	}
 	to := map[string]any{
@@ -694,7 +710,20 @@ func (c *Client) SetSendList(ctx context.Context, id string, ilsListIDs []string
 		// rejected by HubSpot, leaving the email with no recipients.
 		"contactIlsLists": map[string]any{"include": include, "exclude": suppressionIDs},
 	}
-	return c.patchEmail(ctx, id, map[string]any{"to": to})
+	if settings.SuppressGraymail != nil {
+		to["suppressGraymail"] = *settings.SuppressGraymail
+	}
+	if settings.LimitSendFrequency != nil {
+		to["limitSendFrequency"] = *settings.LimitSendFrequency
+	}
+	email, raw, err := c.patchEmailRaw(ctx, id, map[string]any{"to": to})
+	if err != nil {
+		return nil, SendSettings{}, err
+	}
+	// Best-effort: the write succeeded, so a response whose settings cannot be read reports
+	// none rather than failing a send list that is already set.
+	reported, _ := decodeSendSettings(raw)
+	return email, reported, nil
 }
 
 // patchEmail PATCHes the email's DRAFT (/marketing/v3/emails/{id}/draft) and decodes
@@ -702,9 +731,16 @@ func (c *Client) SetSendList(ctx context.Context, id string, ilsListIDs []string
 // the unpublished draft buffer; the base /{id} route mutates the LIVE email instead,
 // so draft edits must go through /draft (verified against HubSpot's v3 spec).
 func (c *Client) patchEmail(ctx context.Context, id string, payload map[string]any) (*Email, error) {
+	email, _, err := c.patchEmailRaw(ctx, id, payload)
+	return email, err
+}
+
+// patchEmailRaw is patchEmail that also hands back the response body, for a caller that reads
+// more of the returned email than the Email subset carries.
+func (c *Client) patchEmailRaw(ctx context.Context, id string, payload map[string]any) (*Email, []byte, error) {
 	raw, err := c.doRequest(ctx, http.MethodPatch, emailsPath+"/"+url.PathEscape(id)+"/draft", payload, false)
 	if err != nil {
-		return nil, fmt.Errorf("hubspot: patch email %s draft: %w", id, err)
+		return nil, nil, fmt.Errorf("hubspot: patch email %s draft: %w", id, err)
 	}
 	// Decode into a POINTER: a JSON `null` body unmarshals into a *Email as nil
 	// WITHOUT error (Go's null-into-pointer semantics), which is exactly how we detect
@@ -714,16 +750,16 @@ func (c *Client) patchEmail(ctx context.Context, id string, payload map[string]a
 	var e *Email
 	if err := json.Unmarshal(raw, &e); err != nil {
 		// An undecodable 2xx body: same UNCONFIRMED treatment (the change may have landed).
-		return nil, unconfirmed(fmt.Sprintf("hubspot: patch email %s UNCONFIRMED (2xx with an undecodable body — the update may have applied; verify before retrying)", id), err)
+		return nil, nil, unconfirmed(fmt.Sprintf("hubspot: patch email %s UNCONFIRMED (2xx with an undecodable body — the update may have applied; verify before retrying)", id), err)
 	}
 	if e == nil {
-		return nil, unconfirmed(fmt.Sprintf("hubspot: patch email %s UNCONFIRMED (2xx with a null body — the update may have applied; verify before retrying)", id), nil)
+		return nil, nil, unconfirmed(fmt.Sprintf("hubspot: patch email %s UNCONFIRMED (2xx with a null body — the update may have applied; verify before retrying)", id), nil)
 	}
 	if e.ID == "" {
 		e.ID = id // some PATCH responses omit the id; keep the caller's
 	}
 	e.AppURL = c.emailEditURL(e.ID)
-	return e, nil
+	return e, raw, nil
 }
 
 // EmailDetailsURL links to a SENT email's performance page. The edit link is wrong for a
