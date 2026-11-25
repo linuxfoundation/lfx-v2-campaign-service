@@ -150,7 +150,7 @@ func campaignBidding(manualBid float64, objective string) (campaignBiddingPlan, 
 	switch objective {
 	case "", ObjectiveWebsiteVisit, ObjectiveWebsiteConversion, ObjectiveLeadGeneration, ObjectiveEngagement:
 	default:
-		return campaignBiddingPlan{}, fmt.Errorf("linkedin: objective %q is not one this service creates; use %s, %s or %s", objective, ObjectiveWebsiteVisit, ObjectiveWebsiteConversion, ObjectiveLeadGeneration)
+		return campaignBiddingPlan{}, fmt.Errorf("linkedin: objective %q is not one this service creates; use %s, %s or %s (or %s for a document create)", objective, ObjectiveWebsiteVisit, ObjectiveWebsiteConversion, ObjectiveLeadGeneration, ObjectiveEngagement)
 	}
 	// ENGAGEMENT (#665) is a document create's default: automatic only, optimising for reach
 	// (MAX_REACH, costType CPM), the Campaign Objectives row for documents. Name segment

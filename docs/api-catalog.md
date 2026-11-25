@@ -1698,6 +1698,11 @@ with **Maximum delivery** (automatic bidding). Optional; exact lowercase strings
 | `traffic` | manual | refused `400` | | | | | |
 | `lead_generation` (#664) | automatic (default) | `LEAD_GENERATION` | `MAX_LEAD` | `CPM` | — | `Leads` | no (needs `leadGenForm`) |
 | `lead_generation` | manual | refused `400` | | | | | |
+| omitted, with `format: "document"` (#665) | automatic (default) | `ENGAGEMENT` | `MAX_REACH` | `CPM` | — | `Engagement` | no |
+| `traffic` / `conversions` with `format: "document"`, or a manual bid | | refused `400` | | | | | |
+
+The rows above `format: "document"` describe every other format; a document create takes only an
+omitted objective (ENGAGEMENT) or `lead_generation` with a form (see LinkedInConfig document ads).
 
 LinkedIn rules, from li-lms-2026-02 (unchanged through li-lms-2026-10; the service pins `202611` since #639),
 consulted 2026-11-13: "Ad Budget Type Allowable Combinations" — `WEBSITE_CONVERSION` allows `NONE`,
@@ -1729,7 +1734,8 @@ create's by-name reuse also compares the bidding mode — a same-name campaign r
 the reverse, and a same-name `WEBSITE_CONVERSION` campaign that reports no `optimizationTargetType`
 is not reused for `MAX_CONVERSION` either (the create aborts; a manual create still reuses it). The settings readback's `objective_type` reads the
 `objectiveType` the create recorded in the campaign's result (automatic + `conversions` →
-`WEBSITE_CONVERSION`, `lead_generation` → `LEAD_GENERATION`, otherwise `WEBSITE_VISIT`), never the config snapshot, which a campaign
+`WEBSITE_CONVERSION`, `lead_generation` → `LEAD_GENERATION`, a `format: "document"` create with no objective →
+`ENGAGEMENT` (#665), otherwise `WEBSITE_VISIT`), never the config snapshot, which a campaign
 update can replace.
 
 #### LinkedInConfig Audience Expansion and Audience Network (#667)

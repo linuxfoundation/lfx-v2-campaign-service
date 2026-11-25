@@ -5080,15 +5080,16 @@ type CampaignSettingsFieldResponseBody struct {
 	// LinkedIn's `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the
 	// currency is not reported, never a bare number) are upstream-only, and
 	// `objective_type` is compared against the objective the recorded bidding
-	// strategy implies (automatic WEBSITE_VISIT, or the WEBSITE_CONVERSION or
-	// LEAD_GENERATION (#664) the create recorded; manual WEBSITE_CONVERSION;
-	// `unknown` when none is recorded); `audience_expansion_enabled` and
-	// `offsite_delivery_enabled` (#667: LinkedIn's audienceExpansionEnabled and
-	// offsiteDeliveryEnabled, `true` or `false`, absent when not reported) are
-	// upstream-only; a campaign reporting both a daily and a total budget, neither
-	// (as under a campaign group's shared budget), or a non-USD amount reads both
-	// budget fields `unknown`. The vocabulary is per-platform and may grow, so a
-	// consumer must render an unrecognised field name rather than dropping it.
+	// strategy implies (automatic WEBSITE_VISIT, or the WEBSITE_CONVERSION,
+	// LEAD_GENERATION (#664) or ENGAGEMENT (#665, a document create) the create
+	// recorded; manual WEBSITE_CONVERSION; `unknown` when none is recorded);
+	// `audience_expansion_enabled` and `offsite_delivery_enabled` (#667:
+	// LinkedIn's audienceExpansionEnabled and offsiteDeliveryEnabled, `true` or
+	// `false`, absent when not reported) are upstream-only; a campaign reporting
+	// both a daily and a total budget, neither (as under a campaign group's shared
+	// budget), or a non-USD amount reads both budget fields `unknown`. The
+	// vocabulary is per-platform and may grow, so a consumer must render an
+	// unrecognised field name rather than dropping it.
 	Field *string `form:"field,omitempty" json:"field,omitempty" xml:"field,omitempty"`
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.

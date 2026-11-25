@@ -290,7 +290,10 @@ type CampaignInput struct {
 	// MAX_CLICK; a positive value is a manual max CPC under WEBSITE_CONVERSION. The objective and
 	// the campaign name's Objective segment follow the choice. See campaignBidding.
 	ManualCPCBid float64
-	// Objective is the requested objectiveType (#582): "" lets ManualCPCBid decide, as above;
+	// Objective is the requested objectiveType (#582): "" lets ManualCPCBid decide, as above,
+	// except for FormatDocument (#665), where "" becomes ObjectiveEngagement (MAX_REACH, automatic
+	// only) and only ObjectiveEngagement or ObjectiveLeadGeneration is accepted (documentObjective);
+	// ObjectiveEngagement is refused for every other format;
 	// ObjectiveWebsiteVisit is automatic only; ObjectiveWebsiteConversion with ManualCPCBid 0 is
 	// automatic bidding for conversions (MAX_CONVERSION, costType CPM) and requires Conversions,
 	// because LinkedIn will not activate a MAX_CONVERSION campaign without an associated

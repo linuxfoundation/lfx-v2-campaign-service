@@ -236,7 +236,9 @@ type linkedinConfig struct {
 	// "lead_generation" (#664: LEAD_GENERATION / MAX_LEAD, automatic only, requires LeadGenForm).
 	// Omitted, the bidding strategy decides as before (automatic → WEBSITE_VISIT / MAX_CLICK,
 	// manual → WEBSITE_CONVERSION / NONE). "conversions" with automatic bidding creates
-	// WEBSITE_CONVERSION / MAX_CONVERSION and requires Conversions. See linkedinObjective.
+	// WEBSITE_CONVERSION / MAX_CONVERSION and requires Conversions. See linkedinObjective. With
+	// format "document" (#665) omitted is ENGAGEMENT / MAX_REACH, "lead_generation" is the only
+	// other value accepted, and a manual bid is refused (see linkedinDocumentFormat).
 	Objective string `json:"objective,omitempty"`
 	// JobFunctions replace the default job functions in the profile's jobFunctions clause
 	// (#585). Not read with Targeting. See linkedin.ValidateJobFunctions.
