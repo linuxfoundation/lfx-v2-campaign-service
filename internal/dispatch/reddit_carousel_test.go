@@ -145,6 +145,9 @@ func TestRedditCarousel_RefusedBeforeAnyUpstreamCall(t *testing.T) {
 	}{
 		{"flag off", "", carouselSizer(), true, carouselExtra(rcCards...), constants.EnvRedditCarouselEnabled},
 		{"flag not exactly true", "TRUE", carouselSizer(), true, carouselExtra(rcCards...), constants.EnvRedditCarouselEnabled},
+		// An explicit empty array is supplied, not absent: gated while off, and too few cards.
+		{"empty array, flag off", "", carouselSizer(), true, `,"carouselCards":[]`, constants.EnvRedditCarouselEnabled},
+		{"empty array", "true", carouselSizer(), true, `,"carouselCards":[]`, "0 cards supplied; a carousel takes 2 to 6"},
 		{"one card", "true", carouselSizer(), true, carouselExtra(rcCards[0]), "1 cards supplied; a carousel takes 2 to 6"},
 		{"seven cards", "true", carouselSizer(), true, carouselExtra(seven...), "7 cards supplied"},
 		{"with imageAssetId", "true", carouselSizer(), true, carouselExtra(rcCards...) + `,"imageAssetId":"` + raAsset + `"`, "cannot be combined"},
@@ -202,6 +205,8 @@ func TestRedditCarousel_PreflightRefusesSynchronously(t *testing.T) {
 		{"flag off", "", "", carouselExtra(rcCards...), constants.EnvRedditCarouselEnabled},
 		// Off, an unrelated mistyped field must not turn the gated carousel into an accepted job.
 		{"flag off beside a broken field", "", "", carouselExtra(rcCards...) + `,"keywords":"not-a-list"`, constants.EnvRedditCarouselEnabled},
+		{"empty array, flag off", "", "", `,"carouselCards":[]`, constants.EnvRedditCarouselEnabled},
+		{"empty array", "true", "", `,"carouselCards":[]`, "0 cards supplied; a carousel takes 2 to 6"},
 		{"one card", "true", "", carouselExtra(rcCards[0]), "a carousel takes 2 to 6"},
 		{"with imageAssetId", "true", "", carouselExtra(rcCards...) + `,"imageAssetId":"` + raAsset + `"`, "cannot be combined"},
 		{"malformed id", "true", "", carouselExtra(rcCards[0], "x"), "not a valid asset id"},
@@ -231,6 +236,14 @@ func TestRedditCarousel_PreflightRefusesSynchronously(t *testing.T) {
 	if err := pre(carouselExtra(rcCards...)); !errors.Is(err, domain.ErrPreflightNotApplicable) {
 		t.Fatalf("valid carousel config: err = %v, want ErrPreflightNotApplicable", err)
 	}
+	// null (like omitting the field) is absent, flag on or off.
+	for _, flag := range []string{"", "true"} {
+		t.Setenv(constants.EnvRedditCarouselEnabled, flag)
+		if err := pre(`,"carouselCards":null`); errors.Is(err, domain.ErrCreateConfigInvalid) {
+			t.Fatalf("flag %q: carouselCards null was refused: %v", flag, err)
+		}
+	}
+	t.Setenv(constants.EnvRedditCarouselEnabled, "true")
 	// With both flags on, the video gate passes a well-formed video, so the carousel's own
 	// exclusivity rule is what refuses the mix.
 	t.Setenv(constants.EnvRedditVideoEnabled, "true")

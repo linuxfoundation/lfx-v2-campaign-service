@@ -855,6 +855,7 @@ carouselCards?: [{imageAssetId: string, headline: string, destinationUrl: string
                                   `"true"`: the shape is from Reddit's public OpenAPI document and has
                                   not been sent live. Synchronous **400** "invalid campaign config:
                                   redditConfig: ..." for the flag off, a wrong JSON type, fewer than 2
+                                  (an explicit `[]` included; only omitted or `null` is absent)
                                   or more than 6 cards, a card field outside those limits, a non-UUID
                                   id, a mix with `postUrl` / `imageUrl` / `imageAssetId` /
                                   `videoAssetId` / `thumbnailAssetId`, or signed asset URLs not

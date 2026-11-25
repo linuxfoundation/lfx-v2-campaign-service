@@ -52,10 +52,15 @@ func redditCarouselInvalid(format string, args ...any) error {
 
 // checkRedditCarouselChoice applies the config-only carousel rules, shared by PreflightCreate
 // (synchronous 400) and Dispatch (again, pre-create, for any path that skipped preflight). It
-// returns each card's canonical asset id, or nil when carouselCards is absent or empty. The
+// returns each card's canonical asset id, or nil when carouselCards is absent or null. The
 // deployment gate is checked first, so it never depends on the cards' validity.
+//
+// An explicit empty array is SUPPLIED, not absent: encoding/json decodes `[]` to a non-nil empty
+// slice, and it must reach the gate (400 while the flag is off) and the count check (400 for
+// fewer than 2 cards). Treating it as absent would let the create proceed with no creative at
+// all — a campaign and ad group with no post, recorded as a clean created.
 func (d *RedditDispatcher) checkRedditCarouselChoice(cfg redditConfig) ([]string, error) {
-	if len(cfg.CarouselCards) == 0 {
+	if cfg.CarouselCards == nil {
 		return nil, nil
 	}
 	if !redditCarouselEnabled() {

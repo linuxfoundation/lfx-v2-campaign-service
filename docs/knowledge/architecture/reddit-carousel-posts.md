@@ -66,7 +66,9 @@ error, the steps and the ad warning (`scrubRedditOutcome`).
 - **Pre-flight (synchronous 400)**: `checkRedditCarouselShape` on the raw config (a non-array
   or non-string card field, flag on or off), then `checkRedditCarouselChoice` on the best-effort
   decode: the flag off (named, checked first), a mix with another creative, two or more variants
-  with one ad per variant on, a card count outside 2 to 6, signed asset URLs not configured, and
+  with one ad per variant on, a card count outside 2 to 6 (an explicit `[]` is supplied, not
+  absent: it is gated and refused as 0 cards; only an omitted or `null` field is absent), signed
+  asset URLs not configured, and
   per card a missing or non-UUID `imageAssetId`, a blank or over-180-character headline, or a
   `destinationUrl` that is missing, not absolute http(s), carries userinfo or has a malformed
   query. Refusals name the 1-based card and never echo a headline or URL.
