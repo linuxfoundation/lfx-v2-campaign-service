@@ -1910,7 +1910,7 @@ is the single-image create, unchanged.
   "format": "carousel",
   "carouselIntroText": "Meet the KubeCon 2099 keynote speakers",  // required, at most 255 characters
   "carouselCards": [                                              // 2-10, replaces variants
-    { "imageAssetId": "<brief creative asset id>",                // required: PNG/JPEG, <= 10 MB, <= 4320x4320
+    { "imageAssetId": "<brief creative asset id>",                // required: square PNG/JPEG, <= 10 MB, <= 4320x4320
       "headline": "Keynote: Jane Doe" },                          // required, at most 45 characters
     { "imageAssetId": "<brief creative asset id>", "headline": "Panel: Platform teams",
       "destinationUrl": "https://events.example.org/schedule" }    // optional, default the registration URL
@@ -1950,9 +1950,11 @@ array of objects whose fields are the three strings above (`null`, a number, an 
 intro text blank or dash-only after normalisation, or over 45 / 255 characters (refused, never
 truncated); a `destinationUrl` that is not an absolute `http(s)` URL, carries userinfo or a
 malformed query, or is over 2,000 characters; and `objective: "lead_generation"` (a lead gen
-carousel is not built yet). An asset that does not exist for the brief, is a video, or is not a
-PNG/JPEG within the limits above fails the job before anything is created; so does a tagged
-landing page over 2,000 characters.
+carousel is not built yet); and a card image whose recorded dimensions are not exactly square
+(1:1; decision 2026-11-25, LinkedIn recommends 1:1 and documents no tolerance). An asset that does
+not exist for the brief, is a video, or is not a square PNG/JPEG within the limits above (checked
+from the image itself when no dimensions are recorded) fails the job before anything is created;
+so does a tagged landing page over 2,000 characters.
 
 **Probe before enabling (owed):** one paused create in the shared ad account with two cards;
 confirm the campaign is accepted with `format: CAROUSEL`, the post with `content.carousel` and

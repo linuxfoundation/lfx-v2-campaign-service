@@ -5,6 +5,7 @@ package dispatch
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
@@ -115,4 +117,46 @@ func linkedinCarouselFormat(cfg linkedinConfig) (string, error) {
 		return refuse(err)
 	}
 	return linkedin.FormatCarousel, nil
+}
+
+// assetMetadataReader is the bytes-free asset read PreflightCreate uses for a carousel card's
+// recorded dimensions. The production repository implements it (the assertion below); a reader
+// without it leaves the shape to Dispatch, which decodes the image header.
+type assetMetadataReader interface {
+	GetAssetMetadata(ctx context.Context, projectID, briefID, assetID string) (*model.CreativeAsset, error)
+}
+
+var _ assetMetadataReader = domain.CreativeAssetRepository(nil)
+
+// checkCarouselCardShapes is PreflightCreate's square-image check for a carousel create (#665,
+// decision 2026-11-25: a carousel card image must be exactly 1:1; LinkedIn's spec recommends 1:1
+// and documents no tolerance). It reads each distinct card asset's RECORDED width and height,
+// without its bytes, scoped to the brief the create targets, and refuses one that is not square
+// with an ErrCreateConfigInvalid pre-flight refusal (a synchronous 400). It decides nothing it
+// cannot see: no brief in the context, a reader without metadata, an asset that is missing or
+// unreadable, or dimensions not recorded (zero) all pass here and are decided by Dispatch, which
+// loads the image and runs linkedin.ValidateCarouselImage before any LinkedIn request.
+func (d *LinkedInDispatcher) checkCarouselCardShapes(ctx context.Context, cfg linkedinConfig) error {
+	brief := model.CreatePreflightBrief(ctx)
+	meta, ok := d.creatives.(assetMetadataReader)
+	if brief == nil || !ok {
+		return nil
+	}
+	seen := map[string]bool{}
+	for i, card := range cfg.CarouselCards {
+		id, err := uuid.Parse(strings.TrimSpace(card.ImageAssetID))
+		if err != nil || seen[id.String()] {
+			continue
+		}
+		seen[id.String()] = true
+		asset, err := meta.GetAssetMetadata(ctx, brief.ProjectID, brief.ID, id.String())
+		if err != nil || asset == nil || asset.Width == 0 || asset.Height == 0 {
+			continue
+		}
+		if asset.Width != asset.Height {
+			return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.carouselCards[%d].imageAssetId %s is a %dx%d image; a LinkedIn carousel card image must be square (1:1)",
+				domain.ErrCreateConfigInvalid, i, id.String(), asset.Width, asset.Height))
+		}
+	}
+	return nil
 }

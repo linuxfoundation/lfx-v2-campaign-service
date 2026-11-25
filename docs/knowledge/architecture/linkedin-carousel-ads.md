@@ -38,7 +38,10 @@ and again in `Dispatch`, before any LinkedIn request.
 From LinkedIn's carousel ad specifications (help a88137) and the Carousel Ads API
 (li-lms-2026-11): 2 to 10 cards; card headline at most 45 characters (the API's media title takes
 under 400); intro text at most 255; images PNG or JPEG, at most 10 MB and 4320x4320 pixels (no
-minimum is documented); destination `http(s)`, at most 2,000 characters, checked on the tagged URL
+minimum is documented), and exactly square (decision 2026-11-25: LinkedIn recommends 1:1 and
+scales cards to 312x312, with no documented tolerance). `PreflightCreate` refuses a card whose
+RECORDED width and height are not square (`checkCarouselCardShapes`, a bytes-free metadata read
+scoped to the brief); Dispatch and the client refuse it from the image header; destination `http(s)`, at most 2,000 characters, checked on the tagged URL
 before the campaign group exists. A lead generation carousel (one form for every card) is refused:
 that creative shape is not built.
 

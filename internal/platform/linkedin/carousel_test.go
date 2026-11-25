@@ -92,6 +92,11 @@ func TestValidateCarouselImage(t *testing.T) {
 		{"taller than 4320", ImageUpload{Data: pngHeaderOnly(100, 4321), MimeType: "image/png"}, "accept at most 4320x4320"},
 		{"over 10 MB", ImageUpload{Data: big, MimeType: "image/png"}, "at most 10000000"},
 		{"gif", ImageUpload{Data: testPNG(t, 100, 100), MimeType: "image/gif"}, "only PNG and JPEG"},
+		// Square only (decision 2026-11-25): exact 1:1, no tolerance.
+		{"landscape", ImageUpload{Data: testPNG(t, 1200, 627), MimeType: "image/png"}, "the image is 1200x627; a LinkedIn carousel card image must be square (1:1)"},
+		{"portrait", ImageUpload{Data: testJPEG(t, 1080, 1350), MimeType: "image/jpeg"}, "must be square (1:1)"},
+		{"one pixel off square", ImageUpload{Data: testPNG(t, 1080, 1081), MimeType: "image/png"}, "must be square (1:1)"},
+		{"4320 square", ImageUpload{Data: pngHeaderOnly(4320, 4320), MimeType: "image/png"}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := ValidateCarouselImage(tc.in)

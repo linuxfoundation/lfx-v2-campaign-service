@@ -829,8 +829,15 @@ func (d *LinkedInDispatcher) PreflightCreate(ctx context.Context, projectID stri
 	if err := checkFormatShape(config); err != nil {
 		return err
 	}
-	if _, err := linkedinFormat(cfg, plan); err != nil {
+	format, err := linkedinFormat(cfg, plan)
+	if err != nil {
 		return err
+	}
+	// A carousel card image whose recorded shape is not square (#665) is a synchronous 400 too.
+	if format == linkedin.FormatCarousel {
+		if err := d.checkCarouselCardShapes(ctx, cfg); err != nil {
+			return err
+		}
 	}
 	// Video variants (#586): the feature gate and the request shape are a synchronous 400 too.
 	if err := checkLinkedInVideoVariants(cfg); err != nil {

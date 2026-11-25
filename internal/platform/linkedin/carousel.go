@@ -29,7 +29,9 @@ import (
 //     Conversions (MAX_CONVERSION, or manual), so every bid plan this service creates applies.
 //   - Carousel ad specifications (https://www.linkedin.com/help/lms/answer/88137): "a minimum of
 //     two cards and a maximum of ten cards"; intro text "a maximum of 255 characters"; headline
-//     45 characters; "Max file size: 10 MB"; "Max image dimension: 4320 x 4320 pixels"; JPG or
+//     45 characters; "Max file size: 10 MB"; "Max image dimension: 4320 x 4320 pixels";
+//     "Recommended individual image spec: 1080 x 1080px with a 1:1 aspect ratio", which this
+//     service requires exactly (decision 2026-11-25; no tolerance is documented); JPG or
 //     PNG (the asset store holds only those); destination link "up to 2,000 characters" with an
 //     http:// or https:// prefix.
 //
@@ -123,8 +125,8 @@ func ValidateCarousel(cards []CarouselCard, introText string) error {
 }
 
 // ValidateCarouselImage reports whether in can be uploaded as a carousel card image: PNG or JPEG,
-// at most MaxCarouselImageBytes, neither side over 4320 pixels, and under the Images API's pixel
-// ceiling. It decodes only the header and never quotes bytes.
+// at most MaxCarouselImageBytes, neither side over 4320 pixels, under the Images API's pixel
+// ceiling, and exactly square. It decodes only the header and never quotes bytes.
 func ValidateCarouselImage(in ImageUpload) error {
 	cfg, err := decodeImageHeader(in, MaxCarouselImageBytes, "carousel ads")
 	if err != nil {
@@ -135,6 +137,11 @@ func ValidateCarouselImage(in ImageUpload) error {
 	}
 	if int64(cfg.Width)*int64(cfg.Height) >= maxImagePixels {
 		return fmt.Errorf("%w: the image is %dx%d; LinkedIn accepts fewer than %d pixels", ErrImageInvalid, cfg.Width, cfg.Height, maxImagePixels)
+	}
+	// Square only (decision 2026-11-25): LinkedIn recommends 1:1 and scales every card to
+	// 312x312, documenting no tolerance, so anything but an exact 1:1 is refused.
+	if cfg.Width != cfg.Height {
+		return fmt.Errorf("%w: the image is %dx%d; a LinkedIn carousel card image must be square (1:1)", ErrImageInvalid, cfg.Width, cfg.Height)
 	}
 	return nil
 }

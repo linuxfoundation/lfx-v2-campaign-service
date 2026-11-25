@@ -1028,7 +1028,7 @@ headers for the ETag. `createVideoDarkPost` shares `darkPostEnvelope`/`postDarkP
 cards, cards or intro text under another format, what `ValidateCarousel` refuses (2 to 10 cards,
 headline at most 45, intro at most 255, destination per `validateLandingURL`, the rules
 `validateRegistrationURL` now delegates to, at most 2,000 characters), a card image not supplied or
-refused by `ValidateCarouselImage` (PNG/JPEG, at most 10 MB, at most 4320x4320), a lead generation
+refused by `ValidateCarouselImage` (PNG/JPEG, at most 10 MB, at most 4320x4320, exactly square), a lead generation
 carousel (`ValidateLeadGen`), and a tagged landing page over 2,000 characters
 (`carouselLandingPages`, against the final campaign name). `uploadVariantImages` uploads each
 distinct card image; `createCarousel` posts the dark post (`createCarouselDarkPost`: cards in

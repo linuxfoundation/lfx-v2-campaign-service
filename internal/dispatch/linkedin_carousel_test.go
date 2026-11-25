@@ -198,6 +198,77 @@ func TestLinkedInCarousel_ImageRefusedByTheCarouselRule(t *testing.T) {
 	}
 }
 
+// liMetadataAssets adds the bytes-free metadata read to multiCreativeAssets, answering each asset's
+// RECORDED width and height as the production repository does.
+type liMetadataAssets struct{ *multiCreativeAssets }
+
+func (m liMetadataAssets) GetAssetMetadata(_ context.Context, _, _, assetID string) (*model.CreativeAsset, error) {
+	a, ok := m.assets[assetID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	meta := *a
+	meta.Bytes = nil
+	return &meta, nil
+}
+
+// TestLinkedInCarousel_CardImagesMustBeSquare (decision 2026-11-25): a card image that is not
+// exactly 1:1 is a synchronous 400 when its recorded dimensions say so, and is refused again by
+// Dispatch from the image header before any LinkedIn request; a square one, or one whose
+// dimensions were never recorded, passes PreflightCreate.
+func TestLinkedInCarousel_CardImagesMustBeSquare(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		w, h            int  // card 2's pixels
+		recorded        bool // card 2's width and height are on its row
+		preflight400    bool
+		dispatchRefused bool
+	}{
+		{"square", 600, 600, true, false, false},
+		{"landscape, recorded", 1200, 627, true, true, true},
+		{"one pixel off, recorded", 1080, 1081, true, true, true},
+		{"landscape, not recorded", 1200, 627, false, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(constants.EnvLinkedInAdsCarouselEnabled, "true")
+			api := newLIImageAPI(t)
+			assets := liCarouselAssets(t)
+			assets.assets[msAssetID].Width, assets.assets[msAssetID].Height = 1080, 1080
+			b := &model.CreativeAsset{ID: liCarouselAssetB, MimeType: model.MimeTypePNG, Bytes: msTestPNG(t, tc.w, tc.h)}
+			if tc.recorded {
+				b.Width, b.Height = tc.w, tc.h
+			}
+			assets.assets[liCarouselAssetB] = b
+			d := newLIImageDispatcher(api, liMetadataAssets{assets}, nil)
+			cfg := liCarouselConfig("", liCard(msAssetID, ""), liCard(liCarouselAssetB, ""))
+
+			ctx := model.WithCreatePreflightBrief(context.Background(), testBrief())
+			perr := d.PreflightCreate(ctx, "cncf", model.ProviderLinkedInAds, cfg)
+			if tc.preflight400 {
+				if !errors.Is(perr, domain.ErrCreateConfigInvalid) || !strings.Contains(perr.Error(), "carouselCards[1].imageAssetId") || !strings.Contains(perr.Error(), "must be square (1:1)") {
+					t.Errorf("PreflightCreate = %v, want a 400 naming carouselCards[1] as not square", perr)
+				}
+			} else if !errors.Is(perr, domain.ErrPreflightNotApplicable) {
+				t.Errorf("PreflightCreate = %v, want ErrPreflightNotApplicable", perr)
+			}
+
+			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+			if !tc.dispatchRefused {
+				if err != nil || camp == nil {
+					t.Fatalf("Dispatch of square cards: camp=%v err=%v", camp, err)
+				}
+				return
+			}
+			if camp != nil || !isNoUpstreamCreate(err) || !strings.Contains(err.Error(), "must be square (1:1)") {
+				t.Fatalf("Dispatch = camp %v err %v; want the square refusal before any create", camp, err)
+			}
+			if n := api.count(""); n != 0 {
+				t.Errorf("%d request(s) reached LinkedIn", n)
+			}
+		})
+	}
+}
+
 // TestLinkedInCarousel_DefaultCreateUnchanged: with the flag on, a create that names no carousel
 // field is today's single-image create — no campaign format, no carousel post.
 func TestLinkedInCarousel_DefaultCreateUnchanged(t *testing.T) {
