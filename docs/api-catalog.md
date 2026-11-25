@@ -835,13 +835,13 @@ thumbnailAssetId?: string       — OPTIONAL (#549) id of a stored PNG or JPEG o
                                   post's thumbnail. Only with `videoAssetId` (see above).
 carouselCards?: [{imageAssetId: string, headline: string, destinationUrl: string}]
                                 — OPTIONAL (#661) 2 to 6 cards authored as ONE promoted CAROUSEL post
-                                  before the campaign:
+                                  before the campaign, on POST /profiles/{account}/posts, with one
+                                  content entry per card in order:
                                   {"type":"CAROUSEL","headline":..,"allow_comments":false,
                                    "content":[{"media_url":<card image URL>,"caption":<card headline>,
                                    "call_to_action":..,"destination_url":<card URL + UTM>}, ...]}
                                   Each card URL gets the post's UTM parameters with
                                   `utm_content=card-<k>` (1-based card position).
-                                  on POST /profiles/{account}/posts, one entry per card in order.
                                   `imageAssetId` is a stored PNG/JPEG of THIS brief, served at a
                                   short-lived signed image URL minted immediately before the request;
                                   `headline` (required, at most 180 characters: the schema's caption
