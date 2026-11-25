@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
@@ -71,17 +72,30 @@ type boostServer struct {
 	// existingCreatives the creatives finder. Empty means none.
 	existingCampaign  string
 	existingCreatives string
+	finderStatus      int // creatives finder status; 0 is 200
 	creativeStatus    int // creative POST status; 0 is 201
+	// stateful makes the server remember what it created: the group search and the group GET
+	// answer the posted group, the campaign search the posted campaign, and the creatives finder
+	// the posted creative. creativeDelay holds each creative POST that long before it lands.
+	stateful      bool
+	group         map[string]any
+	creativeDelay time.Duration
 }
 
 func (s *boostServer) handler(t *testing.T) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.EscapedPath()
+		if r.Method == http.MethodPost && strings.HasSuffix(path, "/creatives") && s.creativeDelay > 0 {
+			time.Sleep(s.creativeDelay) // outside the lock, so the other create's requests proceed
+		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		path := r.URL.EscapedPath()
 		s.calls = append(s.calls, r.Method+" "+path)
 		raw, _ := io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
+		if s.stateful && s.statefulAnswer(w, r, path, raw) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && strings.HasPrefix(path, "/posts/"):
 			if s.postStatus != 0 {
@@ -92,6 +106,11 @@ func (s *boostServer) handler(t *testing.T) http.HandlerFunc {
 			_, _ = io.WriteString(w, s.post)
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/creatives"):
 			s.queries = append(s.queries, r.URL.RawQuery)
+			if s.finderStatus != 0 {
+				w.WriteHeader(s.finderStatus)
+				_, _ = io.WriteString(w, `{"status":500,"message":"finder down"}`)
+				return
+			}
 			if s.existingCreatives != "" {
 				_, _ = io.WriteString(w, s.existingCreatives)
 				return
@@ -125,6 +144,46 @@ func (s *boostServer) handler(t *testing.T) http.HandlerFunc {
 			http.Error(w, "unexpected path "+path, http.StatusBadRequest)
 		}
 	}
+}
+
+// statefulAnswer serves the stateful mode's requests and reports whether it answered; anything
+// else falls through to the handler's fixed answers (with existingCampaign and existingCreatives
+// set by it as the campaign and the creative are posted).
+func (s *boostServer) statefulAnswer(w http.ResponseWriter, r *http.Request, path string, raw []byte) bool {
+	switch {
+	case r.Method == http.MethodGet && strings.HasSuffix(path, "/adCampaignGroups") && s.group != nil:
+		el, _ := json.Marshal(map[string]any{"elements": []map[string]any{{"id": 100, "name": s.group["name"], "status": "ACTIVE"}}, "metadata": map[string]any{}})
+		_, _ = w.Write(el)
+		return true
+	case r.Method == http.MethodGet && strings.HasSuffix(path, "/adCampaignGroups/100") && s.group != nil:
+		el, _ := json.Marshal(map[string]any{"id": 100, "runSchedule": s.group["runSchedule"]})
+		_, _ = w.Write(el)
+		return true
+	case r.Method == http.MethodPost && strings.HasSuffix(path, "/adCampaignGroups"):
+		_ = json.Unmarshal(raw, &s.group)
+		_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		return true
+	case r.Method == http.MethodPost && strings.HasSuffix(path, "/adCampaigns"):
+		_ = json.Unmarshal(raw, &s.campaign)
+		el, _ := json.Marshal(map[string]any{"elements": []map[string]any{{
+			"name": s.campaign["name"], "status": "PAUSED", "id": 200, "type": s.campaign["type"],
+			"objectiveType": s.campaign["objectiveType"], "optimizationTargetType": s.campaign["optimizationTargetType"],
+			"campaignGroup": "urn:li:sponsoredCampaignGroup:100",
+		}}, "metadata": map[string]any{}})
+		s.existingCampaign = string(el)
+		w.Header().Set("x-restli-id", "urn:li:sponsoredCampaign:200")
+		_, _ = io.WriteString(w, `{}`)
+		return true
+	case r.Method == http.MethodPost && strings.HasSuffix(path, "/creatives"):
+		var b map[string]any
+		_ = json.Unmarshal(raw, &b)
+		s.creatives = append(s.creatives, b)
+		s.existingCreatives = `{"elements":[{"id":"urn:li:sponsoredCreative:401"}],"metadata":{}}`
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:401"}`)
+		return true
+	}
+	return false
 }
 
 // mutations reports the mutating requests (every non-GET) the server saw.
@@ -439,5 +498,99 @@ func TestCreateCampaign_BoostCreativeFailure(t *testing.T) {
 		if res == nil || res.CampaignGroupID != "100" || res.CampaignID != "200" || res.CreativeCount != 0 || res.BoostedPostURN != "" {
 			t.Errorf("status %d: partial = %+v", tc.status, res)
 		}
+	}
+}
+
+// TestCreateCampaign_BoostUntrustedFinderPostsNothing: a creatives-finder page identityjson refuses
+// (a repeated key whose last value is an empty list, or malformed UTF-8) is a failed lookup, not
+// an absence: no creative is posted, and the create returns no result, so the claim is released
+// and a retry looks again.
+func TestCreateCampaign_BoostUntrustedFinderPostsNothing(t *testing.T) {
+	for name, body := range map[string]string{
+		"duplicate elements": `{"elements":[{"id":"urn:li:sponsoredCreative:777"}],"elements":[],"metadata":{}}`,
+		"invalid utf-8":      "{\"elements\":[],\"metadata\":{},\"note\":\"\xff\"}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := &boostServer{existingCampaign: existingBoostCampaign(t), existingCreatives: body}
+			res, err := newBoostClient(t, s).CreateCampaign(context.Background(), boostInput())
+			if res != nil || err == nil || !strings.Contains(err.Error(), "could not be trusted") ||
+				!strings.Contains(err.Error(), "repeats the lookup") {
+				t.Fatalf("res %+v, err %v; want no result and an untrusted-lookup error", res, err)
+			}
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if len(s.queries) != 1 || len(s.creatives) != 0 {
+				t.Errorf("queries %v, creatives %v; want one lookup and no creative POST", s.queries, s.creatives)
+			}
+		})
+	}
+}
+
+// TestCreateCampaign_BoostLookupFailureThenRetry (#680 review): a failed lookup on a reused campaign
+// returns no partial (one would be recorded as created_degraded and reused as complete, or as
+// pending and refused), and the next create of the same input finds the campaign again and
+// repeats the lookup: a creative the first attempt could not see is reused, none is posted.
+func TestCreateCampaign_BoostLookupFailureThenRetry(t *testing.T) {
+	s := &boostServer{existingCampaign: existingBoostCampaign(t), finderStatus: http.StatusInternalServerError}
+	c := newBoostClient(t, s)
+	res, err := c.CreateCampaign(context.Background(), boostInput())
+	if res != nil || err == nil || !strings.Contains(err.Error(), "this call created nothing") {
+		t.Fatalf("first create: res %+v, err %v; want no result", res, err)
+	}
+
+	s.mu.Lock()
+	s.finderStatus = 0
+	s.existingCreatives = `{"elements":[{"id":"urn:li:sponsoredCreative:777"}],"metadata":{}}`
+	s.mu.Unlock()
+	res, err = c.CreateCampaign(context.Background(), boostInput())
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if res.CampaignID != "555" || res.CreativeCount != 1 || res.BoostedPostURN != boostTestPost {
+		t.Errorf("retry result = %+v", res)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.queries) != 2 || len(s.creatives) != 0 {
+		t.Errorf("queries %v, creatives %v; want the lookup twice and no creative POST", s.queries, s.creatives)
+	}
+}
+
+// TestCreateCampaign_BoostConcurrentSameNameCreatesOneCreative (#680 review): two creates of the
+// same campaign name and post, from different briefs in this process, post one creative. The
+// event's group lock is held through finishBoost, so the second create finds the first one's
+// group and campaign and then its creative; released after the campaign POST, the second would
+// look up while the first's creative POST is still in flight (creativeDelay) and post a second ad.
+func TestCreateCampaign_BoostConcurrentSameNameCreatesOneCreative(t *testing.T) {
+	s := &boostServer{stateful: true, creativeDelay: 150 * time.Millisecond}
+	first := newBoostClient(t, s)
+	second := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(first.baseURL), WithClock(fixedClock()))
+
+	var wg sync.WaitGroup
+	results := make([]*CampaignResult, 2)
+	errs := make([]error, 2)
+	for i, c := range []*Client{first, second} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i], errs[i] = c.CreateCampaign(context.Background(), boostInput())
+		}()
+	}
+	wg.Wait()
+	for i := range errs {
+		if errs[i] != nil {
+			t.Fatalf("create %d: %v", i, errs[i])
+		}
+		if results[i].CampaignID != "200" || results[i].CreativeCount != 1 || results[i].BoostedPostURN != boostTestPost {
+			t.Errorf("create %d result = %+v", i, results[i])
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.creatives) != 1 {
+		t.Errorf("creative POSTs = %d, want 1: %v", len(s.creatives), s.creatives)
+	}
+	if len(s.queries) != 1 {
+		t.Errorf("creatives finder queries = %v, want one (the second create's)", s.queries)
 	}
 }

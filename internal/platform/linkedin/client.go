@@ -481,6 +481,10 @@ type linkedInResponse struct {
 	// outcome each of those walks has its own guard against reaching by other routes. A nil
 	// pointer forces each walk to decide, and the compiler makes that decision explicit.
 	Metadata *linkedInMetadata `json:"metadata"`
+	// raw is the 2xx body this response was decoded from, for a caller that must also check it
+	// with identityjson (the boost creative lookup, #673): encoding/json keeps the last of two
+	// repeated keys without an error. Not part of the wire shape.
+	raw []byte
 }
 
 // linkedInMetadata carries the cursor-pagination block used by the LinkedIn
@@ -1087,6 +1091,15 @@ func (c *Client) findCreativeURNs(ctx context.Context, accountID, campaignID, co
 		if err != nil {
 			return nil, fmt.Errorf("find creatives for campaign %s: %w", campaignID, err)
 		}
+		// The boost lookup (#673) answers "no creative for this post" with a creative POST, so a
+		// page it reads must be one identityjson trusts, as the post GET is: a repeated key or
+		// malformed UTF-8 could otherwise decode to an empty or different element list. A refused
+		// page is a failed lookup, never an absence.
+		if contentRef != "" {
+			if err := identityjson.Check(resp.raw); err != nil {
+				return nil, fmt.Errorf("find creatives for campaign %s: the response could not be trusted: %w", campaignID, err)
+			}
+		}
 		if resp.Elements != nil {
 			for _, el := range *resp.Elements {
 				urn := creativeURN(el)
@@ -1486,6 +1499,8 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			cancel()
 			return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("search response missing elements field — cannot confirm absence")}
 		}
+
+		out.raw = buf.Bytes()
 
 		// Promote the resource ID header when the body carried no id. Mirrors the
 		// x-restli-id fallback in linkedInRequest().
@@ -3479,7 +3494,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// the next one's sibling search sees the campaign. A group THIS create makes is covered too,
 	// because the lock is taken before the group exists. A wait is bounded by ctx. Released as
 	// soon as createSponsoredCampaign returns: the dark post and creatives do not touch the
-	// group's schedule. Other replicas are not covered (LFXV2-2665).
+	// group's schedule. A boost (#673) keeps it through finishBoost instead: its creative has a
+	// natural key (the post), and a same-name create that reuses the campaign looks that creative
+	// up, so the lookup and the POST must not interleave with another's or both would see no
+	// creative and post two ads for one post. Other replicas are not covered (LFXV2-2665).
 	releaseGroup, err := eventGroupLocks.acquire(ctx, c.baseURL+"\x00"+accountID+"\x00"+groupName)
 	if err != nil {
 		return nil, fmt.Errorf("campaign group %q: waiting for another create of this event was aborted before any LinkedIn write; nothing was created: %w", groupName, err)
@@ -3588,7 +3606,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, jobFns, targeting, in.LifetimeBudget, bidding, dailyCap, campaignTypeFor(format), campaignFormat, in.DeliveryOptions)
-	unlockGroup()
+	if format != FormatBoost {
+		unlockGroup() // a boost releases it when CreateCampaign returns (the deferred unlock)
+	}
 	if err != nil {
 		// findOrCreateCampaignGroup may have just created a PERMANENT campaign group
 		// (groupID) whose creation is a real side effect. Returning nil,err here

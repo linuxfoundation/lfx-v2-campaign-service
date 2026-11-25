@@ -118,6 +118,15 @@ type liBoostAPI struct {
 	calls     []string
 	campaign  map[string]any
 	creatives []map[string]any
+	// existing makes the group and campaign searches find what an earlier create left (group 100
+	// with the group POST's name, campaign 200 with the campaign POST's name), so the next create
+	// reuses both. finderStatus fails the creatives finder; creativeFound makes it answer with a
+	// creative for the post. finderCalls counts the finder requests.
+	existing      bool
+	group         map[string]any
+	finderStatus  int
+	creativeFound bool
+	finderCalls   int
 }
 
 func newLIBoostAPI(t *testing.T, post string) *liBoostAPI {
@@ -132,9 +141,34 @@ func newLIBoostAPI(t *testing.T, post string) *liBoostAPI {
 		switch {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/posts/"):
 			_, _ = io.WriteString(w, a.post)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives"):
+			a.finderCalls++
+			switch {
+			case a.finderStatus != 0:
+				w.WriteHeader(a.finderStatus)
+				_, _ = io.WriteString(w, `{"status":503,"message":"unavailable"}`)
+			case a.creativeFound:
+				_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:777"}],"metadata":{}}`)
+			default:
+				_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
+			}
+		case r.Method == http.MethodGet && a.existing && strings.HasSuffix(r.URL.Path, "/adCampaignGroups"):
+			b, _ := json.Marshal(map[string]any{"elements": []any{map[string]any{"id": 100, "name": a.group["name"], "status": "ACTIVE"}}, "metadata": map[string]any{}})
+			_, _ = w.Write(b)
+		case r.Method == http.MethodGet && a.existing && strings.HasSuffix(r.URL.Path, "/adCampaignGroups/100"):
+			b, _ := json.Marshal(map[string]any{"id": 100, "runSchedule": a.group["runSchedule"]})
+			_, _ = w.Write(b)
+		case r.Method == http.MethodGet && a.existing && strings.HasSuffix(r.URL.Path, "/adCampaigns"):
+			b, _ := json.Marshal(map[string]any{"elements": []any{map[string]any{
+				"id": 200, "name": a.campaign["name"], "status": "PAUSED", "type": a.campaign["type"],
+				"objectiveType": a.campaign["objectiveType"], "optimizationTargetType": a.campaign["optimizationTargetType"],
+				"campaignGroup": "urn:li:sponsoredCampaignGroup:100",
+			}}, "metadata": map[string]any{}})
+			_, _ = w.Write(b)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			_ = json.Unmarshal(raw, &a.group)
 			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
 		case strings.Contains(r.URL.Path, "adCampaigns"):
 			_ = json.Unmarshal(raw, &a.campaign)
@@ -280,4 +314,41 @@ func TestLinkedIn_BoostThroughAGrantedAccount(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestLinkedIn_BoostLookupFailureIsRetried (#680 review): a create that reuses a campaign found by
+// name and cannot look up its creatives fails as not created (claim released), not as a
+// created_degraded row the orchestrator would reuse as complete, nor a pending one it would refuse
+// to retry. The next Dispatch of the same brief finds the campaign again and repeats the lookup.
+func TestLinkedIn_BoostLookupFailureIsRetried(t *testing.T) {
+	t.Setenv(constants.EnvLinkedInAdsBoostPostEnabled, "true")
+	api := newLIBoostAPI(t, boostPostBody("urn:li:organization:987654321"))
+	d := newLIBoostDispatcher(api)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, linkedInBoostConfig(validBoost)); err != nil {
+		t.Fatalf("first Dispatch: %v", err)
+	}
+
+	api.mu.Lock()
+	api.existing, api.finderStatus, api.creatives = true, http.StatusServiceUnavailable, nil
+	api.mu.Unlock()
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, linkedInBoostConfig(validBoost))
+	if camp != nil || !isNoUpstreamCreate(err) || !strings.Contains(err.Error(), "repeats the lookup") {
+		t.Fatalf("Dispatch with the finder down = %+v, %v; want nothing recorded and a not-created error", camp, err)
+	}
+
+	api.mu.Lock()
+	api.finderStatus, api.creativeFound = 0, true
+	api.mu.Unlock()
+	camp, err = d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, linkedInBoostConfig(validBoost))
+	if err != nil {
+		t.Fatalf("retry Dispatch: %v", err)
+	}
+	if camp.Status != campaignStatusCreated || camp.PlatformCampaignID != "200" {
+		t.Errorf("retry row = %q/%q, want created/200", camp.Status, camp.PlatformCampaignID)
+	}
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.finderCalls != 2 || len(api.creatives) != 0 {
+		t.Errorf("finder calls %d, creative POSTs %d; want the lookup on both reuses and no second creative", api.finderCalls, len(api.creatives))
+	}
 }

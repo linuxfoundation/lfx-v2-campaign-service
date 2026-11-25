@@ -6010,8 +6010,10 @@ exact `"true"`, off by default), which refuses variants, a missing post and a UR
 `linkedin.ValidateBoostPostURN` refuses. `PreflightCreate` and `Dispatch` both run it; `Dispatch`
 stores `"boost"`, skips the empty-variant refusal for it, and passes `BoostPost` to the client,
 which reads the post in the job (a refused post fails the job not-created, with
-`linkedin.ErrBoostPostIneligible`). `linkedinFormat` checks `boostPost` before the document and
-carousel fields (#665), and a boost with either is refused as under any other format.
+`linkedin.ErrBoostPostIneligible`). A failed creative lookup on a reused campaign also comes back
+with no result, so it fails not-created and the next dispatch repeats the lookup
+(`TestLinkedIn_BoostLookupFailureIsRetried`). `linkedinFormat` checks `boostPost` before the
+document and carousel fields (#665), and a boost with either is refused as under any other format.
 `linkedinCreativeCount` is 1 for a boost; the snapshot keeps `format` and `boostPost` and the
 result `boostedPostUrn`.
 

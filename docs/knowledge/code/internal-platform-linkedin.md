@@ -485,7 +485,9 @@ the group between a capped create's check and its campaign POST. `CreateCampaign
 holds `eventGroupLocks` (keyed on base URL, account and group NAME, since a group the create
 makes has no id yet) from `findOrCreateCampaignGroup` through `createSponsoredCampaign`: within
 the process, same-event creates run that span one at a time, and the next one's search sees the
-campaign. It is a separate lock set from `groupScheduleLocks` and always taken first. NOT
+campaign. A boost (#673) holds it on through `finishBoost`, so a same-name boost's creative
+lookup cannot run while another's creative POST is in flight. It is a separate lock set from
+`groupScheduleLocks` and always taken first. NOT
 covered: a create on another replica in that window (LFXV2-2665), and a hand edit of the group
 in Campaign Manager. Pinned by `group_capped_test.go` (including
 `TestCreateCampaign_InterleavedCreatesCannotWidenUnderACappedCampaign`) and
@@ -1285,8 +1287,17 @@ legacy-name lookup. `finishBoost` attaches the creative through `ensureBoostCrea
 campaign found by name it first calls `findCreativeURNs` (the creatives finder narrowed by
 `contentReferences=List(<post>)`, a new `preEncodedParams` key; `listCreativeURNs` is the
 unfiltered call) and reuses a creative already referencing the post, so a retry does not add a
-second ad. A failed creative POST returns the partial with the group and campaign, UNCONFIRMED
-when ambiguous. `CampaignResult.BoostedPostURN` records the post once its creative exists.
+second ad. The finder's body is checked with `identityjson` for this filtered call
+(`linkedInResponse.raw`, the 2xx body `doRequest` decoded): a repeated key or malformed UTF-8 is
+a failed lookup, never an absence. A failed lookup returns `(nil, err)`, like the group-widening
+and legacy-name failures: it runs only on a campaign and group found by name, so the call
+created nothing, and a partial would be recorded as `created_degraded` (reused as complete, the
+lookup never repeated) or `pending` (every retry refused). The claim is released and the next
+create repeats the lookup. `eventGroupLocks` is held through `finishBoost`, so two same-name
+boosts in one process post one creative (`TestCreateCampaign_BoostConcurrentSameNameCreatesOneCreative`,
+run with `-race`); other replicas are not covered (LFXV2-2665). A failed creative POST returns
+the partial with the group and campaign, UNCONFIRMED when ambiguous.
+`CampaignResult.BoostedPostURN` records the post once its creative exists.
 
 ## Profile targeting shape (`targeting.go`, #585)
 

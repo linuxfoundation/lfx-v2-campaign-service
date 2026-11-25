@@ -13,7 +13,10 @@ of a dark post per variant. Behind the new `LINKEDIN_ADS_BOOST_POST_ENABLED` (ch
   the post; a 401 is the connection's expiry. A member author is named only as "a LinkedIn
   member", never by person URN.
 - Ad Format name segment `Boost`; no legacy-name lookup. On a campaign found by name, a creative
-  already referencing the post (creatives finder, `contentReferences`) is reused.
+  already referencing the post (creatives finder, `contentReferences`) is reused. The finder's
+  body must pass `identityjson`; a failed lookup creates nothing and returns no result, so the
+  claim is released and the next create repeats the lookup. Same-name boosts in one process are
+  serialised through the creative step by the event's group lock, so they post one creative.
 - Result `boostedPostUrn`; snapshot `format` and `boostPost`. Variants, text ads, and `boostPost`
   under another format are refused synchronously.
 

@@ -197,7 +197,9 @@ func boostCreativeName(eventName, postURN string) string {
 // key. A new campaign holds no creative, so it needs no lookup. reused reports a found creative.
 // A found creative keeps whatever status it has.
 //
-// The lookup's failure is returned plain: nothing was posted. The POST's failures are createCreative's.
+// The lookup's failure is returned plain: nothing was posted. The lookup runs only on a reused
+// campaign, so the group and campaign both existed before this call. The POST's failures are
+// createCreative's.
 func (c *Client) ensureBoostCreative(ctx context.Context, accountID, campaignID string, campaignReused bool, postURN, adName string) (urn string, reused bool, lookupErr, createErr error) {
 	if campaignReused {
 		found, err := c.findCreativeURNs(ctx, accountID, campaignID, postURN)
@@ -214,14 +216,24 @@ func (c *Client) ensureBoostCreative(ctx context.Context, accountID, campaignID 
 }
 
 // finishBoost is CreateCampaign's creative step for a boost (#673): the one creative sponsoring
-// postURN, created, or found on a reused campaign. Its failures follow the single-image loop's:
-// an ambiguous POST is UNCONFIRMED and a definite one failed, each with the partial result
-// carrying the group and campaign. There is no dark post, so nothing else can be orphaned.
+// postURN, created, or found on a reused campaign. It runs under the event's group lock, so two
+// same-name creates in this process cannot both find no creative and post one each.
+//
+// A failed lookup returns (nil, err), like the group-widening and legacy-name failures before it:
+// it runs only on a campaign found by name, in a group found by name, so this call created
+// neither, and posted nothing. A partial here would be recorded with the campaign id, as
+// created_degraded (which the orchestrator reuses as complete, so a repeated request would report
+// success without the lookup) or as pending (which refuses every retry as "reconciliation
+// required"); either way the lookup the error promises would never run. With (nil, err) the claim
+// is released and a retry finds the group and campaign by name again and repeats the lookup.
+//
+// The creative POST's failures follow the single-image loop's: an ambiguous POST is UNCONFIRMED
+// and a definite one failed, each with the partial result carrying the group and campaign. There
+// is no dark post, so nothing else can be orphaned.
 func (c *Client) finishBoost(ctx context.Context, accountID, groupName, groupID, campaignName, campaignID string, campaignReused bool, eventName, postURN string, steps []string, partial func(*CampaignResult) *CampaignResult, finish func(int) *CampaignResult) (*CampaignResult, error) {
 	creativeURN, found, lookupErr, err := c.ensureBoostCreative(ctx, accountID, campaignID, campaignReused, postURN, boostCreativeName(eventName, postURN))
 	if lookupErr != nil {
-		return partial(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps)),
-			fmt.Errorf("looking for a creative of reused campaign %q that already sponsors post %s failed; no creative was created, and a retry looks again: %w — group %q and campaign %q already exist", campaignID, postURN, lookupErr, groupID, campaignID)
+		return nil, fmt.Errorf("looking for a creative of campaign %q (found by name in group %q) that already sponsors post %s failed; this call created nothing and posted no creative, and a retry finds the campaign again and repeats the lookup: %w", campaignID, groupID, postURN, lookupErr)
 	}
 	if err != nil {
 		if createOutcomeAmbiguous(err) {
