@@ -147,26 +147,37 @@ func (d *RedditDispatcher) checkRedditVideoAssets(ctx context.Context, brief *mo
 		{redditThumbnailAssetField, thumbID, false},
 	}
 	for _, s := range slots {
-		meta, err := d.assets.GetAssetMetadata(ctx, brief.ProjectID, brief.ID, s.id)
-		if err != nil {
-			if errors.Is(err, domain.ErrNotFound) {
-				return domain.PreflightRefusalf("redditConfig.%s references creative asset %s, which does not exist for this brief", s.field, s.id)
-			}
-			return fmt.Errorf("reddit: read creative asset %s: %w", s.id, err)
+		if err := d.checkRedditStoredAsset(ctx, brief, s.field, s.id, s.video); err != nil {
+			return err
 		}
-		if meta == nil || meta.ByteSize <= 0 {
-			return domain.PreflightRefusalf("redditConfig.%s references creative asset %s, which has no stored bytes", s.field, s.id)
+	}
+	return nil
+}
+
+// checkRedditStoredAsset proves one stored asset a Reddit post will fetch from the signed route
+// (a video post's video or thumbnail, #549, or a carousel card's image, #661): it exists FOR THIS
+// BRIEF under an active brief, has bytes, is a video/mp4 when video is set and a PNG or JPEG
+// otherwise, and its id can be carried in a signed URL. field names the config slot in refusals.
+// Every failure is pre-create.
+func (d *RedditDispatcher) checkRedditStoredAsset(ctx context.Context, brief *model.CampaignBrief, field, id string, video bool) error {
+	meta, err := d.assets.GetAssetMetadata(ctx, brief.ProjectID, brief.ID, id)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return domain.PreflightRefusalf("redditConfig.%s references creative asset %s, which does not exist for this brief", field, id)
 		}
-		isVideo := meta.MimeType == model.MimeTypeMP4
-		if s.video && !isVideo {
-			return domain.PreflightRefusalf("creative asset %s is not a video; redditConfig.%s accepts a stored video/mp4", s.id, s.field)
-		}
-		if !s.video && meta.MimeType != model.MimeTypePNG && meta.MimeType != model.MimeTypeJPEG {
-			return domain.PreflightRefusalf("creative asset %s is not an image; redditConfig.%s accepts PNG or JPEG", s.id, s.field)
-		}
-		if err := assetsign.ValidateIDs(brief.ProjectID, brief.ID, s.id); err != nil {
-			return fmt.Errorf("reddit: creative asset %s cannot be served at a signed URL: %w", s.id, err)
-		}
+		return fmt.Errorf("reddit: read creative asset %s: %w", id, err)
+	}
+	if meta == nil || meta.ByteSize <= 0 {
+		return domain.PreflightRefusalf("redditConfig.%s references creative asset %s, which has no stored bytes", field, id)
+	}
+	if video && meta.MimeType != model.MimeTypeMP4 {
+		return domain.PreflightRefusalf("creative asset %s is not a video; redditConfig.%s accepts a stored video/mp4", id, field)
+	}
+	if !video && meta.MimeType != model.MimeTypePNG && meta.MimeType != model.MimeTypeJPEG {
+		return domain.PreflightRefusalf("creative asset %s is not an image; redditConfig.%s accepts PNG or JPEG", id, field)
+	}
+	if err := assetsign.ValidateIDs(brief.ProjectID, brief.ID, id); err != nil {
+		return fmt.Errorf("reddit: creative asset %s cannot be served at a signed URL: %w", id, err)
 	}
 	return nil
 }

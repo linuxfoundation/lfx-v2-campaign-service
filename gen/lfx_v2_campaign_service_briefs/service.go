@@ -61,10 +61,11 @@ type Service interface {
 	// uploaded to the ad account's media library (an account-scoped MediaId) and
 	// attached to the campaign as an image ad extension; Microsoft accepts at most
 	// 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also
-	// reference the asset (redditConfig.imageAssetId), served to Reddit at a
-	// short-lived signed URL when that feature is configured. An X (Twitter)
-	// campaign may also reference the asset as the image of its authored tweet
-	// (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is
+	// reference the asset (redditConfig.imageAssetId, or a carousel card's
+	// carouselCards[].imageAssetId behind REDDIT_CAROUSEL_ENABLED, #661), served
+	// to Reddit at a short-lived signed URL when that feature is configured. An X
+	// (Twitter) campaign may also reference the asset as the image of its authored
+	// tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is
 	// likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig
 	// variant names one by imageAssetId, and at dispatch it is uploaded once
 	// through LinkedIn's Images API (an organization-owned image URN) and used as
@@ -1633,11 +1634,25 @@ type CampaignCreateInput struct {
 	// status toggle cascades over every ad. More than 5 variants, or a blank or
 	// over-300-character variant headline, is refused synchronously with 400
 	// "invalid campaign config: redditConfig.variants...: ..." before any job
-	// exists. X TARGETING (#564): twitterConfig takes `geoTargets` (ISO 3166-1
-	// alpha-2 country codes, at most 50, uppercased and de-duplicated) and
-	// `languages` (X language values such as en, at most 20, lowercased and
-	// de-duplicated). Before anything is created each country is resolved with X's
-	// GET targeting_criteria/locations (location_type COUNTRIES, exactly one
+	// exists. REDDIT CAROUSEL (#661): redditConfig.carouselCards is 2 to 6 cards,
+	// each {imageAssetId (a stored PNG or JPEG of this brief), headline (at most
+	// 180 characters, the card's caption), destinationUrl (an absolute http or
+	// https URL, sent with the post's UTM parameters and utm_content=card-<k>, the
+	// card's 1-based position)}, authored as one CAROUSEL post and one ad whose
+	// images Reddit fetches from short-lived signed URLs. Never with postUrl,
+	// imageUrl, imageAssetId, videoAssetId or thumbnailAssetId, nor with two or
+	// more variants while REDDIT_AD_PER_VARIANT_ENABLED is on. OFF unless
+	// REDDIT_CAROUSEL_ENABLED is exactly "true": the post shape is from Reddit's
+	// public schema and has not been sent live. The flag off, a wrong JSON type, a
+	// card count or field outside those limits, a non-UUID id or signed asset URLs
+	// not configured is refused synchronously with 400 "invalid campaign config:
+	// redditConfig: ..." before any job exists; a card asset missing for this
+	// brief, empty or not PNG/JPEG fails the job before any Reddit call. X
+	// TARGETING (#564): twitterConfig takes `geoTargets` (ISO 3166-1 alpha-2
+	// country codes, at most 50, uppercased and de-duplicated) and `languages` (X
+	// language values such as en, at most 20, lowercased and de-duplicated).
+	// Before anything is created each country is resolved with X's GET
+	// targeting_criteria/locations (location_type COUNTRIES, exactly one
 	// country-level entry required) and the languages are checked against GET
 	// targeting_criteria/languages; the new line item then gets one LOCATION or
 	// LANGUAGE criterion (operator EQ) per value, after the line item and before

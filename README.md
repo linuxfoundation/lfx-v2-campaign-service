@@ -276,6 +276,16 @@ openssl rand -base64 32
   with a 400 before any job exists. It names no account resource; it keeps a
   post shape no live create has sent off the shared ad account. The chart
   sets it to `"false"` (`app.environment.REDDIT_VIDEO_ENABLED.value`).
+- `REDDIT_CAROUSEL_ENABLED` (default unset, i.e. OFF) — opts a deployment
+  IN to Reddit CAROUSEL posts (#661): `redditConfig.carouselCards`, 2 to 6
+  cards each naming a stored PNG or JPEG (`imageAssetId`), a `headline` and a
+  `destinationUrl`, authored as one CAROUSEL post whose images Reddit fetches
+  from short-lived signed URLs. It also needs the signed creative-asset URLs
+  configured. Only the exact value `true` enables it; anything else fails
+  closed, and a create naming `carouselCards` is refused with a 400 before any
+  job exists. It names no account resource; it keeps a post shape no live
+  create has sent off the shared ad account. The chart sets it to `"false"`
+  (`app.environment.REDDIT_CAROUSEL_ENABLED.value`).
 - `REDDIT_TARGETING_EXCLUSIONS_ENABLED` (default unset, i.e. OFF) — opts
   a deployment IN to `redditConfig.excludedSubreddits` and
   `redditConfig.excludedGeoTargets` (#549), sent at create time as the ad

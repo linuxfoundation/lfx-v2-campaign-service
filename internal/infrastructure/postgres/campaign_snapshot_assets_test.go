@@ -78,6 +78,12 @@ func TestSnapshotAssetIDs_FindsRedditVideoKeys(t *testing.T) {
 	wantIDs(t, `{"redditConfig":{"THUMBNAILASSETID":"`+assetB+`"}}`, assetB)
 }
 
+// TestSnapshotAssetIDs_FindsRedditCarouselCards pins the Reddit carousel (#661): each card names
+// its image under imageAssetId inside the carouselCards array, and every one is guarded.
+func TestSnapshotAssetIDs_FindsRedditCarouselCards(t *testing.T) {
+	wantIDs(t, `{"redditConfig":{"carouselCards":[{"imageAssetId":"`+assetA+`","headline":"A"},{"imageAssetId":"`+assetB+`"}]}}`, assetA, assetB)
+}
+
 // TestSnapshotAssetIDs_FindsLinkedInDocumentKey pins the LinkedIn document ad (#665): its PDF
 // under documentAssetId is guarded, in every spelling.
 func TestSnapshotAssetIDs_FindsLinkedInDocumentKey(t *testing.T) {

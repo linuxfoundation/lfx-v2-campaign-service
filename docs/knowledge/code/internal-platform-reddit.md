@@ -1189,3 +1189,16 @@ campaign refusal after a successful or unconfirmed video post returns a partial 
 `(nil, err)`, so the claim is kept. The success
 step reads "Authored promoted video post". The dispatcher keeps it behind `REDDIT_VIDEO_ENABLED`:
 see [Reddit Video Posts](../architecture/reddit-video-posts.md).
+
+## Carousel posts (`CampaignInput.CarouselCards`, #661)
+
+When `CarouselCards` is non-empty, and `PostURL`, `ImageURL`, `ImageURLSource` and the video
+sources are all empty, Step 1.5 authors a **CAROUSEL** post (`carousel.go`): `"type":"CAROUSEL"`
+with one content entry per card (`media_url`, `caption` = the card headline, the post's
+`call_to_action`, and the card's `destination_url` with the post's UTM parameters and
+`utm_content=card-<k>`, via `carouselCardUTM` and `buildRedditUTMURLFrom`). `validateCarouselInput` checks 2 to 6 cards, each with a source, a
+headline of at most 180 characters and an absolute http(s) destination without userinfo, before any
+request; `resolveCarouselCards` mints every card URL late, in order. Outcomes are the video post's,
+including the partial result after a campaign refusal; the success step reads "Authored promoted
+carousel post". The dispatcher keeps it behind `REDDIT_CAROUSEL_ENABLED`: see
+[Reddit Carousel Posts](../architecture/reddit-carousel-posts.md).
