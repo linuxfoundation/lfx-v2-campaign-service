@@ -328,6 +328,11 @@ type CampaignInput struct {
 	Format string
 	// TextAds are the Text Ad creatives of a FormatText create; refused under any other format.
 	TextAds []TextAd
+	// CarouselCards and CarouselIntroText are a FormatCarousel create's cards and post commentary
+	// (#665); refused under any other format. Each card's ImageAssetID is a key into Images. See
+	// carousel.go.
+	CarouselCards     []CarouselCard
+	CarouselIntroText string
 	// JobFunctions replace the default job functions (urn:li:function:8, 13 and 16) in the
 	// profile's own jobFunctions clause (#585). Nil means the default. Not read with Targeting,
 	// which brings its own. CreateCampaign runs ValidateJobFunctions on it before any request.
@@ -1625,11 +1630,11 @@ func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, n
 		// videos and post the dark posts before LinkedIn refused the first creative. Refused here,
 		// before any upload. An unreported format cannot contradict: a campaign with no creative
 		// yet takes its format from the first one.
-		if el.Format != "" && campaignType == campaignTypeSponsoredUpdates &&
-			(el.Format == campaignFormatSingleVideo) != (campaignFormat == campaignFormatSingleVideo) {
+		// A CAROUSEL campaign (#665) is told apart the same way: it takes only carousel creatives.
+		if el.Format != "" && campaignType == campaignTypeSponsoredUpdates && sponsoredFormatKind(el.Format) != sponsoredFormatKind(campaignFormat) {
 			want := "an image format"
-			if campaignFormat == campaignFormatSingleVideo {
-				want = campaignFormatSingleVideo
+			if campaignFormat != "" {
+				want = campaignFormat
 			}
 			return false, fmt.Errorf("campaign %q already exists in this campaign group with format %s, not %s — aborting rather than reuse it or create a duplicate", el.Name, el.Format, want)
 		}
@@ -2659,6 +2664,12 @@ func (c *Client) createCreative(ctx context.Context, accountID, campaignID, shar
 // and it only removes a literal, unencoded trailing "/". Query and fragment are
 // preserved.
 func BuildUTMURL(baseURL, hsToken, campaignName string, variantIndex int) string {
+	return buildUTMURLWithContent(baseURL, hsToken, campaignName, fmt.Sprintf("variant-%d", variantIndex))
+}
+
+// buildUTMURLWithContent is BuildUTMURL with the utm_content value given: "variant-<n>" for a
+// variant, "card-<k>" for a carousel card (#665).
+func buildUTMURLWithContent(baseURL, hsToken, campaignName, content string) string {
 	term := strings.ReplaceAll(campaignName, " | ", "_")
 	term = strings.Join(strings.Fields(term), "-")
 	term = strings.ToLower(term)
@@ -2672,7 +2683,7 @@ func BuildUTMURL(baseURL, hsToken, campaignName string, variantIndex int) string
 		if strings.Contains(baseURL, "?") {
 			sep = "&"
 		}
-		return trimmed + sep + utmValues(hsToken, term, variantIndex).Encode()
+		return trimmed + sep + utmValues(hsToken, term, content).Encode()
 	}
 
 	// Strip one literal trailing slash from the path, mirroring the TS source.
@@ -2688,7 +2699,7 @@ func BuildUTMURL(baseURL, hsToken, campaignName string, variantIndex int) string
 	}
 
 	q := u.Query()
-	for k, vals := range utmValues(hsToken, term, variantIndex) {
+	for k, vals := range utmValues(hsToken, term, content) {
 		for _, val := range vals {
 			q.Set(k, val)
 		}
@@ -2698,7 +2709,7 @@ func BuildUTMURL(baseURL, hsToken, campaignName string, variantIndex int) string
 }
 
 // utmValues builds the LinkedIn UTM query parameters.
-func utmValues(hsToken, term string, variantIndex int) url.Values {
+func utmValues(hsToken, term, content string) url.Values {
 	v := url.Values{}
 	v.Set("utm_source", "linkedin")
 	v.Set("utm_medium", "paid-social")
@@ -2706,7 +2717,7 @@ func utmValues(hsToken, term string, variantIndex int) url.Values {
 		v.Set("utm_campaign", hsToken)
 	}
 	v.Set("utm_term", term)
-	v.Set("utm_content", fmt.Sprintf("variant-%d", variantIndex))
+	v.Set("utm_content", content)
 	return v
 }
 
@@ -2839,9 +2850,16 @@ func (c *Client) validatePrerequisites(accountID, profile string) error {
 // it up front keeps CreateCampaign side-effect-free on invalid input. The URL
 // must parse, be absolute, and use an http/https scheme.
 func validateRegistrationURL(raw string) error {
+	return validateLandingURL(raw, "registration URL")
+}
+
+// validateLandingURL holds validateRegistrationURL's rules for any landing page; what names the
+// URL in each refusal ("registration URL", or a carousel card's destinationUrl, #665), and no
+// refusal quotes the URL.
+func validateLandingURL(raw, what string) error {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return fmt.Errorf("registration URL is required")
+		return fmt.Errorf("%s is required", what)
 	}
 	u, err := url.Parse(trimmed)
 	if err != nil {
@@ -2850,12 +2868,12 @@ func validateRegistrationURL(raw string) error {
 		// userinfo or query string, and this error is logged/persisted. Report a
 		// generic message. Mirrors the Reddit client (validateRegistrationURL), which
 		// never surfaces the raw URL.
-		return fmt.Errorf("registration URL is not a valid URL")
+		return fmt.Errorf("%s is not a valid URL", what)
 	}
 	// Require a real host: url.Parse accepts "https://:443/path" (Host=":443")
 	// where Hostname() is empty, so check Hostname() not just Host.
 	if !u.IsAbs() || u.Hostname() == "" {
-		return fmt.Errorf("registration URL must be absolute (include scheme and host)")
+		return fmt.Errorf("%s must be absolute (include scheme and host)", what)
 	}
 	// url.Parse does NOT validate percent-encoding in the query. A URL like
 	// ".../reg?ticket=%zz" parses fine here, but u.Query() (used by BuildUTMURL)
@@ -2863,13 +2881,13 @@ func validateRegistrationURL(raw string) error {
 	// different destination than the caller supplied. Reject a malformed query up
 	// front, before any mutating call. Mirrors the Reddit client.
 	if _, qerr := url.ParseQuery(u.RawQuery); qerr != nil {
-		return fmt.Errorf("registration URL has a malformed query string")
+		return fmt.Errorf("%s has a malformed query string", what)
 	}
 	// Reject embedded userinfo (user[:password]@host): an ad destination never
 	// needs URL credentials, and BuildUTMURL would otherwise forward the password
 	// to LinkedIn and echo it downstream, leaking it. Mirrors the Reddit client.
 	if u.User != nil {
-		return fmt.Errorf("registration URL must not contain embedded credentials (userinfo)")
+		return fmt.Errorf("%s must not contain embedded credentials (userinfo)", what)
 	}
 	switch strings.ToLower(u.Scheme) {
 	case "http", "https":
@@ -2877,7 +2895,7 @@ func validateRegistrationURL(raw string) error {
 	default:
 		// Do NOT echo the raw URL or the scheme value (a bespoke scheme could itself
 		// reflect caller material); report a generic message.
-		return fmt.Errorf("registration URL must use an http or https scheme")
+		return fmt.Errorf("%s must use an http or https scheme", what)
 	}
 }
 
@@ -3099,11 +3117,32 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	} else if len(in.TextAds) > 0 {
 		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: textAds are accepted only with format %q", ErrFormatInvalid, FormatText))
 	}
+	// A carousel create (#665) takes its one creative from CarouselCards: every card an image
+	// this create uploads, checked here against the carousel image rules before any POST.
+	if format == FormatCarousel {
+		if len(in.Variants) > 0 {
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: a carousel create takes its creative from carouselCards, not variants", ErrFormatInvalid))
+		}
+		if err := ValidateCarousel(in.CarouselCards, in.CarouselIntroText); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+		for i, card := range in.CarouselCards {
+			img, ok := in.Images[card.ImageAssetID]
+			if !ok {
+				return nil, domain.PreflightRefusalf("carousel card %d names stored image asset %s, which was not supplied", i+1, domain.CallerValue(card.ImageAssetID))
+			}
+			if err := ValidateCarouselImage(img); err != nil {
+				return nil, domain.WrapPreflightRefusal(fmt.Errorf("carousel card %d image asset %s: %w", i+1, domain.CallerValue(card.ImageAssetID), err))
+			}
+		}
+	} else if len(in.CarouselCards) > 0 || in.CarouselIntroText != "" {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: carouselCards and carouselIntroText are accepted only with format %q", ErrFormatInvalid, FormatCarousel))
+	}
 
 	// Refuse to create a campaign with no creatives: LinkedIn campaign-group and
 	// campaign creation are permanent side effects, so an empty variant set would
 	// leave an orphaned, un-adorned campaign upstream.
-	if format != FormatText && len(in.Variants) == 0 {
+	if format == FormatSingleImage && len(in.Variants) == 0 {
 		return nil, domain.PreflightRefusalf("at least one creative variant is required")
 	}
 
@@ -3173,6 +3212,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	campaignFormat := ""
 	if isVideoInput(in) {
 		campaignFormat = campaignFormatSingleVideo
+	}
+	if format == FormatCarousel {
+		campaignFormat = campaignFormatCarousel
 	}
 
 	// The optional call to action and creative name (#588, #589) are checked here too: an
@@ -3279,6 +3321,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	if n := len([]rune(campaignName)); n > maxNameLen {
 		return nil, domain.PreflightRefusalf("campaign name is %d characters, exceeds the %d-character limit; shorten the event name or project", n, maxNameLen)
+	}
+
+	// Each carousel card's tagged landing page (#665) is composed now, against the final campaign
+	// name, so one over LinkedIn's length limit is refused before the campaign group exists.
+	var carouselLanding []string
+	if format == FormatCarousel {
+		if carouselLanding, err = carouselLandingPages(in.CarouselCards, reg, in.HSToken, campaignName); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
 	}
 
 	// The lead gen form (#664) is read before the campaign group exists: a form of another
@@ -3533,6 +3584,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			result.OptimizationTarget = bidding.optimizationTarget
 		}
 		return result
+	}
+	if format == FormatCarousel {
+		count, carouselSteps, cerr := c.createCarousel(ctx, accountID, campaignID, eventName, in, carouselLanding, imageURNs)
+		steps = append(steps, carouselSteps...)
+		if cerr != nil {
+			return withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, count, steps)),
+				fmt.Errorf("%w — group %q and campaign %q already exist", cerr, groupID, campaignID)
+		}
+		return finish(count), nil
 	}
 	if format == FormatText {
 		count, textSteps, terr := c.createTextAds(ctx, accountID, campaignID, campaignName, eventName, reg, in, imageURNs)

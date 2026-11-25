@@ -822,6 +822,17 @@ openssl rand -base64 32
   chart sets it to `"false"`
   (`app.environment.LINKEDIN_ADS_LEAD_GEN_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once the paused probe passes.
+- `LINKEDIN_ADS_CAROUSEL_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `linkedInConfig.format: "carousel"` (#665), a LinkedIn
+  CAROUSEL campaign whose one creative is a carousel dark post built from
+  `linkedInConfig.carouselCards` (2 to 10 stored images of the brief, each
+  with a headline and an optional destination) and
+  `linkedInConfig.carouselIntroText`. Only the exact value `true` enables it;
+  anything else fails closed, and a create naming it is refused with a 400
+  before a job exists. The default single-image create is unaffected. The
+  chart sets it to `"false"`
+  (`app.environment.LINKEDIN_ADS_CAROUSEL_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once the paused probe passes.
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request
   names no `source_workflow_url`. Unset or empty selects the in-code

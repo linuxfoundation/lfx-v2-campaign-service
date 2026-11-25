@@ -163,6 +163,11 @@ func (d *LinkedInDispatcher) resolveLinkedInImages(ctx context.Context, brief *m
 	for i := range cfg.TextAds {
 		refs = append(refs, imageRef{fmt.Sprintf("textAds[%d]", i), &cfg.TextAds[i].ImageAssetID, cfg.TextAds[i].ImageURN})
 	}
+	// A carousel create (#665) carries its images on carouselCards, under the carousel image
+	// rules; like a text create it has no variants.
+	for i := range cfg.CarouselCards {
+		refs = append(refs, imageRef{fmt.Sprintf("carouselCards[%d]", i), &cfg.CarouselCards[i].ImageAssetID, ""})
+	}
 	for _, ref := range refs {
 		raw := strings.TrimSpace(*ref.assetID)
 		if raw == "" {
@@ -189,8 +194,11 @@ func (d *LinkedInDispatcher) resolveLinkedInImages(ctx context.Context, brief *m
 	// The refusals below name the field the assets came from: a text create references them
 	// from textAds[].imageAssetId and may not carry variants at all.
 	adKind, field := "single image ads", "variants"
-	if cfg.Format == linkedin.FormatText {
+	switch cfg.Format {
+	case linkedin.FormatText:
 		adKind, field = "text ads", "textAds"
+	case linkedin.FormatCarousel:
+		adKind, field = "carousel ads", "carouselCards"
 	}
 	all := append(append([]string{}, order...), videoOrder...)
 	if len(all) == 0 {
@@ -267,8 +275,8 @@ func (d *LinkedInDispatcher) resolveLinkedInImages(ctx context.Context, brief *m
 			continue
 		}
 		if asset.MimeType == model.MimeTypeMP4 {
-			if cfg.Format == linkedin.FormatText {
-				return nil, nil, noop, domain.PreflightRefusalf("linkedInConfig.textAds name creative asset %s as imageAssetId, but it is a video; a text ad image is a PNG or JPEG", assetID)
+			if cfg.Format == linkedin.FormatText || cfg.Format == linkedin.FormatCarousel {
+				return nil, nil, noop, domain.PreflightRefusalf("linkedInConfig.%s name creative asset %s as imageAssetId, but it is a video; a %s image is a PNG or JPEG", field, assetID, strings.TrimSuffix(adKind, "s"))
 			}
 			return nil, nil, noop, domain.PreflightRefusalf("linkedInConfig.variants name creative asset %s as imageAssetId, but it is a video; name it as videoAssetId", assetID)
 		}

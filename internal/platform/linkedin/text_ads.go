@@ -91,8 +91,10 @@ func NormalizeFormat(raw string) (string, error) {
 		return FormatSingleImage, nil
 	case FormatText:
 		return FormatText, nil
+	case FormatCarousel:
+		return FormatCarousel, nil
 	}
-	return "", fmt.Errorf("%w: format must be %q (the default) or %q", ErrFormatInvalid, FormatSingleImage, FormatText)
+	return "", fmt.Errorf("%w: format must be %q (the default), %q or %q", ErrFormatInvalid, FormatSingleImage, FormatText, FormatCarousel)
 }
 
 // ValidateTextAds checks the content of every text ad before anything is created: headline and
@@ -145,18 +147,24 @@ func ValidateTextAdImage(in ImageUpload) error {
 }
 
 // ValidateImageForFormat applies the image rules of format: ValidateTextAdImage for FormatText,
-// ValidateImage otherwise.
+// ValidateCarouselImage for FormatCarousel (#665), ValidateImage otherwise.
 func ValidateImageForFormat(format string, in ImageUpload) error {
-	if format == FormatText {
+	switch format {
+	case FormatText:
 		return ValidateTextAdImage(in)
+	case FormatCarousel:
+		return ValidateCarouselImage(in)
 	}
 	return ValidateImage(in)
 }
 
 // MaxImageBytesForFormat is the stored-asset size ceiling of format.
 func MaxImageBytesForFormat(format string) int64 {
-	if format == FormatText {
+	switch format {
+	case FormatText:
 		return MaxTextAdImageBytes
+	case FormatCarousel:
+		return MaxCarouselImageBytes
 	}
 	return MaxImageBytes
 }
@@ -176,9 +184,15 @@ func campaignTypeFor(format string) string {
 // "Motion" is a video campaign's (#586), LF's own word for LinkedIn video (lf-dbt's
 // parse_campaign_name reads it), for the same reason: a SINGLE_VIDEO campaign cannot take
 // image creatives, nor an image campaign videos.
+//
+// "Carousel" is a carousel campaign's (#665): a CAROUSEL campaign takes only carousel creatives.
+// lf-dbt stores an 8-segment name's Ad Format segment as-is.
 func adFormatNameSegment(in CampaignInput) string {
-	if in.Format == FormatText {
+	switch in.Format {
+	case FormatText:
 		return "Text"
+	case FormatCarousel:
+		return "Carousel"
 	}
 	if isVideoInput(in) {
 		return "Motion"

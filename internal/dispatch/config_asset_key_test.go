@@ -60,6 +60,8 @@ func TestPlatformConfigsNameTheirAssetUnderOneKey(t *testing.T) {
 		// The Meta video variant (#550) names its asset under the second key.
 		"meta-video": metaConfig{Variants: []meta.AdVariant{{VideoAssetID: assetID}}},
 		"linkedin":   linkedinConfig{Variants: []linkedin.CreativeVariant{{ImageAssetID: assetID}}},
+		// A LinkedIn carousel card (#665) names its image under the first key.
+		"linkedin-carousel": linkedinConfig{CarouselCards: []linkedin.CarouselCard{{ImageAssetID: assetID}}},
 		// EVERY Google slot, not one of them: they are separate fields on several structs,
 		// and one more slot declared as a bare []string would carry no key on its elements
 		// at all.
