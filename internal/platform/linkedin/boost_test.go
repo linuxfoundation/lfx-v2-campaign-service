@@ -72,8 +72,9 @@ type boostServer struct {
 	// existingCreatives the creatives finder. Empty means none.
 	existingCampaign  string
 	existingCreatives string
-	finderStatus      int // creatives finder status; 0 is 200
-	creativeStatus    int // creative POST status; 0 is 201
+	finderStatus      int    // creatives finder status; 0 is 200
+	creativeStatus    int    // creative POST status; 0 is 201
+	creativeBody      string // the failed creative POST's body; "" is a plain 400 envelope
 	// stateful makes the server remember what it created: the group search and the group GET
 	// answer the posted group, the campaign search the posted campaign, and the creatives finder
 	// the posted creative. creativeDelay holds each creative POST that long before it lands.
@@ -132,7 +133,11 @@ func (s *boostServer) handler(t *testing.T) http.HandlerFunc {
 			s.creatives = append(s.creatives, b)
 			if s.creativeStatus != 0 {
 				w.WriteHeader(s.creativeStatus)
-				_, _ = io.WriteString(w, `{"status":400,"message":"bad"}`)
+				body := s.creativeBody
+				if body == "" {
+					body = `{"status":400,"message":"bad"}`
+				}
+				_, _ = io.WriteString(w, body)
 				return
 			}
 			w.WriteHeader(http.StatusCreated)
@@ -304,8 +309,8 @@ func TestCreateCampaign_BoostContentDecidesFormat(t *testing.T) {
 }
 
 // TestCreateCampaign_BoostPostRefusedBeforeAnyPOST: every post LinkedIn would refuse to sponsor
-// from this account, and every failed read, stops the create after the one GET, with no result
-// and no POST. The post refusals are operator-safe pre-flight refusals; a read that failed for
+// from this account, and every failed read but a 403 (TestCreateCampaign_BoostUnreadablePost),
+// stops the create after the one GET, with no result and no POST. The post refusals are operator-safe pre-flight refusals; a read that failed for
 // another reason is not.
 func TestCreateCampaign_BoostPostRefusedBeforeAnyPOST(t *testing.T) {
 	for _, tc := range []struct {
@@ -332,7 +337,6 @@ func TestCreateCampaign_BoostPostRefusedBeforeAnyPOST(t *testing.T) {
 		}, 0, `carries media "urn:li:document:D1"`, true},
 		{"carousel", func(p map[string]any) { p["content"] = map[string]any{"carousel": map[string]any{}} }, 0, `carries "carousel" content`, true},
 		{"not found", nil, http.StatusNotFound, `post "urn:li:share:7001" was not found (LinkedIn answered 404)`, true},
-		{"not readable", nil, http.StatusForbidden, "needs the r_organization_social scope", true},
 		{"another post answered", func(p map[string]any) { p["id"] = "urn:li:share:9" }, 0, `describes post "urn:li:share:9"`, false},
 		{"server error", nil, http.StatusInternalServerError, `reading boost post "urn:li:share:7001" failed before anything was created`, false},
 	} {
@@ -360,6 +364,66 @@ func TestCreateCampaign_BoostPostRefusedBeforeAnyPOST(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCreateCampaign_BoostUnreadablePost: a 403 on the post read means this connection cannot read
+// posts (no r_organization_social), not that the post is ineligible, so the pre-checks are skipped
+// and the create goes on with no campaign format, letting LinkedIn's creative POST decide. When
+// LinkedIn takes the creative the boost is created; when it refuses it as UGC_FORBIDDEN the result
+// is the partial carrying the group and the PAUSED campaign, with the page-role sentence, after
+// exactly one creative POST.
+func TestCreateCampaign_BoostUnreadablePost(t *testing.T) {
+	t.Run("LinkedIn takes the creative", func(t *testing.T) {
+		s := &boostServer{postStatus: http.StatusForbidden}
+		res, err := newBoostClient(t, s).CreateCampaign(context.Background(), boostInput())
+		if err != nil {
+			t.Fatalf("CreateCampaign: %v", err)
+		}
+		if res.CreativeCount != 1 || res.BoostedPostURN != boostTestPost {
+			t.Errorf("CreativeCount %d, BoostedPostURN %q; want 1, %s", res.CreativeCount, res.BoostedPostURN, boostTestPost)
+		}
+		if !strings.Contains(strings.Join(res.Steps, "\n"), "not pre-checked: this connection cannot read posts") {
+			t.Errorf("steps do not record the skipped pre-checks: %v", res.Steps)
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.campaign["status"] != "PAUSED" {
+			t.Errorf("campaign status = %v, want PAUSED", s.campaign["status"])
+		}
+		if _, has := s.campaign["format"]; has {
+			t.Errorf("campaign format %v sent for an unread post; LinkedIn infers it from the creative", s.campaign["format"])
+		}
+		if len(s.creatives) != 1 {
+			t.Fatalf("creatives = %d, want 1", len(s.creatives))
+		}
+		if content, _ := s.creatives[0]["content"].(map[string]any); len(content) != 1 || content["reference"] != boostTestPost {
+			t.Errorf("creative content = %v, want only reference %s", content, boostTestPost)
+		}
+	})
+
+	t.Run("LinkedIn refuses the creative as UGC_FORBIDDEN", func(t *testing.T) {
+		s := &boostServer{postStatus: http.StatusForbidden, creativeStatus: http.StatusForbidden,
+			creativeBody: `{"status":403,"code":"UGC_FORBIDDEN","message":"Accessing the UGC resource is forbidden"}`}
+		res, err := newBoostClient(t, s).CreateCampaign(context.Background(), boostInput())
+		want := `LinkedIn refused to sponsor post "urn:li:share:7001" from ad account 123456789 (UGC_FORBIDDEN): the connection's LinkedIn member needs a sponsoring role (ADMINISTRATOR, DIRECT_SPONSORED_CONTENT_POSTER or CONTENT_ADMIN) on the organization page that authored it`
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %v, want it to contain %q", err, want)
+		}
+		if _, pre := domain.AsPreflightRefusal(err); pre {
+			t.Errorf("a refusal after the campaign exists is reported as pre-flight: %v", err)
+		}
+		if res == nil || res.CampaignGroupID != "100" || res.CampaignID != "200" || res.CreativeCount != 0 || res.BoostedPostURN != "" {
+			t.Fatalf("partial = %+v", res)
+		}
+		if !strings.Contains(strings.Join(res.Steps, "\n"), want) {
+			t.Errorf("steps do not carry the refusal: %v", res.Steps)
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if len(s.creatives) != 1 {
+			t.Errorf("creative POSTs = %d, want exactly 1", len(s.creatives))
+		}
+	})
 }
 
 // TestCreateCampaign_BoostPostReadExpiry: a 401 on the post read is the connection's expiry, so

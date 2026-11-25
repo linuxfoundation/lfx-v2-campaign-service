@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding whose objective follows the strategy (automatic WEBSITE_VISIT + MAX_CLICK + CPM, manual WEBSITE_CONVERSION + CPC/NONE/unitCost) unless the caller asks for automatic website conversions (WEBSITE_CONVERSION + MAX_CONVERSION + CPM, only with a conversion to associate) or a manual bid on website visits (WEBSITE_VISIT + CPC/NONE/unitCost), either automatic one optionally with a target cost sent as unitCost, where the create once sent no optimizationTargetType, a boost create whose one creative references an existing organization post read and checked before the campaign group, and optional single-flight access-token refresh."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding whose objective follows the strategy (automatic WEBSITE_VISIT + MAX_CLICK + CPM, manual WEBSITE_CONVERSION + CPC/NONE/unitCost) unless the caller asks for automatic website conversions (WEBSITE_CONVERSION + MAX_CONVERSION + CPM, only with a conversion to associate) or a manual bid on website visits (WEBSITE_VISIT + CPC/NONE/unitCost), either automatic one optionally with a target cost sent as unitCost, where the create once sent no optimizationTargetType, a boost create whose one creative references an existing organization post read and checked before the campaign group (best-effort: a connection that cannot read posts lets LinkedIn's creative POST decide), and optional single-flight access-token refresh."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -1269,9 +1269,16 @@ check and before `findOrCreateCampaignGroup`, under the event's group lock. It r
 `orgURN(accountID)`; `lifecycleState` other than `PUBLISHED`; `visibility` other than `PUBLIC`; a
 `reshareContext`; `feedDistribution` other than `MAIN_FEED` (a dark or container post); content
 other than none, `article`, or `media` with an `urn:li:image:`/`urn:li:video:` id (poll,
-multiImage and celebration named as unsponsorable). A 404 and a 403 are refusals of the post; an
-`id` that is not the requested URN, a body `identityjson` refuses, and any other read failure
-are plain errors (a 401 keeps `ErrCredentialsExpired`). Every quoted value passes through
+multiImage and celebration named as unsponsorable). A 404 is a refusal of the post; an `id` that
+is not the requested URN, a body `identityjson` refuses, and any other read failure are plain
+errors (a 401 keeps `ErrCredentialsExpired`). A 403 is not a refusal: it means the connection
+cannot read posts (its token lacks `r_organization_social`), not that the post is ineligible, so
+`verifyBoostPost` returns `checked == false` with no format, logs one warning (post URN and ad
+account, no body) that the pre-checks were skipped, and the create goes on with no campaign
+`format` (step "Boost post … not pre-checked"). Probed 2026-11-26 (LinkedIn-Version 202611, LF
+Events 509430019): such a token gets 403 `ACCESS_DENIED` on the read and 201 on the creative,
+and LinkedIn sets the campaign's format to `STANDARD_UPDATE` itself. LinkedIn's creative POST then
+decides; its refusal comes back through `finishBoost`'s creative-failure path below. Every quoted value passes through
 `domain.CallerValue`, and an author that is not an `urn:li:organization:` (a member's person URN,
 which the caller never supplied) is reported only as "a LinkedIn member". The create body sends
 `content.reference`; LinkedIn reads such a creative back as `content.standardUpdateAd.reference`
@@ -1296,7 +1303,14 @@ lookup never repeated) or `pending` (every retry refused). The claim is released
 create repeats the lookup. `eventGroupLocks` is held through `finishBoost`, so two same-name
 boosts in one process post one creative (`TestCreateCampaign_BoostConcurrentSameNameCreatesOneCreative`,
 run with `-race`); other replicas are not covered (LFXV2-2665). A failed creative POST returns
-the partial with the group and campaign, UNCONFIRMED when ambiguous.
+the partial with the group and the PAUSED campaign, UNCONFIRMED when ambiguous, as the
+single-image loop does (the dispatcher records it `created_degraded`). A definite failure whose
+error envelope (`identityjson`-checked) carries one of `boostCreativeCodes` — `UGC_FORBIDDEN`,
+`UGC_RESHARE_CANNOT_BE_SPONSORED`, `UGC_INVALID_VISIBILITY_SETTING`,
+`UGC_INVALID_FEED_DISTRIBUTION`, as its `code` or an input error's — adds a step and error
+sentence from `boostCreativeRefusal` ("LinkedIn refused to sponsor post X from ad account Y
+(UGC_FORBIDDEN): the connection's LinkedIn member needs a sponsoring role …"); no other code is
+quoted (`TestCreateCampaign_BoostUnreadablePost`).
 `CampaignResult.BoostedPostURN` records the post once its creative exists.
 
 ## Profile targeting shape (`targeting.go`, #585)

@@ -2161,11 +2161,21 @@ POST /rest/adAccounts/<acct>/creatives
   post's campaign is created with `format: SINGLE_VIDEO`, which LinkedIn requires on a video
   campaign; otherwise no campaign `format` is sent.
 
-A 404 is refused as "not found", a 403 as "this connection cannot read post …" (reading an
-organization's posts needs `r_organization_social` and an ADMINISTRATOR,
-DIRECT_SPONSORED_CONTENT_POSTER or CONTENT_ADMIN page role). A 401 is the connection's expiry. Any
-other read failure fails the job with nothing created, and a retry reads again. These refusals
-fail the job, not the request: the post is read by the job, not by the synchronous check.
+A 404 is refused as "not found". A 401 is the connection's expiry. Any other read failure but a
+403 fails the job with nothing created, and a retry reads again. These refusals fail the job, not
+the request: the post is read by the job, not by the synchronous check.
+
+A 403 on the read means the connection cannot read posts (its token lacks
+`r_organization_social`), not that the post is ineligible. The checks above are then skipped
+(logged, and a result step says so), no campaign `format` is sent (LinkedIn infers it from the
+creative), and the group, PAUSED campaign and creative are created, letting LinkedIn decide. If
+LinkedIn refuses the creative, the row is `created_degraded` with the group and campaign, as for a
+failed image creative; `UGC_FORBIDDEN` reads "LinkedIn refused to sponsor post X from ad account Y
+(UGC_FORBIDDEN): the connection's LinkedIn member needs a sponsoring role (ADMINISTRATOR,
+DIRECT_SPONSORED_CONTENT_POSTER or CONTENT_ADMIN) on the organization page that authored it", and
+the reshare, visibility and feed-distribution `UGC_*` codes get their own sentences. Granting
+`r_organization_social` is optional: it turns those post problems into refusals before anything
+is created instead of a degraded create.
 
 On a campaign found by name (a retry), the creatives finder is asked for a creative of that
 campaign already referencing the post (`contentReferences=List(<post>)`); one found is reused and

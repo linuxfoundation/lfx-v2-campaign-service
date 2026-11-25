@@ -3515,16 +3515,23 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// to sponsor from this account fails the creative POST only after the group and the campaign
 	// exist. The read creates nothing, so any failure here returns (nil, err). It runs under the
 	// group lock, after every local check, so a refused input costs no request. The post's
-	// content also decides the campaign format (SINGLE_VIDEO for a video post).
+	// content also decides the campaign format (SINGLE_VIDEO for a video post). A connection that
+	// cannot read posts (a 403) skips the checks and sends no format: LinkedIn infers it from the
+	// creative, and the creative POST decides whether the post can be sponsored.
 	if format == FormatBoost {
 		orgURN, err := c.orgURN(accountID)
 		if err != nil {
 			return nil, domain.WrapPreflightRefusal(err)
 		}
-		if campaignFormat, err = c.verifyBoostPost(ctx, accountID, orgURN, in.BoostPost); err != nil {
+		var checked bool
+		if campaignFormat, checked, err = c.verifyBoostPost(ctx, accountID, orgURN, in.BoostPost); err != nil {
 			return nil, err
 		}
-		steps = append(steps, fmt.Sprintf("Boost post %s verified: published by %s, public, organic, sponsorable", in.BoostPost, orgURN))
+		if checked {
+			steps = append(steps, fmt.Sprintf("Boost post %s verified: published by %s, public, organic, sponsorable", in.BoostPost, orgURN))
+		} else {
+			steps = append(steps, fmt.Sprintf("Boost post %s not pre-checked: this connection cannot read posts (LinkedIn answered 403; it lacks r_organization_social), so LinkedIn decides at the creative whether the post can be sponsored", in.BoostPost))
+		}
 	}
 
 	groupID, groupReused, err := c.findOrCreateCampaignGroup(ctx, accountID, groupName, in.StartDate, endMs)

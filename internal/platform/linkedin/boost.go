@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -43,6 +44,15 @@ import (
 // So every one of those creative refusals that the post itself decides is checked here, with one
 // GET, before the campaign group POST: a post that fails any of them would otherwise leave a
 // campaign group and a PAUSED campaign with no creative.
+//
+// That read is best-effort on a 403 only. A 403 means this connection cannot read posts (its token
+// lacks r_organization_social), not that the post is ineligible, and the scope is not needed to
+// sponsor one: probed 2026-11-26 on LinkedIn-Version 202611, a token without it got 403 on the
+// Posts API GET and yet 201 on the creative POST {content: {reference: <share>}} against a paused
+// campaign with no format, which LinkedIn then set to STANDARD_UPDATE itself. So on a 403 the
+// pre-checks are skipped and the creative POST decides; its refusal (UGC_FORBIDDEN when the
+// connection's member has no sponsoring role on the page, or one of the UGC_* codes above) comes
+// back through finishBoost's creative-failure path, as a partial result with the PAUSED campaign.
 
 // FormatBoost is a SPONSORED_UPDATES campaign whose single creative sponsors CampaignInput.BoostPost.
 const FormatBoost = "boost"
@@ -85,12 +95,15 @@ func boostIneligible(format string, args ...any) error {
 // a content type this service boosts — text only, an article, or a single image or video. It
 // returns the campaign format the post needs: campaignFormatSingleVideo for a video post, which
 // LinkedIn requires to be set on the campaign, and "" otherwise (LinkedIn sets it from the
-// creative, as for every image campaign).
+// creative, as for every image campaign). checked reports whether the post was read and checked.
 //
-// It sends one GET and nothing else. A 404 or 403 is a refusal of the post (it does not exist, or
-// this connection cannot read it); any other failure is returned wrapped, so a 401 still reaches
-// the dispatcher as the connection's expiry. Either way nothing was created.
-func (c *Client) verifyBoostPost(ctx context.Context, accountID, orgURN, postURN string) (string, error) {
+// It sends one GET and nothing else. A 404 is a refusal of the post (it does not exist). A 403
+// means this connection cannot read posts (it lacks r_organization_social), not that the post is
+// ineligible: it returns ("", false, nil), logging that the pre-checks were skipped, so the create
+// goes on with no campaign format and LinkedIn's creative POST decides (see the package note
+// above). Any other failure is returned wrapped, so a 401 still reaches the dispatcher as the
+// connection's expiry; nothing was created.
+func (c *Client) verifyBoostPost(ctx context.Context, accountID, orgURN, postURN string) (format string, checked bool, err error) {
 	shown := domain.CallerValue(postURN)
 	raw, err := c.doEntityGET(ctx, "posts/"+encodeURNForPath(postURN))
 	if err != nil {
@@ -98,13 +111,22 @@ func (c *Client) verifyBoostPost(ctx context.Context, accountID, orgURN, postURN
 		if errors.As(err, &apiErr) {
 			switch apiErr.StatusCode {
 			case http.StatusNotFound:
-				return "", boostIneligible("post %s was not found (LinkedIn answered 404); check the URN, and that the post has not been deleted", shown)
+				return "", false, boostIneligible("post %s was not found (LinkedIn answered 404); check the URN, and that the post has not been deleted", shown)
 			case http.StatusForbidden:
-				return "", boostIneligible("this connection cannot read post %s (LinkedIn answered 403); reading an organization's posts needs the r_organization_social scope and an ADMINISTRATOR, DIRECT_SPONSORED_CONTENT_POSTER or CONTENT_ADMIN role on its page", shown)
+				slog.WarnContext(ctx, "linkedin boost: post pre-checks skipped because the connection cannot read posts (r_organization_social); LinkedIn's creative POST decides whether the post can be sponsored",
+					"post_urn", postURN, "ad_account_id", accountID)
+				return "", false, nil
 			}
 		}
-		return "", fmt.Errorf("reading boost post %s failed before anything was created; a retry reads it again: %w", shown, err)
+		return "", false, fmt.Errorf("reading boost post %s failed before anything was created; a retry reads it again: %w", shown, err)
 	}
+	format, err = checkBoostPost(accountID, orgURN, postURN, raw)
+	return format, err == nil, err
+}
+
+// checkBoostPost runs verifyBoostPost's checks on the Posts API answer raw.
+func checkBoostPost(accountID, orgURN, postURN string, raw []byte) (string, error) {
+	shown := domain.CallerValue(postURN)
 	if err := identityjson.Check(raw); err != nil {
 		return "", fmt.Errorf("LinkedIn's answer for boost post %s could not be trusted; nothing was created: %w", shown, err)
 	}
@@ -179,6 +201,45 @@ func boostCampaignFormat(shown string, content map[string]json.RawMessage) (stri
 	return "", nil
 }
 
+// boostCreativeCodes are the Creatives API error codes a boost's creative POST can answer about
+// the post itself, each with the service's sentence for it. A code outside this list is never
+// quoted: the envelope is upstream text.
+var boostCreativeCodes = map[string]string{
+	"UGC_FORBIDDEN":                   "the connection's LinkedIn member needs a sponsoring role (ADMINISTRATOR, DIRECT_SPONSORED_CONTENT_POSTER or CONTENT_ADMIN) on the organization page that authored it",
+	"UGC_RESHARE_CANNOT_BE_SPONSORED": "the post is a reshare, which LinkedIn does not sponsor; boost the original post instead",
+	"UGC_INVALID_VISIBILITY_SETTING":  "LinkedIn sponsors only a PUBLIC post",
+	"UGC_INVALID_FEED_DISTRIBUTION":   "a boost sponsors an organic MAIN_FEED post",
+}
+
+// boostCreativeRefusal explains a definite creative POST failure whose LinkedIn error envelope
+// carries one of boostCreativeCodes (as its code, or an input error's), or returns "" when it
+// carries none. The envelope is read only when identityjson accepts it.
+func boostCreativeRefusal(err error, postURN, accountID string) string {
+	var ae *apiError
+	if !errors.As(err, &ae) || len(ae.raw) == 0 || identityjson.Check(ae.raw) != nil {
+		return ""
+	}
+	var env errorEnvelope
+	if json.Unmarshal(ae.raw, &env) != nil {
+		return ""
+	}
+	codes := []string{}
+	if env.Code != nil {
+		codes = append(codes, *env.Code)
+	}
+	if env.ErrorDetails != nil {
+		for _, ie := range append(append([]inputErrorWire(nil), env.ErrorDetails.InputErrors...), env.ErrorDetails.ConditionalInputErrors...) {
+			codes = append(codes, ie.Code)
+		}
+	}
+	for _, code := range codes {
+		if why, ok := boostCreativeCodes[code]; ok {
+			return fmt.Sprintf("LinkedIn refused to sponsor post %s from ad account %s (%s): %s", domain.CallerValue(postURN), accountID, code, why)
+		}
+	}
+	return ""
+}
+
 // isJSONNullRaw reports whether raw is the JSON literal null.
 func isJSONNullRaw(raw json.RawMessage) bool {
 	return strings.TrimSpace(string(raw)) == "null"
@@ -240,6 +301,11 @@ func (c *Client) finishBoost(ctx context.Context, accountID, groupName, groupID,
 			steps = append(steps, fmt.Sprintf("Boost creative for post %s outcome UNCONFIRMED (timeout, server error, or an in-flight cancellation); it may have been created — verify before recreating", postURN))
 			return partial(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps)),
 				fmt.Errorf("boost creative for post %s UNCONFIRMED: %w — group %q and campaign %q already exist; the creative MAY have been created; inspect the returned partial result", postURN, err, groupID, campaignID)
+		}
+		if why := boostCreativeRefusal(err, postURN, accountID); why != "" {
+			steps = append(steps, why)
+			return partial(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps)),
+				fmt.Errorf("boost creative for post %s failed: %s: %w — group %q and campaign %q already exist (the campaign is PAUSED); inspect the returned partial result", postURN, why, err, groupID, campaignID)
 		}
 		return partial(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps)),
 			fmt.Errorf("boost creative for post %s failed: %w — group %q and campaign %q already exist; inspect the returned partial result", postURN, err, groupID, campaignID)

@@ -127,6 +127,11 @@ type liBoostAPI struct {
 	finderStatus  int
 	creativeFound bool
 	finderCalls   int
+	// postStatus fails the post read (0 answers post); creativeStatus fails the creative POST
+	// with creativeBody.
+	postStatus     int
+	creativeStatus int
+	creativeBody   string
 }
 
 func newLIBoostAPI(t *testing.T, post string) *liBoostAPI {
@@ -140,6 +145,11 @@ func newLIBoostAPI(t *testing.T, post string) *liBoostAPI {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/posts/"):
+			if a.postStatus != 0 {
+				w.WriteHeader(a.postStatus)
+				_, _ = io.WriteString(w, `{"status":403,"code":"ACCESS_DENIED","message":"Not enough permissions to access: partnerApiPostsExternal.GET"}`)
+				return
+			}
 			_, _ = io.WriteString(w, a.post)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives"):
 			a.finderCalls++
@@ -178,6 +188,11 @@ func newLIBoostAPI(t *testing.T, post string) *liBoostAPI {
 			var b map[string]any
 			_ = json.Unmarshal(raw, &b)
 			a.creatives = append(a.creatives, b)
+			if a.creativeStatus != 0 {
+				w.WriteHeader(a.creativeStatus)
+				_, _ = io.WriteString(w, a.creativeBody)
+				return
+			}
 			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:400"}`)
 		default:
 			http.Error(w, "unexpected "+r.URL.Path, http.StatusBadRequest)
@@ -259,6 +274,29 @@ func TestLinkedIn_BoostOfAnotherOrganizationsPostCreatesNothing(t *testing.T) {
 		if !strings.HasPrefix(c, "GET ") {
 			t.Errorf("mutating request for a refused post: %s", c)
 		}
+	}
+}
+
+// TestLinkedIn_BoostUnreadablePostRefusedByLinkedIn: a connection that cannot read posts (403 on
+// the read) still creates the group and PAUSED campaign, and LinkedIn's UGC_FORBIDDEN refusal of
+// the creative is recorded the way a failed image creative is: a created_degraded row keeping the
+// campaign id, with the error naming the page role the connection's member lacks.
+func TestLinkedIn_BoostUnreadablePostRefusedByLinkedIn(t *testing.T) {
+	t.Setenv(constants.EnvLinkedInAdsBoostPostEnabled, "true")
+	api := newLIBoostAPI(t, "")
+	api.postStatus, api.creativeStatus = http.StatusForbidden, http.StatusForbidden
+	api.creativeBody = `{"status":403,"code":"UGC_FORBIDDEN","message":"Accessing the UGC resource is forbidden"}`
+	camp, err := newLIBoostDispatcher(api).Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, linkedInBoostConfig(validBoost))
+	if err == nil || !strings.Contains(err.Error(), "(UGC_FORBIDDEN): the connection's LinkedIn member needs a sponsoring role") {
+		t.Fatalf("Dispatch err = %v, want the UGC_FORBIDDEN role sentence", err)
+	}
+	if camp == nil || camp.Status != campaignStatusCreatedDegraded || camp.PlatformCampaignID != "200" {
+		t.Fatalf("row = %+v, want created_degraded/200", camp)
+	}
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.creatives) != 1 {
+		t.Errorf("creative POSTs = %d, want 1", len(api.creatives))
 	}
 }
 
