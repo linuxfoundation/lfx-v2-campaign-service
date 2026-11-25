@@ -116,7 +116,13 @@ func (c *Client) verifyBoostPost(ctx context.Context, accountID, orgURN, postURN
 		return "", fmt.Errorf("LinkedIn's answer for boost post %s describes post %s; nothing was created", shown, domain.CallerValue(post.ID))
 	}
 	if post.Author != orgURN {
-		return "", boostIneligible("post %s is authored by %s, not by %s, the organization ad account %s serves; only that organization's own posts can be boosted here", shown, domain.CallerValue(post.Author), orgURN, accountID)
+		// A member's person URN is a linked pseudonym the caller never supplied: name it only
+		// when the author is an organization, so it cannot reach the job's failure message.
+		who := "a LinkedIn member"
+		if strings.HasPrefix(post.Author, "urn:li:organization:") {
+			who = domain.CallerValue(post.Author)
+		}
+		return "", boostIneligible("post %s is authored by %s, not by %s, the organization ad account %s serves; only that organization's own posts can be boosted here", shown, who, orgURN, accountID)
 	}
 	if post.LifecycleState != "PUBLISHED" {
 		return "", boostIneligible("post %s has lifecycleState %s; only a PUBLISHED post can be boosted", shown, domain.CallerValue(post.LifecycleState))

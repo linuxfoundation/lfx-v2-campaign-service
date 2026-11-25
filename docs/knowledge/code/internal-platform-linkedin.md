@@ -1270,7 +1270,10 @@ other than none, `article`, or `media` with an `urn:li:image:`/`urn:li:video:` i
 multiImage and celebration named as unsponsorable). A 404 and a 403 are refusals of the post; an
 `id` that is not the requested URN, a body `identityjson` refuses, and any other read failure
 are plain errors (a 401 keeps `ErrCredentialsExpired`). Every quoted value passes through
-`domain.CallerValue`. Sources (li-lms-2026-11, consulted 2026-11-26): the Posts API GET and
+`domain.CallerValue`, and an author that is not an `urn:li:organization:` (a member's person URN,
+which the caller never supplied) is reported only as "a LinkedIn member". The create body sends
+`content.reference`; LinkedIn reads such a creative back as `content.standardUpdateAd.reference`
+(202610+), and nothing here decodes a creative's `content`. Sources (li-lms-2026-11, consulted 2026-11-26): the Posts API GET and
 content table, and the Creatives API error table (`UGC_RESHARE_CANNOT_BE_SPONSORED`,
 `UGC_INVALID_VISIBILITY_SETTING`, `UGC_INVALID_FEED_DISTRIBUTION`,
 `REFERENCE_MEDIA_CATEGORY_AND_CAMPAIGN_FORMAT_MISMATCH`), cited in `boost.go`. A video post's

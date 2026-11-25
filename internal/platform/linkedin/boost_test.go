@@ -234,7 +234,10 @@ func TestCreateCampaign_BoostContentDecidesFormat(t *testing.T) {
 			if _, err := newBoostClient(t, s).CreateCampaign(context.Background(), boostInput()); err != nil {
 				t.Fatalf("CreateCampaign: %v", err)
 			}
-			if got := s.campaign["format"]; got != tc.want {
+			s.mu.Lock()
+			got := s.campaign["format"]
+			s.mu.Unlock()
+			if got != tc.want {
 				t.Errorf("campaign format = %v, want %v", got, tc.want)
 			}
 		})
@@ -255,7 +258,7 @@ func TestCreateCampaign_BoostPostRefusedBeforeAnyPOST(t *testing.T) {
 	}{
 		{"another organization's post", func(p map[string]any) { p["author"] = "urn:li:organization:5515715" }, 0,
 			`post "urn:li:share:7001" is authored by "urn:li:organization:5515715", not by urn:li:organization:987654321, the organization ad account 123456789 serves`, true},
-		{"a member's post", func(p map[string]any) { p["author"] = "urn:li:person:abc" }, 0, `is authored by "urn:li:person:abc"`, true},
+		{"a member's post", func(p map[string]any) { p["author"] = "urn:li:person:abc" }, 0, `is authored by a LinkedIn member, not by`, true},
 		{"draft", func(p map[string]any) { p["lifecycleState"] = "DRAFT" }, 0, `has lifecycleState "DRAFT"; only a PUBLISHED post can be boosted`, true},
 		{"connections only", func(p map[string]any) { p["visibility"] = "CONNECTIONS" }, 0, `has visibility "CONNECTIONS"; LinkedIn sponsors only a PUBLIC post`, true},
 		{"reshare", func(p map[string]any) {
@@ -282,6 +285,9 @@ func TestCreateCampaign_BoostPostRefusedBeforeAnyPOST(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want it to contain %q", err, tc.want)
+			}
+			if strings.Contains(err.Error(), "urn:li:person:") {
+				t.Errorf("err echoes a member's person URN: %v", err)
 			}
 			msg, pre := domain.AsPreflightRefusal(err)
 			if pre != tc.preflight {

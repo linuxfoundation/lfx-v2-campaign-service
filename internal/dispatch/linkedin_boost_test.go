@@ -227,3 +227,57 @@ func TestLinkedIn_BoostOfAnotherOrganizationsPostCreatesNothing(t *testing.T) {
 		}
 	}
 }
+
+// TestLinkedIn_BoostThroughAGrantedAccount: with account selection on, a boost naming one of the
+// LF system row's grants reads the post against the GRANT's organization. A post by that
+// organization is boosted in the granted account; a post by the row's default organization is
+// refused with nothing sent, since it is not the granted page's own post.
+func TestLinkedIn_BoostThroughAGrantedAccount(t *testing.T) {
+	t.Setenv(constants.EnvLinkedInAdsBoostPostEnabled, "true")
+	t.Setenv(constants.EnvLinkedInAdsAccountSelectionEnabled, "true")
+	cfg := linkedInBoostConfig(validBoost + `,"adAccountId":"500928401"`)
+	dispatcher := func(api *liBoostAPI) *LinkedInDispatcher {
+		repo := &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: grantedSystemRow()}}
+		return NewLinkedInDispatcher(repo, identityEncryptor{}, linkedin.WithBaseURL(api.srv.URL),
+			linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }))
+	}
+
+	t.Run("the grant's own post", func(t *testing.T) {
+		api := newLIBoostAPI(t, boostPostBody("urn:li:organization:12893459"))
+		camp, err := dispatcher(api).Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+		if err != nil {
+			t.Fatalf("Dispatch: %v", err)
+		}
+		if got := linkedInCreationAccountID(camp); got != "500928401" {
+			t.Errorf("created row records account %q, want the granted 500928401", got)
+		}
+		api.mu.Lock()
+		defer api.mu.Unlock()
+		if len(api.creatives) != 1 {
+			t.Fatalf("creatives = %d, want 1", len(api.creatives))
+		}
+		for _, c := range api.calls {
+			if strings.Contains(c, "538170226") {
+				t.Errorf("a request named the default account: %s", c)
+			}
+		}
+	})
+
+	t.Run("the default organization's post", func(t *testing.T) {
+		api := newLIBoostAPI(t, boostPostBody("urn:li:organization:208777"))
+		camp, err := dispatcher(api).Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+		if camp != nil || !isNoUpstreamCreate(err) || !errors.Is(err, linkedin.ErrBoostPostIneligible) {
+			t.Fatalf("Dispatch = %v, %v; want nothing created and the post refusal", camp, err)
+		}
+		if msg, _ := domain.AsPreflightRefusal(err); !strings.Contains(msg, "not by urn:li:organization:12893459") {
+			t.Errorf("refusal = %q, want it to name the grant's organization", msg)
+		}
+		api.mu.Lock()
+		defer api.mu.Unlock()
+		for _, c := range api.calls {
+			if !strings.HasPrefix(c, "GET ") {
+				t.Errorf("mutating request for a refused post: %s", c)
+			}
+		}
+	})
+}
