@@ -154,3 +154,32 @@ func TestMeta_DispatchVideoAssetBecomesAVideoAd(t *testing.T) {
 		t.Fatalf("snapshot = %s; want the asset id kept and no bytes", camp.ConfigSnapshot)
 	}
 }
+
+// TestCheckMetaSlotMime: an image slot takes only PNG or JPEG — a video or a PDF (#665) is refused
+// — and a video slot only an MP4.
+func TestCheckMetaSlotMime(t *testing.T) {
+	for _, tc := range []struct {
+		mime  string
+		video bool
+		want  string // "" accepted
+	}{
+		{model.MimeTypePNG, false, ""},
+		{model.MimeTypeJPEG, false, ""},
+		{model.MimeTypeMP4, false, "which is a video, not an image"},
+		{model.MimeTypePDF, false, "which is a PDF document, not an image"},
+		{model.MimeTypeMP4, true, ""},
+		{model.MimeTypePDF, true, "it is not an MP4 video"},
+		{model.MimeTypePNG, true, "it is not an MP4 video"},
+	} {
+		err := checkMetaSlotMime(0, "a1", tc.mime, tc.video)
+		if tc.want == "" {
+			if err != nil {
+				t.Errorf("%s video=%v refused: %v", tc.mime, tc.video, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s video=%v: err = %v, want %q", tc.mime, tc.video, err, tc.want)
+		}
+	}
+}

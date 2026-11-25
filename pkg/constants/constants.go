@@ -785,6 +785,15 @@ const (
 	// exercised against a live account; see docs/knowledge/architecture/linkedin-carousel-ads.md.
 	EnvLinkedInAdsCarouselEnabled = "LINKEDIN_ADS_CAROUSEL_ENABLED"
 
+	// EnvLinkedInAdsDocumentEnabled opts a deployment IN to linkedInConfig.format "document"
+	// (#665): a document ad whose one creative is a dark post carrying a stored PDF
+	// (linkedInConfig.documentAssetId) uploaded through LinkedIn's Documents API, ENGAGEMENT by
+	// default or LEAD_GENERATION with a Lead Gen Form. Only the exact value "true" enables it;
+	// unset or any other value fails closed, and a create naming it is refused before a job
+	// exists. The Documents API upload and the document post have not been exercised against a
+	// live account; see docs/knowledge/architecture/linkedin-document-ads.md.
+	EnvLinkedInAdsDocumentEnabled = "LINKEDIN_ADS_DOCUMENT_ENABLED"
+
 	// EnvLinkedInAdsCallToActionEnabled opts a deployment IN to linkedInConfig.variants[].callToAction
 	// (#588): the dark post's contentCallToActionLabel, sent with contentLandingPage. Only the exact
 	// value "true" enables it; unset or any other value fails closed, and a create naming one is

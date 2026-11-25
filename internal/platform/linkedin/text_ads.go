@@ -93,8 +93,10 @@ func NormalizeFormat(raw string) (string, error) {
 		return FormatText, nil
 	case FormatCarousel:
 		return FormatCarousel, nil
+	case FormatDocument:
+		return FormatDocument, nil
 	}
-	return "", fmt.Errorf("%w: format must be %q (the default), %q or %q", ErrFormatInvalid, FormatSingleImage, FormatText, FormatCarousel)
+	return "", fmt.Errorf("%w: format must be %q (the default), %q, %q or %q", ErrFormatInvalid, FormatSingleImage, FormatText, FormatCarousel, FormatDocument)
 }
 
 // ValidateTextAds checks the content of every text ad before anything is created: headline and
@@ -193,6 +195,9 @@ func adFormatNameSegment(in CampaignInput) string {
 		return "Text"
 	case FormatCarousel:
 		return "Carousel"
+	case FormatDocument:
+		// #665; lf-dbt stores an 8-segment name's Ad Format segment as-is.
+		return "Document"
 	}
 	if isVideoInput(in) {
 		return "Motion"

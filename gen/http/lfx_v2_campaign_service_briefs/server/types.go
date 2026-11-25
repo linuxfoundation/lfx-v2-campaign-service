@@ -510,7 +510,7 @@ type UploadCreativeAssetOKResponseBody struct {
 	// Parent brief
 	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
 	// Stored MIME type, as verified from the bytes (not merely the declared
-	// header). video/mp4 since #586.
+	// header). video/mp4 since #586, application/pdf since #665.
 	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
 	// Size of the stored image in bytes
 	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
@@ -562,7 +562,7 @@ type GetCreativeAssetResponseBody struct {
 	// Parent brief
 	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
 	// Stored MIME type, as verified from the bytes (not merely the declared
-	// header). video/mp4 since #586.
+	// header). video/mp4 since #586, application/pdf since #665.
 	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
 	// Size of the stored image in bytes
 	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
@@ -4928,7 +4928,7 @@ type CreativeAssetResponseBody struct {
 	// Parent brief
 	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
 	// Stored MIME type, as verified from the bytes (not merely the declared
-	// header). video/mp4 since #586.
+	// header). video/mp4 since #586, application/pdf since #665.
 	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
 	// Size of the stored image in bytes
 	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
@@ -5080,15 +5080,16 @@ type CampaignSettingsFieldResponseBody struct {
 	// LinkedIn's `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the
 	// currency is not reported, never a bare number) are upstream-only, and
 	// `objective_type` is compared against the objective the recorded bidding
-	// strategy implies (automatic WEBSITE_VISIT, or the WEBSITE_CONVERSION or
-	// LEAD_GENERATION (#664) the create recorded; manual WEBSITE_CONVERSION;
-	// `unknown` when none is recorded); `audience_expansion_enabled` and
-	// `offsite_delivery_enabled` (#667: LinkedIn's audienceExpansionEnabled and
-	// offsiteDeliveryEnabled, `true` or `false`, absent when not reported) are
-	// upstream-only; a campaign reporting both a daily and a total budget, neither
-	// (as under a campaign group's shared budget), or a non-USD amount reads both
-	// budget fields `unknown`. The vocabulary is per-platform and may grow, so a
-	// consumer must render an unrecognised field name rather than dropping it.
+	// strategy implies (automatic WEBSITE_VISIT, or the WEBSITE_CONVERSION,
+	// LEAD_GENERATION (#664) or ENGAGEMENT (#665, a document create) the create
+	// recorded; manual WEBSITE_CONVERSION; `unknown` when none is recorded);
+	// `audience_expansion_enabled` and `offsite_delivery_enabled` (#667:
+	// LinkedIn's audienceExpansionEnabled and offsiteDeliveryEnabled, `true` or
+	// `false`, absent when not reported) are upstream-only; a campaign reporting
+	// both a daily and a total budget, neither (as under a campaign group's shared
+	// budget), or a non-USD amount reads both budget fields `unknown`. The
+	// vocabulary is per-platform and may grow, so a consumer must render an
+	// unrecognised field name rather than dropping it.
 	Field string `form:"field" json:"field" xml:"field"`
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.
@@ -11597,8 +11598,8 @@ func ValidateUploadCreativeAssetRequestBody(body *UploadCreativeAssetRequestBody
 		err = goa.MergeErrors(err, goa.MissingFieldError("bytes", "body"))
 	}
 	if body.ContentType != nil {
-		if !(*body.ContentType == "image/png" || *body.ContentType == "image/jpeg" || *body.ContentType == "video/mp4") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.content_type", *body.ContentType, []any{"image/png", "image/jpeg", "video/mp4"}))
+		if !(*body.ContentType == "image/png" || *body.ContentType == "image/jpeg" || *body.ContentType == "video/mp4" || *body.ContentType == "application/pdf") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.content_type", *body.ContentType, []any{"image/png", "image/jpeg", "video/mp4", "application/pdf"}))
 		}
 	}
 	if body.Bytes != nil {

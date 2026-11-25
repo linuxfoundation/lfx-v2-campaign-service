@@ -1007,6 +1007,18 @@ app:
     LINKEDIN_ADS_CAROUSEL_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to linkedInConfig.format "document" (#665): a
+    # document ad whose one creative is a dark post carrying a stored PDF
+    # (linkedInConfig.documentAssetId) uploaded through LinkedIn's Documents
+    # API. ENGAGEMENT by default; objective "lead_generation" with a Lead Gen
+    # Form makes it a gated document. The upload and the post have not been
+    # exercised against a live account. Set it to exactly "true" in
+    # lfx-v2-argocd once the paused probe in the PR passes. While off, a create
+    # naming it is refused before a job exists. Any value other than "true" is
+    # treated as off, so a typo fails closed.
+    LINKEDIN_ADS_DOCUMENT_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to linkedInConfig.variants[].callToAction (#588):
     # the dark post's contentCallToActionLabel, sent with contentLandingPage. No
     # call to action on an article dark post has been sent to a live LinkedIn

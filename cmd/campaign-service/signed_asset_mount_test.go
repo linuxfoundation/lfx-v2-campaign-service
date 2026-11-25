@@ -412,3 +412,24 @@ func TestSignedAssetKindCannotBeRelabelled(t *testing.T) {
 		t.Fatalf("the store was read %d times for re-labelled URLs", n)
 	}
 }
+
+const saPDFAsset = "99999999-7777-4888-9999-bbbbbbbbbbbb"
+
+// TestSignedAssetNeverServesAPDF (#665): a stored PDF is uploaded to LinkedIn from the bytes at
+// dispatch and is never fetched by a platform, so neither an image URL nor a video URL serves it;
+// both are the generic 404.
+func TestSignedAssetNeverServesAPDF(t *testing.T) {
+	f := newSignedAssetFixture(t, true, func(s *fakeAssetStore, _ *countingBudget) {
+		s.assets[[3]string{saProject, saBrief, saPDFAsset}] = &model.CreativeAsset{ID: saPDFAsset, ProjectID: saProject, BriefID: saBrief, MimeType: model.MimeTypePDF, Bytes: []byte("%PDF-1.7 fake")}
+	})
+	for name, target := range map[string]string{
+		"image URL for a stored PDF": f.mint(t, saProject, saBrief, saPDFAsset),
+		"video URL for a stored PDF": f.mintKind(t, assetsign.KindVideo, saProject, saBrief, saPDFAsset),
+	} {
+		resp, body := do(t, http.MethodGet, target)
+		if resp.StatusCode != http.StatusNotFound || len(body) != 0 {
+			t.Errorf("%s: status %d body %q, want bare 404", name, resp.StatusCode, body)
+		}
+	}
+	waitReleased(t, f.budget)
+}

@@ -310,6 +310,9 @@ func TestMicrosoftImage_PreCreateRefusals(t *testing.T) {
 	// A stored MP4 (#586) is never sent as an image.
 	video := ownedPNGAsset(t)
 	video.asset.MimeType = model.MimeTypeMP4
+	// A stored PDF (#665) is never sent as an image either.
+	pdf := ownedPNGAsset(t)
+	pdf.asset.MimeType = model.MimeTypePDF
 
 	cases := []struct {
 		name       string
@@ -325,6 +328,7 @@ func TestMicrosoftImage_PreCreateRefusals(t *testing.T) {
 		{"no stored bytes", empty, `,"imageAssetId":"` + msAssetID + `"`, "no stored image bytes", false},
 		{"store error", dbDown, `,"imageAssetId":"` + msAssetID + `"`, "load creative asset", false},
 		{"video asset named as an image", video, `,"imageAssetId":"` + msAssetID + `"`, "is a video, not an image", false},
+		{"PDF asset named as an image", pdf, `,"imageAssetId":"` + msAssetID + `"`, "is a PDF document, not an image", false},
 		{"malformed asset id", ownedPNGAsset(t), `,"imageAssetId":"not-a-uuid"`, "not a valid asset id", true},
 		{"alt text over 35", ownedPNGAsset(t), `,"imageAssetId":"` + msAssetID + `","imageAltText":"` + strings.Repeat("a", 36) + `"`, "the limit is 35", false},
 		{"alt text without an image", ownedPNGAsset(t), `,"imageAltText":"orphan"`, "without imageAssetId", true},

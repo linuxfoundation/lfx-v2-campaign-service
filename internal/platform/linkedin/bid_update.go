@@ -148,9 +148,26 @@ type campaignBiddingPlan struct {
 // default with unitCost 0, under which "the campaign does not deliver".
 func campaignBidding(manualBid float64, objective string) (campaignBiddingPlan, error) {
 	switch objective {
-	case "", ObjectiveWebsiteVisit, ObjectiveWebsiteConversion, ObjectiveLeadGeneration:
+	case "", ObjectiveWebsiteVisit, ObjectiveWebsiteConversion, ObjectiveLeadGeneration, ObjectiveEngagement:
 	default:
-		return campaignBiddingPlan{}, fmt.Errorf("linkedin: objective %q is not one this service creates; use %s, %s or %s", objective, ObjectiveWebsiteVisit, ObjectiveWebsiteConversion, ObjectiveLeadGeneration)
+		return campaignBiddingPlan{}, fmt.Errorf("linkedin: objective %q is not one this service creates; use %s, %s or %s (or %s for a document create)", objective, ObjectiveWebsiteVisit, ObjectiveWebsiteConversion, ObjectiveLeadGeneration, ObjectiveEngagement)
+	}
+	// ENGAGEMENT (#665) is a document create's default: automatic only, optimising for reach
+	// (MAX_REACH, costType CPM), the Campaign Objectives row for documents. Name segment
+	// "Engagement". CreateCampaign creates it for a document only.
+	if objective == ObjectiveEngagement {
+		if manualBid != 0 {
+			return campaignBiddingPlan{}, fmt.Errorf("linkedin: objective %s is created with automatic bidding (%s) only; omit the manual bid", ObjectiveEngagement, OptimizationTargetMaxReach)
+		}
+		return campaignBiddingPlan{
+			fields: map[string]any{
+				"costType":               costTypeCPM,
+				"optimizationTargetType": OptimizationTargetMaxReach,
+			},
+			objectiveType:      ObjectiveEngagement,
+			optimizationTarget: OptimizationTargetMaxReach,
+			nameObjective:      "Engagement",
+		}, nil
 	}
 	// LEAD_GENERATION (#664) is created with automatic bidding only: MAX_LEAD, costType CPM, no
 	// unitCost. Name segment "Leads". See lead_gen.go for the sources and the decision.

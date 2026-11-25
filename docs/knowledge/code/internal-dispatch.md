@@ -5820,6 +5820,21 @@ came from — `linkedInConfig.textAds reference creative asset …` on a text cr
 otherwise; the snapshot redacts text-ad copy like
 variant copy, and `linkedinCreativeCount` gives `campaignFromLinkedIn` the requested creative count.
 
+**LinkedIn document ads (#665).** `linkedin_document.go`. `checkFormatShape` (and, before the
+strict decode, `Dispatch` via `checkDocumentShape`) refuses a `documentAssetId`, `documentTitle` or
+`documentIntroText` that is not a JSON string. `linkedinFormat` refuses those fields under another
+format and calls `linkedinDocumentFormat`: gate `LINKEDIN_ADS_DOCUMENT_ENABLED` first, then no
+variants, text ads or carousel, objective omitted or `"lead_generation"` only (decision 2026-11-25),
+automatic bidding, a uuid asset id and `linkedin.ValidateDocumentFields`. An omitted objective
+reaches the client as `""`, which it resolves to ENGAGEMENT (`documentObjective`), and `resolveLinkedInDocument`
+prices, reserves, loads and checks the PDF (brief-scoped, `model.MimeTypePDF`,
+`linkedin.ValidateDocument`) before any request. `linkedinCreativeCount` is 1;
+`linkedinSnapshotConfig` redacts the title and intro text; `linkedinResultObjective` accepts a
+recorded `ENGAGEMENT`. Every image consumer now refuses a non-image through
+`model.IsImageMimeType` (naming it with `model.AssetKindPhrase`), so a PDF never reaches an image
+slot, and `TestPlatformConfigsNameTheirAssetUnderOneKey` accepts `documentAssetId` as the fourth
+snapshot key. See [LinkedIn Document Ads](../architecture/linkedin-document-ads.md).
+
 **LinkedIn carousel creates (#665).** `linkedin_carousel.go`. `checkFormatShape` hands
 `carouselCards` and `carouselIntroText` to `checkCarouselFieldShape` (cards an array of objects of
 the three `CarouselCard` string fields, null fields and unknown keys refused; intro text a string).

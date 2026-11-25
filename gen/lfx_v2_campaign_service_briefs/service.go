@@ -33,30 +33,37 @@ type Service interface {
 	// Fetch an event page and extract its details, for pre-filling a brief. Does
 	// not create anything.
 	FetchEventURL(context.Context, *FetchEventURLPayload) (res *EventDetails, err error)
-	// Upload an image or MP4 video asset for a brief so an ad creative can
-	// reference it by id. Synchronous: the image is validated (PNG/JPEG, size
-	// limit) and stored, then the asset id is returned. An MP4 (content_type
-	// video/mp4, #586) is checked structurally rather than decoded: it must open
-	// with an ftyp box of an MP4 brand, its top-level boxes must tile the file
-	// exactly, and it must carry moov and mdat boxes; it is stored with no width
-	// or height, and only an X campaign (twitterConfig.videoAssetId, #564: the
-	// authored tweet's video or the website card's media) or a LinkedIn video
-	// variant (linkedInConfig.variants[].videoAssetId, #586: all variants or none,
-	// a SINGLE_VIDEO campaign, 400 unless LINKEDIN_ADS_VIDEO_ENABLED is "true";
+	// Upload an image, MP4 video or PDF document asset for a brief so an ad
+	// creative can reference it by id. Synchronous: the asset is validated
+	// (PNG/JPEG decoded with a size limit; MP4 and PDF checked structurally) and
+	// stored, then the asset id is returned. An MP4 (content_type video/mp4, #586)
+	// is checked structurally rather than decoded: it must open with an ftyp box
+	// of an MP4 brand, its top-level boxes must tile the file exactly, and it must
+	// carry moov and mdat boxes; it is stored with no width or height, and only an
+	// X campaign (twitterConfig.videoAssetId, #564: the authored tweet's video or
+	// the website card's media) or a LinkedIn video variant
+	// (linkedInConfig.variants[].videoAssetId, #586: all variants or none, a
+	// SINGLE_VIDEO campaign, 400 unless LINKEDIN_ADS_VIDEO_ENABLED is "true";
 	// api-catalog LinkedInConfig variant videos) or a Reddit video post
 	// (redditConfig.videoAssetId, #549, behind REDDIT_VIDEO_ENABLED) consumes it —
-	// every image slot refuses a video asset at dispatch. Re-uploading identical
-	// bytes to the same brief returns the existing asset (idempotent). This does
-	// not touch any ad platform; the account-scoped Meta image_hash is resolved
-	// later, at campaign dispatch. Meta and Microsoft Advertising consume stored
-	// assets: a Microsoft Advertising campaign names one by
-	// microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad
-	// account's media library (an account-scoped MediaId) and attached to the
-	// campaign as an image ad extension; Microsoft accepts at most 76,800 bytes
-	// and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the
-	// asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed
-	// URL when that feature is configured. An X (Twitter) campaign may also
-	// reference the asset as the image of its authored tweet
+	// every image slot refuses a video asset at dispatch. A PDF (content_type
+	// application/pdf, #665) is likewise checked structurally (the PDF header, and
+	// the file must end with its final end-of-file marker, within its last 1024
+	// bytes and followed only by whitespace) and stored with no width or height;
+	// only a LinkedIn document ad (linkedInConfig.documentAssetId, format
+	// "document", 400 unless LINKEDIN_ADS_DOCUMENT_ENABLED is "true") consumes it
+	// — every image and video slot refuses a PDF at dispatch, and a signed asset
+	// URL never serves one. Re-uploading identical bytes to the same brief returns
+	// the existing asset (idempotent). This does not touch any ad platform; the
+	// account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta
+	// and Microsoft Advertising consume stored assets: a Microsoft Advertising
+	// campaign names one by microsoftConfig.imageAssetId, and at dispatch it is
+	// uploaded to the ad account's media library (an account-scoped MediaId) and
+	// attached to the campaign as an image ad extension; Microsoft accepts at most
+	// 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also
+	// reference the asset (redditConfig.imageAssetId), served to Reddit at a
+	// short-lived signed URL when that feature is configured. An X (Twitter)
+	// campaign may also reference the asset as the image of its authored tweet
 	// (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is
 	// likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig
 	// variant names one by imageAssetId, and at dispatch it is uploaded once
@@ -2218,15 +2225,16 @@ type CampaignSettingsField struct {
 	// LinkedIn's `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the
 	// currency is not reported, never a bare number) are upstream-only, and
 	// `objective_type` is compared against the objective the recorded bidding
-	// strategy implies (automatic WEBSITE_VISIT, or the WEBSITE_CONVERSION or
-	// LEAD_GENERATION (#664) the create recorded; manual WEBSITE_CONVERSION;
-	// `unknown` when none is recorded); `audience_expansion_enabled` and
-	// `offsite_delivery_enabled` (#667: LinkedIn's audienceExpansionEnabled and
-	// offsiteDeliveryEnabled, `true` or `false`, absent when not reported) are
-	// upstream-only; a campaign reporting both a daily and a total budget, neither
-	// (as under a campaign group's shared budget), or a non-USD amount reads both
-	// budget fields `unknown`. The vocabulary is per-platform and may grow, so a
-	// consumer must render an unrecognised field name rather than dropping it.
+	// strategy implies (automatic WEBSITE_VISIT, or the WEBSITE_CONVERSION,
+	// LEAD_GENERATION (#664) or ENGAGEMENT (#665, a document create) the create
+	// recorded; manual WEBSITE_CONVERSION; `unknown` when none is recorded);
+	// `audience_expansion_enabled` and `offsite_delivery_enabled` (#667:
+	// LinkedIn's audienceExpansionEnabled and offsiteDeliveryEnabled, `true` or
+	// `false`, absent when not reported) are upstream-only; a campaign reporting
+	// both a daily and a total budget, neither (as under a campaign group's shared
+	// budget), or a non-USD amount reads both budget fields `unknown`. The
+	// vocabulary is per-platform and may grow, so a consumer must render an
+	// unrecognised field name rather than dropping it.
 	Field string
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.
@@ -2378,7 +2386,7 @@ type CreativeAsset struct {
 	// Parent brief
 	BriefID string
 	// Stored MIME type, as verified from the bytes (not merely the declared
-	// header). video/mp4 since #586.
+	// header). video/mp4 since #586, application/pdf since #665.
 	MimeType string
 	// Size of the stored image in bytes
 	ByteSize int64

@@ -4443,7 +4443,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: upload-creative-asset lfx-v2-campaign-service-briefs
-            description: 'Upload an image or MP4 video asset for a brief so an ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. An MP4 (content_type video/mp4, #586) is checked structurally rather than decoded: it must open with an ftyp box of an MP4 brand, its top-level boxes must tile the file exactly, and it must carry moov and mdat boxes; it is stored with no width or height, and only an X campaign (twitterConfig.videoAssetId, #564: the authored tweet''s video or the website card''s media) or a LinkedIn video variant (linkedInConfig.variants[].videoAssetId, #586: all variants or none, a SINGLE_VIDEO campaign, 400 unless LINKEDIN_ADS_VIDEO_ENABLED is "true"; api-catalog LinkedInConfig variant videos) or a Reddit video post (redditConfig.videoAssetId, #549, behind REDDIT_VIDEO_ENABLED) consumes it — every image slot refuses a video asset at dispatch. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account''s media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig variant names one by imageAssetId, and at dispatch it is uploaded once through LinkedIn''s Images API (an organization-owned image URN) and used as that dark post''s article thumbnail; LinkedIn accepts at most 5,000,000 bytes and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or 360x640 to 2430x4320 (vertical) pixels. A LinkedIn carousel card (linkedInConfig.format "carousel", #665, 400 unless LINKEDIN_ADS_CAROUSEL_ENABLED is "true") names one by carouselCards[].imageAssetId; a carousel takes 2 to 10 cards, each a square (1:1) image of at most 10,000,000 bytes and 4320x4320 pixels. A brief''s library is bounded by a per-brief quota on both count and total stored bytes; an upload that would exceed either is refused with 409 and reason creative_asset_quota_exceeded, and list-creative-assets publishes the ceilings and the current totals so a client can see the headroom before it uploads. A re-upload of identical bytes is idempotent and is NOT judged against the quota, since it stores nothing. An archived brief returns 404, matching every other access to a brief''s children.'
+            description: 'Upload an image, MP4 video or PDF document asset for a brief so an ad creative can reference it by id. Synchronous: the asset is validated (PNG/JPEG decoded with a size limit; MP4 and PDF checked structurally) and stored, then the asset id is returned. An MP4 (content_type video/mp4, #586) is checked structurally rather than decoded: it must open with an ftyp box of an MP4 brand, its top-level boxes must tile the file exactly, and it must carry moov and mdat boxes; it is stored with no width or height, and only an X campaign (twitterConfig.videoAssetId, #564: the authored tweet''s video or the website card''s media) or a LinkedIn video variant (linkedInConfig.variants[].videoAssetId, #586: all variants or none, a SINGLE_VIDEO campaign, 400 unless LINKEDIN_ADS_VIDEO_ENABLED is "true"; api-catalog LinkedInConfig variant videos) or a Reddit video post (redditConfig.videoAssetId, #549, behind REDDIT_VIDEO_ENABLED) consumes it — every image slot refuses a video asset at dispatch. A PDF (content_type application/pdf, #665) is likewise checked structurally (the PDF header, and the file must end with its final end-of-file marker, within its last 1024 bytes and followed only by whitespace) and stored with no width or height; only a LinkedIn document ad (linkedInConfig.documentAssetId, format "document", 400 unless LINKEDIN_ADS_DOCUMENT_ENABLED is "true") consumes it — every image and video slot refuses a PDF at dispatch, and a signed asset URL never serves one. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account''s media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig variant names one by imageAssetId, and at dispatch it is uploaded once through LinkedIn''s Images API (an organization-owned image URN) and used as that dark post''s article thumbnail; LinkedIn accepts at most 5,000,000 bytes and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or 360x640 to 2430x4320 (vertical) pixels. A LinkedIn carousel card (linkedInConfig.format "carousel", #665, 400 unless LINKEDIN_ADS_CAROUSEL_ENABLED is "true") names one by carouselCards[].imageAssetId; a carousel takes 2 to 10 cards, each a square (1:1) image of at most 10,000,000 bytes and 4320x4320 pixels. A brief''s library is bounded by a per-brief quota on both count and total stored bytes; an upload that would exceed either is refused with 409 and reason creative_asset_quota_exceeded, and list-creative-assets publishes the ceilings and the current totals so a client can see the headroom before it uploads. A re-upload of identical bytes is idempotent and is NOT judged against the quota, since it stores nothing. An archived brief returns 404, matching every other access to a brief''s children.'
             operationId: lfx-v2-campaign-service-briefs#upload-creative-asset
             parameters:
                 - name: project_id
@@ -16739,7 +16739,7 @@ definitions:
                     - unknown
             field:
                 type: string
-                description: 'The setting''s name in this service''s own stable vocabulary rather than the platform''s field names. Several names do coincide with a campaign-row column, but the vocabulary is NOT a column list and must not be read as one: `advertising_channel_type` has no column and is recovered from the campaign''s config snapshot, and the upstream-only names below have no recorded side at all. On Google Ads the COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`, `advertising_channel_type`, `start_date` and `end_date`. `budget_delivery_method`, `budget_explicitly_shared` and `bidding_strategy_type` are reported UPSTREAM-ONLY, with no `recorded` counterpart and therefore always an `unknown` verdict. For the two budget fields that is because nothing this service records expresses them. `bidding_strategy_type` IS recorded, and is left uncompared deliberately: the comparison would require mapping this service''s caller vocabulary onto Google''s OUTPUT_ONLY bidding-strategy enum, which is unverified exactly where it is ambiguous, and on an adopted campaign the recorded strategy was never pushed upstream, so a guessed mapping would report a false divergence on a campaign set exactly as asked. `status` is also reported with no `recorded` counterpart, but for a DIFFERENT reason: the campaign row DOES record a `status`, and it is deliberately never compared because the two are different axes. The column carries this service''s own lifecycle vocabulary — mostly provisioning state (`pending`, `created`, `created_degraded`, soft-deleted) and only sometimes a run state — while Google''s `ENABLED`/`PAUSED`/`REMOVED` is purely delivery state, so comparing them would report a permanent, meaningless divergence on nearly every campaign. The upstream value is still reported so an operator can see that a campaign is paused upstream. `advertising_channel_type` is compared rather than upstream-only because the dispatch config''s channel IS persisted in the campaign''s config snapshot; it still reads `unknown` on a legacy row that carries no snapshot, but for the ordinary reason that nothing was recorded there — not because the field has no recorded side. On Microsoft Advertising, Meta, Reddit and X the COMPARED settings are `budget_amount`, `budget_type` and `campaign_name`, plus `start_date` and `end_date` on Meta, Reddit and X (Microsoft keeps flight dates on the ad group, not the campaign, and this read does not read the ad group, so they are not reported there); `status` and `bidding_strategy_type` are upstream-only on all four (since LFXV2-2665 their create paths record an `automatic` or `manual` choice — the campaign''s `bidding_strategy` — but that vocabulary is deliberately not mapped onto each platform''s strategy enum, for the reason given for Google above); Microsoft also reports `budget_explicitly_shared` upstream-only, Reddit `is_campaign_budget_optimization` and X `budget_optimization` — the last two say where the budget lives, and explain a budget that reads `unknown` because the campaign-level amount is not the one the row recorded (Reddit with campaign budget optimization off, X under anything but `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged forward past UTC midnight (because the requested day had already begun at dispatch) is shown with both sides and an `unknown` verdict rather than a false `diverged`. On LinkedIn the COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`, `start_date` and `end_date` (the start, like Meta''s and Reddit''s, may be nudged by the create path); `status`, `bidding_strategy_type` (LinkedIn''s optimizationTargetType), `cost_type`, `unit_cost` (the bid amount), `unit_cost_currency` (its ISO currency, from LinkedIn''s `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the currency is not reported, never a bare number) are upstream-only, and `objective_type` is compared against the objective the recorded bidding strategy implies (automatic WEBSITE_VISIT, or the WEBSITE_CONVERSION or LEAD_GENERATION (#664) the create recorded; manual WEBSITE_CONVERSION; `unknown` when none is recorded); `audience_expansion_enabled` and `offsite_delivery_enabled` (#667: LinkedIn''s audienceExpansionEnabled and offsiteDeliveryEnabled, `true` or `false`, absent when not reported) are upstream-only; a campaign reporting both a daily and a total budget, neither (as under a campaign group''s shared budget), or a non-USD amount reads both budget fields `unknown`. The vocabulary is per-platform and may grow, so a consumer must render an unrecognised field name rather than dropping it.'
+                description: 'The setting''s name in this service''s own stable vocabulary rather than the platform''s field names. Several names do coincide with a campaign-row column, but the vocabulary is NOT a column list and must not be read as one: `advertising_channel_type` has no column and is recovered from the campaign''s config snapshot, and the upstream-only names below have no recorded side at all. On Google Ads the COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`, `advertising_channel_type`, `start_date` and `end_date`. `budget_delivery_method`, `budget_explicitly_shared` and `bidding_strategy_type` are reported UPSTREAM-ONLY, with no `recorded` counterpart and therefore always an `unknown` verdict. For the two budget fields that is because nothing this service records expresses them. `bidding_strategy_type` IS recorded, and is left uncompared deliberately: the comparison would require mapping this service''s caller vocabulary onto Google''s OUTPUT_ONLY bidding-strategy enum, which is unverified exactly where it is ambiguous, and on an adopted campaign the recorded strategy was never pushed upstream, so a guessed mapping would report a false divergence on a campaign set exactly as asked. `status` is also reported with no `recorded` counterpart, but for a DIFFERENT reason: the campaign row DOES record a `status`, and it is deliberately never compared because the two are different axes. The column carries this service''s own lifecycle vocabulary — mostly provisioning state (`pending`, `created`, `created_degraded`, soft-deleted) and only sometimes a run state — while Google''s `ENABLED`/`PAUSED`/`REMOVED` is purely delivery state, so comparing them would report a permanent, meaningless divergence on nearly every campaign. The upstream value is still reported so an operator can see that a campaign is paused upstream. `advertising_channel_type` is compared rather than upstream-only because the dispatch config''s channel IS persisted in the campaign''s config snapshot; it still reads `unknown` on a legacy row that carries no snapshot, but for the ordinary reason that nothing was recorded there — not because the field has no recorded side. On Microsoft Advertising, Meta, Reddit and X the COMPARED settings are `budget_amount`, `budget_type` and `campaign_name`, plus `start_date` and `end_date` on Meta, Reddit and X (Microsoft keeps flight dates on the ad group, not the campaign, and this read does not read the ad group, so they are not reported there); `status` and `bidding_strategy_type` are upstream-only on all four (since LFXV2-2665 their create paths record an `automatic` or `manual` choice — the campaign''s `bidding_strategy` — but that vocabulary is deliberately not mapped onto each platform''s strategy enum, for the reason given for Google above); Microsoft also reports `budget_explicitly_shared` upstream-only, Reddit `is_campaign_budget_optimization` and X `budget_optimization` — the last two say where the budget lives, and explain a budget that reads `unknown` because the campaign-level amount is not the one the row recorded (Reddit with campaign budget optimization off, X under anything but `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged forward past UTC midnight (because the requested day had already begun at dispatch) is shown with both sides and an `unknown` verdict rather than a false `diverged`. On LinkedIn the COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`, `start_date` and `end_date` (the start, like Meta''s and Reddit''s, may be nudged by the create path); `status`, `bidding_strategy_type` (LinkedIn''s optimizationTargetType), `cost_type`, `unit_cost` (the bid amount), `unit_cost_currency` (its ISO currency, from LinkedIn''s `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the currency is not reported, never a bare number) are upstream-only, and `objective_type` is compared against the objective the recorded bidding strategy implies (automatic WEBSITE_VISIT, or the WEBSITE_CONVERSION, LEAD_GENERATION (#664) or ENGAGEMENT (#665, a document create) the create recorded; manual WEBSITE_CONVERSION; `unknown` when none is recorded); `audience_expansion_enabled` and `offsite_delivery_enabled` (#667: LinkedIn''s audienceExpansionEnabled and offsiteDeliveryEnabled, `true` or `false`, absent when not reported) are upstream-only; a campaign reporting both a daily and a total budget, neither (as under a campaign group''s shared budget), or a non-USD amount reads both budget fields `unknown`. The vocabulary is per-platform and may grow, so a consumer must render an unrecognised field name rather than dropping it.'
                 example: budget_amount
             recorded:
                 type: string
@@ -16984,12 +16984,13 @@ definitions:
                 format: uuid
             mime_type:
                 type: string
-                description: 'Stored MIME type, as verified from the bytes (not merely the declared header). video/mp4 since #586.'
-                example: video/mp4
+                description: 'Stored MIME type, as verified from the bytes (not merely the declared header). video/mp4 since #586, application/pdf since #665.'
+                example: application/pdf
                 enum:
                     - image/png
                     - image/jpeg
                     - video/mp4
+                    - application/pdf
             project_id:
                 type: string
                 description: Owning project
@@ -17007,7 +17008,7 @@ definitions:
             created: "true"
             height: 6089835885683914289
             id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
-            mime_type: video/mp4
+            mime_type: application/pdf
             project_id: Qui aliquam ea quam dolore est.
             width: 1297412450570756896
         required:
@@ -17033,7 +17034,7 @@ definitions:
                       created: "true"
                       height: 6089835885683914289
                       id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
-                      mime_type: video/mp4
+                      mime_type: application/pdf
                       project_id: Qui aliquam ea quam dolore est.
                       width: 1297412450570756896
                     - brief_id: Praesentium dolore aut labore qui debitis.
@@ -17042,7 +17043,7 @@ definitions:
                       created: "true"
                       height: 6089835885683914289
                       id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
-                      mime_type: video/mp4
+                      mime_type: application/pdf
                       project_id: Qui aliquam ea quam dolore est.
                       width: 1297412450570756896
                     - brief_id: Praesentium dolore aut labore qui debitis.
@@ -17051,7 +17052,7 @@ definitions:
                       created: "true"
                       height: 6089835885683914289
                       id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
-                      mime_type: video/mp4
+                      mime_type: application/pdf
                       project_id: Qui aliquam ea quam dolore est.
                       width: 1297412450570756896
                     - brief_id: Praesentium dolore aut labore qui debitis.
@@ -17060,7 +17061,7 @@ definitions:
                       created: "true"
                       height: 6089835885683914289
                       id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
-                      mime_type: video/mp4
+                      mime_type: application/pdf
                       project_id: Qui aliquam ea quam dolore est.
                       width: 1297412450570756896
             bytes_limit:
@@ -17091,7 +17092,7 @@ definitions:
                   created: "true"
                   height: 6089835885683914289
                   id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
-                  mime_type: video/mp4
+                  mime_type: application/pdf
                   project_id: Qui aliquam ea quam dolore est.
                   width: 1297412450570756896
                 - brief_id: Praesentium dolore aut labore qui debitis.
@@ -17100,7 +17101,7 @@ definitions:
                   created: "true"
                   height: 6089835885683914289
                   id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
-                  mime_type: video/mp4
+                  mime_type: application/pdf
                   project_id: Qui aliquam ea quam dolore est.
                   width: 1297412450570756896
                 - brief_id: Praesentium dolore aut labore qui debitis.
@@ -17109,7 +17110,7 @@ definitions:
                   created: "true"
                   height: 6089835885683914289
                   id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
-                  mime_type: video/mp4
+                  mime_type: application/pdf
                   project_id: Qui aliquam ea quam dolore est.
                   width: 1297412450570756896
                 - brief_id: Praesentium dolore aut labore qui debitis.
@@ -17118,7 +17119,7 @@ definitions:
                   created: "true"
                   height: 6089835885683914289
                   id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
-                  mime_type: video/mp4
+                  mime_type: application/pdf
                   project_id: Qui aliquam ea quam dolore est.
                   width: 1297412450570756896
             bytes_limit: 7549547776033087914
@@ -21189,14 +21190,15 @@ definitions:
             content_type:
                 type: string
                 description: Declared MIME type of the uploaded bytes. The bytes are re-sniffed server-side and must match; the stored mime_type is the verified one.
-                example: image/jpeg
+                example: video/mp4
                 enum:
                     - image/png
                     - image/jpeg
                     - video/mp4
+                    - application/pdf
         example:
             bytes: aVZCT1J3MEtHZ29BQUFBTlNVaEVVZ0FBQUFFQUFBQUJDQUFBQUFDNnBLcmVBQUFBREVsRVFWUUlIV05nWUdBQUFBQUVBQUdiQTNvSkFBQUFBRWxGVGtTdVFtQ0M=
-            content_type: image/jpeg
+            content_type: video/mp4
         required:
             - content_type
             - bytes

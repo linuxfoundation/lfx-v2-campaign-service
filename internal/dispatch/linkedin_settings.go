@@ -204,7 +204,8 @@ func linkedinRecordedObjective(ctx context.Context, campaign *model.Campaign) *s
 //
 // A blob with no objectiveType was written before #582 recorded it. Before #582 the only
 // objective an automatic create sent was WEBSITE_VISIT, so that is what such a row was created
-// with. An empty or undecodable blob, or an objectiveType outside the three this service creates,
+// with. An empty or undecodable blob, or an objectiveType outside the four this service creates
+// (ENGAGEMENT only for a document create, #665),
 // is nil: nothing trustworthy was recorded.
 func linkedinResultObjective(ctx context.Context, campaign *model.Campaign) *string {
 	if len(campaign.Result) == 0 {
@@ -223,7 +224,7 @@ func linkedinResultObjective(ctx context.Context, campaign *model.Campaign) *str
 		return strPtr(linkedin.ObjectiveWebsiteVisit)
 	}
 	switch *blob.ObjectiveType {
-	case linkedin.ObjectiveWebsiteVisit, linkedin.ObjectiveWebsiteConversion, linkedin.ObjectiveLeadGeneration:
+	case linkedin.ObjectiveWebsiteVisit, linkedin.ObjectiveWebsiteConversion, linkedin.ObjectiveLeadGeneration, linkedin.ObjectiveEngagement:
 		return strPtr(*blob.ObjectiveType)
 	}
 	slog.WarnContext(ctx, "linkedin result blob records an objectiveType this service does not create; objective_type has no recorded side",
