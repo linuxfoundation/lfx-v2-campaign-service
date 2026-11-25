@@ -2799,7 +2799,11 @@ Three things are particular to how a newsletter's copy is generated (`email_copy
   which is the link a model writes when it wants one. A trailing slash, the query and the
   fragment all count: "/report/" can be a different page from "/report", "?file=reports/" a
   different resource from "?file=reports", and an invented "#section" sends the reader somewhere
-  the operator did not choose. A link that differs in any of them loses its anchor. A removed link keeps its words, the issue
+  the operator did not choose. A link that differs in any of them loses its anchor. Trailing
+  punctuation in the notes is read as prose ("see https://example.org/x.") except inside "<…>" or
+  quotes, where it is the address's own: trimming it there would vouch for a shorter address the
+  notes never gave. An anchor whose tag carries more than one `href` is never kept: a kept tag is
+  written back from its raw bytes, and which `href` a mail client follows is its parser's choice. A removed link keeps its words, the issue
   is still returned, and the count is logged.
 
 Tests: `email_source_links_test.go`.

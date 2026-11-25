@@ -37,6 +37,45 @@ func TestSourceDocumentLinks(t *testing.T) {
 	}
 }
 
+// TestSourceDocumentLinks_DelimitedKeepsPunctuation: inside "<…>" or quotes the address ends at
+// the delimiter, so a trailing "!" or "." is the address's own. Trimming it would vouch for a
+// shorter address the notes never gave; in open prose it is still trimmed.
+func TestSourceDocumentLinks_DelimitedKeepsPunctuation(t *testing.T) {
+	notes := "Download <https://acme.example/d?token=abc!> or \"https://acme.example/q?x=1.\" " +
+		"or 'https://acme.example/s?y=2;', and see https://acme.example/prose."
+	got := sourceDocumentLinks(notes)
+	for _, want := range []string{
+		"https://acme.example/d?token=abc!",
+		"https://acme.example/q?x=1.",
+		"https://acme.example/s?y=2;",
+		"https://acme.example/prose",
+	} {
+		if _, ok := got[want]; !ok {
+			t.Errorf("missing %q in %v", want, got)
+		}
+	}
+	for _, shortened := range []string{"https://acme.example/d?token=abc", "https://acme.example/q?x=1", "https://acme.example/s?y=2"} {
+		if _, ok := got[shortened]; ok {
+			t.Errorf("%q is vouched for, but the notes only give it with its punctuation", shortened)
+		}
+	}
+}
+
+// TestUnlinkUnvouchedAnchors_DuplicateHref: a kept anchor is written back with every href it
+// carries, and which one a mail client follows is its parser's choice, so an anchor with two
+// hrefs loses its link whichever comes first, even when both are vouched for.
+func TestUnlinkUnvouchedAnchors_DuplicateHref(t *testing.T) {
+	allowed := sourceDocumentLinks("https://acme.example/approved")
+	in := `<a href="https://acme.example/invented" HREF="https://acme.example/approved">x</a>` +
+		`<a href="https://acme.example/approved"` + "\n" + `href="https://acme.example/invented">y</a>` +
+		`<a href="https://acme.example/approved" href = "https://acme.example/approved">z</a>`
+	want := `<a>x</a><a>y</a><a>z</a>`
+	got, dropped := unlinkUnvouchedAnchors(in, allowed)
+	if got != want || dropped != 3 {
+		t.Errorf("got %q (%d dropped), want %q (3 dropped)", got, dropped, want)
+	}
+}
+
 func TestNormalizeLinkForMatch(t *testing.T) {
 	cases := map[string]string{
 		"https://Acme.Example/Blog/Post/":  "https://acme.example/Blog/Post/",

@@ -27,6 +27,10 @@ import (
 // scheme: a pasted "HTTPS://" is still an address.
 var sourceLinkPattern = regexp.MustCompile(`(?i)https?://[^\s<>"']+`)
 
+// hrefAttribute finds an href attribute in a raw start tag: the name after a separator, then "=".
+// A value that happens to contain " href=" also counts, which only ever drops a link.
+var hrefAttribute = regexp.MustCompile(`(?i)[\s/"']href\s*=`)
+
 // trailingLinkPunctuation is what prose puts after an address without meaning it as part of it:
 // "see https://example.org/x." or "(https://example.org/x)".
 const trailingLinkPunctuation = ".,;:!?)]}>"
@@ -71,11 +75,28 @@ func trimTrailingLinkPunctuation(raw string) string {
 	return raw
 }
 
-// sourceDocumentLinks returns every address the notes carry, in match form.
+// explicitlyDelimited reports whether the address at text[start:end] is wrapped in a pair that
+// marks where it ends: "<…>" or matching quotes. Inside such a pair nothing after the address is
+// prose, so its trailing punctuation is the address's own ("<https://example.org/d?token=abc!>").
+func explicitlyDelimited(text string, start, end int) bool {
+	if start == 0 || end >= len(text) {
+		return false
+	}
+	open, closing := text[start-1], text[end]
+	return (open == '<' && closing == '>') || (open == '"' && closing == '"') || (open == '\'' && closing == '\'')
+}
+
+// sourceDocumentLinks returns every address the notes carry, in match form. Trailing punctuation
+// is trimmed as prose, except inside an explicit delimiter, where it is part of the address:
+// trimming it there would vouch for a shorter address the notes never gave.
 func sourceDocumentLinks(sourceText string) map[string]struct{} {
 	links := map[string]struct{}{}
-	for _, raw := range sourceLinkPattern.FindAllString(sourceText, -1) {
-		if key := normalizeLinkForMatch(trimTrailingLinkPunctuation(raw)); key != "" {
+	for _, loc := range sourceLinkPattern.FindAllStringIndex(sourceText, -1) {
+		raw := sourceText[loc[0]:loc[1]]
+		if !explicitlyDelimited(sourceText, loc[0], loc[1]) {
+			raw = trimTrailingLinkPunctuation(raw)
+		}
+		if key := normalizeLinkForMatch(raw); key != "" {
 			links[key] = struct{}{}
 		}
 	}
@@ -109,6 +130,9 @@ func unlinkUnvouchedAnchors(body string, allowed map[string]struct{}) (string, i
 			b.WriteString(raw)
 			continue
 		}
+		// The tokenizer reports only an anchor's first href (the one a browser follows), but a kept
+		// tag is written back from its raw bytes, every href included, and a mail client's parser
+		// is not this one. So an anchor whose raw tag carries more than one href is never kept.
 		href := ""
 		for hasAttr {
 			var k, v []byte
@@ -117,7 +141,7 @@ func unlinkUnvouchedAnchors(body string, allowed map[string]struct{}) (string, i
 				href = string(v)
 			}
 		}
-		if _, ok := allowed[normalizeLinkForMatch(href)]; ok && href != "" {
+		if _, ok := allowed[normalizeLinkForMatch(href)]; ok && href != "" && len(hrefAttribute.FindAllStringIndex(raw, 2)) == 1 {
 			b.WriteString(raw)
 			continue
 		}
