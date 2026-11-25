@@ -1042,6 +1042,14 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if err := checkDocumentShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	// A wrong-typed bidding object fails with PreflightCreate's refusal, not the strict decode's
+	// (PR #677 review): biddingConfig.UnmarshalJSON rejects a string or object targetAmount (or
+	// bidAmount, or strategy) with a plain error that carries neither ErrCreateConfigInvalid nor
+	// PreflightRefusal, so a job that skipped the pre-flight would fail as a generic creation
+	// failure instead of the actionable 400 sentence. Pure, so it runs before the decode.
+	if err := checkBiddingShape(config, "linkedInConfig"); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg linkedinConfig
 	if err := unmarshalPlatformConfig(config, "linkedInConfig", &cfg); err != nil {
 		return nil, notCreated(err)
@@ -1065,10 +1073,8 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if orgID == "" {
 		return nil, notCreated(linkedInMissingOrgIDRefusal(res))
 	}
-	// The bidding choice, validated before any upstream call; recorded on every returned row.
-	if err := checkBiddingShape(config, "linkedInConfig"); err != nil {
-		return nil, notCreated(err)
-	}
+	// The bidding choice, validated before any upstream call (its shape is checked above, before
+	// the decode); recorded on every returned row.
 	plan, err := linkedinBidPlan(cfg)
 	if err != nil {
 		return nil, notCreated(err)

@@ -101,12 +101,19 @@ func TestBidding_TargetAmountIsLinkedInOnly(t *testing.T) {
 }
 
 // TestLinkedIn_TargetAmountRefusedByDispatchSendsNothing: a job reaching Dispatch without the
-// pre-flight still refuses before any LinkedIn request.
+// pre-flight still refuses before any LinkedIn request, with PreflightCreate's pre-flight refusal.
+// The wrong-typed rows (PR #677 review) pin that the bidding shape check runs before the strict
+// decode, which would otherwise fail them with a plain error the job reports as a generic failure.
 func TestLinkedIn_TargetAmountRefusedByDispatchSendsNothing(t *testing.T) {
-	for _, tc := range []struct{ name, flag, extra string }{
-		{"flag off", "", `"bidding":{"targetAmount":17.88}`},
-		{"manual with a target", "true", `"bidding":{"strategy":"manual","bidAmount":4.5,"targetAmount":10}`},
-		{"sub-cent target", "true", `"bidding":{"targetAmount":17.885}`},
+	const wrongType = "targetAmount must be a number (for example 17.88), not null"
+	for _, tc := range []struct{ name, flag, extra, want string }{
+		{"flag off", "", `"bidding":{"targetAmount":17.88}`, "targetAmount is disabled on this deployment"},
+		{"manual with a target", "true", `"bidding":{"strategy":"manual","bidAmount":4.5,"targetAmount":10}`, "targetAmount is only accepted with automatic bidding"},
+		{"sub-cent target", "true", `"bidding":{"targetAmount":17.885}`, "is not a whole number of cents"},
+		{"string target", "true", `"bidding":{"targetAmount":"10"}`, wrongType},
+		{"null target", "true", `"bidding":{"targetAmount":null}`, wrongType},
+		{"object target", "true", `"bidding":{"targetAmount":{"amount":10}}`, wrongType},
+		{"string target with the flag off", "", `"bidding":{"targetAmount":"10"}`, wrongType},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(constants.EnvLinkedInAdsTargetCostEnabled, tc.flag)
@@ -115,8 +122,12 @@ func TestLinkedIn_TargetAmountRefusedByDispatchSendsNothing(t *testing.T) {
 			defer srv.Close()
 			d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
 			_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, linkedInObjectiveConfig(tc.extra))
-			if !errors.Is(err, domain.ErrCreateConfigInvalid) {
-				t.Fatalf("Dispatch = %v, want ErrCreateConfigInvalid", err)
+			msg, pre := domain.AsPreflightRefusal(err)
+			if !errors.Is(err, domain.ErrCreateConfigInvalid) || !pre || !strings.Contains(msg, tc.want) {
+				t.Fatalf("Dispatch = %v, want a pre-flight ErrCreateConfigInvalid containing %q", err, tc.want)
+			}
+			if !isNoUpstreamCreate(err) {
+				t.Errorf("Dispatch = %v, want it marked as nothing created upstream", err)
 			}
 			if n := calls.Load(); n != 0 {
 				t.Errorf("%d LinkedIn requests for a refused create", n)

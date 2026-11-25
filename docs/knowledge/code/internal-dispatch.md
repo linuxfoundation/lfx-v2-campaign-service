@@ -5732,8 +5732,14 @@ snapshot keeps `targetAmount` (`biddingConfig.MarshalJSON`), and the result blob
 amount as `targetCost`. The settings readback is unchanged: it compares only `objective_type`, and
 the target shows as the upstream-only `unit_cost` beside `bidding_strategy_type` `MAX_CLICK` /
 `MAX_CONVERSION` and `cost_type` `CPM`. The bid lever refuses such a campaign (not `ManualCPC`), so
-it never rewrites the target; changing a target after create is out of scope. Tests:
-`linkedin_target_cost_test.go`, and the "automatic target cost create shape" row of
+it never rewrites the target; changing a target after create is out of scope. LinkedIn's
+`Dispatch` runs `checkBiddingShape` before `unmarshalPlatformConfig` (PR #677 review): the strict
+decode (`biddingConfig.UnmarshalJSON`) fails a string or object `targetAmount` with a plain error
+that is neither `ErrCreateConfigInvalid` nor a `PreflightRefusal`, so a job that skipped the
+pre-flight would report a generic creation failure; it now gets `PreflightCreate`'s refusal, marked
+nothing-created, before any request. Tests:
+`linkedin_target_cost_test.go` (its Dispatch refusal table includes string, null and object
+targets), and the "automatic target cost create shape" row of
 `TestLinkedIn_WriteBid_GuardsRefuseWithoutWriting`.
 
 `TestCreateCampaigns_LanePlatformBiddingRefusalIsSynchronous400` (`bidding_create_e2e_test.go`)
