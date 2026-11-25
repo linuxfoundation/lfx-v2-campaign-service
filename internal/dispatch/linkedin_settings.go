@@ -48,7 +48,8 @@ const (
 //     reads `unknown`. audience_expansion_enabled and offsite_delivery_enabled (#667) are
 //     upstream-only too, "true" or "false" and absent when LinkedIn does not report them.
 //   - objective_type is COMPARED since LFXV2-2665: the create path's objective follows the
-//     bidding strategy it records (manual → WEBSITE_CONVERSION; automatic → the objectiveType the
+//     bidding strategy it records (manual → WEBSITE_CONVERSION, or the WEBSITE_VISIT a manual
+//     traffic create recorded in the result blob, #675; automatic → the objectiveType the
 //     create recorded in the result blob, #582, and WEBSITE_VISIT for a row written before it;
 //     linkedinRecordedObjective), so a row with a recorded strategy has a recorded objective. A
 //     row without one (legacy, adopted) reads `unknown`, never a guessed objective.
@@ -175,7 +176,8 @@ func linkedinAccountIDUnusable(res *resolved, projectID, op string) error {
 }
 
 // linkedinRecordedObjective is the objectiveType the create path sent for this row's recorded
-// bidding strategy (LFXV2-2665; linkedin.campaignBidding): manual → WEBSITE_CONVERSION; automatic →
+// bidding strategy (LFXV2-2665; linkedin.campaignBidding): manual → WEBSITE_CONVERSION, unless the
+// row's result blob records WEBSITE_VISIT with target NONE (a manual traffic create, #675); automatic →
 // the objectiveType the create recorded in the row's result blob (#582: WEBSITE_CONVERSION for
 // Maximum delivery conversions, LEAD_GENERATION for a lead gen create (#664), WEBSITE_VISIT
 // otherwise). nil when no strategy is recorded — a
@@ -189,6 +191,19 @@ func linkedinRecordedObjective(ctx context.Context, campaign *model.Campaign) *s
 	case model.BiddingAutomatic:
 		return linkedinResultObjective(ctx, campaign)
 	case model.BiddingManual:
+		// Every manual create before #675 was WEBSITE_CONVERSION, and so is every manual create
+		// without objective "traffic" since; only the result blob (which a caller cannot write, see
+		// linkedinResultObjective) recording the manual traffic create — WEBSITE_VISIT with the
+		// manual target NONE — says otherwise. A blob with no objectiveType, one that does not
+		// decode, or one whose target contradicts the manual strategy keeps the pre-#675 answer.
+		var blob struct {
+			ObjectiveType      string `json:"objectiveType"`
+			OptimizationTarget string `json:"optimizationTarget"`
+		}
+		if len(campaign.Result) > 0 && json.Unmarshal(campaign.Result, &blob) == nil &&
+			blob.ObjectiveType == linkedin.ObjectiveWebsiteVisit && blob.OptimizationTarget == linkedin.OptimizationTargetNone {
+			return strPtr(linkedin.ObjectiveWebsiteVisit)
+		}
 		return strPtr(linkedin.ObjectiveWebsiteConversion)
 	}
 	return nil

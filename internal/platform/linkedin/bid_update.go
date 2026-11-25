@@ -142,7 +142,15 @@ type campaignBiddingPlan struct {
 // before LFXV2-2665), costType CPC, optimizationTargetType NONE ("keeps a campaign in manual
 // bidding mode") and unitCost = the bid in USD at whole cents (ValidateBidAmount — refused, never
 // rounded) — exactly what CampaignSettings.ManualCPC accepts. Name segment "Conversions".
-// MANUAL with WEBSITE_VISIT is not offered and is refused.
+//
+// MANUAL, objective WEBSITE_VISIT (#675): the same manual fields — costType CPC,
+// optimizationTargetType NONE, unitCost = the bid — under objectiveType WEBSITE_VISIT, whose
+// allowed targets include NONE (Objective Type Descriptions above), and which "Create and Manage
+// Campaigns" lists as STANDARD_UPDATE | CPC | NONE: costType CPC. Name segment "Traffic". NONE, as
+// on the manual conversions create, is LinkedIn's schema default for optimizationTargetType and
+// keeps the campaign in manual bidding mode; sending it explicitly lets the name-reuse lookup and
+// the bid lever read the same value. The dispatcher offers it only behind
+// LINKEDIN_ADS_TRAFFIC_MANUAL_BID_ENABLED; this package does not read the flag.
 //
 // Before LFXV2-2665 the body sent costType CPC and NO optimizationTargetType: LinkedIn's NONE
 // default with unitCost 0, under which "the campaign does not deliver".
@@ -207,14 +215,11 @@ func campaignBidding(manualBid float64, objective string) (campaignBiddingPlan, 
 			nameObjective:      "Traffic",
 		}, nil
 	}
-	if objective == ObjectiveWebsiteVisit {
-		return campaignBiddingPlan{}, fmt.Errorf("linkedin: a manual max CPC bid is created under objective %s only; %s is offered with automatic bidding", ObjectiveWebsiteConversion, ObjectiveWebsiteVisit)
-	}
 	wire, err := ValidateBidAmount(manualBid)
 	if err != nil {
 		return campaignBiddingPlan{}, err
 	}
-	return campaignBiddingPlan{
+	plan := campaignBiddingPlan{
 		fields: map[string]any{
 			"costType":               CostTypeCPC,
 			"optimizationTargetType": OptimizationTargetNone,
@@ -223,7 +228,12 @@ func campaignBidding(manualBid float64, objective string) (campaignBiddingPlan, 
 		objectiveType:      ObjectiveWebsiteConversion,
 		optimizationTarget: OptimizationTargetNone,
 		nameObjective:      "Conversions",
-	}, nil
+	}
+	if objective == ObjectiveWebsiteVisit {
+		plan.objectiveType = ObjectiveWebsiteVisit
+		plan.nameObjective = "Traffic"
+	}
+	return plan, nil
 }
 
 // manualBiddingTarget reports whether an optimizationTargetType keeps a campaign in manual

@@ -43,6 +43,7 @@ const validTextAds = `"format":"text","textAds":[
 
 func TestLinkedIn_TextAdsPreflight(t *testing.T) {
 	t.Setenv(constants.EnvLinkedInAdsTextAdsEnabled, "true")
+	t.Setenv(constants.EnvLinkedInAdsTrafficManualBidEnabled, "")
 	d := NewLinkedInDispatcher(fakeConnReader{}, identityEncryptor{})
 	auto := json.RawMessage(strings.Replace(string(linkedInTextConfig(validTextAds)), `"bidding":{"strategy":"manual","bidAmount":5.04}`, `"bidding":{"strategy":"automatic"}`, 1))
 	noBid := json.RawMessage(strings.Replace(string(linkedInTextConfig(validTextAds)), `"bidding":{"strategy":"manual","bidAmount":5.04},`, ``, 1))
@@ -55,7 +56,7 @@ func TestLinkedIn_TextAdsPreflight(t *testing.T) {
 		{"explicit single_image, no text ads", linkedInTextConfig(`"format":"single_image"`), ""},
 		{"no format, no text ads", linkedInTextConfig(``), ""},
 		{"objective conversions", linkedInTextConfig(validTextAds + `,"objective":"conversions"`), ""},
-		{"objective traffic", linkedInTextConfig(validTextAds + `,"objective":"traffic"`), "offered with automatic bidding only"},
+		{"objective traffic, traffic manual flag off", linkedInTextConfig(validTextAds + `,"objective":"traffic"`), "offered with automatic bidding only"},
 		{"automatic bidding", auto, "requires bidding"},
 		{"omitted bidding is automatic", noBid, "requires bidding"},
 		{"unknown format", linkedInTextConfig(`"format":"video"`), "format must be"},
@@ -226,6 +227,34 @@ func TestLinkedIn_TextAdsEndToEnd(t *testing.T) {
 	}
 	if snap.Format != linkedin.FormatText || len(snap.TextAds) != 2 || snap.TextAds[1].ImageAssetID != msAssetID {
 		t.Errorf("snapshot = format %q, text ads %+v; want text, 2, the canonical asset id", snap.Format, snap.TextAds)
+	}
+}
+
+// TestLinkedIn_TextAdsTrafficManual (#675): with LINKEDIN_ADS_TRAFFIC_MANUAL_BID_ENABLED on, a
+// Text Ads create (manual only) may be Website visits: a TEXT_AD campaign with objectiveType
+// WEBSITE_VISIT, costType CPC, optimizationTargetType NONE and the bid as unitCost, named Traffic.
+func TestLinkedIn_TextAdsTrafficManual(t *testing.T) {
+	t.Setenv(constants.EnvLinkedInAdsTextAdsEnabled, "true")
+	t.Setenv(constants.EnvLinkedInAdsTrafficManualBidEnabled, "true")
+	api := newLITextAPI(t)
+	d := newLITextDispatcher(api, liPNGAsset(t, 100, 100))
+	cfg := linkedInTextConfig(validTextAds + `,"objective":"traffic"`)
+	if err := d.PreflightCreate(context.Background(), "cncf", model.ProviderLinkedInAds, cfg); !errors.Is(err, domain.ErrPreflightNotApplicable) {
+		t.Fatalf("PreflightCreate = %v, want not applicable", err)
+	}
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if !strings.Contains(camp.CampaignName, "| Traffic | Prospecting | Text |") {
+		t.Errorf("campaign name = %q, want the Traffic and Text segments", camp.CampaignName)
+	}
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	unit, _ := api.campaign["unitCost"].(map[string]any)
+	if api.campaign["type"] != "TEXT_AD" || api.campaign["objectiveType"] != "WEBSITE_VISIT" ||
+		api.campaign["costType"] != "CPC" || api.campaign["optimizationTargetType"] != "NONE" || unit["amount"] != "5.04" {
+		t.Errorf("campaign body = %v", api.campaign)
 	}
 }
 

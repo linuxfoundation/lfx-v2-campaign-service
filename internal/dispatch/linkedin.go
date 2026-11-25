@@ -236,9 +236,11 @@ type linkedinConfig struct {
 	// "lead_generation" (#664: LEAD_GENERATION / MAX_LEAD, automatic only, requires LeadGenForm).
 	// Omitted, the bidding strategy decides as before (automatic → WEBSITE_VISIT / MAX_CLICK,
 	// manual → WEBSITE_CONVERSION / NONE). "conversions" with automatic bidding creates
-	// WEBSITE_CONVERSION / MAX_CONVERSION and requires Conversions. See linkedinObjective. With
-	// format "document" (#665) omitted is ENGAGEMENT / MAX_REACH, "lead_generation" is the only
-	// other value accepted, and a manual bid is refused (see linkedinDocumentFormat).
+	// WEBSITE_CONVERSION / MAX_CONVERSION and requires Conversions; "traffic" with a manual bid
+	// creates WEBSITE_VISIT / NONE / CPC behind LINKEDIN_ADS_TRAFFIC_MANUAL_BID_ENABLED (#675). See
+	// linkedinObjective. With format "document" (#665) omitted is ENGAGEMENT / MAX_REACH,
+	// "lead_generation" is the only other value accepted, and a manual bid is refused (see
+	// linkedinDocumentFormat).
 	Objective string `json:"objective,omitempty"`
 	// JobFunctions replace the default job functions in the profile's jobFunctions clause
 	// (#585). Not read with Targeting. See linkedin.ValidateJobFunctions.
@@ -386,6 +388,14 @@ const (
 	linkedinObjectiveTraffic     = "traffic"
 	linkedinObjectiveConversions = "conversions"
 )
+
+// linkedinTrafficManualBidEnabled reports whether this deployment opted in to
+// linkedInConfig.objective "traffic" with a manual bid (#675). Read per call so it flips without a
+// rebuild. Off by default: no WEBSITE_VISIT campaign with a manual CPC has been created by this
+// service on a live account yet.
+func linkedinTrafficManualBidEnabled() bool {
+	return os.Getenv(constants.EnvLinkedInAdsTrafficManualBidEnabled) == "true"
+}
 
 // linkedinTargetingEnabled reports whether this deployment opted in to linkedInConfig.targeting
 // (#552). Read per call so it flips without a rebuild. Off by default: no targeting shape has
@@ -594,9 +604,12 @@ func checkObjectiveShape(config json.RawMessage) error {
 // PreflightCreate, and the same sentence failing the job from Dispatch.
 //
 //   - omitted: "" — automatic is WEBSITE_VISIT / MAX_CLICK, manual WEBSITE_CONVERSION / NONE.
-//   - "traffic": WEBSITE_VISIT, automatic only. A manual bid is created under WEBSITE_CONVERSION
-//     (the setup the bid lever re-bids), so traffic with manual is refused rather than silently
-//     created as a conversions campaign.
+//   - "traffic": WEBSITE_VISIT. Automatic is MAX_CLICK. Manual (#675) is costType CPC,
+//     optimizationTargetType NONE and unitCost = the bid — the manual CPC LinkedIn allows under
+//     Website visits ("Ad Budget Type Allowable Combinations": row WEBSITE_VISIT allows NONE), and
+//     the setup the bid lever re-bids (CampaignSettings.ManualCPC). Behind
+//     LINKEDIN_ADS_TRAFFIC_MANUAL_BID_ENABLED: while it is off, traffic with manual is refused, as
+//     before #675, rather than silently created as a conversions campaign.
 //   - "conversions": WEBSITE_CONVERSION. Manual is the manual create unchanged. Automatic is
 //     MAX_CONVERSION, LinkedIn's "Maximum delivery" for Website conversions, which LinkedIn will
 //     not activate until a conversion is associated ("Create and Manage Campaigns",
@@ -612,7 +625,7 @@ func linkedinObjective(cfg linkedinConfig, plan bidPlan) (string, error) {
 	case "":
 		return "", nil
 	case linkedinObjectiveTraffic:
-		if plan.manual() {
+		if plan.manual() && !linkedinTrafficManualBidEnabled() {
 			return "", domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.objective \"traffic\" is offered with automatic bidding only; a manual bid is created under the website conversions objective, so choose objective \"conversions\" (or omit it) for manual bidding",
 				domain.ErrCreateConfigInvalid))
 		}
@@ -640,7 +653,8 @@ func linkedinObjective(cfg linkedinConfig, plan bidPlan) (string, error) {
 }
 
 // linkedinBidPlan resolves linkedInConfig's bidding choice. Unless linkedInConfig.objective names
-// one (#582, linkedinObjective), the OBJECTIVE follows it (decision 2026-10-13, Misha): automatic —
+// one (#582, linkedinObjective; "traffic" with manual is WEBSITE_VISIT / CPC / NONE behind its flag,
+// #675), the OBJECTIVE follows it (decision 2026-10-13, Misha): automatic —
 // the default — creates a WEBSITE_VISIT campaign optimising for clicks (MAX_CLICK), because
 // MAX_CONVERSION, the only automated target WEBSITE_CONVERSION allows, needs a conversion
 // association; manual creates the WEBSITE_CONVERSION

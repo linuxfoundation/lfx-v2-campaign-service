@@ -5691,11 +5691,14 @@ and `automatic` refuses it); Meta `meta.ManualBidSupported` (traffic/leads) and 
 decimals; Reddit `reddit.ManualCPCBidSupported` (traffic); LinkedIn `linkedin.ValidateBidAmount` (whole
 cents), the client choosing the objective from the strategy (automatic `WEBSITE_VISIT` +
 `MAX_CLICK`, manual `WEBSITE_CONVERSION`; decision 2026-10-13), and `linkedinObjective` resolving
-`linkedInConfig.objective` (#582: `traffic` automatic only; `conversions` automatic is
+`linkedInConfig.objective` (#582: `traffic` automatic only, or with a manual bid too — `WEBSITE_VISIT`
+/ `CPC` / `NONE` — while `linkedinTrafficManualBidEnabled` (`LINKEDIN_ADS_TRAFFIC_MANUAL_BID_ENABLED`,
+#675, off by default) is on; `conversions` automatic is
 `WEBSITE_CONVERSION` / `MAX_CONVERSION` and requires a non-empty `conversions`, so it inherits
 `LINKEDIN_ADS_CONVERSIONS_ENABLED` and `global_marketing_ops`; `checkObjectiveShape` refuses null,
 `""` and non-strings; the settings readback reads the objectiveType recorded in the row's Result in
-`linkedinRecordedObjective`); X nothing further. Refusals wrap `domain.ErrCreateConfigInvalid` with
+`linkedinRecordedObjective`, which for a manual row is `WEBSITE_CONVERSION` unless the Result
+records `WEBSITE_VISIT` with target `NONE`, #675); X nothing further. Refusals wrap `domain.ErrCreateConfigInvalid` with
 `<configKey>.bidding: <reason>`, and `biddingInvalid` marks every one a `domain.PreflightRefusal`
 (issue #208): each is a pure check raised before any upstream call, its only caller-derived text is
 an amount or a config key rendered through `domain.CallerValue` (`quoteKey`), so when `Dispatch`
@@ -5932,7 +5935,9 @@ checked by `checkFormatShape` (a non-string `format`; a `textAds` that is not an
 of the four `TextAd` string fields, null fields and unknown keys included) and `linkedinFormat`,
 which `PreflightCreate` (synchronous 400) and `Dispatch` (not-created refusal) both run:
 `format: "text"` is gated by `linkedinTextAdsEnabled` (`LINKEDIN_ADS_TEXT_ADS_ENABLED`, off by
-default), needs a manual bid plan, no variants and `linkedin.ValidateTextAds`-valid ads; `textAds`
+default), needs a manual bid plan (so `objective: "traffic"` only while
+`LINKEDIN_ADS_TRAFFIC_MANUAL_BID_ENABLED` is on, #675), no variants and
+`linkedin.ValidateTextAds`-valid ads; `textAds`
 under any other format is refused. `Dispatch` stores `"text"` or `""` — an explicit
 `"single_image"` is stored as the omitted default, so a default create's snapshot is unchanged.
 `resolveLinkedInImages` resolves `textAds[].imageAssetId` like a variant's, under the text ad size
