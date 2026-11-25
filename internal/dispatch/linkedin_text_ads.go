@@ -54,7 +54,12 @@ func checkFormatShape(config json.RawMessage) error {
 		case strings.EqualFold(k, "format"):
 			var str string
 			if isJSONNull(raw) || json.Unmarshal(raw, &str) != nil {
-				return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.format must be the string %q, %q or %q", domain.ErrCreateConfigInvalid, linkedin.FormatSingleImage, linkedin.FormatText, linkedin.FormatCarousel))
+				return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.format must be the string %q, %q, %q or %q", domain.ErrCreateConfigInvalid, linkedin.FormatSingleImage, linkedin.FormatText, linkedin.FormatCarousel, linkedin.FormatDocument))
+			}
+		case isDocumentKey(k):
+			// The document's fields (#665) have their own shape rule (linkedin_document.go).
+			if err := checkDocumentFieldShape(raw); err != nil {
+				return err
 			}
 		case strings.EqualFold(k, "carouselCards"), strings.EqualFold(k, "carouselIntroText"):
 			// The carousel's fields (#665) have their own shape rules (linkedin_carousel.go).
@@ -115,6 +120,12 @@ func linkedinFormat(cfg linkedinConfig, plan bidPlan) (string, error) {
 	if err != nil {
 		return refuse(err)
 	}
+	if format != linkedin.FormatDocument && (cfg.DocumentAssetID != "" || cfg.DocumentTitle != "" || cfg.DocumentIntroText != "") {
+		return refuse(fmt.Errorf("documentAssetId, documentTitle and documentIntroText are accepted only with format %q", linkedin.FormatDocument))
+	}
+	if format == linkedin.FormatDocument {
+		return linkedinDocumentFormat(cfg, plan)
+	}
 	if format != linkedin.FormatCarousel && (cfg.CarouselCards != nil || cfg.CarouselIntroText != "") {
 		return refuse(fmt.Errorf("carouselCards and carouselIntroText are accepted only with format %q", linkedin.FormatCarousel))
 	}
@@ -152,8 +163,8 @@ func linkedinCreativeCount(cfg linkedinConfig) int {
 	switch cfg.Format {
 	case linkedin.FormatText:
 		return len(cfg.TextAds)
-	case linkedin.FormatCarousel:
-		// A carousel is ONE creative, however many cards it has (#665).
+	case linkedin.FormatCarousel, linkedin.FormatDocument:
+		// A carousel is ONE creative, however many cards it has, and so is a document (#665).
 		return 1
 	}
 	return len(cfg.Variants)

@@ -76,6 +76,8 @@ type redditAssetHarness struct {
 	// thumbURL and postType are the authored post's thumbnail_url and type (#549 video posts).
 	thumbURL string
 	postType string
+	// content is every authored content entry (#661 carousel posts carry one per card).
+	content []redditHarnessContent
 	// postsFail makes the post create answer 400 with a body echoing media_url, the shape that
 	// would carry a signature into persisted steps.
 	postsFail bool
@@ -103,16 +105,14 @@ func (h *redditAssetHarness) dispatcher(t *testing.T) *RedditDispatcher {
 			body, _ := io.ReadAll(r.Body)
 			var req struct {
 				Data struct {
-					Type         string `json:"type"`
-					ThumbnailURL string `json:"thumbnail_url"`
-					Content      []struct {
-						MediaURL string `json:"media_url"`
-					} `json:"content"`
+					Type         string                 `json:"type"`
+					ThumbnailURL string                 `json:"thumbnail_url"`
+					Content      []redditHarnessContent `json:"content"`
 				} `json:"data"`
 			}
 			_ = json.Unmarshal(body, &req)
 			h.mu.Lock()
-			h.postType, h.thumbURL = req.Data.Type, req.Data.ThumbnailURL
+			h.postType, h.thumbURL, h.content = req.Data.Type, req.Data.ThumbnailURL, req.Data.Content
 			if len(req.Data.Content) > 0 {
 				h.mediaURL = req.Data.Content[0].MediaURL
 			}
@@ -143,6 +143,13 @@ func (h *redditAssetHarness) dispatcher(t *testing.T) *RedditDispatcher {
 		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
 		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
 	)
+}
+
+// redditHarnessContent is one content entry of an authored post.
+type redditHarnessContent struct {
+	MediaURL       string `json:"media_url"`
+	Caption        string `json:"caption"`
+	DestinationURL string `json:"destination_url"`
 }
 
 func redditAssetCfg(extra string) json.RawMessage {
@@ -234,6 +241,11 @@ func TestRedditAsset_RefusedBeforeAnyUpstreamCall(t *testing.T) {
 		sizes: map[[3]string]int64{{"cncf", raBrief, raAsset}: 20 << 20},
 		mimes: map[[3]string]string{{"cncf", raBrief, raAsset}: model.MimeTypeMP4},
 	}
+	// A stored PDF (#665) is refused the same way.
+	pdf := &fakeAssetSizer{
+		sizes: map[[3]string]int64{{"cncf", raBrief, raAsset}: 1 << 20},
+		mimes: map[[3]string]string{{"cncf", raBrief, raAsset}: model.MimeTypePDF},
+	}
 	cases := []struct {
 		name    string
 		sizer   *fakeAssetSizer
@@ -249,6 +261,7 @@ func TestRedditAsset_RefusedBeforeAnyUpstreamCall(t *testing.T) {
 		{"missing asset", &fakeAssetSizer{}, true, `,"imageAssetId":"` + raAsset + `"`, "does not exist for this brief"},
 		{"asset without bytes", empty, true, `,"imageAssetId":"` + raAsset + `"`, "no stored image bytes"},
 		{"video asset in the image slot", video, true, `,"imageAssetId":"` + raAsset + `"`, "is a video, not an image; redditConfig.imageAssetId accepts PNG or JPEG"},
+		{"PDF asset in the image slot", pdf, true, `,"imageAssetId":"` + raAsset + `"`, "is a PDF document, not an image; redditConfig.imageAssetId accepts PNG or JPEG"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

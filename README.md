@@ -276,6 +276,16 @@ openssl rand -base64 32
   with a 400 before any job exists. It names no account resource; it keeps a
   post shape no live create has sent off the shared ad account. The chart
   sets it to `"false"` (`app.environment.REDDIT_VIDEO_ENABLED.value`).
+- `REDDIT_CAROUSEL_ENABLED` (default unset, i.e. OFF) — opts a deployment
+  IN to Reddit CAROUSEL posts (#661): `redditConfig.carouselCards`, 2 to 6
+  cards each naming a stored PNG or JPEG (`imageAssetId`), a `headline` and a
+  `destinationUrl`, authored as one CAROUSEL post whose images Reddit fetches
+  from short-lived signed URLs. It also needs the signed creative-asset URLs
+  configured. Only the exact value `true` enables it; anything else fails
+  closed, and a create naming `carouselCards` is refused with a 400 before any
+  job exists. It names no account resource; it keeps a post shape no live
+  create has sent off the shared ad account. The chart sets it to `"false"`
+  (`app.environment.REDDIT_CAROUSEL_ENABLED.value`).
 - `REDDIT_TARGETING_EXCLUSIONS_ENABLED` (default unset, i.e. OFF) — opts
   a deployment IN to `redditConfig.excludedSubreddits` and
   `redditConfig.excludedGeoTargets` (#549), sent at create time as the ad
@@ -832,6 +842,18 @@ openssl rand -base64 32
   before a job exists. The default single-image create is unaffected. The
   chart sets it to `"false"`
   (`app.environment.LINKEDIN_ADS_CAROUSEL_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once the paused probe passes.
+- `LINKEDIN_ADS_DOCUMENT_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `linkedInConfig.format: "document"` (#665), a LinkedIn
+  document ad whose one creative is a dark post carrying a stored PDF
+  (`linkedInConfig.documentAssetId`, uploaded with content_type
+  `application/pdf`) sent through LinkedIn's Documents API. The campaign is
+  ENGAGEMENT by default, or LEAD_GENERATION with `objective:
+  "lead_generation"` and a Lead Gen Form (a gated document); Website Visits and
+  Website Conversions are refused. Only the exact value `true` enables it;
+  anything else fails closed, and a create naming it is refused with a 400
+  before a job exists. The chart sets it to `"false"`
+  (`app.environment.LINKEDIN_ADS_DOCUMENT_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once the paused probe passes.
 - `SURVEY_SEQUENCE_WORKFLOW_ID` (default unset) — the HubSpot workflow
   `POST /projects/{project_id}/send-workflows` copies when a request

@@ -459,6 +459,18 @@ app:
     REDDIT_VIDEO_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to Reddit CAROUSEL posts (#661):
+    # redditConfig.carouselCards, 2 to 6 cards each naming a stored PNG/JPEG
+    # (imageAssetId), a headline and a destination URL, authored as one
+    # CAROUSEL post whose images Reddit fetches from short-lived signed URLs.
+    # Needs the signed creative-asset URLs configured too. Default off: the
+    # post shape is built from Reddit's published v3 schema and no live create
+    # has sent it. While off, a create naming carouselCards is refused with a
+    # 400 before any job exists. Any value other than "true" is treated as
+    # off, so a typo fails closed.
+    REDDIT_CAROUSEL_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to twitterConfig.geoTargets, languages, keywords,
     # interestIds, conversationTopics, platforms, devices, ageBucket and gender
     # (#564), sent at create time as LOCATION, LANGUAGE, BROAD_KEYWORD, INTEREST,
@@ -1005,6 +1017,18 @@ app:
     # naming it is refused before a job exists. Any value other than "true" is
     # treated as off, so a typo fails closed.
     LINKEDIN_ADS_CAROUSEL_ENABLED:
+      value: "false"
+
+    # Opts this deployment IN to linkedInConfig.format "document" (#665): a
+    # document ad whose one creative is a dark post carrying a stored PDF
+    # (linkedInConfig.documentAssetId) uploaded through LinkedIn's Documents
+    # API. ENGAGEMENT by default; objective "lead_generation" with a Lead Gen
+    # Form makes it a gated document. The upload and the post have not been
+    # exercised against a live account. Set it to exactly "true" in
+    # lfx-v2-argocd once the paused probe in the PR passes. While off, a create
+    # naming it is refused before a job exists. Any value other than "true" is
+    # treated as off, so a typo fails closed.
+    LINKEDIN_ADS_DOCUMENT_ENABLED:
       value: "false"
 
     # Opts this deployment IN to linkedInConfig.variants[].callToAction (#588):

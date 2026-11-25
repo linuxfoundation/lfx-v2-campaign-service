@@ -5,7 +5,7 @@
 --
 -- NARROWING, so it is only safe once no `newsletter` brief exists: each ADD CONSTRAINT below is
 -- validated against the whole table and FAILS if one does. The file runs in one implicit
--- transaction, so that failure rolls back the DROPs too and the table keeps 000059's checks. A
+-- transaction, so that failure rolls back the DROPs too and the table keeps 000060's checks. A
 -- down migration must not silently delete briefs to make itself apply: an operator rolling back a
 -- release that shipped newsletter briefs deletes those rows by SQL first.
 

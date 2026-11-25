@@ -3,6 +3,9 @@
 **Fix** — the first two rounds of PR review on #685 (Greptile, Copilot and lfx-one). Each finding was read
 against the code and confirmed.
 
+- **The newsletter migration is `000060`.** `main` merged its own `000059_creative_assets_pdf`
+  (#683) while this was in review, and two migrations cannot share a version. The newsletter pair
+  is renumbered and every doc, test message and comment that named it follows.
 - **A newsletter link must match the notes exactly, slash, query and fragment included.**
   `normalizeLinkForMatch` dropped the fragment and trimmed every trailing "/" from the serialised
   address, which also cut one off a query value. Notes with `/report#results` vouched for

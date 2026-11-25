@@ -113,8 +113,8 @@ func (d *TwitterDispatcher) resolveTwitterImage(ctx context.Context, brief *mode
 	if asset == nil || len(asset.Bytes) == 0 {
 		return nil, noop, domain.PreflightRefusalf("creative asset %s has no stored image bytes", assetID)
 	}
-	if asset.MimeType == model.MimeTypeMP4 {
-		return nil, noop, domain.PreflightRefusalf("creative asset %s is a video, not an image; twitterConfig.imageAssetId accepts PNG or JPEG", assetID)
+	if !model.IsImageMimeType(asset.MimeType) {
+		return nil, noop, domain.PreflightRefusalf("creative asset %s is %s, not an image; twitterConfig.imageAssetId accepts PNG or JPEG", assetID, model.AssetKindPhrase(asset.MimeType))
 	}
 	handedOff = true
 	return &twitter.ImageInput{Bytes: asset.Bytes, MIME: asset.MimeType}, release, nil

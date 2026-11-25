@@ -248,6 +248,12 @@ else changes.
 carousel dark post has not been exercised against a live LinkedIn account. Only exactly `"true"`
 enables it; off, a create naming it is refused with a 400 before a job exists. Not role-gated.
 
+`LINKEDIN_ADS_DOCUMENT_ENABLED` defaults to `"false"` (#665) and gates `linkedInConfig.format`
+`"document"` with `linkedInConfig.documentAssetId`, `documentTitle` and `documentIntroText`: a
+document ad whose Documents API upload and post have not been exercised against a live LinkedIn
+account. Only exactly `"true"` enables it; off, a create naming it is refused with a 400 before a
+job exists. Not role-gated beyond what a lead generation create already requires.
+
 `SURVEY_SEQUENCE_WORKFLOW_ID` is a plain value defaulting to `""`, which selects the in-code
 default `1841232183`: the LF Research survey-promo workflow a survey send series
 (`send-workflows`) is copied from when a request names none. That id exists only in the LF

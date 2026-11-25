@@ -272,6 +272,19 @@ const (
 	// post and fetches an MP4 from the signed route. Turn it on per environment, in lfx-v2-argocd.
 	EnvRedditVideoEnabled = "REDDIT_VIDEO_ENABLED"
 
+	// EnvRedditCarouselEnabled opts a deployment IN to Reddit CAROUSEL posts (#661, split from
+	// #549 gap 5): redditConfig.carouselCards, 2 to 6 cards each naming a stored PNG/JPEG
+	// (imageAssetId), a headline and a destination URL, authored as one CAROUSEL post whose images
+	// Reddit fetches from short-lived signed URLs. Only the exact value "true" enables it; unset or
+	// any other value fails closed, and a create naming carouselCards is refused with a 400 before
+	// any job exists (and again at dispatch, before anything upstream).
+	//
+	// It names no account resource: it keeps an UNVERIFIED request shape (the legacy post body's
+	// CAROUSEL type with one content entry per card, from Reddit's published v3 OpenAPI schema; no
+	// live create has sent it) off the shared ad account until a paused live probe in a test
+	// account confirms it. Turn it on per environment, in lfx-v2-argocd.
+	EnvRedditCarouselEnabled = "REDDIT_CAROUSEL_ENABLED"
+
 	// EnvTwitterCreateTargetingEnabled opts a deployment IN to twitterConfig.geoTargets and
 	// twitterConfig.languages (#564): country and language targeting criteria added to the line
 	// item an X create makes (keywords, interestIds, conversationTopics, platforms, devices,
@@ -784,6 +797,15 @@ const (
 	// a job exists. The carousel post shape comes from LinkedIn's documentation and has not been
 	// exercised against a live account; see docs/knowledge/architecture/linkedin-carousel-ads.md.
 	EnvLinkedInAdsCarouselEnabled = "LINKEDIN_ADS_CAROUSEL_ENABLED"
+
+	// EnvLinkedInAdsDocumentEnabled opts a deployment IN to linkedInConfig.format "document"
+	// (#665): a document ad whose one creative is a dark post carrying a stored PDF
+	// (linkedInConfig.documentAssetId) uploaded through LinkedIn's Documents API, ENGAGEMENT by
+	// default or LEAD_GENERATION with a Lead Gen Form. Only the exact value "true" enables it;
+	// unset or any other value fails closed, and a create naming it is refused before a job
+	// exists. The Documents API upload and the document post have not been exercised against a
+	// live account; see docs/knowledge/architecture/linkedin-document-ads.md.
+	EnvLinkedInAdsDocumentEnabled = "LINKEDIN_ADS_DOCUMENT_ENABLED"
 
 	// EnvLinkedInAdsCallToActionEnabled opts a deployment IN to linkedInConfig.variants[].callToAction
 	// (#588): the dark post's contentCallToActionLabel, sent with contentLandingPage. Only the exact

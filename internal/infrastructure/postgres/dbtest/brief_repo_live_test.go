@@ -1090,7 +1090,7 @@ func TestLivePairCheckMatchesSurveyStageNames(t *testing.T) {
 }
 
 // TestLivePairCheckMatchesNewsletterStageNames is the newsletter arm's copy of the survey test
-// above, added with 000059. The arm holds one stage, which Postgres renders as a plain equality
+// above, added with 000060. The arm holds one stage, which Postgres renders as a plain equality
 // rather than an ARRAY, so this reads the arm up to the next `OR` rather than the next ARRAY.
 func TestLivePairCheckMatchesNewsletterStageNames(t *testing.T) {
 	ctx := context.Background()
@@ -1106,7 +1106,7 @@ func TestLivePairCheckMatchesNewsletterStageNames(t *testing.T) {
 
 	marker := strings.Index(def, "'newsletter'::text")
 	if marker < 0 {
-		t.Fatalf("the live pair CHECK has no newsletter arm: migration 000059 has not run against "+
+		t.Fatalf("the live pair CHECK has no newsletter arm: migration 000060 has not run against "+
 			"this database, so every newsletter brief fails its write as a 500 while the API enum "+
 			"accepts it. constraint: %s", def)
 	}

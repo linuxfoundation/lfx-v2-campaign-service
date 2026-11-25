@@ -2736,7 +2736,7 @@ body cap and the anti-invention rule.
 
 ### The newsletter delivery surface
 
-`newsletter` is a fourth `delivery_type` (migration `000059`), for one issue of a brand's recurring
+`newsletter` is a fourth `delivery_type` (migration `000060`), for one issue of a brand's recurring
 HubSpot newsletter. `emailstage` gains a third taxonomy with a single stage, `Newsletter`
 (`NewsletterNames()`/`NewsletterTemplates`/`ResolveNewsletter`/`IsNewsletterStage`); issues are told
 apart by `event_slug`, not by stage. `briefIdentityPairProblem`, `deliveryChannelKind` (it rides the

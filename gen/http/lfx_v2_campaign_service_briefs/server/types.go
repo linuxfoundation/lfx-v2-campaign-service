@@ -510,7 +510,7 @@ type UploadCreativeAssetOKResponseBody struct {
 	// Parent brief
 	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
 	// Stored MIME type, as verified from the bytes (not merely the declared
-	// header). video/mp4 since #586.
+	// header). video/mp4 since #586, application/pdf since #665.
 	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
 	// Size of the stored image in bytes
 	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
@@ -562,7 +562,7 @@ type GetCreativeAssetResponseBody struct {
 	// Parent brief
 	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
 	// Stored MIME type, as verified from the bytes (not merely the declared
-	// header). video/mp4 since #586.
+	// header). video/mp4 since #586, application/pdf since #665.
 	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
 	// Size of the stored image in bytes
 	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
@@ -4928,7 +4928,7 @@ type CreativeAssetResponseBody struct {
 	// Parent brief
 	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
 	// Stored MIME type, as verified from the bytes (not merely the declared
-	// header). video/mp4 since #586.
+	// header). video/mp4 since #586, application/pdf since #665.
 	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
 	// Size of the stored image in bytes
 	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
@@ -5080,15 +5080,16 @@ type CampaignSettingsFieldResponseBody struct {
 	// LinkedIn's `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the
 	// currency is not reported, never a bare number) are upstream-only, and
 	// `objective_type` is compared against the objective the recorded bidding
-	// strategy implies (automatic WEBSITE_VISIT, or the WEBSITE_CONVERSION or
-	// LEAD_GENERATION (#664) the create recorded; manual WEBSITE_CONVERSION;
-	// `unknown` when none is recorded); `audience_expansion_enabled` and
-	// `offsite_delivery_enabled` (#667: LinkedIn's audienceExpansionEnabled and
-	// offsiteDeliveryEnabled, `true` or `false`, absent when not reported) are
-	// upstream-only; a campaign reporting both a daily and a total budget, neither
-	// (as under a campaign group's shared budget), or a non-USD amount reads both
-	// budget fields `unknown`. The vocabulary is per-platform and may grow, so a
-	// consumer must render an unrecognised field name rather than dropping it.
+	// strategy implies (automatic WEBSITE_VISIT, or the WEBSITE_CONVERSION,
+	// LEAD_GENERATION (#664) or ENGAGEMENT (#665, a document create) the create
+	// recorded; manual WEBSITE_CONVERSION; `unknown` when none is recorded);
+	// `audience_expansion_enabled` and `offsite_delivery_enabled` (#667:
+	// LinkedIn's audienceExpansionEnabled and offsiteDeliveryEnabled, `true` or
+	// `false`, absent when not reported) are upstream-only; a campaign reporting
+	// both a daily and a total budget, neither (as under a campaign group's shared
+	// budget), or a non-USD amount reads both budget fields `unknown`. The
+	// vocabulary is per-platform and may grow, so a consumer must render an
+	// unrecognised field name rather than dropping it.
 	Field string `form:"field" json:"field" xml:"field"`
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.
@@ -5887,11 +5888,25 @@ type CampaignCreateInputRequestBody struct {
 	// status toggle cascades over every ad. More than 5 variants, or a blank or
 	// over-300-character variant headline, is refused synchronously with 400
 	// "invalid campaign config: redditConfig.variants...: ..." before any job
-	// exists. X TARGETING (#564): twitterConfig takes `geoTargets` (ISO 3166-1
-	// alpha-2 country codes, at most 50, uppercased and de-duplicated) and
-	// `languages` (X language values such as en, at most 20, lowercased and
-	// de-duplicated). Before anything is created each country is resolved with X's
-	// GET targeting_criteria/locations (location_type COUNTRIES, exactly one
+	// exists. REDDIT CAROUSEL (#661): redditConfig.carouselCards is 2 to 6 cards,
+	// each {imageAssetId (a stored PNG or JPEG of this brief), headline (at most
+	// 180 characters, the card's caption), destinationUrl (an absolute http or
+	// https URL, sent with the post's UTM parameters and utm_content=card-<k>, the
+	// card's 1-based position)}, authored as one CAROUSEL post and one ad whose
+	// images Reddit fetches from short-lived signed URLs. Never with postUrl,
+	// imageUrl, imageAssetId, videoAssetId or thumbnailAssetId, nor with two or
+	// more variants while REDDIT_AD_PER_VARIANT_ENABLED is on. OFF unless
+	// REDDIT_CAROUSEL_ENABLED is exactly "true": the post shape is from Reddit's
+	// public schema and has not been sent live. The flag off, a wrong JSON type, a
+	// card count or field outside those limits, a non-UUID id or signed asset URLs
+	// not configured is refused synchronously with 400 "invalid campaign config:
+	// redditConfig: ..." before any job exists; a card asset missing for this
+	// brief, empty or not PNG/JPEG fails the job before any Reddit call. X
+	// TARGETING (#564): twitterConfig takes `geoTargets` (ISO 3166-1 alpha-2
+	// country codes, at most 50, uppercased and de-duplicated) and `languages` (X
+	// language values such as en, at most 20, lowercased and de-duplicated).
+	// Before anything is created each country is resolved with X's GET
+	// targeting_criteria/locations (location_type COUNTRIES, exactly one
 	// country-level entry required) and the languages are checked against GET
 	// targeting_criteria/languages; the new line item then gets one LOCATION or
 	// LANGUAGE criterion (operator EQ) per value, after the line item and before
@@ -11597,8 +11612,8 @@ func ValidateUploadCreativeAssetRequestBody(body *UploadCreativeAssetRequestBody
 		err = goa.MergeErrors(err, goa.MissingFieldError("bytes", "body"))
 	}
 	if body.ContentType != nil {
-		if !(*body.ContentType == "image/png" || *body.ContentType == "image/jpeg" || *body.ContentType == "video/mp4") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.content_type", *body.ContentType, []any{"image/png", "image/jpeg", "video/mp4"}))
+		if !(*body.ContentType == "image/png" || *body.ContentType == "image/jpeg" || *body.ContentType == "video/mp4" || *body.ContentType == "application/pdf") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.content_type", *body.ContentType, []any{"image/png", "image/jpeg", "video/mp4", "application/pdf"}))
 		}
 	}
 	if body.Bytes != nil {

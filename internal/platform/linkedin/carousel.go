@@ -68,7 +68,7 @@ const (
 // the single-image one. findCampaignByNameInGroup refuses to reuse a campaign of another kind.
 func sponsoredFormatKind(format string) string {
 	switch format {
-	case campaignFormatSingleVideo, campaignFormatCarousel:
+	case campaignFormatSingleVideo, campaignFormatCarousel, campaignFormatDocument:
 		return format
 	}
 	return ""

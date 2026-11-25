@@ -4,7 +4,7 @@
 cloned last month's issue by hand. The legacy emailcreationskill found the clone source by name
 (`lookup_brand_history` with the hint "newsletter").
 
-- `newsletter` is a fourth `delivery_type`, with one stage, `Newsletter`. Migration `000059` widens
+- `newsletter` is a fourth `delivery_type`, with one stage, `Newsletter`. Migration `000060` widens
   both CHECKs and is expand-only.
 - `GET /projects/{projectId}/audience-builder/brand-newsletters?brand=` returns the brand's previous
   sent newsletters with their lists (`AudienceExplorer.BrandNewsletters`, last-sent's send gates,

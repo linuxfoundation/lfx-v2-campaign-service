@@ -104,20 +104,28 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 		return nil, decErr
 	}
 
-	// The declared content type picks the validator: an MP4 is checked structurally
-	// (validateMP4Upload), an image by the staged header/size/decode pipeline
+	// The declared content type picks the validator: an MP4 or a PDF is checked structurally
+	// (validateMP4Upload, validatePDFUpload), an image by the staged header/size/decode pipeline
 	// (validateImageUpload). A declared type that does not match the bytes fails either way:
 	// MP4 bytes are not a decodable image, and image bytes carry no ftyp box.
 	var (
 		sniffed       string
 		width, height int
 	)
-	if p.ContentType == model.MimeTypeMP4 {
+	switch p.ContentType {
+	case model.MimeTypeMP4:
 		if err := validateMP4Upload(decoded); err != nil {
 			return nil, err
 		}
 		sniffed = model.MimeTypeMP4
-	} else {
+	case model.MimeTypePDF:
+		// A PDF (#665) is checked structurally too (validatePDFUpload); image bytes carry no
+		// %PDF- header, and PDF bytes are not a decodable image.
+		if err := validatePDFUpload(decoded); err != nil {
+			return nil, err
+		}
+		sniffed = model.MimeTypePDF
+	default:
 		var verr error
 		if sniffed, width, height, verr = s.validateImageUpload(ctx, p, decoded); verr != nil {
 			return nil, verr

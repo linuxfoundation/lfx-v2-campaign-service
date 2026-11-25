@@ -57,10 +57,10 @@ the `Content-Length` arm the bytes are never read at all.
 The cap is sized from the largest LEGAL upload, not guessed. Base64 expands by exactly 4/3, so the
 30-MiB stored-file ceiling arrives as 41,943,040 characters — 40 MiB to the byte, which is exactly
 what the upload's `bytes` attribute declares as `MaxLength`. Only `content_type` and `bytes` travel in the body (`project_id` and `brief_id` are path
-parameters), so the JSON envelope adds 39 bytes for the shorter enum value (`"image/png"`) and 40
-for the longer (`"image/jpeg"`), putting the worst legal body at **41,943,080** — the JPEG case,
-since `content_type` rides in the body and its length therefore counts. A 40-MiB cap would
-reject every maximum-size image by those 40 bytes; 42 MiB clears it with ~2 MiB of headroom.
+parameters), so the JSON envelope adds 39 bytes for the shortest enum value (`"image/png"`) and 45
+for the longest (`"application/pdf"`, #665), putting the worst legal body at **41,943,085** — the
+PDF case, since `content_type` rides in the body and its length therefore counts. A 40-MiB cap
+would reject every maximum-size upload by those bytes; 42 MiB clears it with ~2 MiB of headroom.
 Raising the declared `MaxLength` (or the `maxCreativeStoredBytes` ceiling it encodes) requires
 raising this constant in step.
 

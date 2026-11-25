@@ -345,6 +345,8 @@ func TestLinkedIn_ReadSettings_ObjectiveIsComparedAgainstTheRecordedStrategy(t *
 		{"objectiveType outside the closed set is unknown", &automatic, resultWith(`"objectiveType":"BRAND_AWARENESS"`), "", "WEBSITE_VISIT", fieldWant{"", "WEBSITE_VISIT", model.SettingsUnknown}},
 		// #664: a lead gen create records LEAD_GENERATION, compared like the other two.
 		{"automatic lead gen matches LEAD_GENERATION", &automatic, resultWith(`"objectiveType":"LEAD_GENERATION"`), "", "LEAD_GENERATION", fieldWant{"LEAD_GENERATION", "LEAD_GENERATION", model.SettingsMatch}},
+		// A document create (#665) records ENGAGEMENT, and the readback compares it.
+		{"automatic document matches ENGAGEMENT", &automatic, resultWith(`"objectiveType":"ENGAGEMENT"`), "", "ENGAGEMENT", fieldWant{"ENGAGEMENT", "ENGAGEMENT", model.SettingsMatch}},
 		{"manual ignores the result objective", &manual, visit, "", "WEBSITE_CONVERSION", fieldWant{"WEBSITE_CONVERSION", "WEBSITE_CONVERSION", model.SettingsMatch}},
 	}
 	for _, tc := range cases {
