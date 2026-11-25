@@ -510,7 +510,7 @@ type UploadCreativeAssetOKResponseBody struct {
 	// Parent brief
 	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
 	// Stored MIME type, as verified from the bytes (not merely the declared
-	// header). video/mp4 since #586.
+	// header). video/mp4 since #586, application/pdf since #665.
 	MimeType *string `form:"mime_type,omitempty" json:"mime_type,omitempty" xml:"mime_type,omitempty"`
 	// Size of the stored image in bytes
 	ByteSize *int64 `form:"byte_size,omitempty" json:"byte_size,omitempty" xml:"byte_size,omitempty"`
@@ -562,7 +562,7 @@ type GetCreativeAssetResponseBody struct {
 	// Parent brief
 	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
 	// Stored MIME type, as verified from the bytes (not merely the declared
-	// header). video/mp4 since #586.
+	// header). video/mp4 since #586, application/pdf since #665.
 	MimeType *string `form:"mime_type,omitempty" json:"mime_type,omitempty" xml:"mime_type,omitempty"`
 	// Size of the stored image in bytes
 	ByteSize *int64 `form:"byte_size,omitempty" json:"byte_size,omitempty" xml:"byte_size,omitempty"`
@@ -4928,7 +4928,7 @@ type CreativeAssetResponseBody struct {
 	// Parent brief
 	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
 	// Stored MIME type, as verified from the bytes (not merely the declared
-	// header). video/mp4 since #586.
+	// header). video/mp4 since #586, application/pdf since #665.
 	MimeType *string `form:"mime_type,omitempty" json:"mime_type,omitempty" xml:"mime_type,omitempty"`
 	// Size of the stored image in bytes
 	ByteSize *int64 `form:"byte_size,omitempty" json:"byte_size,omitempty" xml:"byte_size,omitempty"`
@@ -11621,8 +11621,8 @@ func ValidateUploadCreativeAssetCreatedResponseBody(body *UploadCreativeAssetCre
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.id", *body.ID, goa.FormatUUID))
 	}
 	if body.MimeType != nil {
-		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg" || *body.MimeType == "video/mp4") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg", "video/mp4"}))
+		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg" || *body.MimeType == "video/mp4" || *body.MimeType == "application/pdf") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg", "video/mp4", "application/pdf"}))
 		}
 	}
 	if body.Width != nil {
@@ -11668,8 +11668,8 @@ func ValidateUploadCreativeAssetOKResponseBody(body *UploadCreativeAssetOKRespon
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.id", *body.ID, goa.FormatUUID))
 	}
 	if body.MimeType != nil {
-		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg" || *body.MimeType == "video/mp4") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg", "video/mp4"}))
+		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg" || *body.MimeType == "video/mp4" || *body.MimeType == "application/pdf") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg", "video/mp4", "application/pdf"}))
 		}
 	}
 	if body.Width != nil {
@@ -11743,8 +11743,8 @@ func ValidateGetCreativeAssetResponseBody(body *GetCreativeAssetResponseBody) (e
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.id", *body.ID, goa.FormatUUID))
 	}
 	if body.MimeType != nil {
-		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg" || *body.MimeType == "video/mp4") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg", "video/mp4"}))
+		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg" || *body.MimeType == "video/mp4" || *body.MimeType == "application/pdf") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg", "video/mp4", "application/pdf"}))
 		}
 	}
 	if body.Width != nil {
@@ -16918,8 +16918,8 @@ func ValidateCreativeAssetResponseBody(body *CreativeAssetResponseBody) (err err
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.id", *body.ID, goa.FormatUUID))
 	}
 	if body.MimeType != nil {
-		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg" || *body.MimeType == "video/mp4") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg", "video/mp4"}))
+		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg" || *body.MimeType == "video/mp4" || *body.MimeType == "application/pdf") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg", "video/mp4", "application/pdf"}))
 		}
 	}
 	if body.Width != nil {
@@ -16965,8 +16965,8 @@ func validateCreativeAssetResponseBody(body *CreativeAssetResponseBody, path str
 		err = goa.MergeErrors(err, goa.ValidateFormat(path+".id", *body.ID, goa.FormatUUID))
 	}
 	if body.MimeType != nil {
-		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg" || *body.MimeType == "video/mp4") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".mime_type", *body.MimeType, []any{"image/png", "image/jpeg", "video/mp4"}))
+		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg" || *body.MimeType == "video/mp4" || *body.MimeType == "application/pdf") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".mime_type", *body.MimeType, []any{"image/png", "image/jpeg", "video/mp4", "application/pdf"}))
 		}
 	}
 	if body.Width != nil {

@@ -107,6 +107,20 @@ func TestTwitterVideo_SlotsRefuseTheOtherMedia(t *testing.T) {
 	if !strings.Contains(err.Error(), "is a video, not an image") {
 		t.Errorf("video in the image slot: %v", err)
 	}
+	// A stored PDF (#665) fits neither slot.
+	pdf := briefAsset([]byte("%PDF-1.7 fake"))
+	pdf.assets[testBrief().ProjectID+"/"+testBrief().ID+"/"+xAssetID].MimeType = model.MimeTypePDF
+	d = newXCreativeDispatcher(srv.URL, pdf, nil)
+	_, err = d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds, xImageConfig(""))
+	requireNoUpstreamCreate(t, err)
+	if !strings.Contains(err.Error(), "is a PDF document, not an image") {
+		t.Errorf("PDF in the image slot: %v", err)
+	}
+	_, err = d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds, xVideoConfig(""))
+	requireNoUpstreamCreate(t, err)
+	if !strings.Contains(err.Error(), "is not a video") {
+		t.Errorf("PDF in the video slot: %v", err)
+	}
 	x.mu.Lock()
 	total := x.total
 	x.mu.Unlock()

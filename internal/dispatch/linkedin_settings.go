@@ -223,7 +223,7 @@ func linkedinResultObjective(ctx context.Context, campaign *model.Campaign) *str
 		return strPtr(linkedin.ObjectiveWebsiteVisit)
 	}
 	switch *blob.ObjectiveType {
-	case linkedin.ObjectiveWebsiteVisit, linkedin.ObjectiveWebsiteConversion, linkedin.ObjectiveLeadGeneration:
+	case linkedin.ObjectiveWebsiteVisit, linkedin.ObjectiveWebsiteConversion, linkedin.ObjectiveLeadGeneration, linkedin.ObjectiveEngagement:
 		return strPtr(*blob.ObjectiveType)
 	}
 	slog.WarnContext(ctx, "linkedin result blob records an objectiveType this service does not create; objective_type has no recorded side",

@@ -758,15 +758,15 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 	return out, releaseAll, nil
 }
 
-// checkMetaSlotMime refuses an asset in the wrong slot before anything is created: a video
-// (model.MimeTypeMP4) named as a variant's image, or anything but a video named as its video
-// (#550 gap 9).
+// checkMetaSlotMime refuses an asset in the wrong slot before anything is created: anything but
+// an image — a video (model.MimeTypeMP4) or a PDF document (#665) — named as a variant's image, or
+// anything but a video named as its video (#550 gap 9).
 func checkMetaSlotMime(i int, assetID, mime string, video bool) error {
 	if video && mime != model.MimeTypeMP4 {
 		return domain.PreflightRefusalf("meta variant %d references creative asset %s as its video, but it is not an MP4 video", i+1, assetID)
 	}
-	if !video && mime == model.MimeTypeMP4 {
-		return domain.PreflightRefusalf("meta variant %d references creative asset %s, which is a video, not an image", i+1, assetID)
+	if !video && !model.IsImageMimeType(mime) {
+		return domain.PreflightRefusalf("meta variant %d references creative asset %s, which is %s, not an image", i+1, assetID, model.AssetKindPhrase(mime))
 	}
 	return nil
 }

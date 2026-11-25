@@ -510,7 +510,7 @@ type UploadCreativeAssetOKResponseBody struct {
 	// Parent brief
 	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
 	// Stored MIME type, as verified from the bytes (not merely the declared
-	// header). video/mp4 since #586.
+	// header). video/mp4 since #586, application/pdf since #665.
 	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
 	// Size of the stored image in bytes
 	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
@@ -562,7 +562,7 @@ type GetCreativeAssetResponseBody struct {
 	// Parent brief
 	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
 	// Stored MIME type, as verified from the bytes (not merely the declared
-	// header). video/mp4 since #586.
+	// header). video/mp4 since #586, application/pdf since #665.
 	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
 	// Size of the stored image in bytes
 	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
@@ -4928,7 +4928,7 @@ type CreativeAssetResponseBody struct {
 	// Parent brief
 	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
 	// Stored MIME type, as verified from the bytes (not merely the declared
-	// header). video/mp4 since #586.
+	// header). video/mp4 since #586, application/pdf since #665.
 	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
 	// Size of the stored image in bytes
 	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
@@ -11597,8 +11597,8 @@ func ValidateUploadCreativeAssetRequestBody(body *UploadCreativeAssetRequestBody
 		err = goa.MergeErrors(err, goa.MissingFieldError("bytes", "body"))
 	}
 	if body.ContentType != nil {
-		if !(*body.ContentType == "image/png" || *body.ContentType == "image/jpeg" || *body.ContentType == "video/mp4") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.content_type", *body.ContentType, []any{"image/png", "image/jpeg", "video/mp4"}))
+		if !(*body.ContentType == "image/png" || *body.ContentType == "image/jpeg" || *body.ContentType == "video/mp4" || *body.ContentType == "application/pdf") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.content_type", *body.ContentType, []any{"image/png", "image/jpeg", "video/mp4", "application/pdf"}))
 		}
 	}
 	if body.Bytes != nil {

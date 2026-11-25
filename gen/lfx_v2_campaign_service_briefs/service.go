@@ -45,18 +45,23 @@ type Service interface {
 	// a SINGLE_VIDEO campaign, 400 unless LINKEDIN_ADS_VIDEO_ENABLED is "true";
 	// api-catalog LinkedInConfig variant videos) or a Reddit video post
 	// (redditConfig.videoAssetId, #549, behind REDDIT_VIDEO_ENABLED) consumes it —
-	// every image slot refuses a video asset at dispatch. Re-uploading identical
-	// bytes to the same brief returns the existing asset (idempotent). This does
-	// not touch any ad platform; the account-scoped Meta image_hash is resolved
-	// later, at campaign dispatch. Meta and Microsoft Advertising consume stored
-	// assets: a Microsoft Advertising campaign names one by
-	// microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad
-	// account's media library (an account-scoped MediaId) and attached to the
-	// campaign as an image ad extension; Microsoft accepts at most 76,800 bytes
-	// and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the
-	// asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed
-	// URL when that feature is configured. An X (Twitter) campaign may also
-	// reference the asset as the image of its authored tweet
+	// every image slot refuses a video asset at dispatch. A PDF (content_type
+	// application/pdf, #665) is likewise checked structurally (the PDF header and
+	// the end-of-file marker in its last 1024 bytes) and stored with no width or
+	// height; only a LinkedIn document ad (linkedInConfig.documentAssetId, format
+	// "document", 400 unless LINKEDIN_ADS_DOCUMENT_ENABLED is "true") consumes it
+	// — every image and video slot refuses a PDF at dispatch, and a signed asset
+	// URL never serves one. Re-uploading identical bytes to the same brief returns
+	// the existing asset (idempotent). This does not touch any ad platform; the
+	// account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta
+	// and Microsoft Advertising consume stored assets: a Microsoft Advertising
+	// campaign names one by microsoftConfig.imageAssetId, and at dispatch it is
+	// uploaded to the ad account's media library (an account-scoped MediaId) and
+	// attached to the campaign as an image ad extension; Microsoft accepts at most
+	// 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also
+	// reference the asset (redditConfig.imageAssetId), served to Reddit at a
+	// short-lived signed URL when that feature is configured. An X (Twitter)
+	// campaign may also reference the asset as the image of its authored tweet
 	// (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is
 	// likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig
 	// variant names one by imageAssetId, and at dispatch it is uploaded once
@@ -2378,7 +2383,7 @@ type CreativeAsset struct {
 	// Parent brief
 	BriefID string
 	// Stored MIME type, as verified from the bytes (not merely the declared
-	// header). video/mp4 since #586.
+	// header). video/mp4 since #586, application/pdf since #665.
 	MimeType string
 	// Size of the stored image in bytes
 	ByteSize int64

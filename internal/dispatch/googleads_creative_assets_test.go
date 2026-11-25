@@ -54,7 +54,7 @@ func gaConfigWithRefs(refs ...googleAdsImageRef) *googleAdsConfig {
 }
 
 func gaStoredAsset(b []byte) *fakeCreativeAssets {
-	return &fakeCreativeAssets{asset: &model.CreativeAsset{Bytes: b}}
+	return &fakeCreativeAssets{asset: &model.CreativeAsset{MimeType: model.MimeTypePNG, Bytes: b}}
 }
 
 // The happy path, and the contract the platform side depends on: the bytes come back keyed by
@@ -371,7 +371,7 @@ func (s *sizedAssets) GetAssetSize(context.Context, string, string, string) (int
 }
 
 func (s *sizedAssets) GetAsset(context.Context, string, string, string) (*model.CreativeAsset, error) {
-	return &model.CreativeAsset{Bytes: s.bytes}, nil
+	return &model.CreativeAsset{MimeType: model.MimeTypePNG, Bytes: s.bytes}, nil
 }
 
 func keysOf(m map[string][]byte) []string {
@@ -380,4 +380,26 @@ func keysOf(m map[string][]byte) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestResolveGoogleCreativeAssets_RefusesNonImages: a stored video or PDF (#586, #665) named in an
+// image slot is refused before any Google request; only PNG and JPEG reach it.
+func TestResolveGoogleCreativeAssets_RefusesNonImages(t *testing.T) {
+	for _, tc := range []struct {
+		mime, want string
+	}{
+		{model.MimeTypeMP4, "which is a video, not an image"},
+		{model.MimeTypePDF, "which is a PDF document, not an image"},
+	} {
+		t.Run(tc.mime, func(t *testing.T) {
+			store := &fakeCreativeAssets{asset: &model.CreativeAsset{MimeType: tc.mime, Bytes: []byte("not-an-image")}}
+			cfg := gaConfigWithRefs(googleAdsImageRef{ImageAssetID: gaAssetID})
+			d := gaDispatcher(store, NewAssetReserver(MaxConcurrentVariantAssetBytes, time.Second))
+			_, release, err := d.resolveGoogleCreativeAssets(context.Background(), gaBrief(), cfg)
+			defer release()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
 }

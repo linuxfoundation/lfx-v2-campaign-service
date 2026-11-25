@@ -1037,6 +1037,23 @@ order, each `landingPage` tagged `utm_content=card-<k>` by `buildUTMURLWithConte
 compares `sponsoredFormatKind`, so image, video and carousel campaigns never reuse one another. See
 [LinkedIn Carousel Sponsored Content](../architecture/linkedin-carousel-ads.md).
 
+## Document creates (`documents.go`, #665)
+
+`CampaignInput.Format` `FormatDocument` with `Document` (a `DocumentUpload`), `DocumentAssetID`,
+`DocumentTitle` and `DocumentIntroText` creates a document ad with ONE creative. Before any request
+`CreateCampaign` resolves the objective through `documentObjective` (ENGAGEMENT by default,
+LEAD_GENERATION as asked, anything else refused; ENGAGEMENT refused for every other format) and
+`campaignBidding` gives ENGAGEMENT `MAX_REACH` / `CPM`, automatic only, name segment `Engagement`;
+it refuses variants or carousel cards beside the document, what `ValidateDocumentFields` (title at
+most 70, intro at most 600) and `ValidateDocument` (`application/pdf`, `%PDF-`, at most 100 MB)
+refuse, and document fields under another format. The campaign is created without `format`
+(`createSponsoredCampaign` never sends `campaignFormatDocument`), which `sponsoredFormatKind` uses
+for the reuse check. `createDocumentAd` runs `uploadDocument` (initializeUpload, the PUT to a
+trusted LinkedIn URL, `awaitMediaAvailable` with `documentMedia`; `WithDocumentPolling`, default
+60 s), `createDocumentDarkPost` (`content.media`, no landing page) and `createCreative` (with the
+lead gen form). The URN goes to `CampaignResult.DocumentURNs`. See
+[LinkedIn Document Ads](../architecture/linkedin-document-ads.md).
+
 ## Create-time bidding (`CampaignInput.ManualCPCBid`, `campaignBidding`, LFXV2-2665)
 
 **Bug fixed**: the create body used to send `WEBSITE_CONVERSION`, `costType` `CPC` and NO

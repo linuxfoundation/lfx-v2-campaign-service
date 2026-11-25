@@ -169,7 +169,10 @@ func TestUploadRoute_AdmitsMaximumLegalUpload(t *testing.T) {
 		wantSize    int64 // the exact wire size, pinned so a change in encoding is visible here
 	}{
 		{model.MimeTypePNG, 41943079},
-		{model.MimeTypeJPEG, 41943080}, // the worst case the contract admits
+		{model.MimeTypeJPEG, 41943080},
+		// application/pdf (#665) is the longest enum value, so it is the worst case the contract
+		// admits now.
+		{model.MimeTypePDF, 41943085},
 	} {
 		t.Run(tc.contentType, func(t *testing.T) {
 			// The real wire shape: the image base64'd into the JSON body Goa decodes.

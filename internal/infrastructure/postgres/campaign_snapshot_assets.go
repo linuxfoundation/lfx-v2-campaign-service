@@ -50,10 +50,14 @@ const snapshotVideoAssetIDKey = "videoassetid"
 // A Reddit video post's video itself is named under snapshotVideoAssetIDKey.
 const snapshotThumbnailAssetIDKey = "thumbnailassetid"
 
+// snapshotDocumentAssetIDKey is the fourth key, LOWERCASED: a LinkedIn document ad's
+// linkedInConfig.documentAssetId (#665), the stored PDF uploaded through the Documents API.
+const snapshotDocumentAssetIDKey = "documentassetid"
+
 // isSnapshotAssetIDKey reports whether k names a stored creative asset.
 func isSnapshotAssetIDKey(k string) bool {
 	return strings.EqualFold(k, snapshotAssetIDKey) || strings.EqualFold(k, snapshotVideoAssetIDKey) ||
-		strings.EqualFold(k, snapshotThumbnailAssetIDKey)
+		strings.EqualFold(k, snapshotThumbnailAssetIDKey) || strings.EqualFold(k, snapshotDocumentAssetIDKey)
 }
 
 // snapshotAssetIDs returns the creative-asset ids a config snapshot names, in their canonical

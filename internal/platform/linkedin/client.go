@@ -104,6 +104,10 @@ type Client struct {
 	// (videos.go). Defaults set in NewClient; WithVideoPolling overrides them.
 	videoPollInterval     time.Duration
 	videoAvailabilityWait time.Duration
+	// documentPollInterval and documentAvailabilityWait bound the Documents API availability
+	// poll (documents.go, #665). Defaults set in NewClient; WithDocumentPolling overrides them.
+	documentPollInterval     time.Duration
+	documentAvailabilityWait time.Duration
 }
 
 // Option customizes a Client.
@@ -204,6 +208,9 @@ func NewClient(creds Credentials, cfg RuntimeConfig, opts ...Option) *Client {
 		imageAvailabilityWait: defaultImageAvailabilityWait,
 		videoPollInterval:     defaultVideoPollInterval,
 		videoAvailabilityWait: defaultVideoAvailabilityWait,
+
+		documentPollInterval:     defaultDocumentPollInterval,
+		documentAvailabilityWait: defaultDocumentAvailabilityWait,
 	}
 	for _, o := range opts {
 		o(c)
@@ -333,6 +340,14 @@ type CampaignInput struct {
 	// carousel.go.
 	CarouselCards     []CarouselCard
 	CarouselIntroText string
+	// Document, DocumentAssetID, DocumentTitle and DocumentIntroText are a FormatDocument create's
+	// stored PDF, its asset id (recorded on the result), the post's media title and its
+	// commentary (#665); refused under any other format. A document create's Objective is ""
+	// (ObjectiveEngagement) or ObjectiveLeadGeneration. See documents.go.
+	Document          *DocumentUpload
+	DocumentAssetID   string
+	DocumentTitle     string
+	DocumentIntroText string
 	// JobFunctions replace the default job functions (urn:li:function:8, 13 and 16) in the
 	// profile's own jobFunctions clause (#585). Nil means the default. Not read with Targeting,
 	// which brings its own. CreateCampaign runs ValidateJobFunctions on it before any request.
@@ -377,6 +392,10 @@ type CampaignResult struct {
 	// Videos API (#586) — including one that then failed to upload or process. Omitted when no
 	// variant named a stored video.
 	VideoURNs map[string]string `json:"videoUrns,omitempty"`
+	// DocumentURNs records, per stored asset id, the urn:li:document this run minted through the
+	// Documents API (#665) — including one that then failed to upload or process. Omitted when the
+	// create named no document.
+	DocumentURNs map[string]string `json:"documentUrns,omitempty"`
 	// BidApplied reports that THIS run created the campaign, which carries the bidding
 	// (LFXV2-2665). A campaign reused by name keeps its existing bidding, so the dispatcher records
 	// the strategy and starting bid only when this is true. Set only on the successful result.
@@ -2359,7 +2378,9 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 	if bidding.objectiveType != "" {
 		body["objectiveType"] = bidding.objectiveType
 	}
-	if format != "" {
+	// A document campaign's format is never sent: LinkedIn documents no campaign format for it and
+	// takes the format from the first creative (#665, documents.go).
+	if format != "" && format != campaignFormatDocument {
 		body["format"] = format
 	}
 	for k, v := range targeting {
@@ -3056,6 +3077,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// The bidding fields, resolved BEFORE any POST: a manual bid that is not a whole number of cents
 	// is refused here, with nothing created, rather than after the campaign group exists. The plan
 	// also decides the objective and the campaign name's Objective segment.
+	// A document create's objective (#665): ENGAGEMENT by default, LEAD_GENERATION as asked, and
+	// nothing else; ENGAGEMENT is created for a document only.
+	if f, ferr := NormalizeFormat(in.Format); ferr == nil && f == FormatDocument {
+		if in.Objective, err = documentObjective(in.Objective); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+	} else if in.Objective == ObjectiveEngagement {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: objective %s is created for format %q only", ErrFormatInvalid, ObjectiveEngagement, FormatDocument))
+	}
 	bidding, err := campaignBidding(in.ManualCPCBid, in.Objective)
 	if err != nil {
 		// ValidateBidAmount's sentences are service-authored and numeric-only (issue #208), and
@@ -3138,6 +3168,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	} else if len(in.CarouselCards) > 0 || in.CarouselIntroText != "" {
 		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: carouselCards and carouselIntroText are accepted only with format %q", ErrFormatInvalid, FormatCarousel))
 	}
+	// A document create (#665) takes its one creative from the stored PDF, checked here before
+	// any POST; its objective was resolved with the bidding above.
+	if format == FormatDocument {
+		if len(in.Variants) > 0 || len(in.CarouselCards) > 0 {
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: a document create takes its creative from the document, not variants or carouselCards", ErrFormatInvalid))
+		}
+		if err := ValidateDocumentFields(in.DocumentAssetID, in.DocumentTitle, in.DocumentIntroText); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+		if in.Document == nil {
+			return nil, domain.PreflightRefusalf("the document create names stored document asset %s, which was not supplied", domain.CallerValue(in.DocumentAssetID))
+		}
+		if err := ValidateDocument(*in.Document); err != nil {
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("document asset %s: %w", domain.CallerValue(in.DocumentAssetID), err))
+		}
+	} else if in.Document != nil || in.DocumentAssetID != "" || in.DocumentTitle != "" || in.DocumentIntroText != "" {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: a document is accepted only with format %q", ErrFormatInvalid, FormatDocument))
+	}
 
 	// Refuse to create a campaign with no creatives: LinkedIn campaign-group and
 	// campaign creation are permanent side effects, so an empty variant set would
@@ -3215,6 +3263,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	if format == FormatCarousel {
 		campaignFormat = campaignFormatCarousel
+	}
+	// A document campaign is created without a format (documents.go); campaignFormatDocument is
+	// what the reuse lookup expects LinkedIn to report for one.
+	if format == FormatDocument {
+		campaignFormat = campaignFormatDocument
 	}
 
 	// The optional call to action and creative name (#588, #589) are checked here too: an
@@ -3584,6 +3637,21 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			result.OptimizationTarget = bidding.optimizationTarget
 		}
 		return result
+	}
+	if format == FormatDocument {
+		count, docURN, docSteps, derr := c.createDocumentAd(ctx, accountID, campaignID, eventName, in)
+		steps = append(steps, docSteps...)
+		withDocument := func(r *CampaignResult) *CampaignResult {
+			if docURN != "" {
+				r.DocumentURNs = map[string]string{in.DocumentAssetID: docURN}
+			}
+			return r
+		}
+		if derr != nil {
+			return withDocument(withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, count, steps))),
+				fmt.Errorf("%w — group %q and campaign %q already exist", derr, groupID, campaignID)
+		}
+		return withDocument(finish(count)), nil
 	}
 	if format == FormatCarousel {
 		count, carouselSteps, cerr := c.createCarousel(ctx, accountID, campaignID, eventName, in, carouselLanding, imageURNs)

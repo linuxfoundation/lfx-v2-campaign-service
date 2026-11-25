@@ -214,8 +214,10 @@ type linkedinConfig struct {
 	// Format selects the campaign format (#586): omitted or "single_image" is the
 	// SPONSORED_UPDATES campaign built from Variants; "text", behind
 	// LINKEDIN_ADS_TEXT_ADS_ENABLED, is a TEXT_AD campaign built from TextAds; "carousel", behind
-	// LINKEDIN_ADS_CAROUSEL_ENABLED (#665), is a CAROUSEL campaign built from CarouselCards.
-	// Dispatch stores "text", "carousel" or nothing (the default). See linkedinFormat.
+	// LINKEDIN_ADS_CAROUSEL_ENABLED (#665), is a CAROUSEL campaign built from CarouselCards;
+	// "document", behind LINKEDIN_ADS_DOCUMENT_ENABLED (#665), is a document ad built from
+	// DocumentAssetID. Dispatch stores "text", "carousel", "document" or nothing (the default).
+	// See linkedinFormat.
 	Format string `json:"format,omitempty"`
 	// TextAds are the Text Ad creatives of a "text" create (#586); refused with any other format.
 	TextAds []linkedin.TextAd `json:"textAds,omitempty"`
@@ -224,6 +226,12 @@ type linkedinConfig struct {
 	// linkedinFormat.
 	CarouselCards     []linkedin.CarouselCard `json:"carouselCards,omitempty"`
 	CarouselIntroText string                  `json:"carouselIntroText,omitempty"`
+	// DocumentAssetID, DocumentTitle and DocumentIntroText are a "document" create's stored PDF,
+	// its title and the post commentary (#665), behind LINKEDIN_ADS_DOCUMENT_ENABLED; refused with
+	// any other format. See linkedinDocumentFormat.
+	DocumentAssetID   string `json:"documentAssetId,omitempty"`
+	DocumentTitle     string `json:"documentTitle,omitempty"`
+	DocumentIntroText string `json:"documentIntroText,omitempty"`
 	// Objective is the campaign's optimisation goal (#582): "traffic" or "conversions", exactly, or
 	// "lead_generation" (#664: LEAD_GENERATION / MAX_LEAD, automatic only, requires LeadGenForm).
 	// Omitted, the bidding strategy decides as before (automatic → WEBSITE_VISIT / MAX_CLICK,
@@ -956,6 +964,10 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if err := checkLeadGenShape(config); err != nil {
 		return nil, notCreated(err)
 	}
+	// And a wrong-typed documentAssetId, documentTitle or documentIntroText (#665).
+	if err := checkDocumentShape(config); err != nil {
+		return nil, notCreated(err)
+	}
 	var cfg linkedinConfig
 	if err := unmarshalPlatformConfig(config, "linkedInConfig", &cfg); err != nil {
 		return nil, notCreated(err)
@@ -1092,6 +1104,13 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		return nil, notCreated(err)
 	}
 	defer releaseImages()
+	// A document create's PDF (#665), resolved and validated the same way before anything is
+	// created; a document create names no image, so its reservation is the only one held.
+	document, releaseDocument, err := d.resolveLinkedInDocument(ctx, brief, &cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	defer releaseDocument()
 
 	// Build the runtime config from the connection (account/org) plus any richer
 	// bits the caller supplied in config (targeting profiles / exclusions the
@@ -1153,6 +1172,12 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		// A carousel create's cards (#665), their asset ids canonicalised by resolveLinkedInImages.
 		CarouselCards:     cfg.CarouselCards,
 		CarouselIntroText: cfg.CarouselIntroText,
+		// A document create's PDF and text (#665), the asset id canonicalised by
+		// resolveLinkedInDocument.
+		Document:          document,
+		DocumentAssetID:   cfg.DocumentAssetID,
+		DocumentTitle:     cfg.DocumentTitle,
+		DocumentIntroText: cfg.DocumentIntroText,
 		JobFunctions:      cfg.JobFunctions,
 		DeliveryOptions:   delivery,
 		LeadGen:           leadGen,
@@ -2104,6 +2129,8 @@ func linkedinSnapshotConfig(cfg linkedinConfig) linkedinConfig {
 		}
 	}
 	snapshot.CarouselIntroText = sanitizeSnapshotText(cfg.CarouselIntroText)
+	snapshot.DocumentTitle = sanitizeSnapshotText(cfg.DocumentTitle)
+	snapshot.DocumentIntroText = sanitizeSnapshotText(cfg.DocumentIntroText)
 	if cfg.GeoTargets != nil {
 		snapshot.GeoTargets = make([]linkedin.GeoTarget, len(cfg.GeoTargets))
 		copy(snapshot.GeoTargets, cfg.GeoTargets)

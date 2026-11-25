@@ -78,6 +78,13 @@ func TestSnapshotAssetIDs_FindsRedditVideoKeys(t *testing.T) {
 	wantIDs(t, `{"redditConfig":{"THUMBNAILASSETID":"`+assetB+`"}}`, assetB)
 }
 
+// TestSnapshotAssetIDs_FindsLinkedInDocumentKey pins the LinkedIn document ad (#665): its PDF
+// under documentAssetId is guarded, in every spelling.
+func TestSnapshotAssetIDs_FindsLinkedInDocumentKey(t *testing.T) {
+	wantIDs(t, `{"linkedInConfig":{"format":"document","documentAssetId":"`+assetA+`"}}`, assetA)
+	wantIDs(t, `{"linkedInConfig":{"DOCUMENTASSETID":"`+assetB+`"}}`, assetB)
+}
+
 // TestSnapshotAssetIDs_WalksNestedShapes pins that the walk reaches the place the two biggest
 // platforms actually put the id: inside `variants`, an ARRAY of objects. A top-level-only scan
 // would find nothing at all for Meta and LinkedIn.
