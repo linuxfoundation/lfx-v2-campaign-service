@@ -73,7 +73,7 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    `google-ads/conversion-actions`, `google-ads/audiences`, `google-ads/user-lists`,
    `reddit-ads/custom-audiences`, `reddit-ads/pixels`, `twitter-ads/custom-audiences`,
    `microsoft-ads/remarketing-lists`, `microsoft-ads/conversion-goals`, `linkedin-ads/audiences`,
-   `linkedin-ads/conversions`, `meta-ads/custom-audiences` and
+   `linkedin-ads/conversions`, `linkedin-ads/lead-forms`, `meta-ads/custom-audiences` and
    `meta-ads/lead-forms`, ruled by `marketing-ops-api` below.
    The Meta targeting search, `meta-ads/targeting-search` (#550), stays here: it answers Meta's own
    taxonomy, the same for every token, and `TestMetaTargetingSearchIsACampaignManagerRead` pins it
@@ -92,14 +92,15 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    `GET /projects/:projectId/microsoft-ads/conversion-goals` (#563 gap 7),
    `GET /projects/:projectId/linkedin-ads/audiences`,
    `GET /projects/:projectId/linkedin-ads/conversions` (#552),
+   `GET /projects/:projectId/linkedin-ads/lead-forms` (#664),
    `GET /projects/:projectId/meta-ads/custom-audiences` (#550) and
    `GET /projects/:projectId/meta-ads/lead-forms` (#550) only. The Google three list every
    foundation's conversion actions, audiences and user lists on the shared Google Ads customer,
    the Reddit, X and Meta ones every foundation's custom audiences on the shared Reddit, X or
    Meta ad account, and the Microsoft two every foundation's remarketing lists and conversion goals
-   on the shared Microsoft Advertising account; the LinkedIn two read the account a LinkedIn create uses, which is the LF system
+   on the shared Microsoft Advertising account; the LinkedIn three read the account a LinkedIn create uses, which is the LF system
    account for every project without its own connection, so they can list other foundations'
-   segments and conversion rules; the Meta Instant Form list reads the Page of the connection a Meta
+   segments, conversion rules and Lead Gen Forms; the Meta Instant Form list reads the Page of the connection a Meta
    create uses, the shared LF connection for every project without its own, so it can list other
    foundations' forms. In every case
    `campaign_manager` includes the project's `executive_director`, a foundation-scoped role
@@ -114,7 +115,8 @@ Rendered only when `heimdall.enabled`. Five rules (the chart↔route parity inva
    `TestUserListsIsAMarketingOpsRead` does the same for `google-ads/user-lists` (a
    `project-api` read the service refused with 409 on the shared account until 2026-11-05),
    `TestLinkedInPickersAreMarketingOpsReads` does the same for the LinkedIn ad-segment and
-   conversion-rule pickers `linkedin-ads/audiences` and `linkedin-ads/conversions` (#552: they
+   conversion-rule pickers `linkedin-ads/audiences` and `linkedin-ads/conversions` (#552) and the
+   Lead Gen Form picker `linkedin-ads/lead-forms` (#664: they
    read the account a LinkedIn create uses, the LF system account for every project without its
    own connection), `TestMetaCustomAudiencesIsAMarketingOpsRead` does the same for
    `meta-ads/custom-audiences` (and that `meta-ads/audience`, the insights read, stays on

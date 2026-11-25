@@ -287,7 +287,8 @@ type CampaignInput struct {
 	// ObjectiveWebsiteVisit is automatic only; ObjectiveWebsiteConversion with ManualCPCBid 0 is
 	// automatic bidding for conversions (MAX_CONVERSION, costType CPM) and requires Conversions,
 	// because LinkedIn will not activate a MAX_CONVERSION campaign without an associated
-	// conversion. See campaignBidding.
+	// conversion; ObjectiveLeadGeneration (#664) is automatic only (MAX_LEAD) and requires LeadGen.
+	// See campaignBidding.
 	Objective string
 	// Images holds the stored image for every ImageAssetID a variant names, keyed by that
 	// id. Each distinct key is uploaded ONCE per CreateCampaign however many variants share it.
@@ -336,6 +337,10 @@ type CampaignInput struct {
 	// create has always sent: offsiteDeliveryEnabled false and no audienceExpansionEnabled.
 	// CreateCampaign runs ValidateDeliveryOptions on it before any request. See delivery_options.go.
 	DeliveryOptions DeliveryOptions
+	// LeadGen is a lead generation create's form and button label (#664), with Objective
+	// ObjectiveLeadGeneration; nil otherwise. Every creative carries it as leadgenCallToAction.
+	// CreateCampaign runs ValidateLeadGen on it and reads the form before any POST. See lead_gen.go.
+	LeadGen *LeadGen
 }
 
 // CampaignResult is the outcome of CreateCampaign. Mirrors
@@ -529,6 +534,12 @@ type responseElement struct {
 	Account                string `json:"account"`
 	ApproximateMemberCount *int64 `json:"approximateMemberCount"`
 	Enabled                *bool  `json:"enabled"`
+	// State and Owner are a Lead Gen Form's (#664): DRAFT, PUBLISHED or ARCHIVED, and the
+	// sponsored account that owns it. See ListLeadForms.
+	State string `json:"state"`
+	Owner *struct {
+		SponsoredAccount string `json:"sponsoredAccount"`
+	} `json:"owner"`
 }
 
 // pathValidRE allow-lists the characters a built request path may contain. `%` is included
@@ -1820,6 +1831,7 @@ var preEncodedParams = map[string]struct{}{
 	"campaigns": {}, // listCreativeURNs — the creatives finder's campaign List()
 	"accounts":  {}, // ListAdSegments — the ad segments finder's account List() (#552)
 	"query":     {}, // SearchTargetingEntities — the typeahead text, %20 not "+" (#585)
+	"owner":     {}, // ListLeadForms — the lead form finder's (sponsoredAccount:urn) owner (#664)
 }
 
 // buildRawQuery renders params as a query string, percent-encoding every value
@@ -2589,11 +2601,16 @@ func nameToken(s string) string {
 //
 // Unexported by design (see findOrCreateCampaignGroup): accountID is trusted to
 // have passed resolveAccountID in CreateCampaign.
-func (c *Client) createCreative(ctx context.Context, accountID, campaignID, shareURN, adName string) (string, error) {
+func (c *Client) createCreative(ctx context.Context, accountID, campaignID, shareURN, adName string, leadGen *LeadGen) (string, error) {
 	body := map[string]any{
 		"campaign":       "urn:li:sponsoredCampaign:" + campaignID,
 		"intendedStatus": "DRAFT",
 		"content":        map[string]any{"reference": shareURN},
+	}
+	// A lead generation creative's button opens the form (#664). It can be set only while the
+	// creative is DRAFT, which is how every creative here is created.
+	if leadGen != nil {
+		body["leadgenCallToAction"] = leadGen.leadgenCallToAction()
 	}
 	if adName != "" {
 		if len([]rune(adName)) > 255 {
@@ -3052,6 +3069,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err := ValidateDeliveryOptions(in.DeliveryOptions, format); err != nil {
 		return nil, domain.WrapPreflightRefusal(err)
 	}
+	// Lead generation (#664): the form, its label, and what a lead gen campaign cannot be (text,
+	// the Audience Network, a post-level call to action), before the first POST.
+	if in.LeadGen, err = ValidateLeadGen(in.LeadGen, bidding.objectiveType, format, in.DeliveryOptions, in.Variants); err != nil {
+		return nil, domain.WrapPreflightRefusal(err)
+	}
 	if format == FormatText {
 		if in.ManualCPCBid == 0 {
 			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: a text create requires manual bidding: LinkedIn Text Ads support only a manual bid (optimizationTargetType NONE)", ErrFormatInvalid))
@@ -3259,6 +3281,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, domain.PreflightRefusalf("campaign name is %d characters, exceeds the %d-character limit; shorten the event name or project", n, maxNameLen)
 	}
 
+	// The lead gen form (#664) is read before the campaign group exists: a form of another
+	// account, an archived one or a wrong id is refused with nothing created.
+	if in.LeadGen != nil {
+		if err := c.checkLeadForm(ctx, accountID, *in.LeadGen); err != nil {
+			if errors.Is(err, ErrLeadGenInvalid) {
+				return nil, domain.WrapPreflightRefusal(err)
+			}
+			return nil, fmt.Errorf("%w; nothing was created", err)
+		}
+	}
+
 	// Hold the event's group from its find-or-create through the campaign POST (#584). Between a
 	// create's group check and its campaign existing, another create of the same event could
 	// otherwise widen the group: a daily-capped campaign has no end of its own, so a widening that
@@ -3270,7 +3303,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// group's schedule. Other replicas are not covered (LFXV2-2665).
 	releaseGroup, err := eventGroupLocks.acquire(ctx, c.baseURL+"\x00"+accountID+"\x00"+groupName)
 	if err != nil {
-		return nil, fmt.Errorf("campaign group %q: waiting for another create of this event was aborted before any LinkedIn request; nothing was created: %w", groupName, err)
+		return nil, fmt.Errorf("campaign group %q: waiting for another create of this event was aborted before any LinkedIn write; nothing was created: %w", groupName, err)
 	}
 	groupHeld := true
 	unlockGroup := func() {
@@ -3554,7 +3587,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Dark post variant-%d: %s", i+1, shareURN))
 
 		adName := creativeName(eventName, i, variant)
-		creativeID, err := c.createCreative(ctx, accountID, campaignID, shareURN, adName)
+		creativeID, err := c.createCreative(ctx, accountID, campaignID, shareURN, adName, in.LeadGen)
 		if err != nil {
 			// The creative failed but this variant's dark post (shareURN) was
 			// already created. Report it explicitly: a blind retry would duplicate

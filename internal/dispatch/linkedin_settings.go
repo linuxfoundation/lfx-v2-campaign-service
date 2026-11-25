@@ -177,7 +177,8 @@ func linkedinAccountIDUnusable(res *resolved, projectID, op string) error {
 // linkedinRecordedObjective is the objectiveType the create path sent for this row's recorded
 // bidding strategy (LFXV2-2665; linkedin.campaignBidding): manual → WEBSITE_CONVERSION; automatic →
 // the objectiveType the create recorded in the row's result blob (#582: WEBSITE_CONVERSION for
-// Maximum delivery conversions, WEBSITE_VISIT otherwise). nil when no strategy is recorded — a
+// Maximum delivery conversions, LEAD_GENERATION for a lead gen create (#664), WEBSITE_VISIT
+// otherwise). nil when no strategy is recorded — a
 // legacy or adopted row — or when an automatic row's result cannot say, so the field reads
 // `unknown` rather than comparing against a guess (linkedinResultObjective).
 func linkedinRecordedObjective(ctx context.Context, campaign *model.Campaign) *string {
@@ -203,7 +204,7 @@ func linkedinRecordedObjective(ctx context.Context, campaign *model.Campaign) *s
 //
 // A blob with no objectiveType was written before #582 recorded it. Before #582 the only
 // objective an automatic create sent was WEBSITE_VISIT, so that is what such a row was created
-// with. An empty or undecodable blob, or an objectiveType outside the two this service creates,
+// with. An empty or undecodable blob, or an objectiveType outside the three this service creates,
 // is nil: nothing trustworthy was recorded.
 func linkedinResultObjective(ctx context.Context, campaign *model.Campaign) *string {
 	if len(campaign.Result) == 0 {
@@ -222,7 +223,7 @@ func linkedinResultObjective(ctx context.Context, campaign *model.Campaign) *str
 		return strPtr(linkedin.ObjectiveWebsiteVisit)
 	}
 	switch *blob.ObjectiveType {
-	case linkedin.ObjectiveWebsiteVisit, linkedin.ObjectiveWebsiteConversion:
+	case linkedin.ObjectiveWebsiteVisit, linkedin.ObjectiveWebsiteConversion, linkedin.ObjectiveLeadGeneration:
 		return strPtr(*blob.ObjectiveType)
 	}
 	slog.WarnContext(ctx, "linkedin result blob records an objectiveType this service does not create; objective_type has no recorded side",

@@ -342,7 +342,9 @@ func TestLinkedIn_ReadSettings_ObjectiveIsComparedAgainstTheRecordedStrategy(t *
 		// snapshot content — objective, lifetimeBudget or anything else — moves the recorded side.
 		{"caller snapshot cannot fabricate a divergence", &automatic, conv, `{"budgetUsd":100,"lifetimeBudget":false}`, "WEBSITE_CONVERSION", fieldWant{"WEBSITE_CONVERSION", "WEBSITE_CONVERSION", model.SettingsMatch}},
 		{"caller snapshot objective cannot fabricate a match", &automatic, visit, `{"budgetUsd":100,"lifetimeBudget":false,"objective":"conversions"}`, "WEBSITE_CONVERSION", fieldWant{"WEBSITE_VISIT", "WEBSITE_CONVERSION", model.SettingsDiverged}},
-		{"objectiveType outside the closed set is unknown", &automatic, resultWith(`"objectiveType":"LEAD_GENERATION"`), "", "WEBSITE_VISIT", fieldWant{"", "WEBSITE_VISIT", model.SettingsUnknown}},
+		{"objectiveType outside the closed set is unknown", &automatic, resultWith(`"objectiveType":"BRAND_AWARENESS"`), "", "WEBSITE_VISIT", fieldWant{"", "WEBSITE_VISIT", model.SettingsUnknown}},
+		// #664: a lead gen create records LEAD_GENERATION, compared like the other two.
+		{"automatic lead gen matches LEAD_GENERATION", &automatic, resultWith(`"objectiveType":"LEAD_GENERATION"`), "", "LEAD_GENERATION", fieldWant{"LEAD_GENERATION", "LEAD_GENERATION", model.SettingsMatch}},
 		{"manual ignores the result objective", &manual, visit, "", "WEBSITE_CONVERSION", fieldWant{"WEBSITE_CONVERSION", "WEBSITE_CONVERSION", model.SettingsMatch}},
 	}
 	for _, tc := range cases {

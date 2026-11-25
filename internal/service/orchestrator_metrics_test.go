@@ -437,6 +437,13 @@ func (d upstreamCapableDispatcher) SearchMetaTargeting(context.Context, string, 
 	return []model.MetaTargetingOption{}, true, nil
 }
 
+func (d upstreamCapableDispatcher) ListLinkedInLeadForms(context.Context, string, model.Provider) (*model.LinkedInLeadForms, bool, error) {
+	if d.err != nil {
+		return nil, true, d.err
+	}
+	return &model.LinkedInLeadForms{Forms: []model.LinkedInLeadForm{}}, true, nil
+}
+
 func (d upstreamCapableDispatcher) ListMetaLeadForms(context.Context, string, model.Provider) (*model.MetaLeadForms, bool, error) {
 	if d.err != nil {
 		return nil, true, d.err
@@ -785,6 +792,14 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opListMetaLeadForms,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ReadMetaLeadForms(ctx, "p1", platform)
+				return err
+			},
+		},
+		{
+			name: "list linkedin lead forms",
+			op:   opListLinkedInLeadForms,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadLinkedInLeadForms(ctx, "p1", platform)
 				return err
 			},
 		},

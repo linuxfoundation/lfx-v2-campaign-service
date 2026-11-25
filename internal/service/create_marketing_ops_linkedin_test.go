@@ -48,6 +48,9 @@ func TestLinkedInMarketingOpsInputs(t *testing.T) {
 		{"conversions around a type error", `{"linkedInConfig":{"budgetUsd":"x","conversions":["1"]}}`, []string{"linkedInConfig.conversions"}},
 		{"conversions and segments are both named", `{"linkedInConfig":{"conversions":["1"],"targeting":{"include":[{"dynamicSegments":["urn:li:adSegment:9"]}]}}}`,
 			[]string{"linkedInConfig.conversions", "linkedInConfig.targeting.include[0].dynamicSegments"}},
+		// #664: a Lead Gen Form is an ad account resource too.
+		{"lead gen form", `{"linkedInConfig":{"objective":"lead_generation","leadGenForm":"42"}}`, []string{"linkedInConfig.leadGenForm"}},
+		{"a blank lead gen form does not count", `{"linkedInConfig":{"leadGenForm":" "}}`, nil},
 		{"malformed envelope", `{`, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
