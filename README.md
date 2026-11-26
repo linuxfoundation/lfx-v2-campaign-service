@@ -804,6 +804,22 @@ openssl rand -base64 32
   exists, as before. The chart sets it to `"false"`
   (`app.environment.LINKEDIN_ADS_TRAFFIC_MANUAL_BID_ENABLED.value`); enable
   it per-environment in the ArgoCD overlay once a paused live probe passes.
+- `LINKEDIN_ADS_BOOST_POST_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `linkedInConfig.format: "boost"` (#673): the campaign's
+  one creative sponsors `linkedInConfig.boostPost`, an existing post of the
+  organization the ad account serves, instead of a dark post per variant.
+  When the connection can read posts (`r_organization_social`), the job reads
+  the post first and refuses it, with nothing created, unless that
+  organization authored it and LinkedIn would sponsor it. Without that scope
+  the read answers 403 and LinkedIn decides at the creative POST; the job then
+  reads the creative back and, unless that organization authored the post,
+  deletes the DRAFT creative and fails, leaving a PAUSED campaign with no ad,
+  recorded as `pending` for reconciliation. Only the
+  exact value `true` enables it; anything else fails closed, and a create
+  naming it is refused with a 400 before a job exists. The chart sets it to
+  `"false"` (`app.environment.LINKEDIN_ADS_BOOST_POST_ENABLED.value`);
+  enable it per-environment in the ArgoCD overlay once a paused live probe
+  passes.
 - `LINKEDIN_ADS_VIDEO_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to LinkedIn video Sponsored Content (#586):
   `linkedInConfig.variants[].videoAssetId`, a stored MP4 uploaded through

@@ -1866,7 +1866,7 @@ account, so it requires `global_marketing_ops` like `conversions`. Refused with 
 before any job exists: any of them while the flag is not exactly `"true"`; `lead_generation`
 without `leadGenForm`, or `leadGenForm`/`leadGenCallToAction` without it; a manual bid; a
 `leadGenForm` or `leadGenCallToAction` that is not a JSON string; an id that is not a canonical
-positive integer; an unknown label; `format: "text"` or `"carousel"` (a `"document"` create may be lead generation, #665); `offsiteDeliveryEnabled: true` (LinkedIn:
+positive integer; an unknown label; `format: "text"`, `"carousel"` or `"boost"` (a `"document"` create may be lead generation, #665); `offsiteDeliveryEnabled: true` (LinkedIn:
 "You cannot set offsiteDeliveryEnabled to True when using Lead Gen"); and a
 `variants[].callToAction` (on a lead gen creative the form's button is the call to action).
 Dispatch repeats every check, and the client then reads the form (`GET /rest/leadForms/{id}`)
@@ -1984,7 +1984,7 @@ creatives finder discovers text ads like any creative) and the bid and budget le
 text campaign as on a single-image one.
 
 Refused with a synchronous `400 invalid campaign config: linkedInConfig: …` before any job exists:
-a `format` other than `"single_image"`, `"text"`, `"carousel"` or `"document"` (or not a string); `textAds` without
+a `format` other than `"single_image"`, `"text"`, `"carousel"`, `"document"` or `"boost"` (or not a string); `textAds` without
 `format: "text"`; `format: "text"` with automatic or omitted bidding, with `variants`, with no
 `textAds` or more than 100; a `textAds` that is not an array of objects whose fields are the four
 strings above (`null`, a number, an unknown key such as a misspelled `description`); a headline or
@@ -2117,6 +2117,109 @@ the shared ad account with a stored PDF; confirm the campaign is accepted withou
 `content.media` with the document URN, and the creative (with `leadgenCallToAction` on the gated
 one) references it; confirm whether LinkedIn needs a preview page count for a gated document; then
 archive both.
+
+#### LinkedInConfig boost an existing post (`linkedInConfig.format: "boost"`, #673)
+
+An opt-in create that sponsors a post the organization already published, instead of a dark post
+per variant, behind `LINKEDIN_ADS_BOOST_POST_ENABLED` (off by default; while off,
+`format: "boost"` is a synchronous `400` naming the flag).
+
+```jsonc
+"linkedInConfig": {
+  "format": "boost",
+  "boostPost": "urn:li:share:7001",   // REQUIRED: exactly urn:li:share:<digits> or urn:li:ugcPost:<digits>
+  "budgetUsd": 100, "startDate": "2099-01-01", "endDate": "2099-02-01",
+  "geoTargets": [ ... ], "targetingProfile": "...", "targeting": { ... },
+  "bidding": { ... }, "objective": "...", "conversions": [ ... ]   // as for any create
+}
+```
+
+The campaign group and the SPONSORED_UPDATES campaign are the ordinary ones: bidding, objective,
+targeting, conversions, budget and schedule work exactly as for a single-image create. The
+campaign name's Ad Format segment is `Boost` (`Events | <event> | <region> | <objective> |
+<targeting> | Boost | <project> | <funnel>`), so a boost never shares a name, or the by-name reuse,
+with a dark-post campaign. A video post read before the create gets `Boost Motion` instead: its
+campaign is `SINGLE_VIDEO`, and LinkedIn mixes video and non-video creatives on no campaign, so the
+two kinds never meet by name. Without the post read the media type is unknown and the segment stays
+`Boost`; a same-name campaign LinkedIn reports as `SINGLE_VIDEO` is then refused by the reuse check
+before anything is posted. No dark post is authored; the campaign gets ONE DRAFT creative:
+
+```
+POST /rest/adAccounts/<acct>/creatives
+{"campaign":"urn:li:sponsoredCampaign:<c>","intendedStatus":"DRAFT","name":"<event> | boost <post id>",
+ "content":{"reference":"urn:li:share:7001"}}
+```
+
+**Before the campaign group is created**, the job reads the post once
+(`GET /rest/posts/{percent-encoded URN}`, Posts API) and refuses it, with nothing created, unless:
+
+- `id` is the requested URN;
+- `author` is the organization the ad account serves (`urn:li:organization:<connection org>`);
+- `lifecycleState` is `PUBLISHED`;
+- `visibility` is `PUBLIC` (LinkedIn's `UGC_INVALID_VISIBILITY_SETTING`);
+- it has no `reshareContext` (LinkedIn's `UGC_RESHARE_CANNOT_BE_SPONSORED`);
+- `distribution.feedDistribution` is `MAIN_FEED` — an organic post, not a dark post (`NONE`);
+- its content is text only, an `article`, or `media` with one `urn:li:image:` or `urn:li:video:`.
+  Poll, multi-image and celebration posts are refused because LinkedIn does not sponsor them, and
+  documents, carousels and other content because this service does not build them yet. A video
+  post's campaign is created with `format: SINGLE_VIDEO`, which LinkedIn requires on a video
+  campaign; otherwise no campaign `format` is sent.
+
+A 404 is refused as "not found". A 401 is the connection's expiry. Any other read failure but a
+403 fails the job with nothing created, and a retry reads again. These refusals fail the job, not
+the request: the post is read by the job, not by the synchronous check.
+
+A 403 on the read means the connection cannot read posts (its token lacks
+`r_organization_social`), not that the post is ineligible. The checks above are then skipped
+(logged, and a result step says so), no campaign `format` is sent (LinkedIn infers it from the
+creative), and the group, PAUSED campaign and creative are created, letting LinkedIn decide. The
+job then reads the creative back (`GET /rest/adAccounts/<acct>/creatives/<urn>`, which answers
+`content.standardUpdateAd.contentAuthor` and `.reference`) and, unless it sponsors the requested post
+and the post's author is the account's organization, deletes the DRAFT creative (`DELETE` on the
+same path, on a context detached from the job's so a cancelled job still cleans up; a DRAFT cannot
+be archived) and fails the job. The answer's `id` must be the creative asked for; a failed read, an
+untrusted answer or an answer about another creative means the creative could not be checked, and
+is handled the same way, with the read's own error (a 401 stays the connection's expiry), never as an
+ineligible post.
+
+Which state the row is left in follows the dispatcher's rule: no result only when the job changed
+nothing on LinkedIn (the claim is released and a retry repeats the step), a partial whenever it did
+(the claim is kept). So a creative the job posted that fails, or cannot be checked, leaves the row
+`pending` with the campaign id kept (result `boostCreativeUnverified`), as for targeting not
+applied: a retry answers "reconciliation required" rather than posting and deleting another
+creative. The exception is a creative that could not be checked and was deleted again in a campaign
+the job did not create: nothing remains, so there is no result and a retry checks again.
+
+On every campaign found by name, whether or not the post was read, every creative it already holds
+is checked for the author before one is added (one GET each; LinkedIn caps a campaign at 100), since a
+boost of another post for the same event shares the campaign and activation flips every creative.
+That listing must pass `identityjson`, as the post's lookup does. One that fails is named, never
+deleted (it may be serving), nothing is posted, and the row is `pending`; a check that cannot finish
+posts nothing and leaves no result. If LinkedIn refuses the creative, the row is `created_degraded` with the group and campaign, as for a
+failed image creative; `UGC_FORBIDDEN` reads "LinkedIn refused to sponsor post X from ad account Y
+(UGC_FORBIDDEN): the connection's LinkedIn member needs a sponsoring role (ADMINISTRATOR,
+DIRECT_SPONSORED_CONTENT_POSTER or CONTENT_ADMIN) on the organization page that authored it", and
+the reshare, visibility and feed-distribution `UGC_*` codes get their own sentences. Granting
+`r_organization_social` is optional: it turns those post problems into refusals before anything
+is created instead of a degraded create. One case is unverified: without the read, a video post's
+campaign is not sent `format: SINGLE_VIDEO` (the post's media is unknown). The 2026-11-26 probe
+covered a share only; until a video post is probed on this path, boost a video post only from a
+connection whose token has `r_organization_social`.
+
+On a campaign found by name (a retry), the creatives finder is asked for a creative of that
+campaign already referencing the post (`contentReferences=List(<post>)`); one found is reused and
+no second ad is created. The row's result records `boostedPostUrn`; its snapshot records `format`
+and `boostPost`. The post's own links are not UTM-tagged: the registration URL is still required
+by the create but reaches no creative. The monitor, metrics, pause/resume and the bid and budget
+levers work on a boost campaign as on a single-image one.
+
+Refused with a synchronous `400 invalid campaign config: linkedInConfig: …` before any job exists:
+`format: "boost"` while the flag is off; `boostPost` without `format: "boost"`; `boostPost` that is
+not a string (`null`, a number); `format: "boost"` with no or an empty `boostPost`, with a
+`boostPost` that is not exactly a share or ugcPost URN (a feed URL, an `urn:li:activity:`, padding),
+with `variants` or with `textAds`; with `carouselCards`, `carouselIntroText` or a document field
+(each accepted only with its own format, #665); and with `objective: "lead_generation"` (a lead gen
+boost is not built yet).
 
 #### LinkedIn lifetime budget on a fixed schedule (#633)
 

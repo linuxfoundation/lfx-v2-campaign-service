@@ -5954,6 +5954,11 @@ refuses, so a repeat answers reconciliation required. It is the state Microsoft'
 `TestLinkedIn_ReusedCampaignTargetingStopIsNotReusable` and, through two orchestrator starts,
 `TestOrchestrator_TargetingStopIsNotReusedOnRetry`.
 
+A boost that stopped on a creative failing the client's author check (`BoostCreativeUnverified`,
+#673: a creative a reused campaign already holds, or one the call posted without the post read) is
+stamped `pending` the same way, so a retry does not post and delete another creative. Pinned in
+`TestLinkedIn_CampaignFromLinkedInStatus`.
+
 **LinkedIn Text Ads (#586).** `linkedinConfig.Format` and `TextAds` (`linkedin_text_ads.go`) are
 checked by `checkFormatShape` (a non-string `format`; a `textAds` that is not an array of objects
 of the four `TextAd` string fields, null fields and unknown keys included) and `linkedinFormat`,
@@ -6001,6 +6006,21 @@ unknown dimensions to Dispatch; `linkedinCreativeCount` is 1 for a carousel;
 each `destinationUrl` (`sanitizeSnapshotURL`). `TestPlatformConfigsNameTheirAssetUnderOneKey`
 covers the card's `imageAssetId`. See
 [LinkedIn Carousel Sponsored Content](../architecture/linkedin-carousel-ads.md).
+
+**LinkedIn boost (#673).** `linkedinConfig.BoostPost` (`linkedin_boost.go`): `checkFormatShape`
+refuses a non-string `boostPost` (null included) and lists `"boost"` among the formats;
+`linkedinFormat` refuses `boostPost` under any other format and hands `format: "boost"` to
+`linkedinBoostFormat`, gated by `linkedinBoostPostEnabled` (`LINKEDIN_ADS_BOOST_POST_ENABLED`,
+exact `"true"`, off by default), which refuses variants, a missing post and a URN
+`linkedin.ValidateBoostPostURN` refuses. `PreflightCreate` and `Dispatch` both run it; `Dispatch`
+stores `"boost"`, skips the empty-variant refusal for it, and passes `BoostPost` to the client,
+which reads the post in the job (a refused post fails the job not-created, with
+`linkedin.ErrBoostPostIneligible`). A failed creative lookup on a reused campaign also comes back
+with no result, so it fails not-created and the next dispatch repeats the lookup
+(`TestLinkedIn_BoostLookupFailureIsRetried`). `linkedinFormat` checks `boostPost` before the
+document and carousel fields (#665), and a boost with either is refused as under any other format.
+`linkedinCreativeCount` is 1 for a boost; the snapshot keeps `format` and `boostPost` and the
+result `boostedPostUrn`.
 
 **LinkedIn video variants (#586).** `checkLinkedInVideoVariants` (gate `LINKEDIN_ADS_VIDEO_ENABLED`,
 uuid shape, no image alongside, all-or-none) runs in `PreflightCreate` and `Dispatch`.

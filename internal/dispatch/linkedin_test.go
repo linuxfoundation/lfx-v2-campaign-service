@@ -333,6 +333,12 @@ func TestLinkedIn_CampaignFromLinkedInStatus(t *testing.T) {
 	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "c1", CreativeCount: 2}, 3, linkedinConfig{}); c.Status != campaignStatusCreatedDegraded {
 		t.Errorf("2/3 creatives should be %q, got %q", campaignStatusCreatedDegraded, c.Status)
 	}
+	// A boost creative that failed the author check (#673): the campaign id is kept and the row is
+	// pending, never created_degraded, so the orchestrator does not reuse it and a retry does not
+	// post and delete another creative.
+	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "c1", BoostCreativeUnverified: true}, 1, linkedinConfig{}); c.Status != model.CampaignStatusPending || c.PlatformCampaignID != "c1" {
+		t.Errorf("an unverified boost creative should be %q with its campaign id kept, got %q %q", model.CampaignStatusPending, c.Status, c.PlatformCampaignID)
+	}
 	// Group-only orphan: empty CampaignID + group id → group_created (not degraded).
 	if c := campaignFromLinkedIn(ctx, &linkedin.CampaignResult{CampaignID: "", CampaignGroupID: "g1"}, 3, linkedinConfig{}); c.Status != campaignStatusGroupCreated {
 		t.Errorf("group-only orphan should be %q, got %q", campaignStatusGroupCreated, c.Status)

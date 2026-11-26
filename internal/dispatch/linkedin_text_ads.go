@@ -54,7 +54,7 @@ func checkFormatShape(config json.RawMessage) error {
 		case strings.EqualFold(k, "format"):
 			var str string
 			if isJSONNull(raw) || json.Unmarshal(raw, &str) != nil {
-				return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.format must be the string %q, %q, %q or %q", domain.ErrCreateConfigInvalid, linkedin.FormatSingleImage, linkedin.FormatText, linkedin.FormatCarousel, linkedin.FormatDocument))
+				return domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig.format must be the string %q, %q, %q, %q or %q", domain.ErrCreateConfigInvalid, linkedin.FormatSingleImage, linkedin.FormatText, linkedin.FormatCarousel, linkedin.FormatDocument, linkedin.FormatBoost))
 			}
 		case isDocumentKey(k):
 			// The document's fields (#665) have their own shape rule (linkedin_document.go).
@@ -65,6 +65,13 @@ func checkFormatShape(config json.RawMessage) error {
 			// The carousel's fields (#665) have their own shape rules (linkedin_carousel.go).
 			if err := checkCarouselFieldShape(k, raw); err != nil {
 				return err
+			}
+		case strings.EqualFold(k, "boostPost"):
+			// #673: a string, never null or another type, which the best-effort decode would
+			// leave "" and so read as "no boost post".
+			var str string
+			if isJSONNull(raw) || json.Unmarshal(raw, &str) != nil {
+				return boostPostShapeRefusal()
 			}
 		case strings.EqualFold(k, "textAds"):
 			var list []json.RawMessage
@@ -98,7 +105,8 @@ func checkFormatShape(config json.RawMessage) error {
 
 // linkedinFormat checks linkedInConfig.format and textAds before any job or request (#586) and
 // returns the format Dispatch stores: linkedin.FormatText for a text create,
-// linkedin.FormatCarousel for a carousel create (#665, linkedinCarouselFormat), and "" for the
+// linkedin.FormatCarousel for a carousel create (#665, linkedinCarouselFormat), linkedin.FormatBoost
+// for a boost create (#673, linkedinBoostFormat), and "" for the
 // default (omitted or "single_image"), so a default create's snapshot and client input stay
 // byte for byte what they were before #586. Every refusal is an ErrCreateConfigInvalid pre-flight refusal,
 // so PreflightCreate answers it with a synchronous 400 and Dispatch fails the job with the same
@@ -111,7 +119,9 @@ func checkFormatShape(config json.RawMessage) error {
 //   - format "text" without bidding.strategy "manual" — LinkedIn offers Text Ads no automated
 //     bidding, so the default automatic plan cannot be created as one;
 //   - format "text" with variants, or with textAds that linkedin.ValidateTextAds refuses
-//     (missing or over-long headline/description, a malformed imageUrn, both image fields).
+//     (missing or over-long headline/description, a malformed imageUrn, both image fields);
+//   - boostPost without format "boost", and format "boost" with textAds, or refused by
+//     linkedinBoostFormat (#673).
 func linkedinFormat(cfg linkedinConfig, plan bidPlan) (string, error) {
 	refuse := func(err error) (string, error) {
 		return "", domain.WrapPreflightRefusal(fmt.Errorf("%w: linkedInConfig: %w", domain.ErrCreateConfigInvalid, err))
@@ -119,6 +129,9 @@ func linkedinFormat(cfg linkedinConfig, plan bidPlan) (string, error) {
 	format, err := linkedin.NormalizeFormat(cfg.Format)
 	if err != nil {
 		return refuse(err)
+	}
+	if format != linkedin.FormatBoost && cfg.BoostPost != "" {
+		return refuse(fmt.Errorf("boostPost is accepted only with format %q", linkedin.FormatBoost))
 	}
 	if format != linkedin.FormatDocument && (cfg.DocumentAssetID != "" || cfg.DocumentTitle != "" || cfg.DocumentIntroText != "") {
 		return refuse(fmt.Errorf("documentAssetId, documentTitle and documentIntroText are accepted only with format %q", linkedin.FormatDocument))
@@ -134,6 +147,12 @@ func linkedinFormat(cfg linkedinConfig, plan bidPlan) (string, error) {
 			return refuse(fmt.Errorf("textAds are accepted only with format %q", linkedin.FormatText))
 		}
 		return linkedinCarouselFormat(cfg)
+	}
+	if format == linkedin.FormatBoost {
+		if cfg.TextAds != nil {
+			return refuse(fmt.Errorf("textAds are accepted only with format %q", linkedin.FormatText))
+		}
+		return linkedinBoostFormat(cfg)
 	}
 	if format != linkedin.FormatText {
 		if cfg.TextAds != nil {
@@ -158,13 +177,14 @@ func linkedinFormat(cfg linkedinConfig, plan bidPlan) (string, error) {
 }
 
 // linkedinCreativeCount is how many creatives the create asks for: the text ads of a text
-// create, one for a carousel create, the variants otherwise.
+// create, one for a carousel, document or boost create, the variants otherwise.
 func linkedinCreativeCount(cfg linkedinConfig) int {
 	switch cfg.Format {
 	case linkedin.FormatText:
 		return len(cfg.TextAds)
-	case linkedin.FormatCarousel, linkedin.FormatDocument:
-		// A carousel is ONE creative, however many cards it has, and so is a document (#665).
+	case linkedin.FormatCarousel, linkedin.FormatDocument, linkedin.FormatBoost:
+		// A carousel is ONE creative, however many cards it has, and so is a document (#665) and
+		// the one creative sponsoring a boost's boostPost (#673).
 		return 1
 	}
 	return len(cfg.Variants)

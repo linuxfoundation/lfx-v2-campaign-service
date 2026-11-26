@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding whose objective follows the strategy (automatic WEBSITE_VISIT + MAX_CLICK + CPM, manual WEBSITE_CONVERSION + CPC/NONE/unitCost) unless the caller asks for automatic website conversions (WEBSITE_CONVERSION + MAX_CONVERSION + CPM, only with a conversion to associate) or a manual bid on website visits (WEBSITE_VISIT + CPC/NONE/unitCost), either automatic one optionally with a target cost sent as unitCost, where the create once sent no optimizationTargetType, and optional single-flight access-token refresh."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding whose objective follows the strategy (automatic WEBSITE_VISIT + MAX_CLICK + CPM, manual WEBSITE_CONVERSION + CPC/NONE/unitCost) unless the caller asks for automatic website conversions (WEBSITE_CONVERSION + MAX_CONVERSION + CPM, only with a conversion to associate) or a manual bid on website visits (WEBSITE_VISIT + CPC/NONE/unitCost), either automatic one optionally with a target cost sent as unitCost, where the create once sent no optimizationTargetType, a boost create whose one creative references an existing organization post read and checked before the campaign group (best-effort: a connection that cannot read posts lets LinkedIn's creative POST decide, then has the creative's author checked on read-back), and optional single-flight access-token refresh."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -485,7 +485,9 @@ the group between a capped create's check and its campaign POST. `CreateCampaign
 holds `eventGroupLocks` (keyed on base URL, account and group NAME, since a group the create
 makes has no id yet) from `findOrCreateCampaignGroup` through `createSponsoredCampaign`: within
 the process, same-event creates run that span one at a time, and the next one's search sees the
-campaign. It is a separate lock set from `groupScheduleLocks` and always taken first. NOT
+campaign. A boost (#673) holds it on through `finishBoost`, so a same-name boost's creative
+lookup cannot run while another's creative POST is in flight. It is a separate lock set from
+`groupScheduleLocks` and always taken first. NOT
 covered: a create on another replica in that window (LFXV2-2665), and a hand edit of the group
 in Campaign Manager. Pinned by `group_capped_test.go` (including
 `TestCreateCampaign_InterleavedCreatesCannotWidenUnderACappedCampaign`) and
@@ -1249,6 +1251,93 @@ with the same do-not-retry and UNCONFIRMED wording as the single-image loop. The
 metrics and monitor read campaigns and creatives by id only, so they are format-agnostic
 (`TestUpdateCampaignAndCreativesStatus_TextAdCreatives`).
 
+## Boost an existing post (`boost.go`, #673)
+
+`FormatBoost` ("boost") creates the ordinary group and SPONSORED_UPDATES campaign — bidding,
+objective, targeting, conversions unchanged — and ONE DRAFT creative whose
+`content.reference` is `CampaignInput.BoostPost`, an existing post of the organization the ad
+account serves, instead of a dark post. `ValidateBoostPostURN` accepts exactly `postURNRe`
+(`urn:li:share:<digits>` or `urn:li:ugcPost:<digits>`); variants, text ads, carousel cards or a
+document (#665) beside it, a lead generation objective (`ValidateLeadGen`: the creative is created
+with no `leadgenCallToAction`), and a `BoostPost` under another format, are refused before any
+request.
+
+`verifyBoostPost` reads the post once (`doEntityGET` on `posts/<encodeURNForPath(urn)>`, the
+single-entity GET the settings readback uses; `identityjson.Check` on the body) after every local
+check and before `findOrCreateCampaignGroup`, under the event's group lock. It refuses, as an
+`ErrBoostPostIneligible` pre-flight refusal with nothing created: an `author` other than
+`orgURN(accountID)`; `lifecycleState` other than `PUBLISHED`; `visibility` other than `PUBLIC`; a
+`reshareContext`; `feedDistribution` other than `MAIN_FEED` (a dark or container post); content
+other than none, `article`, or `media` with an `urn:li:image:`/`urn:li:video:` id (poll,
+multiImage and celebration named as unsponsorable). A 404 is a refusal of the post; an `id` that
+is not the requested URN, a body `identityjson` refuses, and any other read failure are plain
+errors (a 401 keeps `ErrCredentialsExpired`). A 403 is not a refusal: it means the connection
+cannot read posts (its token lacks `r_organization_social`), not that the post is ineligible, so
+`verifyBoostPost` returns `checked == false` with no format, logs one warning (post URN and ad
+account, no body) that the pre-checks were skipped, and the create goes on with no campaign
+`format` (step "Boost post … not pre-checked"). Probed 2026-11-26 (LinkedIn-Version 202611, LF
+Events 509430019): such a token gets 403 `ACCESS_DENIED` on the read and 201 on the creative,
+and LinkedIn sets the campaign's format to `STANDARD_UPDATE` itself. LinkedIn's creative POST then
+decides; its refusal comes back through `finishBoost`'s creative-failure path below. Its
+acceptance does not end the check. `judgeBoostCreative` GETs a creative and returns a verdict:
+`creativeOK` (it sponsors a post authored by the account's organization, and the requested post
+when one is named), `creativeWrong` (a trusted answer that fails), or `creativeUnknown` (a failed
+read, an untrusted or undecodable answer, or an `id` other than the creative asked for).
+`finishBoost` returns no result only when the call changed nothing upstream, and a partial whenever
+it did, matching the dispatcher's claim rule. On every reused campaign, `checkReusedBoostCampaign`
+first checks every creative the campaign holds (any post), through `listBoostCreativeURNs`, whose
+pages must pass `identityjson`: wrong means the partial marked `BoostCreativeUnverified` (pending,
+nothing posted, nothing deleted), unknown or a failed listing means no result. With no post read, a
+found creative the scan did not list is judged on the same terms, and the creative the call posted
+goes through `checkPostedBoostCreative`, which DELETEs it on any verdict but OK (a DRAFT can be
+deleted, not archived; the DELETE is detached from the job's context with a 30 s timeout) and
+returns the pending partial, except for an unknown verdict deleted again in a reused campaign, which
+leaves nothing and returns no result. Errors wrap `ErrBoostPostIneligible` only for a wrong creative;
+an unknown one wraps the read's own error (a 401 keeps `ErrCredentialsExpired`) or
+`errBoostCreativeUnchecked`. Unverified:
+a video post on this path gets no `SINGLE_VIDEO` format (the probe covered a share only), so a
+video boost needs a token with `r_organization_social` until it is probed. Every quoted value passes through
+`domain.CallerValue`, and an author that is not an `urn:li:organization:` (a member's person URN,
+which the caller never supplied) is reported only as "a LinkedIn member". The create body sends
+`content.reference`; LinkedIn reads such a creative back as `content.standardUpdateAd.reference`
+(202610+), which only `judgeBoostCreative` decodes (`boostCreativeRead`). Sources (li-lms-2026-11, consulted 2026-11-26): the Posts API GET and
+content table, and the Creatives API error table (`UGC_RESHARE_CANNOT_BE_SPONSORED`,
+`UGC_INVALID_VISIBILITY_SETTING`, `UGC_INVALID_FEED_DISTRIBUTION`,
+`REFERENCE_MEDIA_CATEGORY_AND_CAMPAIGN_FORMAT_MISMATCH`), cited in `boost.go`. A video post's
+campaign gets `format: SINGLE_VIDEO` (the campaign format the post's media needs); otherwise
+none is sent.
+
+The name's Ad Format segment is `Boost` (`adFormatNameSegment`), or `Boost Motion` for a video post:
+the name is composed before the post is read, so `CreateCampaign` recomposes it (and re-checks the
+255-character limit) once `verifyBoostPost` returns `SINGLE_VIDEO`, through the unexported
+`CampaignInput.boostVideoPost`. Without the read the segment stays `Boost`, and the reuse check's
+format-kind comparison refuses a same-name `SINGLE_VIDEO` campaign. An ambiguous creative POST
+without the post read marks the partial `BoostCreativeUnverified`. `postCreative` (every creative,
+not only boosts) refuses a non-empty 2xx body `identityjson` rejects as UNCONFIRMED, since the id it
+returns is what a boost reads back. A boost skips the pre-#587
+legacy-name lookup. `finishBoost` attaches the creative through `ensureBoostCreative`: on a
+campaign found by name it first calls `findCreativeURNs` (the creatives finder narrowed by
+`contentReferences=List(<post>)`, a new `preEncodedParams` key; `listCreativeURNs` is the
+unfiltered call) and reuses a creative already referencing the post, so a retry does not add a
+second ad. The finder's body is checked with `identityjson` for this filtered call
+(`linkedInResponse.raw`, the 2xx body `doRequest` decoded): a repeated key or malformed UTF-8 is
+a failed lookup, never an absence. A failed lookup returns `(nil, err)`, like the group-widening
+and legacy-name failures: it runs only on a campaign and group found by name, so the call
+created nothing, and a partial would be recorded as `created_degraded` (reused as complete, the
+lookup never repeated) or `pending` (every retry refused). The claim is released and the next
+create repeats the lookup. `eventGroupLocks` is held through `finishBoost`, so two same-name
+boosts in one process post one creative (`TestCreateCampaign_BoostConcurrentSameNameCreatesOneCreative`,
+run with `-race`); other replicas are not covered (LFXV2-2665). A failed creative POST returns
+the partial with the group and the PAUSED campaign, UNCONFIRMED when ambiguous, as the
+single-image loop does (the dispatcher records it `created_degraded`). A definite failure whose
+error envelope (`identityjson`-checked) carries one of `boostCreativeCodes` — `UGC_FORBIDDEN`,
+`UGC_RESHARE_CANNOT_BE_SPONSORED`, `UGC_INVALID_VISIBILITY_SETTING`,
+`UGC_INVALID_FEED_DISTRIBUTION`, as its `code` or an input error's — adds a step and error
+sentence from `boostCreativeRefusal` ("LinkedIn refused to sponsor post X from ad account Y
+(UGC_FORBIDDEN): the connection's LinkedIn member needs a sponsoring role …"); no other code is
+quoted (`TestCreateCampaign_BoostUnreadablePost`).
+`CampaignResult.BoostedPostURN` records the post once its creative exists.
+
 ## Profile targeting shape (`targeting.go`, #585)
 
 `buildTargetingCriteria(profile, geoURNs, jobFns)` sends `include.and` as locations, then
@@ -1410,7 +1499,8 @@ reported. Neither has been sent as `true` to a live account.
 makes a lead gen create. `campaignBidding` plans it as `LEAD_GENERATION` / `MAX_LEAD` / `CPM` with
 name segment `Leads`, automatic only. `ValidateLeadGen` runs before any POST: it normalises the
 form (`<id>` or `urn:li:adForm:<id>`, a canonical positive int64), defaults the label to `REGISTER`
-and checks it against `LeadGenCallToActionLabels`, and refuses a text format, the Audience Network,
+and checks it against `LeadGenCallToActionLabels`, and refuses a text format, a carousel or boost
+(#673: the boost creative carries no form) format, the Audience Network,
 a variant `CallToAction`, and the objective and form without each other. `checkLeadForm` then
 reads `GET /rest/leadForms/{id}` before the campaign group: a form whose
 `owner.sponsoredAccount` is not the account, an `ARCHIVED` one, or a 404 is a pre-flight

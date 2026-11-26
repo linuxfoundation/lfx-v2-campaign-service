@@ -124,6 +124,11 @@ func ValidateLeadGen(lg *LeadGen, objective, format string, delivery DeliveryOpt
 	if format == FormatCarousel {
 		return nil, fmt.Errorf("%w: format %q is not available with objective %s yet", ErrLeadGenInvalid, FormatCarousel, ObjectiveLeadGeneration)
 	}
+	// A boost sponsors an existing post whose creative carries no form; a lead gen boost is not
+	// built (#673).
+	if format == FormatBoost {
+		return nil, fmt.Errorf("%w: format %q is not available with objective %s yet", ErrLeadGenInvalid, FormatBoost, ObjectiveLeadGeneration)
+	}
 	if delivery.OffsiteDeliveryEnabled != nil && *delivery.OffsiteDeliveryEnabled {
 		return nil, fmt.Errorf("%w: %s true is not available with objective %s", ErrLeadGenInvalid, FieldOffsiteDeliveryEnabled, ObjectiveLeadGeneration)
 	}

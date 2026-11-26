@@ -95,8 +95,10 @@ func NormalizeFormat(raw string) (string, error) {
 		return FormatCarousel, nil
 	case FormatDocument:
 		return FormatDocument, nil
+	case FormatBoost:
+		return FormatBoost, nil
 	}
-	return "", fmt.Errorf("%w: format must be %q (the default), %q, %q or %q", ErrFormatInvalid, FormatSingleImage, FormatText, FormatCarousel, FormatDocument)
+	return "", fmt.Errorf("%w: format must be %q (the default), %q, %q, %q or %q", ErrFormatInvalid, FormatSingleImage, FormatText, FormatCarousel, FormatDocument, FormatBoost)
 }
 
 // ValidateTextAds checks the content of every text ad before anything is created: headline and
@@ -189,6 +191,9 @@ func campaignTypeFor(format string) string {
 //
 // "Carousel" is a carousel campaign's (#665): a CAROUSEL campaign takes only carousel creatives.
 // lf-dbt stores an 8-segment name's Ad Format segment as-is.
+//
+// "Boost" is a boost campaign's (#673): its creative sponsors an existing post, so a by-name reuse
+// must never bind it to a campaign holding dark-post creatives, nor the reverse.
 func adFormatNameSegment(in CampaignInput) string {
 	switch in.Format {
 	case FormatText:
@@ -198,6 +203,14 @@ func adFormatNameSegment(in CampaignInput) string {
 	case FormatDocument:
 		// #665; lf-dbt stores an 8-segment name's Ad Format segment as-is.
 		return "Document"
+	}
+	if in.Format == FormatBoost {
+		// A video post's campaign is SINGLE_VIDEO and any other post's is not, and LinkedIn mixes
+		// neither, so the two never share a name (CreateCampaign renames once the post is read).
+		if in.boostVideoPost {
+			return "Boost Motion"
+		}
+		return "Boost"
 	}
 	if isVideoInput(in) {
 		return "Motion"

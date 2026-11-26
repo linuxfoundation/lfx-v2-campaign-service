@@ -343,6 +343,8 @@ type CampaignInput struct {
 	// Format is the campaign format (#586): "" or FormatSingleImage creates today's
 	// SPONSORED_UPDATES campaign from Variants; FormatText creates a TEXT_AD campaign from
 	// TextAds, which requires a manual bid (ManualCPCBid > 0) and no Variants. See text_ads.go.
+	// FormatBoost (#673) creates a SPONSORED_UPDATES campaign whose one creative sponsors
+	// BoostPost, with no Variants or TextAds. See boost.go.
 	Format string
 	// TextAds are the Text Ad creatives of a FormatText create; refused under any other format.
 	TextAds []TextAd
@@ -359,6 +361,12 @@ type CampaignInput struct {
 	DocumentAssetID   string
 	DocumentTitle     string
 	DocumentIntroText string
+	// BoostPost is the existing organization post a FormatBoost create sponsors (#673):
+	// urn:li:share:<id> or urn:li:ugcPost:<id>. Refused under any other format. See boost.go.
+	BoostPost string
+	// boostVideoPost is set by CreateCampaign once verifyBoostPost has read a video post, so the
+	// campaign name's Ad Format segment is "Boost Motion" rather than "Boost". Never set by callers.
+	boostVideoPost bool
 	// JobFunctions replace the default job functions (urn:li:function:8, 13 and 16) in the
 	// profile's own jobFunctions clause (#585). Nil means the default. Not read with Targeting,
 	// which brings its own. CreateCampaign runs ValidateJobFunctions on it before any request.
@@ -431,6 +439,16 @@ type CampaignResult struct {
 	// kept), never created_degraded, which the orchestrator would reuse as complete. Set only on
 	// that path's partial, which is always returned with an error.
 	TargetingNotApplied bool `json:"targetingNotApplied,omitempty"`
+	// BoostCreativeUnverified marks a boost that stopped on a creative failing the author check
+	// (#673): one a reused campaign already holds (named, never deleted, nothing posted), or one this
+	// call posted without the post read (deleted, or named for removal when it could not be). The
+	// dispatcher records it as a retained partial (pending, campaign id kept), never
+	// created_degraded, so a retry answers "reconciliation required" instead of posting again. Set
+	// only on that path's partial, which is always returned with an error.
+	BoostCreativeUnverified bool `json:"boostCreativeUnverified,omitempty"`
+	// BoostedPostURN is the existing post a boost create's creative sponsors (#673), recorded once
+	// that creative exists (created or found on the reused campaign). Empty on every other create.
+	BoostedPostURN string `json:"boostedPostUrn,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -473,6 +491,10 @@ type linkedInResponse struct {
 	// outcome each of those walks has its own guard against reaching by other routes. A nil
 	// pointer forces each walk to decide, and the compiler makes that decision explicit.
 	Metadata *linkedInMetadata `json:"metadata"`
+	// raw is the 2xx body this response was decoded from, for a caller that must also check it
+	// with identityjson (the boost creative lookup, #673): encoding/json keeps the last of two
+	// repeated keys without an error. Not part of the wire shape.
+	raw []byte
 }
 
 // linkedInMetadata carries the cursor-pagination block used by the LinkedIn
@@ -1045,6 +1067,28 @@ const maxCreativesPageSize = 100
 // returns each element's id (a sponsoredCreative URN). The campaign id is Rest.li-encoded
 // inside the List(...) so it can't break out of the literal.
 func (c *Client) listCreativeURNs(ctx context.Context, accountID, campaignID string) ([]string, error) {
+	return c.queryCreativeURNs(ctx, accountID, campaignID, "", false)
+}
+
+// listBoostCreativeURNs is listCreativeURNs for a boost's check of a reused campaign (#673): every
+// page must pass identityjson, since a page hiding a creative would leave it unchecked beside the
+// new one. The status cascades keep listCreativeURNs: a creative a page hid there stays DRAFT and
+// never serves, the fail-safe direction, and the cascades have no boost-specific trust to uphold.
+func (c *Client) listBoostCreativeURNs(ctx context.Context, accountID, campaignID string) ([]string, error) {
+	return c.queryCreativeURNs(ctx, accountID, campaignID, "", true)
+}
+
+// findCreativeURNs is listCreativeURNs narrowed to the creatives whose content.reference is the
+// post URN contentRef (the finder's contentReferences filter, #673), with every page held to
+// identityjson. contentRef is trusted to be a validated share/ugcPost URN; it is Rest.li-encoded
+// like the campaign.
+func (c *Client) findCreativeURNs(ctx context.Context, accountID, campaignID, contentRef string) ([]string, error) {
+	return c.queryCreativeURNs(ctx, accountID, campaignID, contentRef, true)
+}
+
+// queryCreativeURNs runs the creatives finder for campaignID, narrowed to contentRef when it is
+// not empty. strict holds every page to identityjson.
+func (c *Client) queryCreativeURNs(ctx context.Context, accountID, campaignID, contentRef string, strict bool) ([]string, error) {
 	nestedPath := fmt.Sprintf("adAccounts/%s/creatives", accountID)
 	campaignURN := "urn:li:sponsoredCampaign:" + campaignID
 	var urns []string
@@ -1060,6 +1104,9 @@ func (c *Client) listCreativeURNs(ctx context.Context, accountID, campaignID str
 			// BOTH status cascades. We request the max (100) and follow pageToken.
 			"pageSize": strconv.Itoa(maxCreativesPageSize),
 		}
+		if contentRef != "" {
+			params["contentReferences"] = "List(" + restliEncode(contentRef) + ")"
+		}
 		if pageToken != "" {
 			params["pageToken"] = pageToken
 		}
@@ -1067,6 +1114,16 @@ func (c *Client) listCreativeURNs(ctx context.Context, accountID, campaignID str
 		resp, err := c.doRequest(ctx, http.MethodGet, nestedPath, nil, params, headers)
 		if err != nil {
 			return nil, fmt.Errorf("find creatives for campaign %s: %w", campaignID, err)
+		}
+		// A boost (#673) acts on what these pages say: its lookup answers "no creative for this
+		// post" with a creative POST, and its reused-campaign check passes the creatives listed. So
+		// a page it reads must be one identityjson trusts, as the post GET is: a repeated key or
+		// malformed UTF-8 could otherwise decode to an empty or different element list. A refused
+		// page is a failed lookup, never an absence.
+		if strict {
+			if err := identityjson.Check(resp.raw); err != nil {
+				return nil, fmt.Errorf("find creatives for campaign %s: the response could not be trusted: %w", campaignID, err)
+			}
 		}
 		if resp.Elements != nil {
 			for _, el := range *resp.Elements {
@@ -1131,21 +1188,25 @@ func encodeURNForPath(urn string) string {
 // into encodeURNForPath (which escapes only colons) and, via the broadened path allow-list,
 // altering the request URL. Returns "" if no usable numeric id can be extracted.
 func creativeURN(el responseElement) string {
-	const prefix = "urn:li:sponsoredCreative:"
 	for _, cand := range []string{el.URN, el.DURN, el.ID.String()} {
-		s := strings.TrimSpace(cand)
-		if s == "" {
-			continue
-		}
-		// Normalize to the trailing id: strip the URN prefix if present, else use the value
-		// as-is (the bare-numeric form). Only a pure positive integer is accepted, so any
-		// path-altering or malformed suffix is rejected.
-		id := strings.TrimPrefix(s, prefix)
-		if creativeNumericIDRE.MatchString(id) {
-			return prefix + id
+		if urn := canonicalCreativeURN(cand); urn != "" {
+			return urn
 		}
 	}
 	return ""
+}
+
+// canonicalCreativeURN is creativeURN for one value: a sponsoredCreative URN or a bare numeric id,
+// rebuilt as "urn:li:sponsoredCreative:<digits>", or "" when it is neither. Only a pure positive
+// integer is accepted as the trailing id, so a path-altering or malformed suffix ('?', '/',
+// percent-encoding) is rejected rather than reaching encodeURNForPath.
+func canonicalCreativeURN(value string) string {
+	const prefix = "urn:li:sponsoredCreative:"
+	id := strings.TrimPrefix(strings.TrimSpace(value), prefix)
+	if !creativeNumericIDRE.MatchString(id) {
+		return ""
+	}
+	return prefix + id
 }
 
 // creativeNumericIDRE matches a bare numeric creative id (the flexibleID numeric form) so it
@@ -1467,6 +1528,8 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			cancel()
 			return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("search response missing elements field — cannot confirm absence")}
 		}
+
+		out.raw = buf.Bytes()
 
 		// Promote the resource ID header when the body carried no id. Mirrors the
 		// x-restli-id fallback in linkedInRequest().
@@ -1875,9 +1938,11 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 var preEncodedParams = map[string]struct{}{
 	"search":    {}, // findMatch — the name filter
 	"campaigns": {}, // listCreativeURNs — the creatives finder's campaign List()
-	"accounts":  {}, // ListAdSegments — the ad segments finder's account List() (#552)
-	"query":     {}, // SearchTargetingEntities — the typeahead text, %20 not "+" (#585)
-	"owner":     {}, // ListLeadForms — the lead form finder's (sponsoredAccount:urn) owner (#664)
+	// findCreativeURNs — the creatives finder's contentReferences List() (#673)
+	"contentReferences": {},
+	"accounts":          {}, // ListAdSegments — the ad segments finder's account List() (#552)
+	"query":             {}, // SearchTargetingEntities — the typeahead text, %20 not "+" (#585)
+	"owner":             {}, // ListLeadForms — the lead form finder's (sponsoredAccount:urn) owner (#664)
 }
 
 // buildRawQuery renders params as a query string, percent-encoding every value
@@ -2680,6 +2745,16 @@ func (c *Client) postCreative(ctx context.Context, accountID, campaignID string,
 		return "", err
 	}
 	creativesPath := fmt.Sprintf("adAccounts/%s/creatives", accountID)
+	// The returned id is what later steps act on (a boost reads that creative back to check its
+	// author, #673), so a body encoding/json would read loosely (a repeated or case-folded id
+	// key, malformed UTF-8) is not trusted: the creative may exist, but which one is unknown, so
+	// it is UNCONFIRMED like any malformed 2xx. An empty body (the id in x-restli-id) has nothing
+	// to check.
+	if len(bytes.TrimSpace(resp.raw)) > 0 {
+		if err := identityjson.Check(resp.raw); err != nil {
+			return "", &transportError{Method: http.MethodPost, Path: creativesPath, Err: fmt.Errorf("creative creation returned a body that could not be trusted: %w", err)}
+		}
+	}
 	if resp.ID == "" {
 		// A 2xx with no id is a malformed SUCCESS: the creative may exist but its id is
 		// unreadable. A creative has no reconciliation lookup, so wrap as
@@ -3228,6 +3303,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	} else if in.Document != nil || in.DocumentAssetID != "" || in.DocumentTitle != "" || in.DocumentIntroText != "" {
 		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: a document is accepted only with format %q", ErrFormatInvalid, FormatDocument))
 	}
+	// A boost (#673) sponsors one existing post: a well-formed post URN, and no creative of its
+	// own to author. Whether LinkedIn will sponsor that post is read below, before any POST.
+	if format == FormatBoost {
+		if len(in.Variants) > 0 {
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: a boost create sponsors boostPost and takes no variants", ErrFormatInvalid))
+		}
+		if err := ValidateBoostPostURN(in.BoostPost); err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+	} else if in.BoostPost != "" {
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("%w: boostPost is accepted only with format %q", ErrFormatInvalid, FormatBoost))
+	}
 
 	// Refuse to create a campaign with no creatives: LinkedIn campaign-group and
 	// campaign creation are permanent side effects, so an empty variant set would
@@ -3446,7 +3533,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// the next one's sibling search sees the campaign. A group THIS create makes is covered too,
 	// because the lock is taken before the group exists. A wait is bounded by ctx. Released as
 	// soon as createSponsoredCampaign returns: the dark post and creatives do not touch the
-	// group's schedule. Other replicas are not covered (LFXV2-2665).
+	// group's schedule. A boost (#673) keeps it through finishBoost instead: its creative has a
+	// natural key (the post), and a same-name create that reuses the campaign looks that creative
+	// up, so the lookup and the POST must not interleave with another's or both would see no
+	// creative and post two ads for one post. Other replicas are not covered (LFXV2-2665).
 	releaseGroup, err := eventGroupLocks.acquire(ctx, c.baseURL+"\x00"+accountID+"\x00"+groupName)
 	if err != nil {
 		return nil, fmt.Errorf("campaign group %q: waiting for another create of this event was aborted before any LinkedIn write; nothing was created: %w", groupName, err)
@@ -3459,6 +3549,45 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 	defer unlockGroup()
+
+	// A boost (#673) reads its post before the campaign group exists: a post LinkedIn would refuse
+	// to sponsor from this account fails the creative POST only after the group and the campaign
+	// exist. The read creates nothing, so any failure here returns (nil, err). It runs under the
+	// group lock, after every local check, so a refused input costs no request. The post's
+	// content also decides the campaign format (SINGLE_VIDEO for a video post). A connection that
+	// cannot read posts (a 403) skips the checks and sends no format: LinkedIn infers it from the
+	// creative, the creative POST decides whether the post can be sponsored, and finishBoost then
+	// reads the creative back and refuses it unless orgURN authored the post (boostOrgURN and
+	// boostPostChecked carry the outcome there).
+	var boostOrgURN string
+	var boostPostChecked bool
+	if format == FormatBoost {
+		orgURN, err := c.orgURN(accountID)
+		if err != nil {
+			return nil, domain.WrapPreflightRefusal(err)
+		}
+		var checked bool
+		if campaignFormat, checked, err = c.verifyBoostPost(ctx, accountID, orgURN, in.BoostPost); err != nil {
+			return nil, err
+		}
+		boostOrgURN, boostPostChecked = orgURN, checked
+		if campaignFormat == campaignFormatSingleVideo {
+			// The name was composed before the post was read: a video post's campaign is
+			// SINGLE_VIDEO, so it gets its own name and never meets a non-video boost's campaign
+			// by name. Re-checked against the limit, since the segment is longer.
+			named := in
+			named.boostVideoPost = true
+			campaignName = buildCampaignName(eventName, bidding.nameObjective, project, named)
+			if n := len([]rune(campaignName)); n > maxNameLen {
+				return nil, domain.PreflightRefusalf("campaign name is %d characters, exceeds the %d-character limit; shorten the event name or project", n, maxNameLen)
+			}
+		}
+		if checked {
+			steps = append(steps, fmt.Sprintf("Boost post %s verified: published by %s, public, organic, sponsorable", in.BoostPost, orgURN))
+		} else {
+			steps = append(steps, fmt.Sprintf("Boost post %s not pre-checked: this connection cannot read posts (LinkedIn answered 403; it lacks r_organization_social), so LinkedIn decides at the creative whether the post can be sponsored, and the creative's author is checked once it exists; a video post gets no SINGLE_VIDEO format on this path, which is unverified", in.BoostPost))
+		}
+	}
 
 	groupID, groupReused, err := c.findOrCreateCampaignGroup(ctx, accountID, groupName, in.StartDate, endMs)
 	if err != nil {
@@ -3522,9 +3651,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// it, so a retry spanning the change reuses that campaign instead of creating a second one
 	// beside it. A new group cannot hold one, so it needs no lookup. A failed lookup returns
 	// (nil, err): the group existed before this call and nothing was created.
-	// A text or video campaign (#586) postdates #587, so none can carry the legacy name (always
-	// Static): skip the lookup, which could otherwise bind it to a single-image campaign.
-	if groupReused && format != FormatText && campaignFormat == "" {
+	// A text or video campaign (#586), or a boost (#673), postdates #587, so none can carry the
+	// legacy name (always Static): skip the lookup, which could otherwise bind it to a
+	// single-image campaign.
+	if groupReused && format != FormatText && format != FormatBoost && campaignFormat == "" {
 		if legacy := legacyCampaignName(eventName, bidding.nameObjective, project, in); legacy != campaignName {
 			found, err := c.findCampaignByNameInGroup(ctx, fmt.Sprintf("adAccounts/%s/adCampaigns", accountID), legacy, groupID, bidding.objectiveType, bidding.optimizationTarget, campaignTypeFor(format), campaignFormat)
 			if err != nil {
@@ -3538,7 +3668,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, jobFns, targeting, in.LifetimeBudget, bidding, dailyCap, campaignTypeFor(format), campaignFormat, in.DeliveryOptions)
-	unlockGroup()
+	if format != FormatBoost {
+		unlockGroup() // a boost releases it when CreateCampaign returns (the deferred unlock)
+	}
 	if err != nil {
 		// findOrCreateCampaignGroup may have just created a PERMANENT campaign group
 		// (groupID) whose creation is a real side effect. Returning nil,err here
@@ -3680,6 +3812,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			result.TargetCost = bidding.targetCost
 		}
 		return result
+	}
+	if format == FormatBoost {
+		return c.finishBoost(ctx, accountID, groupName, groupID, campaignName, campaignID, campaignReused, eventName, in.BoostPost, boostOrgURN, boostPostChecked, steps, withImages, finish)
 	}
 	if format == FormatDocument {
 		count, docURN, docSteps, derr := c.createDocumentAd(ctx, accountID, campaignID, eventName, in)
