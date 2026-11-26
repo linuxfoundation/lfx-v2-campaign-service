@@ -2173,15 +2173,25 @@ job then reads the creative back (`GET /rest/adAccounts/<acct>/creatives/<urn>`,
 `content.standardUpdateAd.contentAuthor` and `.reference`) and, unless it sponsors the requested post
 and the post's author is the account's organization, deletes the DRAFT creative (`DELETE` on the
 same path, on a context detached from the job's so a cancelled job still cleans up; a DRAFT cannot
-be archived) and fails the job. The row is `pending` with the campaign id kept (result
-`boostCreativeUnverified`), as for targeting not applied: a retry answers "reconciliation required"
-rather than posting and deleting another creative. The answer's `id` must be the creative asked
-for. A failed read is treated the same way, but its error is the read's own, not an ineligible post;
-a credential failure (a 401) returns no result instead, so the connection is reported and a retry
-after reconnecting checks again. On a campaign found by name, every creative it already holds (the
-finder without `contentReferences`) is checked for the author before one is added, since a boost of
-another post for the same event shares the campaign and activation flips every creative; one that
-fails is named, never deleted (it may be serving), nothing is posted, and the row is `pending`. If LinkedIn refuses the creative, the row is `created_degraded` with the group and campaign, as for a
+be archived) and fails the job. The answer's `id` must be the creative asked for; a failed read, an
+untrusted answer or an answer about another creative means the creative could not be checked, and
+is handled the same way, with the read's own error (a 401 stays the connection's expiry), never as an
+ineligible post.
+
+Which state the row is left in follows the dispatcher's rule: no result only when the job changed
+nothing on LinkedIn (the claim is released and a retry repeats the step), a partial whenever it did
+(the claim is kept). So a creative the job posted that fails, or cannot be checked, leaves the row
+`pending` with the campaign id kept (result `boostCreativeUnverified`), as for targeting not
+applied: a retry answers "reconciliation required" rather than posting and deleting another
+creative. The exception is a creative that could not be checked and was deleted again in a campaign
+the job did not create: nothing remains, so there is no result and a retry checks again.
+
+On every campaign found by name, whether or not the post was read, every creative it already holds
+is checked for the author before one is added (one GET each; LinkedIn caps a campaign at 100), since a
+boost of another post for the same event shares the campaign and activation flips every creative.
+That listing must pass `identityjson`, as the post's lookup does. One that fails is named, never
+deleted (it may be serving), nothing is posted, and the row is `pending`; a check that cannot finish
+posts nothing and leaves no result. If LinkedIn refuses the creative, the row is `created_degraded` with the group and campaign, as for a
 failed image creative; `UGC_FORBIDDEN` reads "LinkedIn refused to sponsor post X from ad account Y
 (UGC_FORBIDDEN): the connection's LinkedIn member needs a sponsoring role (ADMINISTRATOR,
 DIRECT_SPONSORED_CONTENT_POSTER or CONTENT_ADMIN) on the organization page that authored it", and

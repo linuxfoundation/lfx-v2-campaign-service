@@ -436,11 +436,12 @@ type CampaignResult struct {
 	// kept), never created_degraded, which the orchestrator would reuse as complete. Set only on
 	// that path's partial, which is always returned with an error.
 	TargetingNotApplied bool `json:"targetingNotApplied,omitempty"`
-	// BoostCreativeUnverified marks a boost whose creative failed checkBoostCreativeAuthor (#673):
-	// the campaign exists and the creative was deleted, or is named for removal when it could not
-	// be. The dispatcher records it as a retained partial (pending, campaign id kept), never
-	// created_degraded, so a retry answers "reconciliation required" instead of posting and
-	// deleting again. Set only on that path's partial, which is always returned with an error.
+	// BoostCreativeUnverified marks a boost that stopped on a creative failing the author check
+	// (#673): one a reused campaign already holds (named, never deleted, nothing posted), or one this
+	// call posted without the post read (deleted, or named for removal when it could not be). The
+	// dispatcher records it as a retained partial (pending, campaign id kept), never
+	// created_degraded, so a retry answers "reconciliation required" instead of posting again. Set
+	// only on that path's partial, which is always returned with an error.
 	BoostCreativeUnverified bool `json:"boostCreativeUnverified,omitempty"`
 	// BoostedPostURN is the existing post a boost create's creative sponsors (#673), recorded once
 	// that creative exists (created or found on the reused campaign). Empty on every other create.
@@ -1063,14 +1064,28 @@ const maxCreativesPageSize = 100
 // returns each element's id (a sponsoredCreative URN). The campaign id is Rest.li-encoded
 // inside the List(...) so it can't break out of the literal.
 func (c *Client) listCreativeURNs(ctx context.Context, accountID, campaignID string) ([]string, error) {
-	return c.findCreativeURNs(ctx, accountID, campaignID, "")
+	return c.queryCreativeURNs(ctx, accountID, campaignID, "", false)
 }
 
-// findCreativeURNs is listCreativeURNs narrowed, when contentRef is not empty, to the creatives
-// whose content.reference is that post URN (the finder's contentReferences filter, #673).
-// contentRef is trusted to be a validated share/ugcPost URN; it is Rest.li-encoded like the
-// campaign.
+// listBoostCreativeURNs is listCreativeURNs for a boost's check of a reused campaign (#673): every
+// page must pass identityjson, since a page hiding a creative would leave it unchecked beside the
+// new one. The status cascades keep listCreativeURNs: a creative a page hid there stays DRAFT and
+// never serves, the fail-safe direction, and the cascades have no boost-specific trust to uphold.
+func (c *Client) listBoostCreativeURNs(ctx context.Context, accountID, campaignID string) ([]string, error) {
+	return c.queryCreativeURNs(ctx, accountID, campaignID, "", true)
+}
+
+// findCreativeURNs is listCreativeURNs narrowed to the creatives whose content.reference is the
+// post URN contentRef (the finder's contentReferences filter, #673), with every page held to
+// identityjson. contentRef is trusted to be a validated share/ugcPost URN; it is Rest.li-encoded
+// like the campaign.
 func (c *Client) findCreativeURNs(ctx context.Context, accountID, campaignID, contentRef string) ([]string, error) {
+	return c.queryCreativeURNs(ctx, accountID, campaignID, contentRef, true)
+}
+
+// queryCreativeURNs runs the creatives finder for campaignID, narrowed to contentRef when it is
+// not empty. strict holds every page to identityjson.
+func (c *Client) queryCreativeURNs(ctx context.Context, accountID, campaignID, contentRef string, strict bool) ([]string, error) {
 	nestedPath := fmt.Sprintf("adAccounts/%s/creatives", accountID)
 	campaignURN := "urn:li:sponsoredCampaign:" + campaignID
 	var urns []string
@@ -1097,11 +1112,12 @@ func (c *Client) findCreativeURNs(ctx context.Context, accountID, campaignID, co
 		if err != nil {
 			return nil, fmt.Errorf("find creatives for campaign %s: %w", campaignID, err)
 		}
-		// The boost lookup (#673) answers "no creative for this post" with a creative POST, so a
-		// page it reads must be one identityjson trusts, as the post GET is: a repeated key or
+		// A boost (#673) acts on what these pages say: its lookup answers "no creative for this
+		// post" with a creative POST, and its reused-campaign check passes the creatives listed. So
+		// a page it reads must be one identityjson trusts, as the post GET is: a repeated key or
 		// malformed UTF-8 could otherwise decode to an empty or different element list. A refused
 		// page is a failed lookup, never an absence.
-		if contentRef != "" {
+		if strict {
 			if err := identityjson.Check(resp.raw); err != nil {
 				return nil, fmt.Errorf("find creatives for campaign %s: the response could not be trusted: %w", campaignID, err)
 			}

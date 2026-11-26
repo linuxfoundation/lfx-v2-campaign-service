@@ -72,6 +72,16 @@ added: a creative an earlier boost of another post could not delete would otherw
 with the campaign (lfx-one). The read-back also requires the answer's `id` to be the creative asked
 for, as the post read does.
 
+**Update (review round 5)** — the outcomes now follow one rule, the dispatcher's: no result only
+when the call changed nothing upstream, a partial whenever it did. Each creative read gets a verdict
+(`judgeBoostCreative`: OK, wrong, or unknown). Every reused campaign is checked, whether or not the
+post was read (a boost that can read its post could otherwise add an ad beside an unverified
+leftover), and that listing is held to `identityjson` (`listBoostCreativeURNs`). An unknown verdict
+on a creative the call did not post, or a failed listing, returns no result: nothing changed. A
+creative the call posted that fails or cannot be checked is deleted and keeps the pending partial,
+a 401 included (round 4 had returned no result there, losing the ids of what was created), except
+when it could not be checked and was deleted again in a reused campaign, which leaves nothing.
+
 Account grants (#581) are not scoped to a project: a project falling back to the LF system row may
 name any grant, and a boost through it passes the post check for that grant's organization. That
 is unchanged by this entry; tracked separately.

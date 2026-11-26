@@ -1279,24 +1279,28 @@ account, no body) that the pre-checks were skipped, and the create goes on with 
 Events 509430019): such a token gets 403 `ACCESS_DENIED` on the read and 201 on the creative,
 and LinkedIn sets the campaign's format to `STANDARD_UPDATE` itself. LinkedIn's creative POST then
 decides; its refusal comes back through `finishBoost`'s creative-failure path below. Its
-acceptance does not end the check: with no post read, `finishBoost` calls
-`checkBoostCreativeAuthor`, which GETs the creative and requires
-`content.standardUpdateAd.reference` to be the post and `.contentAuthor` the account's
-organization. Anything else, a failed read included, DELETEs a creative this call created (a DRAFT,
-which can be deleted but not archived; the DELETE is detached from the job's context with a 30 s
-timeout) and returns the partial marked `BoostCreativeUnverified`, which the dispatcher records as
-`pending` with the campaign id kept, so a retry answers "reconciliation required". The error wraps
-`ErrBoostPostIneligible`, or the read's own error when the read failed; a credential failure
-(`isCredentialFailure`) returns no result instead, so the connection is reported and a retry
-checks again. `boostCreativeProblem` also requires the answer's `id` to be the creative asked for.
-On a reused campaign, `checkReusedBoostCampaign` first checks every creative the campaign holds
-(any post); one that fails is named, never deleted, and nothing is posted. Unverified:
+acceptance does not end the check. `judgeBoostCreative` GETs a creative and returns a verdict:
+`creativeOK` (it sponsors a post authored by the account's organization, and the requested post
+when one is named), `creativeWrong` (a trusted answer that fails), or `creativeUnknown` (a failed
+read, an untrusted or undecodable answer, or an `id` other than the creative asked for).
+`finishBoost` returns no result only when the call changed nothing upstream, and a partial whenever
+it did, matching the dispatcher's claim rule. On every reused campaign, `checkReusedBoostCampaign`
+first checks every creative the campaign holds (any post), through `listBoostCreativeURNs`, whose
+pages must pass `identityjson`: wrong means the partial marked `BoostCreativeUnverified` (pending,
+nothing posted, nothing deleted), unknown or a failed listing means no result. With no post read, a
+found creative the scan did not list is judged on the same terms, and the creative the call posted
+goes through `checkPostedBoostCreative`, which DELETEs it on any verdict but OK (a DRAFT can be
+deleted, not archived; the DELETE is detached from the job's context with a 30 s timeout) and
+returns the pending partial, except for an unknown verdict deleted again in a reused campaign, which
+leaves nothing and returns no result. Errors wrap `ErrBoostPostIneligible` only for a wrong creative;
+an unknown one wraps the read's own error (a 401 keeps `ErrCredentialsExpired`) or
+`errBoostCreativeUnchecked`. Unverified:
 a video post on this path gets no `SINGLE_VIDEO` format (the probe covered a share only), so a
 video boost needs a token with `r_organization_social` until it is probed. Every quoted value passes through
 `domain.CallerValue`, and an author that is not an `urn:li:organization:` (a member's person URN,
 which the caller never supplied) is reported only as "a LinkedIn member". The create body sends
 `content.reference`; LinkedIn reads such a creative back as `content.standardUpdateAd.reference`
-(202610+), which only `checkBoostCreativeAuthor` decodes (`boostCreativeRead`). Sources (li-lms-2026-11, consulted 2026-11-26): the Posts API GET and
+(202610+), which only `judgeBoostCreative` decodes (`boostCreativeRead`). Sources (li-lms-2026-11, consulted 2026-11-26): the Posts API GET and
 content table, and the Creatives API error table (`UGC_RESHARE_CANNOT_BE_SPONSORED`,
 `UGC_INVALID_VISIBILITY_SETTING`, `UGC_INVALID_FEED_DISTRIBUTION`,
 `REFERENCE_MEDIA_CATEGORY_AND_CAMPAIGN_FORMAT_MISMATCH`), cited in `boost.go`. A video post's

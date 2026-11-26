@@ -60,7 +60,8 @@ const FormatBoost = "boost"
 
 // ErrBoostPostIneligible marks a boost post LinkedIn would refuse to sponsor from this ad account,
 // found by reading the post before anything is created, or, when the post cannot be read, by reading
-// its creative back (checkBoostCreativeAuthor). Its sentences are service-authored; the
+// its creative back (checkPostedBoostCreative), or on a reused campaign's creatives
+// (checkReusedBoostCampaign). Its sentences are service-authored; the
 // only values they quote pass through domain.CallerValue.
 var ErrBoostPostIneligible = errors.New("linkedin: the post cannot be boosted from this ad account")
 
@@ -282,47 +283,53 @@ func (c *Client) ensureBoostCreative(ctx context.Context, accountID, campaignID 
 // postURN, created, or found on a reused campaign. It runs under the event's group lock, so two
 // same-name creates in this process cannot both find no creative and post one each.
 //
-// A failed lookup returns (nil, err), like the group-widening and legacy-name failures before it:
-// it runs only on a campaign found by name, in a group found by name, so this call created
-// neither, and posted nothing. A partial here would be recorded with the campaign id, as
-// created_degraded (which the orchestrator reuses as complete, so a repeated request would report
-// success without the lookup) or as pending (which refuses every retry as "reconciliation
-// required"); either way the lookup the error promises would never run. With (nil, err) the claim
-// is released and a retry finds the group and campaign by name again and repeats the lookup.
+// What it returns follows the dispatcher's rule: no result only when this call changed nothing
+// upstream, so the claim is released and a retry repeats the step; a partial result whenever it
+// did, so the claim is kept. A campaign found by name sits in a group found by name (a new group
+// holds no campaign), so on a reused campaign everything before the creative POST creates nothing.
 //
-// The creative POST's failures follow the single-image loop's: an ambiguous POST is UNCONFIRMED
-// and a definite one failed, each with the partial result carrying the group and campaign. There
-// is no dark post, so nothing else can be orphaned.
+//   - Reused campaign (whether or not the post was read): every creative it already holds is
+//     checked first (checkReusedBoostCampaign), since a boost of another post for the same event
+//     shares the campaign, activation flips every creative, and an earlier boost may have left a
+//     creative it could not verify or delete. One that cannot be checked (a failed listing or
+//     read, an untrusted answer) returns no result; one checked and wrong returns the partial
+//     marked BoostCreativeUnverified (pending, reconciliation required), naming it for removal.
+//     Nothing is posted in either case, and nothing found is ever deleted: it may be serving.
+//   - The lookup of a creative already sponsoring postURN: its failure returns no result, as above.
+//   - The creative POST: an ambiguous POST is UNCONFIRMED and a definite one failed, each with the
+//     partial result carrying the group and campaign.
+//   - Without the post read (postChecked false: the connection lacks r_organization_social), a
+//     found creative not covered by the scan, and the creative this call posted, are checked too.
+//     A posted creative that fails, or cannot be checked, is deleted (checkPostedBoostCreative) and
+//     the partial marked BoostCreativeUnverified is returned, since this call changed LinkedIn (as
+//     the dispatcher keeps the claim for an expiry on any mutating request). The one exception is
+//     a creative that could not be checked, deleted again, in a reused campaign: nothing this call
+//     did remains, so it returns no result and a retry repeats the check. A creative checked and
+//     wrong always returns the partial: the post is refused, and a retry would be refused again.
 //
-// When the post could not be read first (postChecked false: the connection lacks
-// r_organization_social), the creative is read back and checked against orgURN by
-// checkBoostCreativeAuthor before anything is reported, so that path fails closed too. A failed
-// check returns the partial marked BoostCreativeUnverified, which the dispatcher keeps as
-// pending: the claim is retained, so no retry posts and deletes another creative.
+// A reused campaign's check costs one GET per creative it holds; LinkedIn caps a campaign at 100.
 func (c *Client) finishBoost(ctx context.Context, accountID, groupName, groupID, campaignName, campaignID string, campaignReused bool, eventName, postURN, orgURN string, postChecked bool, steps []string, partial func(*CampaignResult) *CampaignResult, finish func(int) *CampaignResult) (*CampaignResult, error) {
-	// unverified is the failed author check's outcome: the partial kept as pending (the claim is
-	// retained, so no retry posts again), except on a credential failure, which returns no result
-	// so the dispatcher reports the connection and a retry after reconnecting checks again.
+	// unverified is the outcome for a creative checked and wrong, or posted by this call and not
+	// verified: the partial kept as pending, so the claim is retained and no retry posts again.
 	unverified := func(creativeURN string, err error) (*CampaignResult, error) {
-		if isCredentialFailure(err) {
-			return nil, fmt.Errorf("the boost author check on campaign %q could not finish; this call posted no creative it could check, and a retry after reconnecting checks the campaign again: %w", campaignID, err)
-		}
-		steps = append(steps, fmt.Sprintf("Boost creative %s failed the author check; campaign %s is kept for reconciliation", creativeURN, campaignID))
+		steps = append(steps, fmt.Sprintf("Boost creative %s did not pass the author check; campaign %s is kept for reconciliation", creativeURN, campaignID))
 		r := partial(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps))
 		r.BoostCreativeUnverified = true
 		return r, err
 	}
-	// A campaign found by name may already hold a creative an earlier boost could not verify or
-	// delete (a boost of another post for the same event shares the campaign, and activation flips
-	// every creative). Without the post read, every creative it holds is checked before one is added.
-	if campaignReused && !postChecked {
-		bad, err := c.checkReusedBoostCampaign(ctx, accountID, orgURN, campaignID)
-		if bad == "" && err != nil {
-			return nil, fmt.Errorf("listing the creatives of campaign %q (found by name in group %q) to check their authors failed; this call created nothing and posted no creative, and a retry repeats the check: %w", campaignID, groupID, err)
-		}
-		if err != nil {
+	scanned := map[string]bool{}
+	if campaignReused {
+		checked, bad, err := c.checkReusedBoostCampaign(ctx, accountID, orgURN, campaignID)
+		switch {
+		case bad != "":
 			return unverified(bad, err)
+		case err != nil:
+			return nil, fmt.Errorf("checking the creatives campaign %q (found by name in group %q) already holds could not finish; this call created nothing and posted no creative, and a retry repeats the check: %w", campaignID, groupID, err)
 		}
+		for _, urn := range checked {
+			scanned[urn] = true
+		}
+		steps = append(steps, fmt.Sprintf("Checked the %d creative(s) campaign %s already holds: each sponsors a post authored by %s", len(checked), campaignID, orgURN))
 	}
 	creativeURN, found, lookupErr, err := c.ensureBoostCreative(ctx, accountID, campaignID, campaignReused, postURN, boostCreativeName(eventName, postURN))
 	if lookupErr != nil {
@@ -347,13 +354,31 @@ func (c *Client) finishBoost(ctx context.Context, accountID, groupName, groupID,
 		return partial(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps)),
 			fmt.Errorf("boost creative for post %s failed: %w — group %q and campaign %q already exist; inspect the returned partial result", postURN, err, groupID, campaignID)
 	}
-	// A found creative was checked with the rest of the reused campaign above.
-	if !postChecked && !found {
-		if err := c.checkBoostCreativeAuthor(ctx, accountID, orgURN, campaignID, postURN, creativeURN, campaignReused); err != nil {
-			return unverified(creativeURN, err)
-		}
-	}
+	// With the post read, the creative needs no read-back: a found one was matched by the post's
+	// own lookup (filtered by it, every page trusted) and a posted one references it, so either way
+	// it sponsors the post verifyBoostPost confirmed the organization authored.
 	if !postChecked {
+		switch {
+		case !found:
+			if undone, err := c.checkPostedBoostCreative(ctx, accountID, orgURN, campaignID, postURN, creativeURN, campaignReused); err != nil {
+				if undone && campaignReused {
+					// Could not be checked, and deleted again, in a campaign this call did not create:
+					// nothing this call did remains, so a retry repeats the check.
+					return nil, fmt.Errorf("%w; this call created nothing that remains, and a retry repeats the check", err)
+				}
+				return unverified(creativeURN, err)
+			}
+		case !scanned[creativeURN]:
+			// Found by the post's lookup but not listed by the scan (another process posted it in
+			// between): checked on the scan's terms, so this call still changed nothing.
+			verdict, why, readErr := c.judgeBoostCreative(ctx, accountID, orgURN, creativeURN, postURN)
+			switch verdict {
+			case creativeWrong:
+				return unverified(creativeURN, fmt.Errorf("creative %s, found on campaign %s for post %s, failed the author check: %s; nothing was posted, so remove it in Campaign Manager before boosting into this campaign again: %w", creativeURN, campaignID, domain.CallerValue(postURN), why, ErrBoostPostIneligible))
+			case creativeUnknown:
+				return nil, fmt.Errorf("creative %s, found on campaign %s for post %s, could not be checked (%s); this call created nothing and posted no creative, and a retry repeats the check: %w", creativeURN, campaignID, domain.CallerValue(postURN), why, unknownCause(readErr))
+			}
+		}
 		steps = append(steps, fmt.Sprintf("Boost creative %s read back: the post is authored by %s", creativeURN, orgURN))
 	}
 	if found {
@@ -367,7 +392,7 @@ func (c *Client) finishBoost(ctx context.Context, accountID, groupName, groupID,
 	return result, nil
 }
 
-// boostCreativeDeleteTimeout bounds checkBoostCreativeAuthor's compensating DELETE, which runs
+// boostCreativeDeleteTimeout bounds checkPostedBoostCreative's compensating DELETE, which runs
 // detached from the job's context so a cancelled job still removes the creative.
 const boostCreativeDeleteTimeout = 30 * time.Second
 
@@ -384,96 +409,125 @@ type boostCreativeRead struct {
 	} `json:"content"`
 }
 
-// boostCreativeProblem reads creativeURN back and says why it may not stay, or "" when it
-// sponsors a post authored by orgURN (and, when postURN is not empty, that post). readErr is the
-// read's own failure, which is a problem too: nothing then shows the creative is safe to keep.
-func (c *Client) boostCreativeProblem(ctx context.Context, accountID, orgURN, creativeURN, postURN string) (why string, readErr error) {
+// creativeVerdict is what judgeBoostCreative concluded about one creative.
+type creativeVerdict int
+
+const (
+	// creativeOK: it sponsors a post authored by the account's organization (and the requested
+	// post, when one was named).
+	creativeOK creativeVerdict = iota
+	// creativeWrong: LinkedIn answered, the answer was trusted, and the creative fails the check.
+	creativeWrong
+	// creativeUnknown: nothing trustworthy was learned (a failed read, an untrusted or
+	// undecodable answer, or an answer about another creative), so it was neither passed nor failed.
+	creativeUnknown
+)
+
+// judgeBoostCreative reads creativeURN back and judges it: creativeOK when it sponsors a post
+// authored by orgURN (and, when postURN is not empty, that post). why explains any other verdict;
+// readErr is the read's own failure, set only for a creativeUnknown from a failed GET.
+func (c *Client) judgeBoostCreative(ctx context.Context, accountID, orgURN, creativeURN, postURN string) (verdict creativeVerdict, why string, readErr error) {
 	raw, readErr := c.doEntityGET(ctx, fmt.Sprintf("adAccounts/%s/creatives/%s", accountID, encodeURNForPath(creativeURN)))
 	if readErr != nil {
-		return "reading it back to check the post's author failed", readErr
+		return creativeUnknown, "reading it back failed", readErr
 	}
 	if identityjson.Check(raw) != nil {
-		return "LinkedIn's answer for it could not be trusted", nil
+		return creativeUnknown, "LinkedIn's answer for it could not be trusted", nil
 	}
 	var read boostCreativeRead
-	decodeErr := json.Unmarshal(raw, &read)
+	if json.Unmarshal(raw, &read) != nil {
+		return creativeUnknown, "LinkedIn's answer for it is not a creative", nil
+	}
+	if read.ID != creativeURN {
+		// The finder answers ids as sponsoredCreative URNs (probed 26 Nov), as this GET is asked by.
+		return creativeUnknown, "LinkedIn's answer for it describes another creative", nil
+	}
 	ad := read.Content.StandardUpdateAd
 	switch {
-	case decodeErr != nil:
-		return "LinkedIn's answer for it is not a creative", nil
-	case read.ID != creativeURN:
-		// The finder answers ids as sponsoredCreative URNs (probed 26 Nov), as this GET is asked by.
-		return "LinkedIn's answer for it describes another creative", nil
 	case ad == nil:
-		return "LinkedIn's answer for it names no sponsored post", nil
+		return creativeWrong, "it sponsors no organization post (it is not a boost creative)", nil
 	case postURN != "" && ad.Reference != postURN:
-		return fmt.Sprintf("it sponsors post %s, not %s", domain.CallerValue(ad.Reference), domain.CallerValue(postURN)), nil
+		return creativeWrong, fmt.Sprintf("it sponsors post %s, not %s", domain.CallerValue(ad.Reference), domain.CallerValue(postURN)), nil
 	case ad.ContentAuthor != orgURN:
 		who := "a LinkedIn member"
 		if strings.HasPrefix(ad.ContentAuthor, "urn:li:organization:") {
 			who = domain.CallerValue(ad.ContentAuthor)
 		}
-		return fmt.Sprintf("the post is authored by %s, not by %s, the organization ad account %s serves; only that organization's own posts can be boosted here", who, orgURN, accountID), nil
+		return creativeWrong, fmt.Sprintf("the post is authored by %s, not by %s, the organization ad account %s serves; only that organization's own posts can be boosted here", who, orgURN, accountID), nil
 	}
-	return "", nil
+	return creativeOK, "", nil
 }
 
-// checkBoostCreativeAuthor checks the creative this call created and returns nil only when it
+// unknownCause is what an error for a creativeUnknown wraps: the read's own error when the GET
+// failed (a 401 keeps ErrCredentialsExpired), else errBoostCreativeUnchecked. Never
+// ErrBoostPostIneligible: nothing showed the post is ineligible.
+func unknownCause(readErr error) error {
+	if readErr != nil {
+		return readErr
+	}
+	return errBoostCreativeUnchecked
+}
+
+// errBoostCreativeUnchecked marks a boost creative LinkedIn answered about in a way that could not
+// be trusted, so its author was neither confirmed nor refuted.
+var errBoostCreativeUnchecked = errors.New("linkedin: the boost creative's author could not be checked")
+
+// checkPostedBoostCreative checks the creative this call just posted and returns nil only when it
 // sponsors postURN and orgURN authored that post. It stands in for verifyBoostPost's author check
 // when the connection cannot read posts: without it, a caller could boost any post the
 // connection's member may sponsor, from another organization's page included.
 //
-// Any other outcome deletes the creative (a DRAFT, which LinkedIn lets a DELETE remove but not
-// archive) and returns an error. The DELETE runs on a context detached from the job's, with its
-// own timeout, so a cancelled job still cleans up. A failed read's error stays wrapped (%w), so an
-// expired connection still reads as one; it is not reported as an ineligible post, since it says
-// nothing about the post.
-func (c *Client) checkBoostCreativeAuthor(ctx context.Context, accountID, orgURN, campaignID, postURN, creativeURN string, campaignReused bool) error {
-	why, readErr := c.boostCreativeProblem(ctx, accountID, orgURN, creativeURN, postURN)
-	if why == "" {
-		return nil
+// Any other verdict deletes the creative (a DRAFT, which LinkedIn lets a DELETE remove but not
+// archive) and returns an error; the error says whether the DELETE succeeded. undone reports a
+// creative that could not be checked and was deleted, so nothing of it remains (finishBoost
+// decides what that means for the claim). The DELETE runs on a context detached from the job's,
+// with its own timeout, so a cancelled job still cleans up. The error wraps ErrBoostPostIneligible
+// for a wrong creative, and the read's own error (a 401 keeps ErrCredentialsExpired) or
+// errBoostCreativeUnchecked when it could not be checked.
+func (c *Client) checkPostedBoostCreative(ctx context.Context, accountID, orgURN, campaignID, postURN, creativeURN string, campaignReused bool) (undone bool, err error) {
+	verdict, why, readErr := c.judgeBoostCreative(ctx, accountID, orgURN, creativeURN, postURN)
+	if verdict == creativeOK {
+		return false, nil
+	}
+	cause := ErrBoostPostIneligible
+	if verdict == creativeUnknown {
+		cause = unknownCause(readErr)
 	}
 	cleanup := fmt.Sprintf("the DRAFT creative %s was deleted", creativeURN)
 	path := fmt.Sprintf("adAccounts/%s/creatives/%s", accountID, encodeURNForPath(creativeURN))
 	delCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), boostCreativeDeleteTimeout)
 	defer cancel()
+	deleted := true
 	if _, derr := c.doRequest(delCtx, http.MethodDelete, path, nil, nil, nil, true); derr != nil {
+		deleted = false
 		cleanup = fmt.Sprintf("deleting the DRAFT creative %s failed (%v), so delete it in Campaign Manager", creativeURN, derr)
 	}
-	left := fmt.Sprintf("campaign %s is left PAUSED with no ad", campaignID)
+	left := fmt.Sprintf("campaign %s is left PAUSED", campaignID)
 	if campaignReused {
 		left = fmt.Sprintf("campaign %s (found by name) is left as it was", campaignID)
 	}
-	return fmt.Errorf("boost creative for post %s failed the author check: %s; %s, and %s: %w", domain.CallerValue(postURN), why, cleanup, left, problemCause(readErr))
+	return deleted && verdict == creativeUnknown, fmt.Errorf("boost creative for post %s did not pass the author check: %s; %s, and %s: %w", domain.CallerValue(postURN), why, cleanup, left, cause)
 }
 
 // checkReusedBoostCampaign checks the author of every creative campaignID already holds, for any
-// post. It returns ("", err) when the creatives could not be listed (nothing was posted), and the
-// first failing creative with its error otherwise. A failing creative is never deleted here: it
-// may be serving, so the error names it for removal.
-func (c *Client) checkReusedBoostCampaign(ctx context.Context, accountID, orgURN, campaignID string) (string, error) {
-	urns, err := c.listCreativeURNs(ctx, accountID, campaignID)
+// post, reading the campaign's creatives with a listing identityjson must trust (an untrusted page
+// could hide one). It returns the creatives checked. bad names the first creative checked and
+// wrong, with an ErrBoostPostIneligible error; an error with bad empty means the check could not
+// finish (a failed or untrusted listing, or a creative that could not be checked). It never
+// deletes: a creative it finds may be serving.
+func (c *Client) checkReusedBoostCampaign(ctx context.Context, accountID, orgURN, campaignID string) (checked []string, bad string, err error) {
+	urns, err := c.listBoostCreativeURNs(ctx, accountID, campaignID)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 	for _, urn := range urns {
-		if why, readErr := c.boostCreativeProblem(ctx, accountID, orgURN, urn, ""); why != "" {
-			return urn, fmt.Errorf("creative %s on campaign %s (found by name) failed the author check: %s; nothing was posted, so remove it in Campaign Manager before boosting into this campaign again: %w", urn, campaignID, why, problemCause(readErr))
+		verdict, why, readErr := c.judgeBoostCreative(ctx, accountID, orgURN, urn, "")
+		switch verdict {
+		case creativeWrong:
+			return nil, urn, fmt.Errorf("creative %s on campaign %s (found by name) failed the author check: %s; nothing was posted, so remove it in Campaign Manager before boosting into this campaign again: %w", urn, campaignID, why, ErrBoostPostIneligible)
+		case creativeUnknown:
+			return nil, "", fmt.Errorf("creative %s on campaign %s could not be checked (%s): %w", urn, campaignID, why, unknownCause(readErr))
 		}
 	}
-	return "", nil
-}
-
-// problemCause is what an author-check error wraps: the read's own error when the read failed
-// (a 401 keeps ErrCredentialsExpired), else ErrBoostPostIneligible.
-func problemCause(readErr error) error {
-	if readErr != nil {
-		return readErr
-	}
-	return ErrBoostPostIneligible
-}
-
-// isCredentialFailure reports a failure of the connection's credentials rather than of the request.
-func isCredentialFailure(err error) bool {
-	return errors.Is(err, ErrCredentialsExpired) || errors.Is(err, ErrApplicationCredentialsInvalid) || errors.Is(err, ErrTokenRequestRejected)
+	return urns, "", nil
 }

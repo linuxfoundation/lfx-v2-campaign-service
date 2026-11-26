@@ -151,6 +151,12 @@ func newLIBoostAPI(t *testing.T, post string) *liBoostAPI {
 				return
 			}
 			_, _ = io.WriteString(w, a.post)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/creatives/"):
+			// A boost's author check reads each creative of a reused campaign back: the found one
+			// sponsors the post, authored by the connection's organization.
+			b, _ := json.Marshal(map[string]any{"id": "urn:li:sponsoredCreative:777", "content": map[string]any{
+				"standardUpdateAd": map[string]any{"contentAuthor": "urn:li:organization:987654321", "reference": "urn:li:ugcPost:6856810298419044352"}}})
+			_, _ = w.Write(b)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives"):
 			a.finderCalls++
 			switch {
@@ -370,7 +376,7 @@ func TestLinkedIn_BoostLookupFailureIsRetried(t *testing.T) {
 	api.existing, api.finderStatus, api.creatives = true, http.StatusServiceUnavailable, nil
 	api.mu.Unlock()
 	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, linkedInBoostConfig(validBoost))
-	if camp != nil || !isNoUpstreamCreate(err) || !strings.Contains(err.Error(), "repeats the lookup") {
+	if camp != nil || !isNoUpstreamCreate(err) || !strings.Contains(err.Error(), "this call created nothing and posted no creative") {
 		t.Fatalf("Dispatch with the finder down = %+v, %v; want nothing recorded and a not-created error", camp, err)
 	}
 
@@ -386,7 +392,8 @@ func TestLinkedIn_BoostLookupFailureIsRetried(t *testing.T) {
 	}
 	api.mu.Lock()
 	defer api.mu.Unlock()
-	if api.finderCalls != 2 || len(api.creatives) != 0 {
-		t.Errorf("finder calls %d, creative POSTs %d; want the lookup on both reuses and no second creative", api.finderCalls, len(api.creatives))
+	// The failed reuse stops at the campaign-wide check; the retry checks the campaign, then looks up.
+	if api.finderCalls != 3 || len(api.creatives) != 0 {
+		t.Errorf("finder calls %d, creative POSTs %d; want three finder reads and no second creative", api.finderCalls, len(api.creatives))
 	}
 }
