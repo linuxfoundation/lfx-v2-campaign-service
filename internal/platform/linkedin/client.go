@@ -364,6 +364,9 @@ type CampaignInput struct {
 	// BoostPost is the existing organization post a FormatBoost create sponsors (#673):
 	// urn:li:share:<id> or urn:li:ugcPost:<id>. Refused under any other format. See boost.go.
 	BoostPost string
+	// boostVideoPost is set by CreateCampaign once verifyBoostPost has read a video post, so the
+	// campaign name's Ad Format segment is "Boost Motion" rather than "Boost". Never set by callers.
+	boostVideoPost bool
 	// JobFunctions replace the default job functions (urn:li:function:8, 13 and 16) in the
 	// profile's own jobFunctions clause (#585). Nil means the default. Not read with Targeting,
 	// which brings its own. CreateCampaign runs ValidateJobFunctions on it before any request.
@@ -2738,6 +2741,16 @@ func (c *Client) postCreative(ctx context.Context, accountID, campaignID string,
 		return "", err
 	}
 	creativesPath := fmt.Sprintf("adAccounts/%s/creatives", accountID)
+	// The returned id is what later steps act on (a boost reads that creative back to check its
+	// author, #673), so a body encoding/json would read loosely (a repeated or case-folded id
+	// key, malformed UTF-8) is not trusted: the creative may exist, but which one is unknown, so
+	// it is UNCONFIRMED like any malformed 2xx. An empty body (the id in x-restli-id) has nothing
+	// to check.
+	if len(bytes.TrimSpace(resp.raw)) > 0 {
+		if err := identityjson.Check(resp.raw); err != nil {
+			return "", &transportError{Method: http.MethodPost, Path: creativesPath, Err: fmt.Errorf("creative creation returned a body that could not be trusted: %w", err)}
+		}
+	}
 	if resp.ID == "" {
 		// A 2xx with no id is a malformed SUCCESS: the creative may exist but its id is
 		// unreadable. A creative has no reconciliation lookup, so wrap as
@@ -3554,6 +3567,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return nil, err
 		}
 		boostOrgURN, boostPostChecked = orgURN, checked
+		if campaignFormat == campaignFormatSingleVideo {
+			// The name was composed before the post was read: a video post's campaign is
+			// SINGLE_VIDEO, so it gets its own name and never meets a non-video boost's campaign
+			// by name. Re-checked against the limit, since the segment is longer.
+			named := in
+			named.boostVideoPost = true
+			campaignName = buildCampaignName(eventName, bidding.nameObjective, project, named)
+			if n := len([]rune(campaignName)); n > maxNameLen {
+				return nil, domain.PreflightRefusalf("campaign name is %d characters, exceeds the %d-character limit; shorten the event name or project", n, maxNameLen)
+			}
+		}
 		if checked {
 			steps = append(steps, fmt.Sprintf("Boost post %s verified: published by %s, public, organic, sponsorable", in.BoostPost, orgURN))
 		} else {

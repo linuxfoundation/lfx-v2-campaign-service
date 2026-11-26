@@ -82,6 +82,14 @@ creative the call posted that fails or cannot be checked is deleted and keeps th
 a 401 included (round 4 had returned no result there, losing the ids of what was created), except
 when it could not be checked and was deleted again in a reused campaign, which leaves nothing.
 
+**Update (review round 6)** — a video post read before the create gets the Ad Format segment
+`Boost Motion` (the name is recomposed after the read), so a video boost's SINGLE_VIDEO campaign and a
+non-video boost's campaign never share a name; without the read the segment stays `Boost` and the
+reuse check refuses a same-name SINGLE_VIDEO campaign. An ambiguous creative POST without the post
+read is now marked `BoostCreativeUnverified` (pending), since that creative may exist with no author
+check. `postCreative` refuses a 2xx body that `identityjson` rejects (repeated or case-folded keys,
+malformed UTF-8) as UNCONFIRMED, for every creative.
+
 Account grants (#581) are not scoped to a project: a project falling back to the LF system row may
 name any grant, and a boost through it passes the post check for that grant's organization. That
 is unchanged by this entry; tracked separately.

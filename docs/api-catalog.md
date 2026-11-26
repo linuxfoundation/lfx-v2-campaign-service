@@ -2138,7 +2138,11 @@ The campaign group and the SPONSORED_UPDATES campaign are the ordinary ones: bid
 targeting, conversions, budget and schedule work exactly as for a single-image create. The
 campaign name's Ad Format segment is `Boost` (`Events | <event> | <region> | <objective> |
 <targeting> | Boost | <project> | <funnel>`), so a boost never shares a name, or the by-name reuse,
-with a dark-post campaign. No dark post is authored; the campaign gets ONE DRAFT creative:
+with a dark-post campaign. A video post read before the create gets `Boost Motion` instead: its
+campaign is `SINGLE_VIDEO`, and LinkedIn mixes video and non-video creatives on no campaign, so the
+two kinds never meet by name. Without the post read the media type is unknown and the segment stays
+`Boost`; a same-name campaign LinkedIn reports as `SINGLE_VIDEO` is then refused by the reuse check
+before anything is posted. No dark post is authored; the campaign gets ONE DRAFT creative:
 
 ```
 POST /rest/adAccounts/<acct>/creatives

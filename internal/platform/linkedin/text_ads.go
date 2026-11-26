@@ -205,6 +205,11 @@ func adFormatNameSegment(in CampaignInput) string {
 		return "Document"
 	}
 	if in.Format == FormatBoost {
+		// A video post's campaign is SINGLE_VIDEO and any other post's is not, and LinkedIn mixes
+		// neither, so the two never share a name (CreateCampaign renames once the post is read).
+		if in.boostVideoPost {
+			return "Boost Motion"
+		}
 		return "Boost"
 	}
 	if isVideoInput(in) {

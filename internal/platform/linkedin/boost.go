@@ -337,9 +337,13 @@ func (c *Client) finishBoost(ctx context.Context, accountID, groupName, groupID,
 	}
 	if err != nil {
 		if createOutcomeAmbiguous(err) {
-			steps = append(steps, fmt.Sprintf("Boost creative for post %s outcome UNCONFIRMED (timeout, server error, or an in-flight cancellation); it may have been created — verify before recreating", postURN))
-			return partial(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps)),
-				fmt.Errorf("boost creative for post %s UNCONFIRMED: %w — group %q and campaign %q already exist; the creative MAY have been created; inspect the returned partial result", postURN, err, groupID, campaignID)
+			steps = append(steps, fmt.Sprintf("Boost creative for post %s outcome UNCONFIRMED (timeout, server error, an in-flight cancellation, or an untrusted answer); it may have been created — verify before recreating", postURN))
+			r := partial(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps))
+			// Without the post read, a creative that may exist has had no author check: kept as
+			// pending (reconciliation required), never created_degraded, which the orchestrator
+			// would reuse as complete without the check ever running.
+			r.BoostCreativeUnverified = !postChecked
+			return r, fmt.Errorf("boost creative for post %s UNCONFIRMED: %w — group %q and campaign %q already exist; the creative MAY have been created; inspect the returned partial result", postURN, err, groupID, campaignID)
 		}
 		if why := boostCreativeRefusal(err, postURN, accountID); why != "" {
 			steps = append(steps, why)

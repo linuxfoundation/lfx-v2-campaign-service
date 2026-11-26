@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -321,16 +322,20 @@ func TestCreateCampaign_BoostWireBodies(t *testing.T) {
 }
 
 // TestCreateCampaign_BoostContentDecidesFormat: a video post's campaign is created with format
-// SINGLE_VIDEO, which LinkedIn requires on a video campaign; text-only and article posts send none.
+// SINGLE_VIDEO, which LinkedIn requires on a video campaign, and named with the Ad Format segment
+// "Boost Motion", so it never shares a name (and the by-name reuse) with a non-video boost's
+// campaign; text-only, article and image posts send no format and keep "Boost".
 func TestCreateCampaign_BoostContentDecidesFormat(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		content any
 		want    any
+		segment string
 	}{
-		{"video", map[string]any{"media": map[string]any{"id": "urn:li:video:C5F10AQ"}}, "SINGLE_VIDEO"},
-		{"article", map[string]any{"article": map[string]any{"source": "https://x.org", "title": "t"}}, nil},
-		{"text only", nil, nil},
+		{"video", map[string]any{"media": map[string]any{"id": "urn:li:video:C5F10AQ"}}, "SINGLE_VIDEO", " | Boost Motion | "},
+		{"image", map[string]any{"media": map[string]any{"id": "urn:li:image:C4E22AQ"}}, nil, " | Boost | "},
+		{"article", map[string]any{"article": map[string]any{"source": "https://x.org", "title": "t"}}, nil, " | Boost | "},
+		{"text only", nil, nil, " | Boost | "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &boostServer{post: organicPost(func(p map[string]any) {
@@ -344,12 +349,78 @@ func TestCreateCampaign_BoostContentDecidesFormat(t *testing.T) {
 				t.Fatalf("CreateCampaign: %v", err)
 			}
 			s.mu.Lock()
-			got := s.campaign["format"]
+			got, name := s.campaign["format"], s.campaign["name"]
 			s.mu.Unlock()
 			if got != tc.want {
 				t.Errorf("campaign format = %v, want %v", got, tc.want)
 			}
+			if n, _ := name.(string); !strings.Contains(n, tc.segment) {
+				t.Errorf("campaign name = %q, want the Ad Format segment %q", n, tc.segment)
+			}
 		})
+	}
+}
+
+// TestCreateCampaign_BoostUnreadPostNeverJoinsAVideoCampaign: without the post read, the media
+// type is unknown and the name keeps "Boost", so a same-name campaign LinkedIn reports as
+// SINGLE_VIDEO (a video post boosted before) is refused by the reuse check before anything is
+// posted, rather than given a creative of another kind.
+func TestCreateCampaign_BoostUnreadPostNeverJoinsAVideoCampaign(t *testing.T) {
+	var found map[string]any
+	if err := json.Unmarshal([]byte(existingBoostCampaign(t)), &found); err != nil {
+		t.Fatal(err)
+	}
+	found["elements"].([]any)[0].(map[string]any)["format"] = "SINGLE_VIDEO"
+	body, _ := json.Marshal(found)
+	s := &boostServer{postStatus: http.StatusForbidden, existingCampaign: string(body)}
+	_, err := newBoostClient(t, s).CreateCampaign(context.Background(), boostInput())
+	if err == nil || !strings.Contains(err.Error(), "with format SINGLE_VIDEO") {
+		t.Fatalf("err %v; want the video campaign refused", err)
+	}
+	// This server does not report the group, so the client creates one; no campaign or creative is posted.
+	for _, m := range s.mutations() {
+		if strings.Contains(m, "adCampaigns") || strings.Contains(m, "creatives") {
+			t.Errorf("mutation %s; want no campaign or creative POST", m)
+		}
+	}
+}
+
+// TestCreateCampaign_BoostUnconfirmedCreative: an ambiguous creative POST (a 5xx, or a 2xx whose
+// body identityjson refuses, so the id cannot be trusted) is UNCONFIRMED with the partial result.
+// Without the post read, that creative may exist with no author check, so the partial is marked
+// BoostCreativeUnverified (pending); with the post read it is not, since the creative can only
+// sponsor the post already checked.
+func TestCreateCampaign_BoostUnconfirmedCreative(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"server error", http.StatusInternalServerError, ""},
+		{"repeated id key", http.StatusCreated, `{"id":"urn:li:sponsoredCreative:401","id":"urn:li:sponsoredCreative:999"}`},
+		{"case-folded id key", http.StatusCreated, `{"id":"urn:li:sponsoredCreative:401","ID":"urn:li:sponsoredCreative:999"}`},
+		{"malformed UTF-8", http.StatusCreated, "{\"id\":\"urn:li:sponsoredCreative:401\",\"note\":\"\xff\"}"},
+	} {
+		for _, read := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s, post read %v", tc.name, read), func(t *testing.T) {
+				s := &boostServer{creativeStatus: tc.status, creativeBody: tc.body}
+				if !read {
+					s.postStatus = http.StatusForbidden
+				}
+				res, err := newBoostClient(t, s).CreateCampaign(context.Background(), boostInput())
+				if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
+					t.Fatalf("err = %v, want UNCONFIRMED", err)
+				}
+				if res == nil || res.CampaignID != "200" || res.BoostCreativeUnverified != !read {
+					t.Errorf("partial = %+v, want campaign 200 with BoostCreativeUnverified %v", res, !read)
+				}
+				s.mu.Lock()
+				defer s.mu.Unlock()
+				if s.deletes != 0 {
+					t.Errorf("creative DELETEs = %d; an unconfirmed creative's id is unknown, so nothing is deleted", s.deletes)
+				}
+			})
+		}
 	}
 }
 

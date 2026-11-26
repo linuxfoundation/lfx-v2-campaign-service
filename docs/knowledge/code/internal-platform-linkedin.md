@@ -1307,7 +1307,14 @@ content table, and the Creatives API error table (`UGC_RESHARE_CANNOT_BE_SPONSOR
 campaign gets `format: SINGLE_VIDEO` (the campaign format the post's media needs); otherwise
 none is sent.
 
-The name's Ad Format segment is `Boost` (`adFormatNameSegment`); a boost skips the pre-#587
+The name's Ad Format segment is `Boost` (`adFormatNameSegment`), or `Boost Motion` for a video post:
+the name is composed before the post is read, so `CreateCampaign` recomposes it (and re-checks the
+255-character limit) once `verifyBoostPost` returns `SINGLE_VIDEO`, through the unexported
+`CampaignInput.boostVideoPost`. Without the read the segment stays `Boost`, and the reuse check's
+format-kind comparison refuses a same-name `SINGLE_VIDEO` campaign. An ambiguous creative POST
+without the post read marks the partial `BoostCreativeUnverified`. `postCreative` (every creative,
+not only boosts) refuses a non-empty 2xx body `identityjson` rejects as UNCONFIRMED, since the id it
+returns is what a boost reads back. A boost skips the pre-#587
 legacy-name lookup. `finishBoost` attaches the creative through `ensureBoostCreative`: on a
 campaign found by name it first calls `findCreativeURNs` (the creatives finder narrowed by
 `contentReferences=List(<post>)`, a new `preEncodedParams` key; `listCreativeURNs` is the
