@@ -1188,21 +1188,25 @@ func encodeURNForPath(urn string) string {
 // into encodeURNForPath (which escapes only colons) and, via the broadened path allow-list,
 // altering the request URL. Returns "" if no usable numeric id can be extracted.
 func creativeURN(el responseElement) string {
-	const prefix = "urn:li:sponsoredCreative:"
 	for _, cand := range []string{el.URN, el.DURN, el.ID.String()} {
-		s := strings.TrimSpace(cand)
-		if s == "" {
-			continue
-		}
-		// Normalize to the trailing id: strip the URN prefix if present, else use the value
-		// as-is (the bare-numeric form). Only a pure positive integer is accepted, so any
-		// path-altering or malformed suffix is rejected.
-		id := strings.TrimPrefix(s, prefix)
-		if creativeNumericIDRE.MatchString(id) {
-			return prefix + id
+		if urn := canonicalCreativeURN(cand); urn != "" {
+			return urn
 		}
 	}
 	return ""
+}
+
+// canonicalCreativeURN is creativeURN for one value: a sponsoredCreative URN or a bare numeric id,
+// rebuilt as "urn:li:sponsoredCreative:<digits>", or "" when it is neither. Only a pure positive
+// integer is accepted as the trailing id, so a path-altering or malformed suffix ('?', '/',
+// percent-encoding) is rejected rather than reaching encodeURNForPath.
+func canonicalCreativeURN(value string) string {
+	const prefix = "urn:li:sponsoredCreative:"
+	id := strings.TrimPrefix(strings.TrimSpace(value), prefix)
+	if !creativeNumericIDRE.MatchString(id) {
+		return ""
+	}
+	return prefix + id
 }
 
 // creativeNumericIDRE matches a bare numeric creative id (the flexibleID numeric form) so it

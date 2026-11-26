@@ -137,7 +137,7 @@ func checkBoostPost(accountID, orgURN, postURN string, raw []byte) (string, erro
 	if err := json.Unmarshal(raw, &post); err != nil {
 		return "", fmt.Errorf("LinkedIn's answer for boost post %s is not a post; nothing was created", shown)
 	}
-	if post.ID != postURN {
+	if !samePost(post.ID, postURN) {
 		return "", fmt.Errorf("LinkedIn's answer for boost post %s describes post %s; nothing was created", shown, domain.CallerValue(post.ID))
 	}
 	if post.Author != orgURN {
@@ -166,6 +166,25 @@ func checkBoostPost(accountID, orgURN, postURN string, raw []byte) (string, erro
 		return "", boostIneligible("post %s has feedDistribution %s; a boost sponsors an organic MAIN_FEED post (a dark post is created with variants instead)", shown, domain.CallerValue(feed))
 	}
 	return boostCampaignFormat(shown, post.Content)
+}
+
+// samePost reports whether the Posts API's id names the post that was asked for: the same URN, or
+// the same post under its other URN kind. The Posts API takes a share URN or a ugcPost URN for one
+// post and may answer with the other kind, so a share asked for as urn:li:share:N may come back as
+// urn:li:ugcPost:M. The answer is to the GET addressed to postURN, so only a well-formed URN of the
+// other kind is accepted as that alias; the same kind with another id, or any other kind, is not.
+func samePost(answered, postURN string) bool {
+	if answered == postURN {
+		return true
+	}
+	kinds := [...]string{"urn:li:share:", "urn:li:ugcPost:"}
+	for i, asked := range kinds {
+		other := kinds[1-i]
+		if strings.HasPrefix(postURN, asked) && strings.HasPrefix(answered, other) {
+			return creativeNumericIDRE.MatchString(strings.TrimPrefix(answered, other))
+		}
+	}
+	return false
 }
 
 // boostCampaignFormat decides the campaign format a post's content needs, and refuses content
@@ -276,7 +295,18 @@ func (c *Client) ensureBoostCreative(ctx context.Context, accountID, campaignID 
 	}
 	// No leadgenCallToAction: a boost is never a lead generation create (ValidateLeadGen).
 	urn, err := c.createCreative(ctx, accountID, campaignID, postURN, adName, nil)
-	return urn, false, nil, err
+	if err != nil {
+		return "", false, nil, err
+	}
+	// The returned id is read back and may be deleted, so only its canonical form is acted on. An
+	// id that is not a sponsoredCreative URN (or bare number) is a malformed success: the creative
+	// may exist but which one is unknown, so it is UNCONFIRMED, with no GET and no DELETE.
+	canonical := canonicalCreativeURN(urn)
+	if canonical == "" {
+		return "", false, nil, &transportError{Method: http.MethodPost, Path: fmt.Sprintf("adAccounts/%s/creatives", accountID),
+			Err: fmt.Errorf("creative creation returned an ID %s that is not a sponsoredCreative URN", domain.CallerValue(urn))}
+	}
+	return canonical, false, nil, nil
 }
 
 // finishBoost is CreateCampaign's creative step for a boost (#673): the one creative sponsoring
@@ -404,7 +434,8 @@ const boostCreativeDeleteTimeout = 30 * time.Second
 // answers a creative made with content.reference as content.standardUpdateAd (probed on
 // 26 Nov 2026), naming the post and its author.
 type boostCreativeRead struct {
-	ID      string `json:"id"`
+	// ID is a URN or a bare number, as the finder answers it (flexibleID); compared canonically.
+	ID      flexibleID `json:"id"`
 	Content struct {
 		StandardUpdateAd *struct {
 			ContentAuthor string `json:"contentAuthor"`
@@ -442,8 +473,9 @@ func (c *Client) judgeBoostCreative(ctx context.Context, accountID, orgURN, crea
 	if json.Unmarshal(raw, &read) != nil {
 		return creativeUnknown, "LinkedIn's answer for it is not a creative", nil
 	}
-	if read.ID != creativeURN {
-		// The finder answers ids as sponsoredCreative URNs (probed 26 Nov), as this GET is asked by.
+	if canonicalCreativeURN(read.ID.String()) != creativeURN {
+		// creativeURN is canonical (every caller passes a creativeURN or canonicalCreativeURN value),
+		// so "401", 401 and "urn:li:sponsoredCreative:401" all name the creative asked for.
 		return creativeUnknown, "LinkedIn's answer for it describes another creative", nil
 	}
 	ad := read.Content.StandardUpdateAd

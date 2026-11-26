@@ -400,6 +400,9 @@ func TestCreateCampaign_BoostUnconfirmedCreative(t *testing.T) {
 		{"repeated id key", http.StatusCreated, `{"id":"urn:li:sponsoredCreative:401","id":"urn:li:sponsoredCreative:999"}`},
 		{"case-folded id key", http.StatusCreated, `{"id":"urn:li:sponsoredCreative:401","ID":"urn:li:sponsoredCreative:999"}`},
 		{"malformed UTF-8", http.StatusCreated, "{\"id\":\"urn:li:sponsoredCreative:401\",\"note\":\"\xff\"}"},
+		{"an id with a query suffix", http.StatusCreated, `{"id":"urn:li:sponsoredCreative:401?x=1"}`},
+		{"an id with a path suffix", http.StatusCreated, `{"id":"urn:li:sponsoredCreative:401/../9"}`},
+		{"an id of another kind", http.StatusCreated, `{"id":"urn:li:sponsoredCampaign:401"}`},
 	} {
 		for _, read := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s, post read %v", tc.name, read), func(t *testing.T) {
@@ -418,6 +421,11 @@ func TestCreateCampaign_BoostUnconfirmedCreative(t *testing.T) {
 				defer s.mu.Unlock()
 				if s.deletes != 0 {
 					t.Errorf("creative DELETEs = %d; an unconfirmed creative's id is unknown, so nothing is deleted", s.deletes)
+				}
+				for _, call := range s.calls {
+					if strings.HasPrefix(call, "GET ") && strings.Contains(call, "/creatives/") {
+						t.Errorf("an unconfirmed creative was read back: %s", call)
+					}
 				}
 			})
 		}
@@ -454,6 +462,8 @@ func TestCreateCampaign_BoostPostRefusedBeforeAnyPOST(t *testing.T) {
 		{"carousel", func(p map[string]any) { p["content"] = map[string]any{"carousel": map[string]any{}} }, 0, `carries "carousel" content`, true},
 		{"not found", nil, http.StatusNotFound, `post "urn:li:share:7001" was not found (LinkedIn answered 404)`, true},
 		{"another post answered", func(p map[string]any) { p["id"] = "urn:li:share:9" }, 0, `describes post "urn:li:share:9"`, false},
+		{"another kind of resource answered", func(p map[string]any) { p["id"] = "urn:li:activity:7001" }, 0, `describes post "urn:li:activity:7001"`, false},
+		{"a malformed ugcPost id answered", func(p map[string]any) { p["id"] = "urn:li:ugcPost:7001?x=1" }, 0, `describes post (value withheld)`, false},
 		{"server error", nil, http.StatusInternalServerError, `reading boost post "urn:li:share:7001" failed before anything was created`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1136,6 +1146,80 @@ func TestBoostCreativeRefusal(t *testing.T) {
 			}
 			if !strings.Contains(got, "("+tt.want+")") || !strings.Contains(got, boostCreativeCodes[tt.want]) || !strings.Contains(got, account) {
 				t.Fatalf("boostCreativeRefusal = %q, want the %s sentence for account %s", got, tt.want, account)
+			}
+		})
+	}
+}
+
+// TestSamePost pins which Posts API ids name the post asked for: the same URN, or a well-formed URN
+// of the other kind (share ↔ ugcPost), which the API may answer with for the same post.
+func TestSamePost(t *testing.T) {
+	for _, tc := range []struct {
+		answered, asked string
+		want            bool
+	}{
+		{"urn:li:share:7001", "urn:li:share:7001", true},
+		{"urn:li:ugcPost:7002", "urn:li:share:7001", true},
+		{"urn:li:share:7001", "urn:li:ugcPost:7002", true},
+		{"urn:li:share:9", "urn:li:share:7001", false},
+		{"urn:li:ugcPost:9", "urn:li:ugcPost:7002", false},
+		{"urn:li:activity:7001", "urn:li:share:7001", false},
+		{"urn:li:ugcPost:", "urn:li:share:7001", false},
+		{"urn:li:ugcPost:7002?x=1", "urn:li:share:7001", false},
+		{"", "urn:li:share:7001", false},
+	} {
+		if got := samePost(tc.answered, tc.asked); got != tc.want {
+			t.Errorf("samePost(%q, %q) = %v, want %v", tc.answered, tc.asked, got, tc.want)
+		}
+	}
+}
+
+// TestCreateCampaign_BoostPostAnsweredUnderItsOtherURN: a post asked for as a share and answered
+// as its ugcPost passes the checks, and the creative still references the URN asked for.
+func TestCreateCampaign_BoostPostAnsweredUnderItsOtherURN(t *testing.T) {
+	s := &boostServer{post: organicPost(func(p map[string]any) { p["id"] = "urn:li:ugcPost:7002" })}
+	if _, err := newBoostClient(t, s).CreateCampaign(context.Background(), boostInput()); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.creatives) != 1 || s.creatives[0]["content"].(map[string]any)["reference"] != boostTestPost {
+		t.Errorf("creatives = %+v, want one referencing %s", s.creatives, boostTestPost)
+	}
+}
+
+// TestCreateCampaign_BoostCreativeReadNumericID: the creative GET may answer its id as a bare
+// number or numeric string, as the finder does (flexibleID); each names the creative asked for,
+// so the author check passes and nothing is deleted. Another number is still another creative.
+func TestCreateCampaign_BoostCreativeReadNumericID(t *testing.T) {
+	const org = "urn:li:organization:987654321"
+	body := func(id string) string {
+		return `{"id":` + id + `,"content":{"standardUpdateAd":{"contentAuthor":"` + org + `","reference":"` + boostTestPost + `"}}}`
+	}
+	for _, tc := range []struct {
+		name    string
+		id      string
+		wantErr bool
+	}{
+		{"a JSON number", `401`, false},
+		{"a numeric string", `"401"`, false},
+		{"the URN", `"urn:li:sponsoredCreative:401"`, false},
+		{"another number", `9`, true},
+		{"a malformed URN", `"urn:li:sponsoredCreative:401?x=1"`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &boostServer{postStatus: http.StatusForbidden, creativeRead: body(tc.id)}
+			_, err := newBoostClient(t, s).CreateCampaign(context.Background(), boostInput())
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, want error %v", err, tc.wantErr)
+			}
+			if tc.wantErr && !strings.Contains(err.Error(), "describes another creative") {
+				t.Errorf("err = %v, want it to say the answer describes another creative", err)
+			}
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if want := map[bool]int{false: 0, true: 1}[tc.wantErr]; s.deletes != want {
+				t.Errorf("deletes = %d, want %d", s.deletes, want)
 			}
 		})
 	}
