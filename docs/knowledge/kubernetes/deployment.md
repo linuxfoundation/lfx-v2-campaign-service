@@ -260,6 +260,13 @@ document ad whose Documents API upload and post have not been exercised against 
 account. Only exactly `"true"` enables it; off, a create naming it is refused with a 400 before a
 job exists. Not role-gated beyond what a lead generation create already requires.
 
+`LINKEDIN_ADS_TARGET_COST_ENABLED` defaults to `"false"` (#674) and is the same kind of gate for
+`linkedInConfig.bidding.targetAmount`: automatic bidding with a target, sent as the campaign's
+`unitCost` beside `MAX_CLICK` or `MAX_CONVERSION` with `costType` `CPM`. LinkedIn's documentation
+does not describe `unitCost` on a `MAX_*` campaign and this service has not created one, so it stays
+off until a paused probe create shows LinkedIn holding the amount as the target. Only exactly
+`"true"` enables it; off, a create naming `targetAmount` is refused with a 400 before a job exists.
+
 `SURVEY_SEQUENCE_WORKFLOW_ID` is a plain value defaulting to `""`, which selects the in-code
 default `1841232183`: the LF Research survey-promo workflow a survey send series
 (`send-workflows`) is copied from when a request names none. That id exists only in the LF

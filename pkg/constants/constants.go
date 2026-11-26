@@ -841,6 +841,16 @@ const (
 	// creatives off the live ad account until the paused probe in the PR passes.
 	EnvLinkedInAdsLeadGenEnabled = "LINKEDIN_ADS_LEAD_GEN_ENABLED"
 
+	// EnvLinkedInAdsTargetCostEnabled opts a deployment IN to linkedInConfig.bidding.targetAmount
+	// (#674): automatic bidding with a target, sent as the campaign's unitCost beside the automated
+	// optimizationTargetType (MAX_CLICK or MAX_CONVERSION) and costType CPM — the shape the
+	// marketing team's Campaign Manager campaigns carry. Only the exact value "true" enables it;
+	// unset or any other value fails closed, and a create naming targetAmount is refused before a
+	// job exists. LinkedIn's documentation does not describe unitCost on a MAX_* campaign, so it
+	// stays off the shared ad account until a paused live probe create confirms LinkedIn holds the
+	// amount as the campaign's target.
+	EnvLinkedInAdsTargetCostEnabled = "LINKEDIN_ADS_TARGET_COST_ENABLED"
+
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,
 	// so every campaign authenticates as the marketing-ops account regardless of any

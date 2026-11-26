@@ -73,6 +73,9 @@ func TestLinkedIn_WriteBid_GuardsRefuseWithoutWriting(t *testing.T) {
 		// #582: exactly what an automatic objective-"conversions" create sends — WEBSITE_CONVERSION,
 		// MAX_CONVERSION, costType CPM, no unitCost. It has no manual bid to change: 409.
 		{"automatic conversions create shape", liCampaignJSON(replace(`"NONE"`, `"MAX_CONVERSION"`), replace(`"costType":"CPC"`, `"costType":"CPM"`), replace(`"unitCost":{"amount":"5.25","currencyCode":"USD"},`, ``)), domain.ErrBidUnwritable},
+		// #674: exactly what an automatic create with bidding.targetAmount sends — MAX_CLICK, costType
+		// CPM, the target as unitCost. Its unitCost is a target, not a manual bid: 409, never clobbered.
+		{"automatic target cost create shape", liCampaignJSON(replace(`"NONE"`, `"MAX_CLICK"`), replace(`"costType":"CPC"`, `"costType":"CPM"`), replace(`"5.25"`, `"17.88"`)), domain.ErrBidUnwritable},
 		{"target cost", liCampaignJSON(replace(`"NONE"`, `"TARGET_COST_PER_CLICK"`)), domain.ErrBidUnwritable},
 		{"cost cap on CPM", liCampaignJSON(replace(`"NONE"`, `"CAP_COST_AND_MAXIMIZE_CLICKS"`), replace(`"CPC"`, `"CPM"`)), domain.ErrBidUnwritable},
 		{"unreported strategy", liCampaignJSON(replace(`"optimizationTargetType":"NONE",`, ``)), domain.ErrBidUnwritable},

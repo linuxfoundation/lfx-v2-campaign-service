@@ -1529,26 +1529,37 @@ type CampaignCreateInput struct {
 	// no manual bid. Refused with a 400 before any job exists: an objective that
 	// is not one of the two strings (an explicit null, "", a number, another word
 	// or casing), "traffic" with manual bidding, and "conversions" with automatic
-	// bidding and no conversions. LINKEDIN DAILY CAP (#584): with lifetimeBudget
-	// true, linkedInConfig takes an optional `dailyCapUsd` (USD), sent as the
-	// campaign's dailyBudget beside its totalBudget, on LinkedIn's continuous
-	// schedule (no campaign end; the event's campaign group carries it, and a
-	// create that cannot keep the shared group ending at the campaign's end is
-	// refused). Refused with a 400 before any job exists when it is set without
-	// lifetimeBudget, is not a number (null included), is not above zero, is under
-	// LinkedIn's $10 daily minimum, or is more than the lifetime budget. LINKEDIN
-	// LEAD GEN FORMS (#664): linkedInConfig.objective "lead_generation" creates a
-	// LEAD_GENERATION campaign with automatic bidding (MAX_LEAD; a manual bid is
-	// refused) whose creatives open the Lead Gen Form `leadGenForm` names
-	// (required: the form's numeric id or urn:li:adForm:<id>, built in Campaign
-	// Manager on the create's ad account; list-linkedin-ads-lead-forms lists
-	// them), sent as each creative's leadgenCallToAction with the button label
-	// `leadGenCallToAction` (optional, default REGISTER; one of APPLY, DOWNLOAD,
-	// VIEW_QUOTE, LEARN_MORE, SIGN_UP, SUBSCRIBE, REGISTER, REQUEST_DEMO, JOIN,
-	// ATTEND, UNLOCK_FULL_DOCUMENT, SHOP_NOW, BUY_NOW, SEE_MORE). leadGenForm
-	// names a resource of the ad account, so it requires global_marketing_ops of
-	// the project. Refused with a 400 before any job exists: any of the three
-	// while the deployment has not set LINKEDIN_ADS_LEAD_GEN_ENABLED to "true";
+	// bidding and no conversions. LINKEDIN TARGET COST (#674):
+	// linkedInConfig.bidding alone also takes an optional `targetAmount` (USD,
+	// whole cents, greater than zero, at most 1,000,000), automatic bidding's
+	// target: it is sent as the campaign's unitCost beside the automated
+	// optimizationTargetType (MAX_CLICK, or MAX_CONVERSION with objective
+	// "conversions"), with costType CPM. Omitted, nothing changes. The campaign is
+	// recorded as automatic, so update-campaign-bid answers 409 for it and never
+	// rewrites the target. Refused with a 400 before any job exists: targetAmount
+	// while LINKEDIN_ADS_TARGET_COST_ENABLED is not "true", with strategy
+	// "manual", null or not a number, or an amount that is not a whole number of
+	// cents above zero. It is an unknown bidding field on every other platform.
+	// LINKEDIN DAILY CAP (#584): with lifetimeBudget true, linkedInConfig takes an
+	// optional `dailyCapUsd` (USD), sent as the campaign's dailyBudget beside its
+	// totalBudget, on LinkedIn's continuous schedule (no campaign end; the event's
+	// campaign group carries it, and a create that cannot keep the shared group
+	// ending at the campaign's end is refused). Refused with a 400 before any job
+	// exists when it is set without lifetimeBudget, is not a number (null
+	// included), is not above zero, is under LinkedIn's $10 daily minimum, or is
+	// more than the lifetime budget. LINKEDIN LEAD GEN FORMS (#664):
+	// linkedInConfig.objective "lead_generation" creates a LEAD_GENERATION
+	// campaign with automatic bidding (MAX_LEAD; a manual bid is refused) whose
+	// creatives open the Lead Gen Form `leadGenForm` names (required: the form's
+	// numeric id or urn:li:adForm:<id>, built in Campaign Manager on the create's
+	// ad account; list-linkedin-ads-lead-forms lists them), sent as each
+	// creative's leadgenCallToAction with the button label `leadGenCallToAction`
+	// (optional, default REGISTER; one of APPLY, DOWNLOAD, VIEW_QUOTE, LEARN_MORE,
+	// SIGN_UP, SUBSCRIBE, REGISTER, REQUEST_DEMO, JOIN, ATTEND,
+	// UNLOCK_FULL_DOCUMENT, SHOP_NOW, BUY_NOW, SEE_MORE). leadGenForm names a
+	// resource of the ad account, so it requires global_marketing_ops of the
+	// project. Refused with a 400 before any job exists: any of the three while
+	// the deployment has not set LINKEDIN_ADS_LEAD_GEN_ENABLED to "true";
 	// lead_generation without leadGenForm, or leadGenForm or leadGenCallToAction
 	// without lead_generation; a leadGenForm that is not a string of a positive
 	// integer id; an unknown label; format "text"; offsiteDeliveryEnabled true;

@@ -5718,6 +5718,30 @@ minimum (`meta.BidCapDailyBudgetMultiple`, from the Ad Set reference) is the CLI
 encoded minor units once the account currency is known — the pre-check does not attempt it. `TestMicrosoft_ManualCreatedCampaignIsAcceptedByTheBidLever`
 drives a manual create and then `WriteBid` on the returned row.
 
+**LinkedIn target cost (#674).** `linkedInConfig.bidding` alone also takes `targetAmount`
+(`biddingConfig.TargetAmount`), automatic bidding's target in USD. `checkBiddingShape` admits the key
+only under `linkedInConfig` (`platformBiddingFields`; every other platform reports it as an unknown
+bidding field, as Microsoft's `targetCpa` is outside `microsoftConfig`), and `resolveBidding` refuses
+it on any path that reaches it. `linkedinBidPlan` takes it off first (`linkedinTargetAmount`):
+refused while `LINKEDIN_ADS_TARGET_COST_ENABLED` is not exactly `"true"` (`linkedinTargetCostEnabled`,
+read per call; the gate is named before the amount), when `null`, with a manual strategy, and unless
+`linkedin.ValidateTargetCost` accepts it (`ValidateBidAmount`'s rules: finite, above zero, at most
+1,000,000, whole cents, never rounded). The plan's `targetCost` reaches the client as
+`CampaignInput.TargetCost`; the row is recorded `automatic` with no `max_cpc_bid`, the config
+snapshot keeps `targetAmount` (`biddingConfig.MarshalJSON`), and the result blob records the sent
+amount as `targetCost`. The settings readback is unchanged: it compares only `objective_type`, and
+the target shows as the upstream-only `unit_cost` beside `bidding_strategy_type` `MAX_CLICK` /
+`MAX_CONVERSION` and `cost_type` `CPM`. The bid lever refuses such a campaign (not `ManualCPC`), so
+it never rewrites the target; changing a target after create is out of scope. LinkedIn's
+`Dispatch` runs `checkBiddingShape` before `unmarshalPlatformConfig` (PR #677 review): the strict
+decode (`biddingConfig.UnmarshalJSON`) fails a string or object `targetAmount` with a plain error
+that is neither `ErrCreateConfigInvalid` nor a `PreflightRefusal`, so a job that skipped the
+pre-flight would report a generic creation failure; it now gets `PreflightCreate`'s refusal, marked
+nothing-created, before any request. Tests:
+`linkedin_target_cost_test.go` (its Dispatch refusal table includes string, null and object
+targets), and the "automatic target cost create shape" row of
+`TestLinkedIn_WriteBid_GuardsRefuseWithoutWriting`.
+
 `TestCreateCampaigns_LanePlatformBiddingRefusalIsSynchronous400` (`bidding_create_e2e_test.go`)
 drives the real Meta and Microsoft dispatchers through `service.BriefService.CreateCampaigns`: a bad
 `bidding` is a synchronous 400 naming `<configKey>.bidding` and no job is created.
