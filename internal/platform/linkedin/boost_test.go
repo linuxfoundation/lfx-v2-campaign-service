@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -91,9 +93,10 @@ type boostServer struct {
 	deletes            int
 }
 
-// boostCreative is a creative GET body sponsoring post, authored by author.
+// boostCreative is a creative GET body sponsoring post, authored by author. Its id is "SELF",
+// which the fake server replaces with the URN the GET asked for.
 func boostCreative(post, author string) string {
-	b, _ := json.Marshal(map[string]any{"id": "urn:li:sponsoredCreative:401", "intendedStatus": "DRAFT",
+	b, _ := json.Marshal(map[string]any{"id": "SELF", "intendedStatus": "DRAFT",
 		"content": map[string]any{"standardUpdateAd": map[string]any{"contentAuthor": author, "reference": post}}})
 	return string(b)
 }
@@ -126,11 +129,12 @@ func (s *boostServer) handler(t *testing.T) http.HandlerFunc {
 				_, _ = io.WriteString(w, `{"status":500,"message":"read down"}`)
 				return
 			}
-			if s.creativeRead != "" {
-				_, _ = io.WriteString(w, s.creativeRead)
-				return
+			body := s.creativeRead
+			if body == "" {
+				body = boostCreative(boostTestPost, "urn:li:organization:987654321")
 			}
-			_, _ = io.WriteString(w, boostCreative(boostTestPost, "urn:li:organization:987654321"))
+			asked, _ := url.PathUnescape(path[strings.LastIndex(path, "/")+1:])
+			_, _ = io.WriteString(w, strings.Replace(body, `"SELF"`, strconv.Quote(asked), 1))
 		case r.Method == http.MethodDelete && strings.Contains(path, "/creatives/"):
 			s.deletes++
 			if s.deleteStatus != 0 {
@@ -480,6 +484,7 @@ func TestCreateCampaign_BoostUnreadablePostChecksCreativeAuthor(t *testing.T) {
 		reused   bool
 		notWants []string
 		cause    error // what the error wraps; nil is ErrBoostPostIneligible
+		noResult bool  // a credential failure returns no result, so the dispatcher reports the connection
 	}{
 		{
 			name:    "another organization's post",
@@ -514,11 +519,24 @@ func TestCreateCampaign_BoostUnreadablePostChecksCreativeAuthor(t *testing.T) {
 			cause:   errAnyReadFailure,
 		},
 		{
-			name:    "an expired connection on the read",
-			server:  &boostServer{creativeReadStatus: http.StatusUnauthorized},
-			want:    []string{"reading it back to check the post's author failed", "the DRAFT creative urn:li:sponsoredCreative:401 was deleted"},
+			name:     "an expired connection on the read",
+			server:   &boostServer{creativeReadStatus: http.StatusUnauthorized},
+			want:     []string{"a retry after reconnecting checks the campaign again"},
+			deletes:  1,
+			cause:    ErrCredentialsExpired,
+			noResult: true,
+		},
+		{
+			name:    "an answer about another creative",
+			server:  &boostServer{creativeRead: strings.Replace(boostCreative(boostTestPost, "urn:li:organization:987654321"), `"SELF"`, `"urn:li:sponsoredCreative:9"`, 1)},
+			want:    []string{"describes another creative"},
 			deletes: 1,
-			cause:   ErrCredentialsExpired,
+		},
+		{
+			name:    "an answer without an id",
+			server:  &boostServer{creativeRead: `{"content":{"standardUpdateAd":{"contentAuthor":"urn:li:organization:987654321","reference":"urn:li:share:7001"}}}`},
+			want:    []string{"describes another creative"},
+			deletes: 1,
 		},
 		{
 			name:    "a failed delete",
@@ -537,7 +555,16 @@ func TestCreateCampaign_BoostUnreadablePostChecksCreativeAuthor(t *testing.T) {
 			name: "a creative found on a reused campaign",
 			server: &boostServer{creativeRead: boostCreative(boostTestPost, "urn:li:organization:111"),
 				existingCreatives: `{"elements":[{"id":"urn:li:sponsoredCreative:777"}],"metadata":{}}`},
-			want:   []string{"creative urn:li:sponsoredCreative:777, found on campaign 555", "remove it in Campaign Manager"},
+			want:   []string{"creative urn:li:sponsoredCreative:777 on campaign 555 (found by name) failed the author check", "nothing was posted", "remove it in Campaign Manager"},
+			reused: true,
+		},
+		{
+			// An earlier boost of another post could not delete its rejected creative; a boost of this
+			// post for the same event finds the campaign by name and must not add an ad beside it.
+			name: "a leftover creative of another post on a reused campaign",
+			server: &boostServer{creativeRead: boostCreative("urn:li:share:9999", "urn:li:organization:111"),
+				existingCreatives: `{"elements":[{"id":"urn:li:sponsoredCreative:999"}],"metadata":{}}`},
+			want:   []string{"creative urn:li:sponsoredCreative:999 on campaign 555 (found by name) failed the author check", "nothing was posted"},
 			reused: true,
 		},
 	} {
@@ -552,7 +579,10 @@ func TestCreateCampaign_BoostUnreadablePostChecksCreativeAuthor(t *testing.T) {
 			if tc.reused {
 				wantCampaign = "555"
 			}
-			if res == nil || !res.BoostCreativeUnverified || res.CampaignID != wantCampaign || res.CreativeCount != 0 || res.BoostedPostURN != "" {
+			switch {
+			case tc.noResult && res != nil:
+				t.Errorf("partial = %+v, want none, so the dispatcher reports the connection", res)
+			case !tc.noResult && (res == nil || !res.BoostCreativeUnverified || res.CampaignID != wantCampaign || res.CreativeCount != 0 || res.BoostedPostURN != ""):
 				t.Errorf("partial = %+v, want campaign %s marked BoostCreativeUnverified with no creative or post recorded", res, wantCampaign)
 			}
 			switch tc.cause {
@@ -591,6 +621,45 @@ func TestCreateCampaign_BoostUnreadablePostChecksCreativeAuthor(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_BoostUnreadablePostReusedCampaignChecksItsCreatives: without the post read, a
+// campaign found by name has every creative checked before one is added; when all pass, the found
+// creative for the post is reused and nothing is posted or deleted. A 401 on that check returns no
+// result and posts nothing.
+func TestCreateCampaign_BoostUnreadablePostReusedCampaignChecksItsCreatives(t *testing.T) {
+	t.Run("every creative passes", func(t *testing.T) {
+		s := &boostServer{postStatus: http.StatusForbidden, existingCampaign: existingBoostCampaign(t),
+			existingCreatives: `{"elements":[{"id":"urn:li:sponsoredCreative:777"}],"metadata":{}}`}
+		res, err := newBoostClient(t, s).CreateCampaign(context.Background(), boostInput())
+		if err != nil {
+			t.Fatalf("CreateCampaign: %v", err)
+		}
+		if res.CreativeCount != 1 || res.BoostedPostURN != boostTestPost || res.BoostCreativeUnverified {
+			t.Errorf("result = %+v", res)
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if len(s.creatives) != 0 || s.deletes != 0 {
+			t.Errorf("creatives posted %d, deleted %d; want neither", len(s.creatives), s.deletes)
+		}
+		if len(s.queries) != 2 || strings.Contains(s.queries[0], "contentReferences") {
+			t.Errorf("finder queries = %v, want the whole campaign first, then the post's creative", s.queries)
+		}
+	})
+	t.Run("an expired connection posts nothing", func(t *testing.T) {
+		s := &boostServer{postStatus: http.StatusForbidden, existingCampaign: existingBoostCampaign(t), creativeReadStatus: http.StatusUnauthorized,
+			existingCreatives: `{"elements":[{"id":"urn:li:sponsoredCreative:777"}],"metadata":{}}`}
+		res, err := newBoostClient(t, s).CreateCampaign(context.Background(), boostInput())
+		if res != nil || !errors.Is(err, ErrCredentialsExpired) {
+			t.Fatalf("res %+v, err %v; want no result and ErrCredentialsExpired", res, err)
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if len(s.creatives) != 0 || s.deletes != 0 {
+			t.Errorf("creatives posted %d, deleted %d; want neither", len(s.creatives), s.deletes)
+		}
+	})
+}
+
 // errAnyReadFailure marks a table row whose error is any read failure but an ineligible post.
 var errAnyReadFailure = errors.New("any read failure")
 
@@ -601,7 +670,7 @@ func TestCheckBoostCreativeAuthor_DeleteSurvivesCancelledJob(t *testing.T) {
 	c := newBoostClient(t, s)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := c.checkBoostCreativeAuthor(ctx, "123456789", "urn:li:organization:987654321", "200", boostTestPost, "urn:li:sponsoredCreative:401", true, false)
+	err := c.checkBoostCreativeAuthor(ctx, "123456789", "urn:li:organization:987654321", "200", boostTestPost, "urn:li:sponsoredCreative:401", false)
 	if err == nil {
 		t.Fatal("checkBoostCreativeAuthor accepted a creative it could not read")
 	}

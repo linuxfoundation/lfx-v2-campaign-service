@@ -64,6 +64,14 @@ a retry answers "reconciliation required". A failed read wraps its own error, so
 connection's expiry and a 5xx is not reported as an ineligible post. The compensating DELETE runs on
 `context.WithoutCancel` with a 30 s timeout, so a cancelled job still removes the creative.
 
+**Update (review round 4)** — a 401 on the read-back now returns no result (`isCredentialFailure`),
+so the dispatcher reports the connection and a retry after reconnecting checks again, rather than a
+`pending` row that reconnecting cannot clear (Bugbot). On a reused campaign without the post read,
+`checkReusedBoostCampaign` checks the author of every creative the campaign holds before one is
+added: a creative an earlier boost of another post could not delete would otherwise be activated
+with the campaign (lfx-one). The read-back also requires the answer's `id` to be the creative asked
+for, as the post read does.
+
 Account grants (#581) are not scoped to a project: a project falling back to the LF system row may
 name any grant, and a boost through it passes the post check for that grant's organization. That
 is unchanged by this entry; tracked separately.

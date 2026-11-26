@@ -2175,10 +2175,13 @@ and the post's author is the account's organization, deletes the DRAFT creative 
 same path, on a context detached from the job's so a cancelled job still cleans up; a DRAFT cannot
 be archived) and fails the job. The row is `pending` with the campaign id kept (result
 `boostCreativeUnverified`), as for targeting not applied: a retry answers "reconciliation required"
-rather than posting and deleting another creative. A failed read is treated the same way, but its
-error is the read's own (a 401 is still the connection's expiry), not an ineligible post. A creative
-found on a reused campaign is checked too; one that fails is named, never deleted, since it may be
-serving. If LinkedIn refuses the creative, the row is `created_degraded` with the group and campaign, as for a
+rather than posting and deleting another creative. The answer's `id` must be the creative asked
+for. A failed read is treated the same way, but its error is the read's own, not an ineligible post;
+a credential failure (a 401) returns no result instead, so the connection is reported and a retry
+after reconnecting checks again. On a campaign found by name, every creative it already holds (the
+finder without `contentReferences`) is checked for the author before one is added, since a boost of
+another post for the same event shares the campaign and activation flips every creative; one that
+fails is named, never deleted (it may be serving), nothing is posted, and the row is `pending`. If LinkedIn refuses the creative, the row is `created_degraded` with the group and campaign, as for a
 failed image creative; `UGC_FORBIDDEN` reads "LinkedIn refused to sponsor post X from ad account Y
 (UGC_FORBIDDEN): the connection's LinkedIn member needs a sponsoring role (ADMINISTRATOR,
 DIRECT_SPONSORED_CONTENT_POSTER or CONTENT_ADMIN) on the organization page that authored it", and
