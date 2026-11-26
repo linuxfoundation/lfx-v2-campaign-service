@@ -163,7 +163,7 @@ func TestFindCampaignByNameInGroup_RefusesAnObjectiveMismatch(t *testing.T) {
 		t.Run(label, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, `{"elements":[{"name":"`+name+`","status":"PAUSED","id":"urn:li:sponsoredCampaign:200","campaignGroup":"urn:li:sponsoredCampaignGroup:555"`+tc.reported+`}],"metadata":{"nextPageToken":""}}`)
+				_, _ = io.WriteString(w, `{"elements":[{"name":"`+name+`","status":"PAUSED","id":"urn:li:sponsoredCampaign:200","campaignGroup":"urn:li:sponsoredCampaignGroup:555","optimizationTargetType":"MAX_CLICK"`+tc.reported+`}],"metadata":{"nextPageToken":""}}`)
 			}))
 			defer srv.Close()
 			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
@@ -323,8 +323,9 @@ func TestCreateCampaign_AutomaticConversionsIsWebsiteConversionMaxConversion(t *
 }
 
 // TestCreateCampaign_ObjectiveRefusalsSendNothing: MAX_CONVERSION with no conversion to associate
-// (LinkedIn would never activate it), a manual bid under WEBSITE_VISIT, and an objective this
-// service does not create are each refused before any POST.
+// (LinkedIn would never activate it) and an objective this service does not create are each
+// refused before any POST. (A manual bid under WEBSITE_VISIT is accepted since #675; the
+// dispatcher gates it.)
 func TestCreateCampaign_ObjectiveRefusalsSendNothing(t *testing.T) {
 	for label, tc := range map[string]struct {
 		bid       float64
@@ -332,8 +333,7 @@ func TestCreateCampaign_ObjectiveRefusalsSendNothing(t *testing.T) {
 		want      string
 	}{
 		"automatic conversions without a conversion": {0, ObjectiveWebsiteConversion, "requires at least one conversion rule"},
-		"manual traffic":    {4.5, ObjectiveWebsiteVisit, "manual max CPC bid is created under objective WEBSITE_CONVERSION only"},
-		"unknown objective": {0, "BRAND_AWARENESS", "is not one this service creates"},
+		"unknown objective":                          {0, "BRAND_AWARENESS", "is not one this service creates"},
 	} {
 		t.Run(label, func(t *testing.T) {
 			srv, _, posts := biddingCreateServer(t)
@@ -374,6 +374,7 @@ func TestCampaignBidding_ObjectiveMatrix(t *testing.T) {
 		{0, ObjectiveWebsiteConversion, ObjectiveWebsiteConversion, OptimizationTargetMaxConversion, "CPM", "Conversions"},
 		{4.5, "", ObjectiveWebsiteConversion, OptimizationTargetNone, "CPC", "Conversions"},
 		{4.5, ObjectiveWebsiteConversion, ObjectiveWebsiteConversion, OptimizationTargetNone, "CPC", "Conversions"},
+		{4.5, ObjectiveWebsiteVisit, ObjectiveWebsiteVisit, OptimizationTargetNone, "CPC", "Traffic"},
 	} {
 		plan, err := campaignBidding(tc.bid, tc.objective)
 		if err != nil {
@@ -383,6 +384,86 @@ func TestCampaignBidding_ObjectiveMatrix(t *testing.T) {
 			plan.fields["optimizationTargetType"] != tc.wantTarget || plan.fields["costType"] != tc.cost || plan.nameObjective != tc.wantName {
 			t.Errorf("campaignBidding(%v, %q) = %+v, want %s/%s/%s/%s", tc.bid, tc.objective, plan, tc.wantObjective, tc.wantTarget, tc.cost, tc.wantName)
 		}
+		if _, has := plan.fields["unitCost"]; has != (tc.bid > 0) {
+			t.Errorf("campaignBidding(%v, %q) unitCost present = %v, want %v", tc.bid, tc.objective, has, tc.bid > 0)
+		}
+	}
+}
+
+// TestCreateCampaign_ManualTrafficIsWebsiteVisitCPC pins the manual traffic request (#675):
+// objectiveType WEBSITE_VISIT, costType CPC, optimizationTargetType NONE, unitCost = the bid, the
+// name's Objective segment "Traffic", the objective recorded in the result for the settings
+// readback — and that the bid lever's own predicate accepts it.
+func TestCreateCampaign_ManualTrafficIsWebsiteVisitCPC(t *testing.T) {
+	srv, body, _ := biddingCreateServer(t)
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	in := biddingCreateInput(45)
+	in.Objective = ObjectiveWebsiteVisit
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	b := body()
+	if b["objectiveType"] != ObjectiveWebsiteVisit || b["costType"] != "CPC" || b["optimizationTargetType"] != OptimizationTargetNone {
+		t.Fatalf("manual traffic campaign: objectiveType=%v costType=%v optimizationTargetType=%v, want WEBSITE_VISIT/CPC/NONE",
+			b["objectiveType"], b["costType"], b["optimizationTargetType"])
+	}
+	unit, ok := b["unitCost"].(map[string]any)
+	if !ok || unit["amount"] != "45.00" || unit["currencyCode"] != "USD" {
+		t.Fatalf("manual traffic unitCost = %v, want {amount 45.00, currencyCode USD}", b["unitCost"])
+	}
+	if !strings.Contains(res.CampaignName, "| Traffic |") {
+		t.Errorf("campaign name %q lacks the Traffic segment", res.CampaignName)
+	}
+	if !res.BidApplied || res.ObjectiveType != ObjectiveWebsiteVisit || res.OptimizationTarget != OptimizationTargetNone {
+		t.Errorf("result BidApplied=%v ObjectiveType=%q OptimizationTarget=%q, want true/WEBSITE_VISIT/NONE", res.BidApplied, res.ObjectiveType, res.OptimizationTarget)
+	}
+	costType, target := b["costType"].(string), b["optimizationTargetType"].(string)
+	if !(&CampaignSettings{CostType: &costType, OptimizationTargetType: &target}).ManualCPC() {
+		t.Fatal("the bid lever's ManualCPC refuses the setup a manual traffic create sends")
+	}
+}
+
+// TestFindCampaignByNameInGroup_WebsiteVisitBiddingMode (#675): automatic and manual Website
+// visits campaigns share the "Traffic" name, so a same-name WEBSITE_VISIT campaign is reused only
+// in the same bidding mode. An unreported optimizationTargetType is ambiguous in both directions
+// once manual traffic campaigns can exist (PR #676 review), so it aborts for an automatic request
+// as well as a manual one — whatever costType or unitCost the search reports beside it.
+func TestFindCampaignByNameInGroup_WebsiteVisitBiddingMode(t *testing.T) {
+	const name = "Events | KubeCon | NA | Traffic | Prospecting | Text | tlf | MoFU"
+	for label, tc := range map[string]struct {
+		want, reported string
+		wantErr        bool
+	}{
+		"automatic reuses automatic":                     {want: OptimizationTargetMaxClick, reported: `,"optimizationTargetType":"MAX_CLICK"`},
+		"automatic refuses unreported":                   {want: OptimizationTargetMaxClick, reported: ``, wantErr: true},
+		"automatic refuses unreported with a manual cpc": {want: OptimizationTargetMaxClick, reported: `,"costType":"CPC","unitCost":{"amount":"4.50","currencyCode":"USD"}`, wantErr: true},
+		"automatic refuses unreported with cpm":          {want: OptimizationTargetMaxClick, reported: `,"costType":"CPM"`, wantErr: true},
+		"automatic refuses manual NONE":                  {want: OptimizationTargetMaxClick, reported: `,"optimizationTargetType":"NONE"`, wantErr: true},
+		"manual reuses manual NONE":                      {want: OptimizationTargetNone, reported: `,"optimizationTargetType":"NONE"`},
+		"manual reuses ENHANCED":                         {want: OptimizationTargetNone, reported: `,"optimizationTargetType":"ENHANCED_CONVERSION"`},
+		"manual refuses unreported":                      {want: OptimizationTargetNone, reported: ``, wantErr: true},
+		"manual refuses automatic":                       {want: OptimizationTargetNone, reported: `,"optimizationTargetType":"MAX_CLICK"`, wantErr: true},
+		"manual refuses target cost too":                 {want: OptimizationTargetNone, reported: `,"optimizationTargetType":"TARGET_COST_PER_CLICK"`, wantErr: true},
+	} {
+		t.Run(label, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"elements":[{"name":"`+name+`","status":"PAUSED","id":"urn:li:sponsoredCampaign:200","campaignGroup":"urn:li:sponsoredCampaignGroup:555","objectiveType":"WEBSITE_VISIT"`+tc.reported+`}],"metadata":{"nextPageToken":""}}`)
+			}))
+			defer srv.Close()
+			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+			id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", name, "555", ObjectiveWebsiteVisit, tc.want, "", "")
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "optimizationTargetType") {
+					t.Fatalf("id=%q err=%v, want a bidding-mode abort", id, err)
+				}
+				return
+			}
+			if err != nil || id != "200" {
+				t.Fatalf("id=%q err=%v, want 200", id, err)
+			}
+		})
 	}
 }
 

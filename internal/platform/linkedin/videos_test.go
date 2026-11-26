@@ -280,7 +280,7 @@ func TestCreateCampaign_Video_RefusesSameNameImageCampaign(t *testing.T) {
 	existing := func(name, format string) string {
 		b, _ := json.Marshal(map[string]any{"elements": []map[string]any{{
 			"name": name, "status": "PAUSED", "id": 555, "type": "SPONSORED_UPDATES", "format": format,
-			"campaignGroup": "urn:li:sponsoredCampaignGroup:100",
+			"campaignGroup": "urn:li:sponsoredCampaignGroup:100", "optimizationTargetType": "MAX_CLICK",
 		}}, "metadata": map[string]any{}})
 		return string(b)
 	}

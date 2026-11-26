@@ -312,7 +312,8 @@ func resultWith(extra string) string {
 }
 
 // TestLinkedIn_ReadSettings_ObjectiveIsComparedAgainstTheRecordedStrategy (LFXV2-2665, #582): the
-// create records its objective — manual → WEBSITE_CONVERSION, automatic → the objectiveType in the
+// create records its objective — manual → WEBSITE_CONVERSION (or WEBSITE_VISIT for a recorded
+// manual traffic create, #675), automatic → the objectiveType in the
 // server-written result blob — so objective_type is compared on a row that recorded one, and stays
 // `unknown` (never guessed) on a row that did not. The caller-replaceable config snapshot is never
 // read for it.
@@ -323,6 +324,7 @@ func TestLinkedIn_ReadSettings_ObjectiveIsComparedAgainstTheRecordedStrategy(t *
 	legacy := resultWith("") // written before #582 recorded objectiveType
 	conv := resultWith(`"objectiveType":"WEBSITE_CONVERSION","optimizationTarget":"MAX_CONVERSION"`)
 	visit := resultWith(`"objectiveType":"WEBSITE_VISIT","optimizationTarget":"MAX_CLICK"`)
+	manualVisit := resultWith(`"objectiveType":"WEBSITE_VISIT","optimizationTarget":"NONE"`)
 	cases := []struct {
 		name     string
 		strategy *model.BiddingStrategy
@@ -347,7 +349,10 @@ func TestLinkedIn_ReadSettings_ObjectiveIsComparedAgainstTheRecordedStrategy(t *
 		{"automatic lead gen matches LEAD_GENERATION", &automatic, resultWith(`"objectiveType":"LEAD_GENERATION"`), "", "LEAD_GENERATION", fieldWant{"LEAD_GENERATION", "LEAD_GENERATION", model.SettingsMatch}},
 		// A document create (#665) records ENGAGEMENT, and the readback compares it.
 		{"automatic document matches ENGAGEMENT", &automatic, resultWith(`"objectiveType":"ENGAGEMENT"`), "", "ENGAGEMENT", fieldWant{"ENGAGEMENT", "ENGAGEMENT", model.SettingsMatch}},
-		{"manual ignores the result objective", &manual, visit, "", "WEBSITE_CONVERSION", fieldWant{"WEBSITE_CONVERSION", "WEBSITE_CONVERSION", model.SettingsMatch}},
+		{"manual ignores an automatic result objective", &manual, visit, "", "WEBSITE_CONVERSION", fieldWant{"WEBSITE_CONVERSION", "WEBSITE_CONVERSION", model.SettingsMatch}},
+		// #675: a manual traffic create records WEBSITE_VISIT with the manual target NONE.
+		{"manual traffic matches WEBSITE_VISIT", &manual, manualVisit, "", "WEBSITE_VISIT", fieldWant{"WEBSITE_VISIT", "WEBSITE_VISIT", model.SettingsMatch}},
+		{"manual traffic diverges from WEBSITE_CONVERSION", &manual, manualVisit, "", "WEBSITE_CONVERSION", fieldWant{"WEBSITE_VISIT", "WEBSITE_CONVERSION", model.SettingsDiverged}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

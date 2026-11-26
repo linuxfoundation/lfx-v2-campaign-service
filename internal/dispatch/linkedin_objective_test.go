@@ -50,7 +50,7 @@ func TestLinkedIn_ObjectivePreflight(t *testing.T) {
 		{"conversions manual without conversions", `"objective":"conversions",` + manual, ""},
 		{"conversions automatic without conversions", `"objective":"conversions"`, "requires linkedInConfig.conversions"},
 		{"conversions explicit automatic without conversions", `"objective":"conversions","bidding":{"strategy":"automatic"}`, "requires linkedInConfig.conversions"},
-		{"traffic manual", `"objective":"traffic",` + manual, "automatic bidding only"},
+		{"traffic manual, flag off", `"objective":"traffic",` + manual, "automatic bidding only"},
 		{"unknown value", `"objective":"leads"`, `must be "traffic", "conversions" or "lead_generation"`},
 		{"case variant value", `"objective":"Conversions","conversions":["104012"]`, `must be "traffic", "conversions" or "lead_generation"`},
 		{"empty", `"objective":""`, "must be the string"},
@@ -67,6 +67,44 @@ func TestLinkedIn_ObjectivePreflight(t *testing.T) {
 			}
 			msg, pre := domain.AsPreflightRefusal(err)
 			if !errors.Is(err, domain.ErrCreateConfigInvalid) || !pre || !strings.Contains(msg, "linkedInConfig.objective") || !strings.Contains(msg, tc.want) {
+				t.Fatalf("PreflightCreate = %v, want a pre-flight 400 containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestLinkedIn_ObjectiveTrafficManualFlag pins LINKEDIN_ADS_TRAFFIC_MANUAL_BID_ENABLED (#675):
+// objective "traffic" with a manual bid is refused with the pre-#675 sentence unless the flag is
+// exactly "true"; the flag changes nothing else (automatic traffic, manual conversions, and the
+// automatic conversions requirement are the same either way).
+func TestLinkedIn_ObjectiveTrafficManualFlag(t *testing.T) {
+	t.Setenv(constants.EnvLinkedInAdsConversionsEnabled, "true")
+	const manual = `"bidding":{"strategy":"manual","bidAmount":45}`
+	const refusal = `linkedInConfig.objective "traffic" is offered with automatic bidding only; a manual bid is created under the website conversions objective, so choose objective "conversions" (or omit it) for manual bidding`
+	for _, tc := range []struct {
+		name, flag, extra, want string
+	}{
+		{"unset refuses traffic manual", "", `"objective":"traffic",` + manual, refusal},
+		{"false refuses traffic manual", "false", `"objective":"traffic",` + manual, refusal},
+		{"TRUE (wrong case) refuses traffic manual", "TRUE", `"objective":"traffic",` + manual, refusal},
+		{"true accepts traffic manual", "true", `"objective":"traffic",` + manual, ""},
+		{"true leaves traffic automatic", "true", `"objective":"traffic"`, ""},
+		{"true leaves conversions manual", "true", `"objective":"conversions",` + manual, ""},
+		{"true leaves automatic conversions needing conversions", "true", `"objective":"conversions"`, "requires linkedInConfig.conversions"},
+		{"true still refuses an unknown objective", "true", `"objective":"leads",` + manual, `must be "traffic", "conversions" or "lead_generation"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(constants.EnvLinkedInAdsTrafficManualBidEnabled, tc.flag)
+			d := NewLinkedInDispatcher(fakeConnReader{}, identityEncryptor{})
+			err := d.PreflightCreate(context.Background(), "cncf", model.ProviderLinkedInAds, linkedInObjectiveConfig(tc.extra))
+			if tc.want == "" {
+				if !errors.Is(err, domain.ErrPreflightNotApplicable) {
+					t.Fatalf("PreflightCreate = %v, want not applicable", err)
+				}
+				return
+			}
+			msg, pre := domain.AsPreflightRefusal(err)
+			if !errors.Is(err, domain.ErrCreateConfigInvalid) || !pre || !strings.Contains(msg, tc.want) {
 				t.Fatalf("PreflightCreate = %v, want a pre-flight 400 containing %q", err, tc.want)
 			}
 		})
@@ -95,8 +133,10 @@ func TestLinkedIn_ObjectiveRefusedByDispatchSendsNothing(t *testing.T) {
 		{"conversions without conversions", `"objective":"conversions"`},
 		{"null objective", `"objective":null`},
 		{"empty objective", `"objective":""`},
+		{"traffic manual with the flag off", `"objective":"traffic","bidding":{"strategy":"manual","bidAmount":45}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(constants.EnvLinkedInAdsTrafficManualBidEnabled, "")
 			var calls atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
 			defer srv.Close()
@@ -118,6 +158,7 @@ func TestLinkedIn_ObjectiveRefusedByDispatchSendsNothing(t *testing.T) {
 // recorded strategy it promises, and the snapshot keeps the objective the settings readback reads.
 func TestLinkedIn_ObjectiveReachesTheWire(t *testing.T) {
 	t.Setenv(constants.EnvLinkedInAdsConversionsEnabled, "true")
+	t.Setenv(constants.EnvLinkedInAdsTrafficManualBidEnabled, "true")
 	for _, tc := range []struct {
 		name, extra                     string
 		objective, target, costType     string
@@ -130,6 +171,8 @@ func TestLinkedIn_ObjectiveReachesTheWire(t *testing.T) {
 		{"explicit traffic", `"objective":"traffic"`, "WEBSITE_VISIT", "MAX_CLICK", "CPM", "Traffic", model.BiddingAutomatic, 0, "WEBSITE_VISIT"},
 		{"automatic conversions", `"objective":"conversions","conversions":["104012"]`, "WEBSITE_CONVERSION", "MAX_CONVERSION", "CPM", "Conversions", model.BiddingAutomatic, 1, "WEBSITE_CONVERSION"},
 		{"manual conversions", `"objective":"conversions","bidding":{"strategy":"manual","bidAmount":4.5}`, "WEBSITE_CONVERSION", "NONE", "CPC", "Conversions", model.BiddingManual, 0, "WEBSITE_CONVERSION"},
+		{"manual omitted objective stays conversions", `"bidding":{"strategy":"manual","bidAmount":4.5}`, "WEBSITE_CONVERSION", "NONE", "CPC", "Conversions", model.BiddingManual, 0, "WEBSITE_CONVERSION"},
+		{"manual traffic (#675)", `"objective":"traffic","bidding":{"strategy":"manual","bidAmount":45}`, "WEBSITE_VISIT", "NONE", "CPC", "Traffic", model.BiddingManual, 0, "WEBSITE_VISIT"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex
@@ -192,6 +235,34 @@ func TestLinkedIn_ObjectiveReachesTheWire(t *testing.T) {
 			}
 			if got := linkedinRecordedObjective(context.Background(), camp); got == nil || *got != tc.wantRecordedObjectiveOnReadback {
 				t.Errorf("settings readback's recorded objective = %v, want %s (snapshot %s)", got, tc.wantRecordedObjectiveOnReadback, camp.ConfigSnapshot)
+			}
+		})
+	}
+}
+
+// TestLinkedIn_RecordedObjectiveForManualRows (#675): a manual row reads WEBSITE_CONVERSION, as
+// every manual create did before #675, unless its result blob records the manual traffic create
+// (WEBSITE_VISIT with target NONE).
+func TestLinkedIn_RecordedObjectiveForManualRows(t *testing.T) {
+	manual := model.BiddingManual
+	for _, tc := range []struct {
+		name, result, want string
+	}{
+		{"no result", ``, linkedin.ObjectiveWebsiteConversion},
+		{"result without objectiveType (pre-#582)", `{"bidApplied":true}`, linkedin.ObjectiveWebsiteConversion},
+		{"recorded WEBSITE_CONVERSION", `{"objectiveType":"WEBSITE_CONVERSION"}`, linkedin.ObjectiveWebsiteConversion},
+		{"recorded manual WEBSITE_VISIT", `{"objectiveType":"WEBSITE_VISIT","optimizationTarget":"NONE"}`, linkedin.ObjectiveWebsiteVisit},
+		{"recorded WEBSITE_VISIT without a target", `{"objectiveType":"WEBSITE_VISIT"}`, linkedin.ObjectiveWebsiteConversion},
+		{"recorded automatic WEBSITE_VISIT contradicts the strategy", `{"objectiveType":"WEBSITE_VISIT","optimizationTarget":"MAX_CLICK"}`, linkedin.ObjectiveWebsiteConversion},
+		{"undecodable result", `{`, linkedin.ObjectiveWebsiteConversion},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			camp := &model.Campaign{BiddingStrategy: &manual}
+			if tc.result != "" {
+				camp.Result = json.RawMessage(tc.result)
+			}
+			if got := linkedinRecordedObjective(context.Background(), camp); got == nil || *got != tc.want {
+				t.Fatalf("linkedinRecordedObjective = %v, want %s", got, tc.want)
 			}
 		})
 	}

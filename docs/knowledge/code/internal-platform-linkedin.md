@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding whose objective follows the strategy (automatic WEBSITE_VISIT + MAX_CLICK + CPM, manual WEBSITE_CONVERSION + CPC/NONE/unitCost) unless the caller asks for automatic website conversions (WEBSITE_CONVERSION + MAX_CONVERSION + CPM, only with a conversion to associate), where the create once sent no optimizationTargetType, and optional single-flight access-token refresh."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding whose objective follows the strategy (automatic WEBSITE_VISIT + MAX_CLICK + CPM, manual WEBSITE_CONVERSION + CPC/NONE/unitCost) unless the caller asks for automatic website conversions (WEBSITE_CONVERSION + MAX_CONVERSION + CPM, only with a conversion to associate) or a manual bid on website visits (WEBSITE_VISIT + CPC/NONE/unitCost), where the create once sent no optimizationTargetType, and optional single-flight access-token refresh."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -1095,8 +1095,8 @@ resolved before the first POST. Neither shape is verified against a live account
 without at least one conversion id (`ErrAutomaticConversionsNeedConversion`), because LinkedIn's
 "Create and Manage Campaigns" says MAX_CONVERSION campaigns "must have a conversion associated with
 it to be activated ... should be created and then associated with a conversion before activating"
-— the create sends `PAUSED` and associates `Conversions` right after the campaign POST. Manual
-with `WEBSITE_VISIT`, or any other objective, is refused before any POST. `campaignBiddingPlan`
+— the create sends `PAUSED` and associates `Conversions` right after the campaign POST. Any
+other objective is refused before any POST (manual with `WEBSITE_VISIT` was too, until #675). `campaignBiddingPlan`
 now carries `optimizationTarget`, and since automatic and manual conversions share the
 `Conversions` name, `findCampaignByNameInGroup` also aborts on a same-name, same-objective campaign
 of the other bidding MODE (`manualBiddingTarget`: NONE / ENHANCED_CONVERSION versus automated,
@@ -1109,6 +1109,25 @@ written, before #639 moved to `202611`; the same text li-lms-2025-11..2026-10, c
 Combinations" (WEBSITE_CONVERSION allows NONE, ENHANCED_CONVERSION, MAX_CONVERSION; auto-bidding
 `costType` is always CPM) and "Create and Manage Campaigns" row `STANDARD_UPDATE | AUTO |
 MAX_CONVERSION` (costType CPM, Bid Type CPC, conversion tracking Required). Not verified live.
+
+**Manual website visits (#675)**: manual with `ObjectiveWebsiteVisit` is `objectiveType`
+`WEBSITE_VISIT`, `costType` `CPC`, `optimizationTargetType` `NONE`, `unitCost` = the bid — the
+manual plan with only the objective and the name segment (`Traffic`) changed. "Ad Budget Type
+Allowable Combinations" lists `NONE` for `WEBSITE_VISIT`, and "Create and Manage Campaigns" row
+`STANDARD_UPDATE | CPC | NONE` is costType CPC; LF's KubeCon NA 2026 Text Ads campaign (894070046,
+read 2026-11-26) ran exactly `WEBSITE_VISIT` / `CPC` / manual unit cost. `NONE` is sent explicitly,
+as on the manual conversions create, so the bid lever (`ManualCPC`) and the reuse lookup read it.
+This package does not read the flag; the dispatcher gates the pairing
+(`LINKEDIN_ADS_TRAFFIC_MANUAL_BID_ENABLED`). Since manual and automatic traffic now share the
+`Traffic` name, `findCampaignByNameInGroup` mirrors the conversions rule: under `WEBSITE_VISIT` a
+same-name campaign of the other bidding mode aborts, and an UNREPORTED target aborts BOTH a manual
+and an automatic create (PR #676 review): once manual traffic campaigns can exist, and outlive the
+flag being switched off, an unreported target could be either mode, and reusing a manual one for
+`MAX_CLICK` would attach creatives to a campaign still bidding its manual CPC. No `costType` or
+`unitCost` is consulted (manual CPM exists, and automatic is CPM too), so reuse needs a reported
+automated target; this is the same assumption the `WEBSITE_CONVERSION` rule has made for
+`MAX_CONVERSION` since PR #637 — LinkedIn reports the target on a campaign created with one. Not yet
+probed live from this service.
 
 `CampaignResult.BidApplied` is false when `createSponsoredCampaign` reused a campaign found by name
 in the group (it now returns `(id, reused, err)`), with a "bid NOT applied to reused campaign" step.

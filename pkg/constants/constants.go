@@ -778,6 +778,15 @@ const (
 	// shared ad account until the probe in the field's docs passes.
 	EnvLinkedInAdsTextAdsEnabled = "LINKEDIN_ADS_TEXT_ADS_ENABLED"
 
+	// EnvLinkedInAdsTrafficManualBidEnabled opts a deployment IN to linkedInConfig.objective
+	// "traffic" with a manual bid (#675): a WEBSITE_VISIT campaign with costType CPC,
+	// optimizationTargetType NONE and unitCost = the bid, the setup LinkedIn Campaign Manager calls
+	// a manual bid on a Website visits campaign. Only the exact value "true" enables it; unset or
+	// any other value fails closed, and traffic with a manual bid is refused before a job exists,
+	// as before #675. It keeps a pairing this service has not yet created on a live account off
+	// the shared ad account until a paused probe create passes.
+	EnvLinkedInAdsTrafficManualBidEnabled = "LINKEDIN_ADS_TRAFFIC_MANUAL_BID_ENABLED"
+
 	// EnvLinkedInAdsVideoEnabled opts a deployment IN to LinkedIn video Sponsored Content (#586):
 	// linkedInConfig.variants[].videoAssetId, a stored MP4 uploaded through the Videos API and
 	// posted as a SINGLE_VIDEO campaign's dark post. Only the exact value "true" enables it; unset

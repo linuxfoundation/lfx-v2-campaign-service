@@ -220,6 +220,12 @@ LinkedIn: `linkedInConfig.format: "text"` creates a TEXT_AD campaign with `textA
 shape taken from LinkedIn's documentation and not yet exercised against a live account. Only
 exactly `"true"` enables it; off, a create naming it is refused with a 400 before a job exists.
 
+`LINKEDIN_ADS_TRAFFIC_MANUAL_BID_ENABLED` defaults to `"false"` (#675) and gates
+`linkedInConfig.objective: "traffic"` with a manual bid: a `WEBSITE_VISIT` campaign with `costType`
+`CPC`, `optimizationTargetType` `NONE` and the bid as `unitCost` (Text Ads included). This service
+has not yet created that pairing on a live account. Only exactly `"true"` enables it; off, the
+create is refused with a 400 before a job exists, as before #675. Not role-gated.
+
 `LINKEDIN_ADS_VIDEO_ENABLED` defaults to `"false"` (#586) and gates LinkedIn video Sponsored
 Content: `linkedInConfig.variants[].videoAssetId` uploads a stored MP4 through the Videos API and
 posts it in a `SINGLE_VIDEO` campaign, none of which has been exercised against a live LinkedIn

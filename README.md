@@ -795,6 +795,15 @@ openssl rand -base64 32
   job exists. The default single-image create is unaffected. The chart sets
   it to `"false"` (`app.environment.LINKEDIN_ADS_TEXT_ADS_ENABLED.value`);
   enable it per-environment in the ArgoCD overlay once the probe passes.
+- `LINKEDIN_ADS_TRAFFIC_MANUAL_BID_ENABLED` (default unset, i.e. OFF) — opts
+  a deployment IN to `linkedInConfig.objective: "traffic"` with a manual bid
+  (#675): a `WEBSITE_VISIT` campaign with `costType` `CPC`,
+  `optimizationTargetType` `NONE` and the bid as `unitCost`, Text Ads
+  included. Only the exact value `true` enables it; anything else fails
+  closed, and traffic with a manual bid is refused with a 400 before a job
+  exists, as before. The chart sets it to `"false"`
+  (`app.environment.LINKEDIN_ADS_TRAFFIC_MANUAL_BID_ENABLED.value`); enable
+  it per-environment in the ArgoCD overlay once a paused live probe passes.
 - `LINKEDIN_ADS_VIDEO_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to LinkedIn video Sponsored Content (#586):
   `linkedInConfig.variants[].videoAssetId`, a stored MP4 uploaded through

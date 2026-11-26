@@ -287,14 +287,16 @@ type CampaignInput struct {
 	AdAccountID string
 	// ManualCPCBid is the manual starting bid (LFXV2-2665), in USD like BudgetUSD (every
 	// LinkedIn write here is USD). ZERO means AUTOMATIC bidding — objective WEBSITE_VISIT with
-	// MAX_CLICK; a positive value is a manual max CPC under WEBSITE_CONVERSION. The objective and
-	// the campaign name's Objective segment follow the choice. See campaignBidding.
+	// MAX_CLICK; a positive value is a manual max CPC under WEBSITE_CONVERSION (or, with Objective
+	// ObjectiveWebsiteVisit, under WEBSITE_VISIT, #675). The objective and the campaign name's
+	// Objective segment follow the choice. See campaignBidding.
 	ManualCPCBid float64
 	// Objective is the requested objectiveType (#582): "" lets ManualCPCBid decide, as above,
 	// except for FormatDocument (#665), where "" becomes ObjectiveEngagement (MAX_REACH, automatic
 	// only) and only ObjectiveEngagement or ObjectiveLeadGeneration is accepted (documentObjective);
 	// ObjectiveEngagement is refused for every other format;
-	// ObjectiveWebsiteVisit is automatic only; ObjectiveWebsiteConversion with ManualCPCBid 0 is
+	// ObjectiveWebsiteVisit is MAX_CLICK when automatic and a manual CPC (NONE) with a bid (#675;
+	// the dispatcher gates that pairing); ObjectiveWebsiteConversion with ManualCPCBid 0 is
 	// automatic bidding for conversions (MAX_CONVERSION, costType CPM) and requires Conversions,
 	// because LinkedIn will not activate a MAX_CONVERSION campaign without an associated
 	// conversion; ObjectiveLeadGeneration (#664) is automatic only (MAX_LEAD) and requires LeadGen.
@@ -1621,7 +1623,8 @@ func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, n
 			return false, fmt.Errorf("campaign %q already exists in this campaign group with objectiveType %s, not %s — it was not created for this bidding strategy; aborting rather than reuse it or create a duplicate", el.Name, el.ObjectiveType, objectiveType)
 		}
 		// Same name and objective, but the other bidding MODE (#582). Automatic and manual
-		// Website conversions campaigns share the "Conversions" name segment, so the objective no
+		// Website conversions campaigns share the "Conversions" name segment (and, since #675,
+		// automatic and manual Website visits campaigns the "Traffic" one), so the objective no
 		// longer tells them apart: a manual campaign (NONE / ENHANCED_CONVERSION) is never reused
 		// for MAX_CONVERSION, nor the reverse. Only manual-vs-automated is compared, so a manual
 		// campaign moved between NONE and ENHANCED_CONVERSION in Campaign Manager is still reused.
@@ -1629,10 +1632,17 @@ func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, n
 		// request — the campaign could be a manual one, and reuse keeps its existing strategy — so
 		// that aborts too (PR #637 review). A manual request still reuses it: before #582 every
 		// WEBSITE_CONVERSION campaign this service created was manual, and whether LinkedIn echoes
-		// NONE in the search response is unverified, so aborting would strand a manual retry. Under
-		// WEBSITE_VISIT only automated MAX_CLICK is created, so it cannot contradict.
-		if optimizationTarget != "" && !manualBiddingTarget(optimizationTarget) && el.OptimizationTargetType == "" && objectiveType == ObjectiveWebsiteConversion {
-			return false, fmt.Errorf("campaign %q already exists in this campaign group with objectiveType %s but LinkedIn did not report its optimizationTargetType, so it cannot be confirmed to bid %s; aborting rather than reuse it or create a duplicate — check its bidding in Campaign Manager", el.Name, ObjectiveWebsiteConversion, optimizationTarget)
+		// NONE in the search response is unverified, so aborting would strand a manual retry.
+		// Under WEBSITE_VISIT an unreported target aborts in BOTH directions (#675, PR #676 review):
+		// manual and automated Website visits campaigns share the "Traffic" segment, and once this
+		// service can create manual ones (and keeps them after the flag is switched off), a
+		// same-name campaign with no reported target may be either. Reusing it for an automatic
+		// MAX_CLICK request would attach creatives to a campaign still bidding its manual CPC, and
+		// for a manual request to one LinkedIn bids automatically — so neither reuses it.
+		if optimizationTarget != "" && el.OptimizationTargetType == "" &&
+			(objectiveType == ObjectiveWebsiteVisit ||
+				(objectiveType == ObjectiveWebsiteConversion && !manualBiddingTarget(optimizationTarget))) {
+			return false, fmt.Errorf("campaign %q already exists in this campaign group with objectiveType %s but LinkedIn did not report its optimizationTargetType, so it cannot be confirmed to bid %s; aborting rather than reuse it or create a duplicate — check its bidding in Campaign Manager", el.Name, objectiveType, optimizationTarget)
 		}
 		if optimizationTarget != "" && el.OptimizationTargetType != "" &&
 			manualBiddingTarget(el.OptimizationTargetType) != manualBiddingTarget(optimizationTarget) {
@@ -2341,7 +2351,8 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 		// objectiveType, costType, optimizationTargetType and (manual only) unitCost come from
 		// campaignBidding and are merged below: WEBSITE_VISIT + MAX_CLICK for automatic,
 		// WEBSITE_CONVERSION + MAX_CONVERSION for automatic conversions (#582),
-		// WEBSITE_CONVERSION + NONE + unitCost for manual. Before LFXV2-2665 this body sent
+		// WEBSITE_CONVERSION + NONE + unitCost for manual, and WEBSITE_VISIT + NONE + unitCost for
+		// manual traffic (#675). Before LFXV2-2665 this body sent
 		// WEBSITE_CONVERSION, costType CPC and NO optimizationTargetType, which LinkedIn defaults
 		// to NONE — manual bidding — with unitCost 0, under which "the campaign does not deliver".
 		"locale":          map[string]any{"country": "US", "language": "en"},
@@ -3375,7 +3386,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	groupName := fmt.Sprintf("Events | %s | %s", eventName, project)
 	// The Objective segment follows the bidding plan (LFXV2-2665): "Conversions" for a
 	// WEBSITE_CONVERSION campaign, manual — the name every campaign had before — or automatic
-	// MAX_CONVERSION (#582), and "Traffic" for an automatic WEBSITE_VISIT one. A retry of one can
+	// MAX_CONVERSION (#582), and "Traffic" for a WEBSITE_VISIT one, automatic or (#675) manual. A retry of one can
 	// never reuse a campaign of another bidding: findCampaignByNameInGroup refuses an objective
 	// mismatch and a manual-vs-automated optimizationTargetType mismatch.
 	//
