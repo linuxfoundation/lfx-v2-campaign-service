@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
@@ -339,4 +340,56 @@ func TestMonitorAccount_AccountWideLabelKeepsUnknownProvenance(t *testing.T) {
 			}
 		})
 	}
+}
+
+// fakeProvenance classifies a fakeMonitorScope blob ({"account": X}) the way the real
+// classifiers do: no account is unknown, accountID a match, anything else foreign.
+func fakeProvenance(e model.ProjectCampaignScope, accountID string) MonitorProvenance {
+	var blob struct {
+		Account string `json:"account"`
+	}
+	_ = json.Unmarshal(e.Result, &blob)
+	switch blob.Account {
+	case "":
+		return ProvenanceUnknown
+	case accountID:
+		return ProvenanceMatch
+	default:
+		return ProvenanceForeign
+	}
+}
+
+func (d *scopedLiveDispatcher) MonitorProvenanceOf(e model.ProjectCampaignScope, accountID string) MonitorProvenance {
+	return fakeProvenance(e, accountID)
+}
+
+func (d *scopedReportDispatcher) MonitorProvenanceOf(e model.ProjectCampaignScope, accountID string) MonitorProvenance {
+	return fakeProvenance(e, accountID)
+}
+
+func TestRecordedProjectsByID(t *testing.T) {
+	c := func(id, project string, fit MonitorProvenance) model.RecordedCampaignOwner {
+		return model.RecordedCampaignOwner{ProjectCampaignScope: model.ProjectCampaignScope{PlatformCampaignID: id, Result: json.RawMessage(fmt.Sprintf(`{"fit":%d}`, fit))}, ProjectID: project}
+	}
+	got := RecordedProjectsByID([]model.RecordedCampaignOwner{
+		c("unknown-then-match", "legacy", ProvenanceUnknown), c("unknown-then-match", "p", ProvenanceMatch),
+		c("foreign-then-unknown", "q", ProvenanceForeign), c("foreign-then-unknown", "legacy", ProvenanceUnknown),
+		c("foreign-only", "q", ProvenanceForeign),
+		c("match-then-match", "first", ProvenanceMatch), c("match-then-match", "second", ProvenanceMatch),
+	}, fitFromBlob{}, "acct")
+	want := map[string]string{"unknown-then-match": "p", "foreign-then-unknown": "legacy", "match-then-match": "first"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("owners = %v, want %v", got, want)
+	}
+}
+
+// fitFromBlob reads the classification a TestRecordedProjectsByID candidate carries.
+type fitFromBlob struct{}
+
+func (fitFromBlob) MonitorProvenanceOf(e model.ProjectCampaignScope, _ string) MonitorProvenance {
+	var blob struct {
+		Fit MonitorProvenance `json:"fit"`
+	}
+	_ = json.Unmarshal(e.Result, &blob)
+	return blob.Fit
 }

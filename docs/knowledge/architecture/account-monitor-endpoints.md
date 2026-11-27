@@ -706,7 +706,10 @@ each row carries `recorded_project_id` from
 (live, else the latest binding), the first whose provenance fits the account
 labels it, else the first recording no account (a pre-stamping LFX row); one
 confirmed under a different account never does, since Reddit and X ids are
-unique only within an account. Absent for a campaign created outside LFX. A
+unique only within an account. Each record is classified by the dispatcher's
+`AccountMonitorProvenanceClassifier` (match / unknown / foreign), not inferred
+from its scoper's errors, and `service.RecordedProjectsByID` ranks them.
+Absent for a campaign created outside LFX. A
 failed label lookup fails the read rather than labelling every row
 "outside LFX". The precheck still runs.
 

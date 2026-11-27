@@ -18,3 +18,9 @@ Ads' scratch-campaign filter still applies to account-wide reads.
 A record that stores no creating account (`ErrCampaignProvenanceUnknown`, which the Google Ads,
 Reddit and X scopers join with `ErrCampaignAccountMismatch`) still labels its row when no record
 fits the account; only a record confirmed under another account is skipped.
+
+Ranking no longer infers provenance from the scopers' errors, which differ by platform (LinkedIn
+drops an unrecorded record on the system row, Meta keeps it): each shared-tenancy dispatcher
+implements `service.AccountMonitorProvenanceClassifier` (match / unknown / foreign, with its
+scoper's extractor and normalisation), and `service.RecordedProjectsByID` prefers a match, then an
+unknown record, and never a foreign one.

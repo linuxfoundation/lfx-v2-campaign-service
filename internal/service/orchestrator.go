@@ -523,6 +523,65 @@ type AccountMonitorScoper interface {
 	MonitorScopeForAccount(scope []model.ProjectCampaignScope, accountID string) ([]string, error)
 }
 
+// MonitorProvenance classifies one recorded campaign against a monitored account (#672).
+type MonitorProvenance int
+
+const (
+	// ProvenanceUnknown: the record does not say which account it was created under (written
+	// before account stamping).
+	ProvenanceUnknown MonitorProvenance = iota
+	// ProvenanceMatch: the record says it was created under the monitored account.
+	ProvenanceMatch
+	// ProvenanceForeign: the record says it was created under a different account.
+	ProvenanceForeign
+)
+
+// AccountMonitorProvenanceClassifier is an OPTIONAL dispatcher capability: classify one record's
+// creation account against accountID with the same extractor and normalisation the platform's
+// scoper uses, but WITHOUT that scoper's policy (Google, Reddit and X refuse an unknown record,
+// LinkedIn drops it on the system row, Meta keeps it), so the account-wide monitor's row labels
+// can rank records explicitly: a match first, else an unknown one, never a foreign one.
+type AccountMonitorProvenanceClassifier interface {
+	MonitorProvenanceOf(entry model.ProjectCampaignScope, accountID string) MonitorProvenance
+}
+
+// RecordedProjectsByID picks, per campaign id, the project that labels an account-wide monitor
+// row (#672). candidates are in preference order per id (live first, else the latest binding).
+// The first candidate classified ProvenanceMatch wins; failing that, the first ProvenanceUnknown
+// one (still an LFX record of that id, and the label grants nothing, unlike project scoping,
+// which fails closed on it); a ProvenanceForeign one never labels: on Reddit and X an id is unique
+// only within an account. A nil classifier (a platform whose account is not shared) treats every
+// candidate as a match.
+func RecordedProjectsByID(candidates []model.RecordedCampaignOwner, classifier AccountMonitorProvenanceClassifier, accountID string) map[string]string {
+	matched := make(map[string]string, len(candidates))
+	unknown := make(map[string]string, len(candidates))
+	for _, c := range candidates {
+		id := c.PlatformCampaignID
+		if _, done := matched[id]; done {
+			continue
+		}
+		fit := ProvenanceMatch
+		if classifier != nil {
+			fit = classifier.MonitorProvenanceOf(c.ProjectCampaignScope, accountID)
+		}
+		switch fit {
+		case ProvenanceMatch:
+			matched[id] = c.ProjectID
+		case ProvenanceUnknown:
+			if _, seen := unknown[id]; !seen {
+				unknown[id] = c.ProjectID
+			}
+		case ProvenanceForeign:
+		}
+	}
+	for id, p := range unknown {
+		if _, ok := matched[id]; !ok {
+			matched[id] = p
+		}
+	}
+	return matched
+}
+
 // AccountMonitorConnectionScoper is an OPTIONAL capability of an AccountMonitorScoper whose scope
 // rule depends on which connection will serve the read (LinkedIn, #628). MonitorScoperForConnection
 // returns the scoper to apply to projectID's read of accountID, or a nil scoper with a nil error to
@@ -3466,20 +3525,9 @@ func (o *Orchestrator) monitorScope(ctx context.Context, projectID string, platf
 }
 
 // labelRecordedProjects sets each row's RecordedProjectID from this service's own records, in
-// one query. On Reddit and X an id is unique only within an account, so each record is judged
-// against accountID by the platform scoper, and of the rows recording an id (live first, else
-// latest):
-//
-//   - the first whose provenance FITS accountID labels it;
-//   - failing that, the first whose provenance is UNKNOWN (a row written before account
-//     stamping: the scoper's ErrCampaignProvenanceUnknown, which it joins with
-//     ErrCampaignAccountMismatch) labels it. It is still an LFX record of that id; project
-//     scoping cannot place it either, but this label grants nothing, and dropping it would call
-//     an LFX campaign "created outside LFX";
-//   - a record CONFIRMED under another account (mismatch without unknown) never labels it.
-//
-// A failure fails the read: a row unlabeled because the lookup failed would read as "created
-// outside LFX", which is a claim nobody made.
+// one query, ranked by RecordedProjectsByID with the platform's provenance classifier. A failure
+// fails the read: a row unlabeled because the lookup failed would read as "created outside LFX",
+// which is a claim nobody made.
 func (o *Orchestrator) labelRecordedProjects(ctx context.Context, platform model.Provider, accountID string, rows []model.AccountCampaignMetrics) error {
 	ids := make([]string, 0, len(rows))
 	for _, r := range rows {
@@ -3491,35 +3539,17 @@ func (o *Orchestrator) labelRecordedProjects(ctx context.Context, platform model
 	if err != nil {
 		return fmt.Errorf("label account monitor rows on %s: %w", platform, err)
 	}
-	scoper, _ := o.dispatchers[platform].(AccountMonitorScoper)
-	fitting := make(map[string]string, len(candidates))
-	unknown := make(map[string]string, len(candidates))
-	for _, c := range candidates {
-		id := c.PlatformCampaignID
-		if _, done := fitting[id]; done {
-			continue
-		}
-		if scoper != nil {
-			_, serr := scoper.MonitorScopeForAccount([]model.ProjectCampaignScope{c.ProjectCampaignScope}, accountID)
-			switch {
-			case errors.Is(serr, domain.ErrCampaignProvenanceUnknown):
-				if _, seen := unknown[id]; !seen {
-					unknown[id] = c.ProjectID
-				}
-				continue
-			case errors.Is(serr, domain.ErrCampaignAccountMismatch):
-				continue // confirmed under another account
-			}
-		}
-		fitting[id] = c.ProjectID
+	var classifier AccountMonitorProvenanceClassifier
+	if c, ok := o.dispatchers[platform].(AccountMonitorProvenanceClassifier); ok {
+		classifier = c
+	} else if _, scoped := o.dispatchers[platform].(AccountMonitorScoper); scoped {
+		// A shared-tenancy platform without a classifier cannot tell a foreign record from its
+		// own; label nothing rather than risk another foundation's project on this row.
+		return fmt.Errorf("label account monitor rows on %s: the dispatcher cannot classify record provenance", platform)
 	}
+	owners := RecordedProjectsByID(candidates, classifier, accountID)
 	for i := range rows {
-		id := rows[i].PlatformCampaignID
-		if p, ok := fitting[id]; ok {
-			rows[i].RecordedProjectID = p
-		} else {
-			rows[i].RecordedProjectID = unknown[id]
-		}
+		rows[i].RecordedProjectID = owners[rows[i].PlatformCampaignID]
 	}
 	return nil
 }
