@@ -393,3 +393,36 @@ func (fitFromBlob) MonitorProvenanceOf(e model.ProjectCampaignScope, _ string) M
 	_ = json.Unmarshal(e.Result, &blob)
 	return blob.Fit
 }
+
+// noClassifierDispatcher is a shared-tenancy platform (AccountMonitorScoper) WITHOUT an
+// AccountMonitorProvenanceClassifier.
+type noClassifierDispatcher struct {
+	mockAccountMetricsReaderDispatcher
+}
+
+func (d *noClassifierDispatcher) MonitorScopePrecheck(string) error { return nil }
+
+func (d *noClassifierDispatcher) MonitorScopeForAccount(scope []model.ProjectCampaignScope, accountID string) ([]string, error) {
+	return fakeMonitorScope(scope, accountID)
+}
+
+// A shared-tenancy platform that cannot classify record provenance fails the account-wide read
+// rather than labelling rows with a nil classifier, which would treat a foreign record as a match.
+func TestMonitorAccount_AccountWideFailsWithoutAProvenanceClassifier(t *testing.T) {
+	t.Setenv(constants.EnvAccountMonitorAccountScopeEnabled, "true")
+	tc := scopedLiveCases()[1] // meta
+	repo := scopeRepo([]string{"c1"}, nil)
+	repo.recordedOwners = []model.RecordedCampaignOwner{
+		{ProjectCampaignScope: model.ProjectCampaignScope{PlatformCampaignID: "c2", Result: json.RawMessage(`{"account":"act_other"}`)}, ProjectID: "q"},
+	}
+	var d PlatformDispatcher = &noClassifierDispatcher{mockAccountMetricsReaderDispatcher: mockAccountMetricsReaderDispatcher{rows: tc.live}}
+	if _, ok := d.(AccountMonitorProvenanceClassifier); ok {
+		t.Fatal("fixture must not implement AccountMonitorProvenanceClassifier")
+	}
+	svc := liveScopeService(tc.provider, d, repo)
+	svc.SetMarketingOpsChecker(&fakeMarketingOps{allow: true})
+	got, err := accountWideCall(t, tc.provider, svc, tc.account)
+	if err == nil {
+		t.Fatalf("read = %v, want an error: rows would be labelled without provenance (c2 by a foreign record)", campaignIDs(got))
+	}
+}
