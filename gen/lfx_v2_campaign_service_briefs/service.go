@@ -676,19 +676,19 @@ type Service interface {
 	// **409** when refused BEFORE LinkedIn is written: the campaign is
 	// unprovisioned or still provisioning, was adopted, does not record its ad
 	// account or the employer exclusions it was created with (rows created before
-	// #666), belongs to another ad account than the connection now resolves to, or
-	// LinkedIn reports it terminal or omits its account or status. **400** for a
-	// request fault: the gate off, a targeting or geo_targets the rules refuse, a
-	// platform without the capability, or LinkedIn's definite refusal of the
-	// targeting — the response names which. **404** when LinkedIn holds no
-	// campaign with the stored id (deleted upstream), or the project has no
-	// connection for the channel. **500** when the LF system connection is missing
-	// or unusable or stored credentials cannot be decrypted. **503** when LinkedIn
-	// could not be reached or did not confirm (a 429 is never retried in-call);
-	// verify the targeting in Campaign Manager before retrying. On success the
-	// row's config snapshot records the targeting and locations sent and drops
-	// targetingProfile, targetingProfiles and jobFunctions, which a custom
-	// targeting leaves unread.
+	// #666, or whose create reused a same-name campaign), belongs to another ad
+	// account than the connection now resolves to, or LinkedIn reports it terminal
+	// or omits its account or status. **400** for a request fault: the gate off, a
+	// targeting or geo_targets the rules refuse, a platform without the
+	// capability, or LinkedIn's definite refusal of the targeting — the response
+	// names which. **404** when LinkedIn holds no campaign with the stored id
+	// (deleted upstream), or the project has no connection for the channel.
+	// **500** when the LF system connection is missing or unusable or stored
+	// credentials cannot be decrypted. **503** when LinkedIn could not be reached
+	// or did not confirm (a 429 is never retried in-call); verify the targeting in
+	// Campaign Manager before retrying. On success the row's config snapshot
+	// records the targeting and locations sent and drops targetingProfile,
+	// targetingProfiles and jobFunctions, which a custom targeting leaves unread.
 	UpdateCampaignTargeting(context.Context, *UpdateCampaignTargetingPayload) (res *Campaign, err error)
 	// Pause or remove Google Ads or Microsoft Advertising keywords on one
 	// campaign. A MUTATION on a live paid campaign: pausing or removing a keyword

@@ -157,7 +157,7 @@ func targetingWriteError(ctx context.Context, p *briefs.UpdateCampaignTargetingP
 	case errors.Is(werr, ErrTargetingUnwritable):
 		slog.WarnContext(ctx, "campaign targeting change refused: the targeting cannot be replaced here",
 			append(logArgs, "error", safeErrSummary(werr))...)
-		return &briefs.ConflictError{Code: "409", Message: "this campaign's targeting cannot be changed here: it was adopted, its row does not record the employer exclusions it was created with (rows created before this lever), or LinkedIn reports it ended or omits its account or status — change it in LinkedIn Campaign Manager"}
+		return &briefs.ConflictError{Code: "409", Message: "this campaign's targeting cannot be changed here: it was adopted, its row does not record the employer exclusions it was created with (rows created before this lever, or whose create reused an existing campaign), or LinkedIn reports it ended or omits its account or status — change it in LinkedIn Campaign Manager"}
 	case errors.Is(werr, domain.ErrPlatformCampaignAbsent):
 		slog.WarnContext(ctx, "campaign targeting change refused: the platform holds no such campaign", logArgs...)
 		return &briefs.NotFoundError{Code: "404", Message: "the platform holds no campaign with this id — it may have been deleted upstream"}

@@ -3517,7 +3517,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"Behind LINKEDIN_ADS_TARGETING_UPDATE_ENABLED, off by default (400 while off). " +
 			"**409** when refused BEFORE LinkedIn is written: the campaign is unprovisioned or still provisioning, " +
 			"was adopted, does not record its ad account or the employer exclusions it was created with (rows created " +
-			"before #666), belongs to another ad account than " +
+			"before #666, or whose create reused a same-name campaign), belongs to another ad account than " +
 			"the connection now resolves to, or LinkedIn reports it terminal or omits its account or status. " +
 			"**400** for a request fault: the gate off, a targeting or geo_targets the rules refuse, a platform " +
 			"without the capability, or LinkedIn's definite refusal of the targeting — the response names which. " +

@@ -196,7 +196,7 @@ func TestCampaignFromLinkedIn_RecordsEmployerExclusionsInTheResult(t *testing.T)
 		"none": {nil, `[]`},
 	} {
 		t.Run(name, func(t *testing.T) {
-			c := campaignFromLinkedIn(context.Background(), &linkedin.CampaignResult{CampaignID: "777"}, 0, linkedinConfig{EmployerExclusions: tc.cfg})
+			c := campaignFromLinkedIn(context.Background(), &linkedin.CampaignResult{CampaignID: "777", CampaignCreated: true}, 0, linkedinConfig{EmployerExclusions: tc.cfg})
 			var blob struct {
 				EmployerExclusions json.RawMessage `json:"employerExclusions"`
 			}
@@ -208,6 +208,20 @@ func TestCampaignFromLinkedIn_RecordsEmployerExclusionsInTheResult(t *testing.T)
 				t.Fatalf("read back %v, %v", got, err)
 			}
 		})
+	}
+}
+
+// A campaign found by name keeps whatever targeting it had, so its row must not claim this
+// request's exclusions as the original list (cs#688 review): nothing is recorded and the lever
+// refuses it (409) rather than re-merging a list the campaign may never have had.
+func TestCampaignFromLinkedIn_ReusedCampaignRecordsNoEmployerExclusions(t *testing.T) {
+	c := campaignFromLinkedIn(context.Background(), &linkedin.CampaignResult{CampaignID: "777", AccountID: "123456789"}, 0,
+		linkedinConfig{EmployerExclusions: []string{"urn:li:organization:208777"}})
+	if strings.Contains(string(c.Result), "employerExclusions") {
+		t.Fatalf("a reused campaign's result recorded exclusions: %s", c.Result)
+	}
+	if _, err := linkedinRecordedEmployerExclusions(c); err == nil {
+		t.Fatal("the lever would accept a reused campaign's unrecorded exclusions")
 	}
 }
 

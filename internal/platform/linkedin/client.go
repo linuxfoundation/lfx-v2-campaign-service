@@ -431,9 +431,16 @@ type CampaignResult struct {
 	// EmployerExclusions are the configured employer exclusions this create merged into the
 	// targeting (#666), recorded so the targeting update lever re-merges the create-time list from
 	// service-owned data rather than from the caller-replaceable config snapshot. Non-nil (possibly
-	// empty) on every row the dispatcher persists since #666; nil on older rows, which the lever
+	// empty) on every row whose campaign this run created (CampaignCreated) since #666; nil on a
+	// campaign found by name (its targeting is not ours to know) and on older rows, which the lever
 	// refuses because their list cannot be established. Set by the dispatcher, not CreateCampaign.
 	EmployerExclusions *[]string `json:"employerExclusions,omitempty"`
+	// CampaignCreated reports that THIS run created the campaign, so its targetingCriteria (and the
+	// employer exclusions merged into it) are the ones this run sent (#666). False for a campaign
+	// found by name, which keeps whatever targeting it had. Unlike BidApplied it is set on partial
+	// results too (every result built after the campaign exists). Not persisted: the dispatcher
+	// reads it to decide whether to record EmployerExclusions.
+	CampaignCreated bool `json:"-"`
 	// ConversionsAssociated and ConversionsFailed split CampaignInput.Conversions (#552) by
 	// whether this run's Campaign Conversions PUT succeeded. Omitted when none were requested.
 	// A non-empty ConversionsFailed makes the dispatcher report the campaign created_degraded.
@@ -3780,6 +3787,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// images or videos, never both, so at most one of the two uploads does anything.
 	var videoURNs map[string]string
 	withImages := func(r *CampaignResult) *CampaignResult {
+		// Every result from here on names a campaign that exists; record whether THIS run created
+		// it, and so sent its targeting (with the configured employer exclusions), on the partial
+		// paths too (#666).
+		r.CampaignCreated = !campaignReused
 		if len(imageURNs) > 0 {
 			r.ImageURNs = imageURNs
 		}
