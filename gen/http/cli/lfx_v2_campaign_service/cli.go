@@ -896,24 +896,28 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountProjectIDFlag   = new(cliStringFlag)
 		lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountIDFlag   = new(cliStringFlag)
 		lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountDaysFlag        = new(cliStringFlag)
+		lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountScopeFlag       = new(cliStringFlag)
 		lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountBearerTokenFlag = new(cliStringFlag)
 
 		lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountFlags           = flag.NewFlagSet("monitor-linkedin-ads-account", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountProjectIDFlag   = new(cliStringFlag)
 		lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountAccountIDFlag   = new(cliStringFlag)
 		lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountDaysFlag        = new(cliStringFlag)
+		lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountScopeFlag       = new(cliStringFlag)
 		lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountBearerTokenFlag = new(cliStringFlag)
 
 		lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountFlags           = flag.NewFlagSet("monitor-meta-ads-account", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountProjectIDFlag   = new(cliStringFlag)
 		lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountAccountIDFlag   = new(cliStringFlag)
 		lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountDaysFlag        = new(cliStringFlag)
+		lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountScopeFlag       = new(cliStringFlag)
 		lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountBearerTokenFlag = new(cliStringFlag)
 
 		lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountFlags           = flag.NewFlagSet("monitor-reddit-ads-account", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountProjectIDFlag   = new(cliStringFlag)
 		lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountAccountIDFlag   = new(cliStringFlag)
 		lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountDaysFlag        = new(cliStringFlag)
+		lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountScopeFlag       = new(cliStringFlag)
 		lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountBearerTokenFlag = new(cliStringFlag)
 
 		lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountFlags           = flag.NewFlagSet("monitor-microsoft-ads-account", flag.ExitOnError)
@@ -926,6 +930,7 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountProjectIDFlag   = new(cliStringFlag)
 		lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountAccountIDFlag   = new(cliStringFlag)
 		lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountDaysFlag        = new(cliStringFlag)
+		lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountScopeFlag       = new(cliStringFlag)
 		lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountBearerTokenFlag = new(cliStringFlag)
 
 		lfxV2CampaignServiceConnectionsMonitorHubspotAccountFlags           = flag.NewFlagSet("monitor-hubspot-account", flag.ExitOnError)
@@ -1434,18 +1439,22 @@ func ParseEndpoint(
 	lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountIDFlag, "account-id", "")
 	lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountDaysFlag, "days", "")
+	lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountScopeFlag, "scope", "")
 	lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountBearerTokenFlag, "bearer-token", "")
 	lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountAccountIDFlag, "account-id", "")
 	lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountDaysFlag, "days", "")
+	lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountScopeFlag, "scope", "")
 	lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountBearerTokenFlag, "bearer-token", "")
 	lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountAccountIDFlag, "account-id", "")
 	lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountDaysFlag, "days", "")
+	lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountScopeFlag, "scope", "")
 	lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountBearerTokenFlag, "bearer-token", "")
 	lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountAccountIDFlag, "account-id", "")
 	lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountDaysFlag, "days", "")
+	lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountScopeFlag, "scope", "")
 	lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountBearerTokenFlag, "bearer-token", "")
 	lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountAccountIDFlag, "account-id", "")
@@ -1454,6 +1463,7 @@ func ParseEndpoint(
 	lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountAccountIDFlag, "account-id", "")
 	lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountDaysFlag, "days", "")
+	lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountScopeFlag, "scope", "")
 	lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountBearerTokenFlag, "bearer-token", "")
 	lfxV2CampaignServiceConnectionsMonitorHubspotAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorHubspotAccountProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceConnectionsMonitorHubspotAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorHubspotAccountDaysFlag, "days", "")
@@ -2665,22 +2675,22 @@ func ParseEndpoint(
 				data, err = lfxv2campaignserviceconnectionsc.BuildCreateHubspotCampaignPayload(lfxV2CampaignServiceConnectionsCreateHubspotCampaignBodyFlag.value, lfxV2CampaignServiceConnectionsCreateHubspotCampaignProjectIDFlag.value, lfxV2CampaignServiceConnectionsCreateHubspotCampaignBearerTokenFlag.value)
 			case "monitor-google-ads-account":
 				endpoint = c.MonitorGoogleAdsAccount()
-				data, err = lfxv2campaignserviceconnectionsc.BuildMonitorGoogleAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountProjectIDFlag.value, lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountIDFlag.value, lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountDaysFlag.value, lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountBearerTokenFlag.value)
+				data, err = lfxv2campaignserviceconnectionsc.BuildMonitorGoogleAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountProjectIDFlag.value, lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountIDFlag.value, lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountDaysFlag.value, lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountScopeFlag.value, lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountBearerTokenFlag.value)
 			case "monitor-linkedin-ads-account":
 				endpoint = c.MonitorLinkedinAdsAccount()
-				data, err = lfxv2campaignserviceconnectionsc.BuildMonitorLinkedinAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountProjectIDFlag.value, lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountAccountIDFlag.value, lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountDaysFlag.value, lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountBearerTokenFlag.value)
+				data, err = lfxv2campaignserviceconnectionsc.BuildMonitorLinkedinAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountProjectIDFlag.value, lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountAccountIDFlag.value, lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountDaysFlag.value, lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountScopeFlag.value, lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountBearerTokenFlag.value)
 			case "monitor-meta-ads-account":
 				endpoint = c.MonitorMetaAdsAccount()
-				data, err = lfxv2campaignserviceconnectionsc.BuildMonitorMetaAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountProjectIDFlag.value, lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountAccountIDFlag.value, lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountDaysFlag.value, lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountBearerTokenFlag.value)
+				data, err = lfxv2campaignserviceconnectionsc.BuildMonitorMetaAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountProjectIDFlag.value, lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountAccountIDFlag.value, lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountDaysFlag.value, lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountScopeFlag.value, lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountBearerTokenFlag.value)
 			case "monitor-reddit-ads-account":
 				endpoint = c.MonitorRedditAdsAccount()
-				data, err = lfxv2campaignserviceconnectionsc.BuildMonitorRedditAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountProjectIDFlag.value, lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountAccountIDFlag.value, lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountDaysFlag.value, lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountBearerTokenFlag.value)
+				data, err = lfxv2campaignserviceconnectionsc.BuildMonitorRedditAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountProjectIDFlag.value, lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountAccountIDFlag.value, lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountDaysFlag.value, lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountScopeFlag.value, lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountBearerTokenFlag.value)
 			case "monitor-microsoft-ads-account":
 				endpoint = c.MonitorMicrosoftAdsAccount()
 				data, err = lfxv2campaignserviceconnectionsc.BuildMonitorMicrosoftAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountProjectIDFlag.value, lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountAccountIDFlag.value, lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountDaysFlag.value, lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountBearerTokenFlag.value)
 			case "monitor-twitter-ads-account":
 				endpoint = c.MonitorTwitterAdsAccount()
-				data, err = lfxv2campaignserviceconnectionsc.BuildMonitorTwitterAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountProjectIDFlag.value, lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountAccountIDFlag.value, lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountDaysFlag.value, lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountBearerTokenFlag.value)
+				data, err = lfxv2campaignserviceconnectionsc.BuildMonitorTwitterAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountProjectIDFlag.value, lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountAccountIDFlag.value, lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountDaysFlag.value, lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountScopeFlag.value, lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountBearerTokenFlag.value)
 			case "monitor-hubspot-account":
 				endpoint = c.MonitorHubspotAccount()
 				data, err = lfxv2campaignserviceconnectionsc.BuildMonitorHubspotAccountPayload(lfxV2CampaignServiceConnectionsMonitorHubspotAccountProjectIDFlag.value, lfxV2CampaignServiceConnectionsMonitorHubspotAccountDaysFlag.value, lfxV2CampaignServiceConnectionsMonitorHubspotAccountBearerTokenFlag.value)
@@ -6338,6 +6348,7 @@ func lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountUsage() {
 	fmt.Fprint(os.Stderr, " -project-id STRING")
 	fmt.Fprint(os.Stderr, " -account-id STRING")
 	fmt.Fprint(os.Stderr, " -days INT")
+	fmt.Fprint(os.Stderr, " -scope STRING")
 	fmt.Fprint(os.Stderr, " -bearer-token STRING")
 	fmt.Fprintln(os.Stderr)
 
@@ -6349,11 +6360,12 @@ func lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountUsage() {
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
 	fmt.Fprintln(os.Stderr, `    -account-id STRING: `)
 	fmt.Fprintln(os.Stderr, `    -days INT: `)
+	fmt.Fprintln(os.Stderr, `    -scope STRING: `)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections monitor-google-ads-account --project-id \"cncf\" --account-id \"8666746580\" --days 30 --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections monitor-google-ads-account --project-id \"cncf\" --account-id \"8666746580\" --days 30 --scope \"account\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountUsage() {
@@ -6362,6 +6374,7 @@ func lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountUsage() {
 	fmt.Fprint(os.Stderr, " -project-id STRING")
 	fmt.Fprint(os.Stderr, " -account-id STRING")
 	fmt.Fprint(os.Stderr, " -days INT")
+	fmt.Fprint(os.Stderr, " -scope STRING")
 	fmt.Fprint(os.Stderr, " -bearer-token STRING")
 	fmt.Fprintln(os.Stderr)
 
@@ -6373,11 +6386,12 @@ func lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountUsage() {
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
 	fmt.Fprintln(os.Stderr, `    -account-id STRING: `)
 	fmt.Fprintln(os.Stderr, `    -days INT: `)
+	fmt.Fprintln(os.Stderr, `    -scope STRING: `)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections monitor-linkedin-ads-account --project-id \"cncf\" --account-id \"512345678\" --days 30 --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections monitor-linkedin-ads-account --project-id \"cncf\" --account-id \"512345678\" --days 30 --scope \"account\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountUsage() {
@@ -6386,6 +6400,7 @@ func lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountUsage() {
 	fmt.Fprint(os.Stderr, " -project-id STRING")
 	fmt.Fprint(os.Stderr, " -account-id STRING")
 	fmt.Fprint(os.Stderr, " -days INT")
+	fmt.Fprint(os.Stderr, " -scope STRING")
 	fmt.Fprint(os.Stderr, " -bearer-token STRING")
 	fmt.Fprintln(os.Stderr)
 
@@ -6397,11 +6412,12 @@ func lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountUsage() {
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
 	fmt.Fprintln(os.Stderr, `    -account-id STRING: `)
 	fmt.Fprintln(os.Stderr, `    -days INT: `)
+	fmt.Fprintln(os.Stderr, `    -scope STRING: `)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections monitor-meta-ads-account --project-id \"cncf\" --account-id \"act_8666746580\" --days 30 --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections monitor-meta-ads-account --project-id \"cncf\" --account-id \"act_8666746580\" --days 30 --scope \"account\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountUsage() {
@@ -6410,6 +6426,7 @@ func lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountUsage() {
 	fmt.Fprint(os.Stderr, " -project-id STRING")
 	fmt.Fprint(os.Stderr, " -account-id STRING")
 	fmt.Fprint(os.Stderr, " -days INT")
+	fmt.Fprint(os.Stderr, " -scope STRING")
 	fmt.Fprint(os.Stderr, " -bearer-token STRING")
 	fmt.Fprintln(os.Stderr)
 
@@ -6421,11 +6438,12 @@ func lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountUsage() {
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
 	fmt.Fprintln(os.Stderr, `    -account-id STRING: `)
 	fmt.Fprintln(os.Stderr, `    -days INT: `)
+	fmt.Fprintln(os.Stderr, `    -scope STRING: `)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections monitor-reddit-ads-account --project-id \"cncf\" --account-id \"t2_gv9wtbfa\" --days 30 --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections monitor-reddit-ads-account --project-id \"cncf\" --account-id \"t2_gv9wtbfa\" --days 30 --scope \"account\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountUsage() {
@@ -6458,6 +6476,7 @@ func lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountUsage() {
 	fmt.Fprint(os.Stderr, " -project-id STRING")
 	fmt.Fprint(os.Stderr, " -account-id STRING")
 	fmt.Fprint(os.Stderr, " -days INT")
+	fmt.Fprint(os.Stderr, " -scope STRING")
 	fmt.Fprint(os.Stderr, " -bearer-token STRING")
 	fmt.Fprintln(os.Stderr)
 
@@ -6469,11 +6488,12 @@ func lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountUsage() {
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
 	fmt.Fprintln(os.Stderr, `    -account-id STRING: `)
 	fmt.Fprintln(os.Stderr, `    -days INT: `)
+	fmt.Fprintln(os.Stderr, `    -scope STRING: `)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections monitor-twitter-ads-account --project-id \"cncf\" --account-id \"18ce54d4x5t\" --days 30 --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections monitor-twitter-ads-account --project-id \"cncf\" --account-id \"18ce54d4x5t\" --days 30 --scope \"account\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsMonitorHubspotAccountUsage() {

@@ -190,6 +190,10 @@ type fakeCampaignRepo struct {
 	// scopeErr makes the scope lookup fail, so a test can assert the read does not fall back
 	// to an unscoped platform call when the scope cannot be established.
 	scopeErr error
+	// recordedProjects backs RecordedCampaignProjects (the account-wide monitor's row labels,
+	// #672); recordedErr makes it fail.
+	recordedProjects map[string]string
+	recordedErr      error
 	// existing maps briefID+"|"+platform to a pre-existing campaign, letting a
 	// test simulate a brief already dispatched to a platform (idempotency guard).
 	existing map[string]*model.Campaign
@@ -323,6 +327,19 @@ func (r *fakeCampaignRepo) ListProjectPlatformDeletedCampaignIDs(_ context.Conte
 		}
 		seen[c.PlatformCampaignID] = true
 		out = append(out, model.ProjectCampaignScope{PlatformCampaignID: c.PlatformCampaignID, Result: c.Result})
+	}
+	return out, nil
+}
+
+func (r *fakeCampaignRepo) RecordedCampaignProjects(_ context.Context, _ model.Provider, ids []string) (map[string]string, error) {
+	if r.recordedErr != nil {
+		return nil, r.recordedErr
+	}
+	out := make(map[string]string, len(ids))
+	for _, id := range ids {
+		if p, ok := r.recordedProjects[id]; ok {
+			out[id] = p
+		}
 	}
 	return out, nil
 }

@@ -696,6 +696,24 @@ so it keeps the account-wide read. X's saved report
 response is filtered, and the report's `metrics_as_of`, window and
 `metrics_pending` are returned unchanged.
 
+### Account-wide read for the LF marketing team (#672, off)
+
+`scope=account` on the five scoped monitors skips the project scope: every
+campaign the account read returns comes back, with rules and totals over all
+of them, and each row carries `recorded_project_id` from
+`CampaignRepository.RecordedCampaignProjects` (the project holding the id
+live, else the latest binding; absent for a campaign created outside LFX). A
+failed label lookup fails the read rather than labelling every row
+"outside LFX". The precheck still runs.
+
+Admission (`ConnectionService.admitAccountWideMonitor`) is fail-closed: 400
+while `ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED` is not exactly `true`, then
+`global_marketing_ops` on the project (403 on a denial, 503 when it cannot be
+checked). The project-api gateway rule adds the same relation to any
+`/account-monitor` request carrying a `scope` key. `campaign_manager` alone is
+never enough, since it also admits a foundation's executive director. The
+flag stays off until Misha and David agree on widening #897 for this role.
+
 ### Google Ads: read with the credential configured for the account (#591)
 
 The refusal above left every campaign created through the LF system account —

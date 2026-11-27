@@ -6376,6 +6376,13 @@ paths:
                   type: integer
                   maximum: 90
                   minimum: 7
+                - name: scope
+                  in: query
+                  description: Optional (#672). Omitted, only this project's own recorded campaigns are returned. "account" returns every campaign on the account, whoever created it, each row naming the project it is recorded for (recorded_project_id, absent when it was not created or adopted through this service). Requires global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400 otherwise).
+                  required: false
+                  type: string
+                  enum:
+                    - account
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -6410,6 +6417,13 @@ paths:
                         WWW-Authenticate:
                             description: Authentication challenge (RFC 9110 §15.5.2)
                             type: string
+                "403":
+                    description: 'Forbidden: scope=account from a caller without global_marketing_ops on the project'
+                    schema:
+                        $ref: '#/definitions/ForbiddenError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: 'NotFound: Resource not found'
                     schema:
@@ -7825,6 +7839,13 @@ paths:
                   type: integer
                   maximum: 90
                   minimum: 7
+                - name: scope
+                  in: query
+                  description: Optional (#672). Omitted, only this project's own recorded campaigns are returned. "account" returns every campaign on the account, whoever created it, each row naming the project it is recorded for (recorded_project_id, absent when it was not created or adopted through this service). Requires global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400 otherwise).
+                  required: false
+                  type: string
+                  enum:
+                    - account
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -7859,6 +7880,13 @@ paths:
                         WWW-Authenticate:
                             description: Authentication challenge (RFC 9110 §15.5.2)
                             type: string
+                "403":
+                    description: 'Forbidden: scope=account from a caller without global_marketing_ops on the project'
+                    schema:
+                        $ref: '#/definitions/ForbiddenError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: 'NotFound: Resource not found'
                     schema:
@@ -8470,6 +8498,13 @@ paths:
                   type: integer
                   maximum: 90
                   minimum: 7
+                - name: scope
+                  in: query
+                  description: Optional (#672). Omitted, only this project's own recorded campaigns are returned. "account" returns every campaign on the account, whoever created it, each row naming the project it is recorded for (recorded_project_id, absent when it was not created or adopted through this service). Requires global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400 otherwise).
+                  required: false
+                  type: string
+                  enum:
+                    - account
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -8504,6 +8539,13 @@ paths:
                         WWW-Authenticate:
                             description: Authentication challenge (RFC 9110 §15.5.2)
                             type: string
+                "403":
+                    description: 'Forbidden: scope=account from a caller without global_marketing_ops on the project'
+                    schema:
+                        $ref: '#/definitions/ForbiddenError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: 'NotFound: Resource not found'
                     schema:
@@ -9752,6 +9794,13 @@ paths:
                   type: integer
                   maximum: 90
                   minimum: 7
+                - name: scope
+                  in: query
+                  description: Optional (#672). Omitted, only this project's own recorded campaigns are returned. "account" returns every campaign on the account, whoever created it, each row naming the project it is recorded for (recorded_project_id, absent when it was not created or adopted through this service). Requires global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400 otherwise).
+                  required: false
+                  type: string
+                  enum:
+                    - account
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -9786,6 +9835,13 @@ paths:
                         WWW-Authenticate:
                             description: Authentication challenge (RFC 9110 §15.5.2)
                             type: string
+                "403":
+                    description: 'Forbidden: scope=account from a caller without global_marketing_ops on the project'
+                    schema:
+                        $ref: '#/definitions/ForbiddenError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: 'NotFound: Resource not found'
                     schema:
@@ -10397,6 +10453,13 @@ paths:
                   type: integer
                   maximum: 90
                   minimum: 7
+                - name: scope
+                  in: query
+                  description: Optional (#672). Omitted, only this project's own recorded campaigns are returned. "account" returns every campaign on the account, whoever created it, each row naming the project it is recorded for (recorded_project_id, absent when it was not created or adopted through this service). Requires global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400 otherwise).
+                  required: false
+                  type: string
+                  enum:
+                    - account
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -10431,6 +10494,13 @@ paths:
                         WWW-Authenticate:
                             description: Authentication challenge (RFC 9110 §15.5.2)
                             type: string
+                "403":
+                    description: 'Forbidden: scope=account from a caller without global_marketing_ops on the project'
+                    schema:
+                        $ref: '#/definitions/ForbiddenError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: 'NotFound: Resource not found'
                     schema:
@@ -13820,6 +13890,10 @@ definitions:
                 type: string
                 description: The id the platform assigned to this campaign.
                 example: "24183781329"
+            recorded_project_id:
+                type: string
+                description: 'scope=account reads only (#672): the project (the {project_id} it was created or adopted under) this service records the campaign for; absent when no project records it, i.e. it was created outside LFX. Never set on a project-scoped read, whose rows are all the requesting project''s.'
+                example: tlf
             spend:
                 type: number
                 description: Total cost in the account's currency over the requested window.

@@ -190,6 +190,10 @@ func (stubCampaignRepo) ListProjectPlatformMonitorCampaignIDs(context.Context, s
 	return nil, nil
 }
 
+func (stubCampaignRepo) RecordedCampaignProjects(context.Context, model.Provider, []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
 func (stubCampaignRepo) ListRecentProjectPlatformCampaigns(context.Context, string, model.Provider, int) ([]*model.Campaign, error) {
 	return nil, nil
 }

@@ -769,6 +769,13 @@ const (
 	// and the system scope's LinkedIn accounts list returns the default account and the grants.
 	EnvLinkedInAdsAccountSelectionEnabled = "LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED"
 
+	// EnvAccountMonitorAccountScopeEnabled opts a deployment IN to the account monitors' scope=account
+	// read (#672): every campaign on a shared ad account, whoever created it, for global_marketing_ops
+	// callers only. Only the exact value "true" enables it; unset or any other value fails closed, and
+	// a scope=account request is refused with 400. It widens the project scoping of
+	// lfx-self-serve-ops#897, so it stays off until that change is agreed.
+	EnvAccountMonitorAccountScopeEnabled = "ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED"
+
 	// EnvLinkedInAdsTextAdsEnabled opts a deployment IN to linkedInConfig.format "text" (#586):
 	// a TEXT_AD campaign whose creatives are linkedInConfig.textAds (headline, description,
 	// optional 100x100 image) instead of single-image dark posts. Only the exact value "true"

@@ -162,3 +162,45 @@ func TestCampaignMonitorHistoryIndex_Live(t *testing.T) {
 			valid, allStatuses, nonUnique, definition)
 	}
 }
+
+// TestRecordedCampaignProjects_Live runs the account-wide monitor's row labels (#672) against a
+// real database: a live row names its project over an older deleted one elsewhere, among deleted
+// rows the latest binding wins, and an id no row records is absent.
+func TestRecordedCampaignProjects_Live(t *testing.T) {
+	pool := creativeAssetTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	briefA, projectA := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
+	briefB, projectB := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
+	id := func(name string) string { return creativeAssetUniqueID(t, name) }
+	liveB, latestA, unknown := id("live-b"), id("latest-a"), id("unknown")
+	base := time.Now().UTC().Add(-time.Hour)
+	slot := 0
+	insert := func(brief, project, platformID, status string) {
+		t.Helper()
+		slot++
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO campaigns (project_id, brief_id, platform, variant, slot_version, platform_campaign_id,
+			                       campaign_name, status, created_at)
+			VALUES ($1, $2, 'meta-ads', $5, $3, $4, 'n', $6, $7)`,
+			project, brief, slot, platformID, fmt.Sprintf("v%d", slot), status, base.Add(time.Duration(slot)*time.Second)); err != nil {
+			t.Fatalf("insert campaign: %v", err)
+		}
+	}
+	// A deleted A row then B's live row: B holds it.
+	insert(briefA, projectA, liveB, "deleted")
+	insert(briefB, projectB, liveB, "created")
+	// Both deleted, A's later: A is the latest owner.
+	insert(briefB, projectB, latestA, "deleted")
+	insert(briefA, projectA, latestA, "deleted")
+
+	got, err := NewCampaignRepo(pool).RecordedCampaignProjects(ctx, model.ProviderMetaAds, []string{liveB, latestA, unknown})
+	if err != nil {
+		t.Fatalf("RecordedCampaignProjects: %v", err)
+	}
+	want := map[string]string{liveB: projectB, latestA: projectA}
+	if len(got) != len(want) || got[liveB] != projectB || got[latestA] != projectA {
+		t.Errorf("owners = %v, want %v (and %s absent)", got, want, unknown)
+	}
+}

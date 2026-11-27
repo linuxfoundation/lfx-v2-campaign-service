@@ -17436,6 +17436,9 @@ func EncodeMonitorGoogleAdsAccountRequest(encoder func(*http.Request) goahttp.En
 			values.Add("account_id", *p.AccountID)
 		}
 		values.Add("days", strconv.Itoa(p.Days))
+		if p.Scope != nil {
+			values.Add("scope", *p.Scope)
+		}
 		req.URL.RawQuery = values.Encode()
 		return nil
 	}
@@ -17449,6 +17452,7 @@ func EncodeMonitorGoogleAdsAccountRequest(encoder func(*http.Request) goahttp.En
 //   - "Conflict" (type *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError): http.StatusConflict
 //   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "Forbidden" (type *lfxv2campaignserviceconnections.ForbiddenError): http.StatusForbidden
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
 //   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
@@ -17532,6 +17536,20 @@ func DecodeMonitorGoogleAdsAccountResponse(decoder func(*http.Response) goahttp.
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-google-ads-account", err)
 			}
 			return nil, NewMonitorGoogleAdsAccountServiceUnavailable(&body)
+		case http.StatusForbidden:
+			var (
+				body MonitorGoogleAdsAccountForbiddenResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-google-ads-account", err)
+			}
+			err = ValidateMonitorGoogleAdsAccountForbiddenResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-google-ads-account", err)
+			}
+			return nil, NewMonitorGoogleAdsAccountForbidden(&body)
 		case http.StatusInternalServerError:
 			var (
 				body MonitorGoogleAdsAccountInternalServerErrorResponseBody
@@ -17657,6 +17675,9 @@ func EncodeMonitorLinkedinAdsAccountRequest(encoder func(*http.Request) goahttp.
 			values.Add("account_id", *p.AccountID)
 		}
 		values.Add("days", strconv.Itoa(p.Days))
+		if p.Scope != nil {
+			values.Add("scope", *p.Scope)
+		}
 		req.URL.RawQuery = values.Encode()
 		return nil
 	}
@@ -17670,6 +17691,7 @@ func EncodeMonitorLinkedinAdsAccountRequest(encoder func(*http.Request) goahttp.
 //   - "Conflict" (type *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError): http.StatusConflict
 //   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "Forbidden" (type *lfxv2campaignserviceconnections.ForbiddenError): http.StatusForbidden
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
 //   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
@@ -17753,6 +17775,20 @@ func DecodeMonitorLinkedinAdsAccountResponse(decoder func(*http.Response) goahtt
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-linkedin-ads-account", err)
 			}
 			return nil, NewMonitorLinkedinAdsAccountServiceUnavailable(&body)
+		case http.StatusForbidden:
+			var (
+				body MonitorLinkedinAdsAccountForbiddenResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-linkedin-ads-account", err)
+			}
+			err = ValidateMonitorLinkedinAdsAccountForbiddenResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-linkedin-ads-account", err)
+			}
+			return nil, NewMonitorLinkedinAdsAccountForbidden(&body)
 		case http.StatusInternalServerError:
 			var (
 				body MonitorLinkedinAdsAccountInternalServerErrorResponseBody
@@ -17875,6 +17911,9 @@ func EncodeMonitorMetaAdsAccountRequest(encoder func(*http.Request) goahttp.Enco
 		values := req.URL.Query()
 		values.Add("account_id", p.AccountID)
 		values.Add("days", strconv.Itoa(p.Days))
+		if p.Scope != nil {
+			values.Add("scope", *p.Scope)
+		}
 		req.URL.RawQuery = values.Encode()
 		return nil
 	}
@@ -17888,6 +17927,7 @@ func EncodeMonitorMetaAdsAccountRequest(encoder func(*http.Request) goahttp.Enco
 //   - "Conflict" (type *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError): http.StatusConflict
 //   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "Forbidden" (type *lfxv2campaignserviceconnections.ForbiddenError): http.StatusForbidden
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
 //   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
@@ -17971,6 +18011,20 @@ func DecodeMonitorMetaAdsAccountResponse(decoder func(*http.Response) goahttp.De
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-meta-ads-account", err)
 			}
 			return nil, NewMonitorMetaAdsAccountServiceUnavailable(&body)
+		case http.StatusForbidden:
+			var (
+				body MonitorMetaAdsAccountForbiddenResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-meta-ads-account", err)
+			}
+			err = ValidateMonitorMetaAdsAccountForbiddenResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-meta-ads-account", err)
+			}
+			return nil, NewMonitorMetaAdsAccountForbidden(&body)
 		case http.StatusInternalServerError:
 			var (
 				body MonitorMetaAdsAccountInternalServerErrorResponseBody
@@ -18093,6 +18147,9 @@ func EncodeMonitorRedditAdsAccountRequest(encoder func(*http.Request) goahttp.En
 		values := req.URL.Query()
 		values.Add("account_id", p.AccountID)
 		values.Add("days", strconv.Itoa(p.Days))
+		if p.Scope != nil {
+			values.Add("scope", *p.Scope)
+		}
 		req.URL.RawQuery = values.Encode()
 		return nil
 	}
@@ -18106,6 +18163,7 @@ func EncodeMonitorRedditAdsAccountRequest(encoder func(*http.Request) goahttp.En
 //   - "Conflict" (type *lfxv2campaignserviceconnections.AccountMonitorScopeConflictError): http.StatusConflict
 //   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "Forbidden" (type *lfxv2campaignserviceconnections.ForbiddenError): http.StatusForbidden
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
 //   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
@@ -18189,6 +18247,20 @@ func DecodeMonitorRedditAdsAccountResponse(decoder func(*http.Response) goahttp.
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-reddit-ads-account", err)
 			}
 			return nil, NewMonitorRedditAdsAccountServiceUnavailable(&body)
+		case http.StatusForbidden:
+			var (
+				body MonitorRedditAdsAccountForbiddenResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-reddit-ads-account", err)
+			}
+			err = ValidateMonitorRedditAdsAccountForbiddenResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-reddit-ads-account", err)
+			}
+			return nil, NewMonitorRedditAdsAccountForbidden(&body)
 		case http.StatusInternalServerError:
 			var (
 				body MonitorRedditAdsAccountInternalServerErrorResponseBody
@@ -18516,6 +18588,9 @@ func EncodeMonitorTwitterAdsAccountRequest(encoder func(*http.Request) goahttp.E
 		values := req.URL.Query()
 		values.Add("account_id", p.AccountID)
 		values.Add("days", strconv.Itoa(p.Days))
+		if p.Scope != nil {
+			values.Add("scope", *p.Scope)
+		}
 		req.URL.RawQuery = values.Encode()
 		return nil
 	}
@@ -18529,6 +18604,7 @@ func EncodeMonitorTwitterAdsAccountRequest(encoder func(*http.Request) goahttp.E
 //   - "Conflict" (type *lfxv2campaignserviceconnections.AccountMonitorConflictError): http.StatusConflict
 //   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "Forbidden" (type *lfxv2campaignserviceconnections.ForbiddenError): http.StatusForbidden
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
 //   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
@@ -18612,6 +18688,20 @@ func DecodeMonitorTwitterAdsAccountResponse(decoder func(*http.Response) goahttp
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
 			}
 			return nil, NewMonitorTwitterAdsAccountServiceUnavailable(&body)
+		case http.StatusForbidden:
+			var (
+				body MonitorTwitterAdsAccountForbiddenResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			err = ValidateMonitorTwitterAdsAccountForbiddenResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			return nil, NewMonitorTwitterAdsAccountForbidden(&body)
 		case http.StatusInternalServerError:
 			var (
 				body MonitorTwitterAdsAccountInternalServerErrorResponseBody
@@ -19801,6 +19891,7 @@ func unmarshalAccountMonitorCampaignResponseBodyToLfxv2campaignserviceconnection
 		PacingPct:          *v.PacingPct,
 		PacingLabel:        *v.PacingLabel,
 		CampaignURL:        v.CampaignURL,
+		RecordedProjectID:  v.RecordedProjectID,
 	}
 
 	return res

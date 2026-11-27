@@ -781,6 +781,7 @@ func newAudienceBuilder(repo *postgres.ConnectionRepo, enc domain.Encryptor, cfg
 func (c *Container) newConnectionService(repo domain.ConnectionRepository, enc domain.Encryptor) *service.ConnectionService {
 	s := service.NewConnectionService(repo, enc)
 	s.SetTokenVerifier(c.tokenVerifier)
+	s.SetMarketingOpsChecker(c.marketingOpsChecker())
 	return s
 }
 

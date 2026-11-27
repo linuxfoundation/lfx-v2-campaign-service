@@ -6981,6 +6981,16 @@ type MonitorGoogleAdsAccountServiceUnavailableResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// MonitorGoogleAdsAccountForbiddenResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
+// endpoint HTTP response body for the "Forbidden" error.
+type MonitorGoogleAdsAccountForbiddenResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // MonitorGoogleAdsAccountInternalServerErrorResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
 // endpoint HTTP response body for the "InternalServerError" error.
@@ -7051,6 +7061,16 @@ type MonitorLinkedinAdsAccountBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "monitor-linkedin-ads-account"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
 type MonitorLinkedinAdsAccountServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// MonitorLinkedinAdsAccountForbiddenResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-linkedin-ads-account"
+// endpoint HTTP response body for the "Forbidden" error.
+type MonitorLinkedinAdsAccountForbiddenResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -7133,6 +7153,16 @@ type MonitorMetaAdsAccountServiceUnavailableResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// MonitorMetaAdsAccountForbiddenResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
+// endpoint HTTP response body for the "Forbidden" error.
+type MonitorMetaAdsAccountForbiddenResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // MonitorMetaAdsAccountInternalServerErrorResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
 // endpoint HTTP response body for the "InternalServerError" error.
@@ -7203,6 +7233,16 @@ type MonitorRedditAdsAccountBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
 type MonitorRedditAdsAccountServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// MonitorRedditAdsAccountForbiddenResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
+// endpoint HTTP response body for the "Forbidden" error.
+type MonitorRedditAdsAccountForbiddenResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -7349,6 +7389,16 @@ type MonitorTwitterAdsAccountBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
 type MonitorTwitterAdsAccountServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// MonitorTwitterAdsAccountForbiddenResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
+// endpoint HTTP response body for the "Forbidden" error.
+type MonitorTwitterAdsAccountForbiddenResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -8250,6 +8300,11 @@ type AccountMonitorCampaignResponseBody struct {
 	PacingLabel string `form:"pacing_label" json:"pacing_label" xml:"pacing_label"`
 	// Google Ads only: direct link to the campaign in the Google Ads UI.
 	CampaignURL *string `form:"campaign_url,omitempty" json:"campaign_url,omitempty" xml:"campaign_url,omitempty"`
+	// scope=account reads only (#672): the project (the {project_id} it was
+	// created or adopted under) this service records the campaign for; absent when
+	// no project records it, i.e. it was created outside LFX. Never set on a
+	// project-scoped read, whose rows are all the requesting project's.
+	RecordedProjectID *string `form:"recorded_project_id,omitempty" json:"recorded_project_id,omitempty" xml:"recorded_project_id,omitempty"`
 }
 
 // AccountMonitorActionItemResponseBody is used to define fields on response
@@ -16518,6 +16573,17 @@ func NewMonitorGoogleAdsAccountServiceUnavailableResponseBody(res *lfxv2campaign
 	return body
 }
 
+// NewMonitorGoogleAdsAccountForbiddenResponseBody builds the HTTP response
+// body from the result of the "monitor-google-ads-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorGoogleAdsAccountForbiddenResponseBody(res *lfxv2campaignserviceconnections.ForbiddenError) *MonitorGoogleAdsAccountForbiddenResponseBody {
+	body := &MonitorGoogleAdsAccountForbiddenResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewMonitorGoogleAdsAccountInternalServerErrorResponseBody builds the HTTP
 // response body from the result of the "monitor-google-ads-account" endpoint
 // of the "lfx-v2-campaign-service-connections" service.
@@ -16590,6 +16656,17 @@ func NewMonitorLinkedinAdsAccountBadRequestResponseBody(res *lfxv2campaignservic
 // of the "lfx-v2-campaign-service-connections" service.
 func NewMonitorLinkedinAdsAccountServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *MonitorLinkedinAdsAccountServiceUnavailableResponseBody {
 	body := &MonitorLinkedinAdsAccountServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewMonitorLinkedinAdsAccountForbiddenResponseBody builds the HTTP response
+// body from the result of the "monitor-linkedin-ads-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorLinkedinAdsAccountForbiddenResponseBody(res *lfxv2campaignserviceconnections.ForbiddenError) *MonitorLinkedinAdsAccountForbiddenResponseBody {
+	body := &MonitorLinkedinAdsAccountForbiddenResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -16674,6 +16751,17 @@ func NewMonitorMetaAdsAccountServiceUnavailableResponseBody(res *lfxv2campaignse
 	return body
 }
 
+// NewMonitorMetaAdsAccountForbiddenResponseBody builds the HTTP response body
+// from the result of the "monitor-meta-ads-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorMetaAdsAccountForbiddenResponseBody(res *lfxv2campaignserviceconnections.ForbiddenError) *MonitorMetaAdsAccountForbiddenResponseBody {
+	body := &MonitorMetaAdsAccountForbiddenResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewMonitorMetaAdsAccountInternalServerErrorResponseBody builds the HTTP
 // response body from the result of the "monitor-meta-ads-account" endpoint of
 // the "lfx-v2-campaign-service-connections" service.
@@ -16746,6 +16834,17 @@ func NewMonitorRedditAdsAccountBadRequestResponseBody(res *lfxv2campaignservicec
 // of the "lfx-v2-campaign-service-connections" service.
 func NewMonitorRedditAdsAccountServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *MonitorRedditAdsAccountServiceUnavailableResponseBody {
 	body := &MonitorRedditAdsAccountServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewMonitorRedditAdsAccountForbiddenResponseBody builds the HTTP response
+// body from the result of the "monitor-reddit-ads-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorRedditAdsAccountForbiddenResponseBody(res *lfxv2campaignserviceconnections.ForbiddenError) *MonitorRedditAdsAccountForbiddenResponseBody {
+	body := &MonitorRedditAdsAccountForbiddenResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -16890,6 +16989,17 @@ func NewMonitorTwitterAdsAccountBadRequestResponseBody(res *lfxv2campaignservice
 // of the "lfx-v2-campaign-service-connections" service.
 func NewMonitorTwitterAdsAccountServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *MonitorTwitterAdsAccountServiceUnavailableResponseBody {
 	body := &MonitorTwitterAdsAccountServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewMonitorTwitterAdsAccountForbiddenResponseBody builds the HTTP response
+// body from the result of the "monitor-twitter-ads-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorTwitterAdsAccountForbiddenResponseBody(res *lfxv2campaignserviceconnections.ForbiddenError) *MonitorTwitterAdsAccountForbiddenResponseBody {
+	body := &MonitorTwitterAdsAccountForbiddenResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -17954,11 +18064,12 @@ func NewCreateHubspotCampaignPayload(body *CreateHubspotCampaignRequestBody, pro
 // NewMonitorGoogleAdsAccountPayload builds a
 // lfx-v2-campaign-service-connections service monitor-google-ads-account
 // endpoint payload.
-func NewMonitorGoogleAdsAccountPayload(projectID string, accountID *string, days int, bearerToken *string) *lfxv2campaignserviceconnections.MonitorGoogleAdsAccountPayload {
+func NewMonitorGoogleAdsAccountPayload(projectID string, accountID *string, days int, scope *string, bearerToken *string) *lfxv2campaignserviceconnections.MonitorGoogleAdsAccountPayload {
 	v := &lfxv2campaignserviceconnections.MonitorGoogleAdsAccountPayload{}
 	v.ProjectID = projectID
 	v.AccountID = accountID
 	v.Days = days
+	v.Scope = scope
 	v.BearerToken = bearerToken
 
 	return v
@@ -17967,11 +18078,12 @@ func NewMonitorGoogleAdsAccountPayload(projectID string, accountID *string, days
 // NewMonitorLinkedinAdsAccountPayload builds a
 // lfx-v2-campaign-service-connections service monitor-linkedin-ads-account
 // endpoint payload.
-func NewMonitorLinkedinAdsAccountPayload(projectID string, accountID *string, days int, bearerToken *string) *lfxv2campaignserviceconnections.MonitorLinkedinAdsAccountPayload {
+func NewMonitorLinkedinAdsAccountPayload(projectID string, accountID *string, days int, scope *string, bearerToken *string) *lfxv2campaignserviceconnections.MonitorLinkedinAdsAccountPayload {
 	v := &lfxv2campaignserviceconnections.MonitorLinkedinAdsAccountPayload{}
 	v.ProjectID = projectID
 	v.AccountID = accountID
 	v.Days = days
+	v.Scope = scope
 	v.BearerToken = bearerToken
 
 	return v
@@ -17979,11 +18091,12 @@ func NewMonitorLinkedinAdsAccountPayload(projectID string, accountID *string, da
 
 // NewMonitorMetaAdsAccountPayload builds a lfx-v2-campaign-service-connections
 // service monitor-meta-ads-account endpoint payload.
-func NewMonitorMetaAdsAccountPayload(projectID string, accountID string, days int, bearerToken *string) *lfxv2campaignserviceconnections.MonitorMetaAdsAccountPayload {
+func NewMonitorMetaAdsAccountPayload(projectID string, accountID string, days int, scope *string, bearerToken *string) *lfxv2campaignserviceconnections.MonitorMetaAdsAccountPayload {
 	v := &lfxv2campaignserviceconnections.MonitorMetaAdsAccountPayload{}
 	v.ProjectID = projectID
 	v.AccountID = accountID
 	v.Days = days
+	v.Scope = scope
 	v.BearerToken = bearerToken
 
 	return v
@@ -17992,11 +18105,12 @@ func NewMonitorMetaAdsAccountPayload(projectID string, accountID string, days in
 // NewMonitorRedditAdsAccountPayload builds a
 // lfx-v2-campaign-service-connections service monitor-reddit-ads-account
 // endpoint payload.
-func NewMonitorRedditAdsAccountPayload(projectID string, accountID string, days int, bearerToken *string) *lfxv2campaignserviceconnections.MonitorRedditAdsAccountPayload {
+func NewMonitorRedditAdsAccountPayload(projectID string, accountID string, days int, scope *string, bearerToken *string) *lfxv2campaignserviceconnections.MonitorRedditAdsAccountPayload {
 	v := &lfxv2campaignserviceconnections.MonitorRedditAdsAccountPayload{}
 	v.ProjectID = projectID
 	v.AccountID = accountID
 	v.Days = days
+	v.Scope = scope
 	v.BearerToken = bearerToken
 
 	return v
@@ -18018,11 +18132,12 @@ func NewMonitorMicrosoftAdsAccountPayload(projectID string, accountID string, da
 // NewMonitorTwitterAdsAccountPayload builds a
 // lfx-v2-campaign-service-connections service monitor-twitter-ads-account
 // endpoint payload.
-func NewMonitorTwitterAdsAccountPayload(projectID string, accountID string, days int, bearerToken *string) *lfxv2campaignserviceconnections.MonitorTwitterAdsAccountPayload {
+func NewMonitorTwitterAdsAccountPayload(projectID string, accountID string, days int, scope *string, bearerToken *string) *lfxv2campaignserviceconnections.MonitorTwitterAdsAccountPayload {
 	v := &lfxv2campaignserviceconnections.MonitorTwitterAdsAccountPayload{}
 	v.ProjectID = projectID
 	v.AccountID = accountID
 	v.Days = days
+	v.Scope = scope
 	v.BearerToken = bearerToken
 
 	return v

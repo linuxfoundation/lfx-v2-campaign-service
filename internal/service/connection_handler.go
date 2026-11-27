@@ -72,6 +72,8 @@ type ConnectionService struct {
 	repo domain.ConnectionRepository
 	enc  domain.Encryptor
 	orch *Orchestrator
+	// marketingOps admits the account monitors' scope=account read (#672); nil refuses it (503).
+	marketingOps MarketingOpsChecker
 }
 
 var (

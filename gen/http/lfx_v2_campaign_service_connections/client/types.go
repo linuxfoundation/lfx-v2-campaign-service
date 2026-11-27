@@ -6981,6 +6981,16 @@ type MonitorGoogleAdsAccountServiceUnavailableResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// MonitorGoogleAdsAccountForbiddenResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
+// endpoint HTTP response body for the "Forbidden" error.
+type MonitorGoogleAdsAccountForbiddenResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // MonitorGoogleAdsAccountInternalServerErrorResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
 // endpoint HTTP response body for the "InternalServerError" error.
@@ -7051,6 +7061,16 @@ type MonitorLinkedinAdsAccountBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "monitor-linkedin-ads-account"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
 type MonitorLinkedinAdsAccountServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorLinkedinAdsAccountForbiddenResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-linkedin-ads-account"
+// endpoint HTTP response body for the "Forbidden" error.
+type MonitorLinkedinAdsAccountForbiddenResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -7133,6 +7153,16 @@ type MonitorMetaAdsAccountServiceUnavailableResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// MonitorMetaAdsAccountForbiddenResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
+// endpoint HTTP response body for the "Forbidden" error.
+type MonitorMetaAdsAccountForbiddenResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // MonitorMetaAdsAccountInternalServerErrorResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
 // endpoint HTTP response body for the "InternalServerError" error.
@@ -7203,6 +7233,16 @@ type MonitorRedditAdsAccountBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
 type MonitorRedditAdsAccountServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorRedditAdsAccountForbiddenResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
+// endpoint HTTP response body for the "Forbidden" error.
+type MonitorRedditAdsAccountForbiddenResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -7349,6 +7389,16 @@ type MonitorTwitterAdsAccountBadRequestResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
 type MonitorTwitterAdsAccountServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorTwitterAdsAccountForbiddenResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
+// endpoint HTTP response body for the "Forbidden" error.
+type MonitorTwitterAdsAccountForbiddenResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -8250,6 +8300,11 @@ type AccountMonitorCampaignResponseBody struct {
 	PacingLabel *string `form:"pacing_label,omitempty" json:"pacing_label,omitempty" xml:"pacing_label,omitempty"`
 	// Google Ads only: direct link to the campaign in the Google Ads UI.
 	CampaignURL *string `form:"campaign_url,omitempty" json:"campaign_url,omitempty" xml:"campaign_url,omitempty"`
+	// scope=account reads only (#672): the project (the {project_id} it was
+	// created or adopted under) this service records the campaign for; absent when
+	// no project records it, i.e. it was created outside LFX. Never set on a
+	// project-scoped read, whose rows are all the requesting project's.
+	RecordedProjectID *string `form:"recorded_project_id,omitempty" json:"recorded_project_id,omitempty" xml:"recorded_project_id,omitempty"`
 }
 
 // AccountMonitorActionItemResponseBody is used to define fields on response
@@ -16904,6 +16959,18 @@ func NewMonitorGoogleAdsAccountServiceUnavailable(body *MonitorGoogleAdsAccountS
 	return v
 }
 
+// NewMonitorGoogleAdsAccountForbidden builds a
+// lfx-v2-campaign-service-connections service monitor-google-ads-account
+// endpoint Forbidden error.
+func NewMonitorGoogleAdsAccountForbidden(body *MonitorGoogleAdsAccountForbiddenResponseBody) *lfxv2campaignserviceconnections.ForbiddenError {
+	v := &lfxv2campaignserviceconnections.ForbiddenError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewMonitorGoogleAdsAccountInternalServerError builds a
 // lfx-v2-campaign-service-connections service monitor-google-ads-account
 // endpoint InternalServerError error.
@@ -17017,6 +17084,18 @@ func NewMonitorLinkedinAdsAccountBadRequest(body *MonitorLinkedinAdsAccountBadRe
 // endpoint ServiceUnavailable error.
 func NewMonitorLinkedinAdsAccountServiceUnavailable(body *MonitorLinkedinAdsAccountServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
 	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorLinkedinAdsAccountForbidden builds a
+// lfx-v2-campaign-service-connections service monitor-linkedin-ads-account
+// endpoint Forbidden error.
+func NewMonitorLinkedinAdsAccountForbidden(body *MonitorLinkedinAdsAccountForbiddenResponseBody) *lfxv2campaignserviceconnections.ForbiddenError {
+	v := &lfxv2campaignserviceconnections.ForbiddenError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -17144,6 +17223,18 @@ func NewMonitorMetaAdsAccountServiceUnavailable(body *MonitorMetaAdsAccountServi
 	return v
 }
 
+// NewMonitorMetaAdsAccountForbidden builds a
+// lfx-v2-campaign-service-connections service monitor-meta-ads-account
+// endpoint Forbidden error.
+func NewMonitorMetaAdsAccountForbidden(body *MonitorMetaAdsAccountForbiddenResponseBody) *lfxv2campaignserviceconnections.ForbiddenError {
+	v := &lfxv2campaignserviceconnections.ForbiddenError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewMonitorMetaAdsAccountInternalServerError builds a
 // lfx-v2-campaign-service-connections service monitor-meta-ads-account
 // endpoint InternalServerError error.
@@ -17257,6 +17348,18 @@ func NewMonitorRedditAdsAccountBadRequest(body *MonitorRedditAdsAccountBadReques
 // endpoint ServiceUnavailable error.
 func NewMonitorRedditAdsAccountServiceUnavailable(body *MonitorRedditAdsAccountServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
 	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorRedditAdsAccountForbidden builds a
+// lfx-v2-campaign-service-connections service monitor-reddit-ads-account
+// endpoint Forbidden error.
+func NewMonitorRedditAdsAccountForbidden(body *MonitorRedditAdsAccountForbiddenResponseBody) *lfxv2campaignserviceconnections.ForbiddenError {
+	v := &lfxv2campaignserviceconnections.ForbiddenError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -17484,6 +17587,18 @@ func NewMonitorTwitterAdsAccountBadRequest(body *MonitorTwitterAdsAccountBadRequ
 // endpoint ServiceUnavailable error.
 func NewMonitorTwitterAdsAccountServiceUnavailable(body *MonitorTwitterAdsAccountServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
 	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorTwitterAdsAccountForbidden builds a
+// lfx-v2-campaign-service-connections service monitor-twitter-ads-account
+// endpoint Forbidden error.
+func NewMonitorTwitterAdsAccountForbidden(body *MonitorTwitterAdsAccountForbiddenResponseBody) *lfxv2campaignserviceconnections.ForbiddenError {
+	v := &lfxv2campaignserviceconnections.ForbiddenError{
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
@@ -26199,6 +26314,18 @@ func ValidateMonitorGoogleAdsAccountServiceUnavailableResponseBody(body *Monitor
 	return
 }
 
+// ValidateMonitorGoogleAdsAccountForbiddenResponseBody runs the validations
+// defined on MonitorGoogleAdsAccountForbiddenResponseBody
+func ValidateMonitorGoogleAdsAccountForbiddenResponseBody(body *MonitorGoogleAdsAccountForbiddenResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateMonitorGoogleAdsAccountInternalServerErrorResponseBody runs the
 // validations defined on MonitorGoogleAdsAccountInternalServerErrorResponseBody
 func ValidateMonitorGoogleAdsAccountInternalServerErrorResponseBody(body *MonitorGoogleAdsAccountInternalServerErrorResponseBody) (err error) {
@@ -26283,6 +26410,18 @@ func ValidateMonitorLinkedinAdsAccountBadRequestResponseBody(body *MonitorLinked
 // validations defined on
 // MonitorLinkedinAdsAccountServiceUnavailableResponseBody
 func ValidateMonitorLinkedinAdsAccountServiceUnavailableResponseBody(body *MonitorLinkedinAdsAccountServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorLinkedinAdsAccountForbiddenResponseBody runs the validations
+// defined on MonitorLinkedinAdsAccountForbiddenResponseBody
+func ValidateMonitorLinkedinAdsAccountForbiddenResponseBody(body *MonitorLinkedinAdsAccountForbiddenResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -26385,6 +26524,18 @@ func ValidateMonitorMetaAdsAccountServiceUnavailableResponseBody(body *MonitorMe
 	return
 }
 
+// ValidateMonitorMetaAdsAccountForbiddenResponseBody runs the validations
+// defined on MonitorMetaAdsAccountForbiddenResponseBody
+func ValidateMonitorMetaAdsAccountForbiddenResponseBody(body *MonitorMetaAdsAccountForbiddenResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateMonitorMetaAdsAccountInternalServerErrorResponseBody runs the
 // validations defined on MonitorMetaAdsAccountInternalServerErrorResponseBody
 func ValidateMonitorMetaAdsAccountInternalServerErrorResponseBody(body *MonitorMetaAdsAccountInternalServerErrorResponseBody) (err error) {
@@ -26468,6 +26619,18 @@ func ValidateMonitorRedditAdsAccountBadRequestResponseBody(body *MonitorRedditAd
 // ValidateMonitorRedditAdsAccountServiceUnavailableResponseBody runs the
 // validations defined on MonitorRedditAdsAccountServiceUnavailableResponseBody
 func ValidateMonitorRedditAdsAccountServiceUnavailableResponseBody(body *MonitorRedditAdsAccountServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorRedditAdsAccountForbiddenResponseBody runs the validations
+// defined on MonitorRedditAdsAccountForbiddenResponseBody
+func ValidateMonitorRedditAdsAccountForbiddenResponseBody(body *MonitorRedditAdsAccountForbiddenResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -26634,6 +26797,18 @@ func ValidateMonitorTwitterAdsAccountBadRequestResponseBody(body *MonitorTwitter
 // ValidateMonitorTwitterAdsAccountServiceUnavailableResponseBody runs the
 // validations defined on MonitorTwitterAdsAccountServiceUnavailableResponseBody
 func ValidateMonitorTwitterAdsAccountServiceUnavailableResponseBody(body *MonitorTwitterAdsAccountServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorTwitterAdsAccountForbiddenResponseBody runs the validations
+// defined on MonitorTwitterAdsAccountForbiddenResponseBody
+func ValidateMonitorTwitterAdsAccountForbiddenResponseBody(body *MonitorTwitterAdsAccountForbiddenResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

@@ -501,6 +501,19 @@ resolving which credential serves the read is an error, and omitting `account_id
 account is still a 409. Implementing it is how a platform is recorded as shared in code: if a platform's
 tenancy changes, change its dispatcher in the same change as the tables here.
 
+**Account-wide read for the LF marketing team (#672, OFF).** The five scoped monitors also take an
+opt-in `scope=account`, which skips the project scope and returns every campaign the account read
+returns, whoever created it, with the same rules and totals over those rows. Each row carries
+`recorded_project_id`, the project this service records the campaign for (live row first, else the
+latest binding), absent when none does, so a caller can mark campaigns created outside LFX. It is
+admitted only for `global_marketing_ops` of the project, which `campaign_manager` alone does not
+give (it also admits a foundation's executive director): the project-api gateway rule adds that
+check to any `/account-monitor` request carrying a `scope` key, and the service checks it again
+(`ConnectionService.admitAccountWideMonitor`: 403 on a denial, 503 when it cannot be checked). It
+changes the scoping above for that role, so it is behind `ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED`
+(400 while off), which stays off until Misha and David agree on the scope change; every other
+caller, and every request without `scope`, keeps the project-scoped read unchanged.
+
 **Requested-account guards.** Five platforms carry one —
 `requireLinkedInManagedAccount`, `requireMetaManagedAccount`, Reddit's `resolveMonitorClient`,
 `requireTwitterManagedAccount` and `requireMicrosoftManagedAccount` — each refusing a requested

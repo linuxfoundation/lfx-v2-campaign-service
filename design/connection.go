@@ -51,6 +51,23 @@ const (
 
 // ─── Shared attribute helpers ───
 
+// monitorScopeAttr declares the account monitors' opt-in `scope` (#672). Absent, the read is
+// project-scoped as before (lfx-self-serve-ops#897). "account" asks for every campaign on the
+// account, whoever created it, and is admitted only for global_marketing_ops of the project (the
+// LF marketing team; campaign_manager also admits a foundation's executive director) and only
+// while ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED is on. Declared on the five shared-tenancy monitors;
+// Microsoft's monitor is account-wide already.
+func monitorScopeAttr() {
+	Attribute("scope", String, "Optional (#672). Omitted, only this project's own recorded campaigns are returned. "+
+		"\"account\" returns every campaign on the account, whoever created it, each row naming the project it is "+
+		"recorded for (recorded_project_id, absent when it was not created or adopted through this service). "+
+		"Requires global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked) and "+
+		"ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400 otherwise).", func() {
+		Enum("account")
+		Example("account")
+	})
+}
+
 // bearerToken declares the JWT bearer token attribute on a payload.
 func bearerToken() {
 	Token("bearer_token", String, func() {
@@ -1243,6 +1260,7 @@ var AccountMonitorCampaign = Type("account-monitor-campaign", func() {
 		Example("underspending")
 	})
 	Attribute("campaign_url", String, "Google Ads only: direct link to the campaign in the Google Ads UI.", func() { Example("https://ads.google.com/aw/campaigns?campaignId=24183781329") })
+	Attribute("recorded_project_id", String, "scope=account reads only (#672): the project (the {project_id} it was created or adopted under) this service records the campaign for; absent when no project records it, i.e. it was created outside LFX. Never set on a project-scoped read, whose rows are all the requesting project's.", func() { Example("tlf") })
 	Required("platform_campaign_id", "name", "status", "spend", "impressions", "clicks", "ctr",
 		"budget_day", "total_budget", "start_date", "end_date", "pacing_unknown",
 		"is_search_channel", "fetch_failed", "pacing_pct", "pacing_label")
@@ -2662,11 +2680,13 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 				Maximum(monitorDaysMax)
 				Example(30)
 			})
+			monitorScopeAttr()
 			Required("project_id", "days")
 		})
 		Result(AccountMonitor)
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("Conflict", AccountMonitorScopeConflictError, "A campaign recorded for this project does not fit the monitored account: created under a different customer than account_id, or recording none (see reason); the same for account_id omitted")
+		Error("Forbidden", ForbiddenError, "scope=account from a caller without global_marketing_ops on the project")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -2676,9 +2696,11 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			connectionAuthErrorResponses()
 			Param("account_id")
 			Param("days")
+			Param("scope")
 			Response(StatusOK, accountMonitorExampleBody(googleAccountMonitorBody, googleAccountMonitorExample()))
 			Response("NotFound", StatusNotFound)
 			Response("Conflict", StatusConflict)
+			Response("Forbidden", StatusForbidden)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})
@@ -2726,11 +2748,13 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 				Maximum(monitorDaysMax)
 				Example(30)
 			})
+			monitorScopeAttr()
 			Required("project_id", "days")
 		})
 		Result(AccountMonitor)
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("Conflict", AccountMonitorScopeConflictError, "A campaign recorded for this project does not fit the monitored account: created under a different account than account_id, or carrying an id the platform cannot read (see reason); with account_id omitted, also when no live campaign records an account")
+		Error("Forbidden", ForbiddenError, "scope=account from a caller without global_marketing_ops on the project")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -2740,9 +2764,11 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			connectionAuthErrorResponses()
 			Param("account_id")
 			Param("days")
+			Param("scope")
 			Response(StatusOK, accountMonitorExampleBody(linkedinAccountMonitorBody, linkedinAccountMonitorExample()))
 			Response("NotFound", StatusNotFound)
 			Response("Conflict", StatusConflict)
+			Response("Forbidden", StatusForbidden)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})
@@ -2779,11 +2805,13 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 				Maximum(monitorDaysMax)
 				Example(30)
 			})
+			monitorScopeAttr()
 			Required("project_id", "account_id", "days")
 		})
 		Result(AccountMonitor)
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("Conflict", AccountMonitorScopeConflictError, "A campaign recorded for this project does not fit the monitored account: created under a different account, or carrying an id the platform cannot read (see reason)")
+		Error("Forbidden", ForbiddenError, "scope=account from a caller without global_marketing_ops on the project")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -2793,9 +2821,11 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			connectionAuthErrorResponses()
 			Param("account_id")
 			Param("days")
+			Param("scope")
 			Response(StatusOK, accountMonitorExampleBody(metaAccountMonitorBody, metaAccountMonitorExample()))
 			Response("NotFound", StatusNotFound)
 			Response("Conflict", StatusConflict)
+			Response("Forbidden", StatusForbidden)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})
@@ -2832,11 +2862,13 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 				Maximum(monitorDaysMax)
 				Example(30)
 			})
+			monitorScopeAttr()
 			Required("project_id", "account_id", "days")
 		})
 		Result(AccountMonitor)
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("Conflict", AccountMonitorScopeConflictError, "A campaign recorded for this project does not fit the monitored account: created under a different account, recording none, or carrying an id the platform cannot read (see reason)")
+		Error("Forbidden", ForbiddenError, "scope=account from a caller without global_marketing_ops on the project")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -2846,9 +2878,11 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			connectionAuthErrorResponses()
 			Param("account_id")
 			Param("days")
+			Param("scope")
 			Response(StatusOK, accountMonitorExampleBody(redditAccountMonitorBody, redditAccountMonitorExample()))
 			Response("NotFound", StatusNotFound)
 			Response("Conflict", StatusConflict)
+			Response("Forbidden", StatusForbidden)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})
@@ -2947,11 +2981,13 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 				Maximum(monitorDaysMax)
 				Example(30)
 			})
+			monitorScopeAttr()
 			Required("project_id", "account_id", "days")
 		})
 		Result(AccountMonitor)
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("Conflict", AccountMonitorConflictError, "The account cannot be monitored as it stands: too many active campaigns on the shared account, a timezone off the whole UTC hour, or a recorded campaign that does not fit the account (see reason)")
+		Error("Forbidden", ForbiddenError, "scope=account from a caller without global_marketing_ops on the project")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -2961,9 +2997,11 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			connectionAuthErrorResponses()
 			Param("account_id")
 			Param("days")
+			Param("scope")
 			Response(StatusOK, accountMonitorExampleBody(twitterAccountMonitorBody, twitterAccountMonitorExample()))
 			Response("NotFound", StatusNotFound)
 			Response("Conflict", StatusConflict)
+			Response("Forbidden", StatusForbidden)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})

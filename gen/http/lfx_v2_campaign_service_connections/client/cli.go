@@ -3201,7 +3201,7 @@ func BuildCreateHubspotCampaignPayload(lfxV2CampaignServiceConnectionsCreateHubs
 // BuildMonitorGoogleAdsAccountPayload builds the payload for the
 // lfx-v2-campaign-service-connections monitor-google-ads-account endpoint from
 // CLI flags.
-func BuildMonitorGoogleAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountProjectID *string, lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID *string, lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountDays *string, lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountBearerToken *string) (*lfxv2campaignserviceconnections.MonitorGoogleAdsAccountPayload, error) {
+func BuildMonitorGoogleAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountProjectID *string, lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID *string, lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountDays *string, lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountScope *string, lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountBearerToken *string) (*lfxv2campaignserviceconnections.MonitorGoogleAdsAccountPayload, error) {
 	var err error
 	var projectID string
 	{
@@ -3244,6 +3244,18 @@ func BuildMonitorGoogleAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorG
 			return nil, err
 		}
 	}
+	var scope *string
+	{
+		if lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountScope != nil {
+			scope = lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountScope
+			if !(*lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountScope == "account") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("scope", *lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountScope, []any{"account"}))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	var bearerToken *string
 	{
 		if lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountBearerToken != nil {
@@ -3254,6 +3266,7 @@ func BuildMonitorGoogleAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorG
 	v.ProjectID = projectID
 	v.AccountID = accountID
 	v.Days = days
+	v.Scope = scope
 	v.BearerToken = bearerToken
 
 	return v, nil
@@ -3262,7 +3275,7 @@ func BuildMonitorGoogleAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorG
 // BuildMonitorLinkedinAdsAccountPayload builds the payload for the
 // lfx-v2-campaign-service-connections monitor-linkedin-ads-account endpoint
 // from CLI flags.
-func BuildMonitorLinkedinAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountProjectID *string, lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountAccountID *string, lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountDays *string, lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountBearerToken *string) (*lfxv2campaignserviceconnections.MonitorLinkedinAdsAccountPayload, error) {
+func BuildMonitorLinkedinAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountProjectID *string, lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountAccountID *string, lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountDays *string, lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountScope *string, lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountBearerToken *string) (*lfxv2campaignserviceconnections.MonitorLinkedinAdsAccountPayload, error) {
 	var err error
 	var projectID string
 	{
@@ -3305,6 +3318,18 @@ func BuildMonitorLinkedinAdsAccountPayload(lfxV2CampaignServiceConnectionsMonito
 			return nil, err
 		}
 	}
+	var scope *string
+	{
+		if lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountScope != nil {
+			scope = lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountScope
+			if !(*lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountScope == "account") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("scope", *lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountScope, []any{"account"}))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	var bearerToken *string
 	{
 		if lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountBearerToken != nil {
@@ -3315,6 +3340,7 @@ func BuildMonitorLinkedinAdsAccountPayload(lfxV2CampaignServiceConnectionsMonito
 	v.ProjectID = projectID
 	v.AccountID = accountID
 	v.Days = days
+	v.Scope = scope
 	v.BearerToken = bearerToken
 
 	return v, nil
@@ -3323,7 +3349,7 @@ func BuildMonitorLinkedinAdsAccountPayload(lfxV2CampaignServiceConnectionsMonito
 // BuildMonitorMetaAdsAccountPayload builds the payload for the
 // lfx-v2-campaign-service-connections monitor-meta-ads-account endpoint from
 // CLI flags.
-func BuildMonitorMetaAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountProjectID *string, lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountAccountID *string, lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountDays *string, lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountBearerToken *string) (*lfxv2campaignserviceconnections.MonitorMetaAdsAccountPayload, error) {
+func BuildMonitorMetaAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountProjectID *string, lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountAccountID *string, lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountDays *string, lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountScope *string, lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountBearerToken *string) (*lfxv2campaignserviceconnections.MonitorMetaAdsAccountPayload, error) {
 	var err error
 	var projectID string
 	{
@@ -3367,6 +3393,18 @@ func BuildMonitorMetaAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorMet
 			return nil, err
 		}
 	}
+	var scope *string
+	{
+		if lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountScope != nil {
+			scope = lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountScope
+			if !(*lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountScope == "account") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("scope", *lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountScope, []any{"account"}))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	var bearerToken *string
 	{
 		if lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountBearerToken != nil {
@@ -3377,6 +3415,7 @@ func BuildMonitorMetaAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorMet
 	v.ProjectID = projectID
 	v.AccountID = accountID
 	v.Days = days
+	v.Scope = scope
 	v.BearerToken = bearerToken
 
 	return v, nil
@@ -3385,7 +3424,7 @@ func BuildMonitorMetaAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorMet
 // BuildMonitorRedditAdsAccountPayload builds the payload for the
 // lfx-v2-campaign-service-connections monitor-reddit-ads-account endpoint from
 // CLI flags.
-func BuildMonitorRedditAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountProjectID *string, lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountAccountID *string, lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountDays *string, lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountBearerToken *string) (*lfxv2campaignserviceconnections.MonitorRedditAdsAccountPayload, error) {
+func BuildMonitorRedditAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountProjectID *string, lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountAccountID *string, lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountDays *string, lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountScope *string, lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountBearerToken *string) (*lfxv2campaignserviceconnections.MonitorRedditAdsAccountPayload, error) {
 	var err error
 	var projectID string
 	{
@@ -3429,6 +3468,18 @@ func BuildMonitorRedditAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorR
 			return nil, err
 		}
 	}
+	var scope *string
+	{
+		if lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountScope != nil {
+			scope = lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountScope
+			if !(*lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountScope == "account") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("scope", *lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountScope, []any{"account"}))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	var bearerToken *string
 	{
 		if lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountBearerToken != nil {
@@ -3439,6 +3490,7 @@ func BuildMonitorRedditAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorR
 	v.ProjectID = projectID
 	v.AccountID = accountID
 	v.Days = days
+	v.Scope = scope
 	v.BearerToken = bearerToken
 
 	return v, nil
@@ -3509,7 +3561,7 @@ func BuildMonitorMicrosoftAdsAccountPayload(lfxV2CampaignServiceConnectionsMonit
 // BuildMonitorTwitterAdsAccountPayload builds the payload for the
 // lfx-v2-campaign-service-connections monitor-twitter-ads-account endpoint
 // from CLI flags.
-func BuildMonitorTwitterAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountProjectID *string, lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountAccountID *string, lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountDays *string, lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountBearerToken *string) (*lfxv2campaignserviceconnections.MonitorTwitterAdsAccountPayload, error) {
+func BuildMonitorTwitterAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountProjectID *string, lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountAccountID *string, lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountDays *string, lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountScope *string, lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountBearerToken *string) (*lfxv2campaignserviceconnections.MonitorTwitterAdsAccountPayload, error) {
 	var err error
 	var projectID string
 	{
@@ -3553,6 +3605,18 @@ func BuildMonitorTwitterAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitor
 			return nil, err
 		}
 	}
+	var scope *string
+	{
+		if lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountScope != nil {
+			scope = lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountScope
+			if !(*lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountScope == "account") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("scope", *lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountScope, []any{"account"}))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	var bearerToken *string
 	{
 		if lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountBearerToken != nil {
@@ -3563,6 +3627,7 @@ func BuildMonitorTwitterAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitor
 	v.ProjectID = projectID
 	v.AccountID = accountID
 	v.Days = days
+	v.Scope = scope
 	v.BearerToken = bearerToken
 
 	return v, nil

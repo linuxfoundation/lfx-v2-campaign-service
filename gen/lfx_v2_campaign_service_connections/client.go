@@ -1779,6 +1779,7 @@ func (c *Client) CreateHubspotCampaign(ctx context.Context, p *CreateHubspotCamp
 // MonitorGoogleAdsAccount may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *AccountMonitorScopeConflictError): A campaign recorded for this project does not fit the monitored account: created under a different customer than account_id, or recording none (see reason); the same for account_id omitted
+//   - "Forbidden" (type *ForbiddenError): scope=account from a caller without global_marketing_ops on the project
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
@@ -1799,6 +1800,7 @@ func (c *Client) MonitorGoogleAdsAccount(ctx context.Context, p *MonitorGoogleAd
 // MonitorLinkedinAdsAccount may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *AccountMonitorScopeConflictError): A campaign recorded for this project does not fit the monitored account: created under a different account than account_id, or carrying an id the platform cannot read (see reason); with account_id omitted, also when no live campaign records an account
+//   - "Forbidden" (type *ForbiddenError): scope=account from a caller without global_marketing_ops on the project
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
@@ -1819,6 +1821,7 @@ func (c *Client) MonitorLinkedinAdsAccount(ctx context.Context, p *MonitorLinked
 // MonitorMetaAdsAccount may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *AccountMonitorScopeConflictError): A campaign recorded for this project does not fit the monitored account: created under a different account, or carrying an id the platform cannot read (see reason)
+//   - "Forbidden" (type *ForbiddenError): scope=account from a caller without global_marketing_ops on the project
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
@@ -1839,6 +1842,7 @@ func (c *Client) MonitorMetaAdsAccount(ctx context.Context, p *MonitorMetaAdsAcc
 // MonitorRedditAdsAccount may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *AccountMonitorScopeConflictError): A campaign recorded for this project does not fit the monitored account: created under a different account, recording none, or carrying an id the platform cannot read (see reason)
+//   - "Forbidden" (type *ForbiddenError): scope=account from a caller without global_marketing_ops on the project
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
@@ -1878,6 +1882,7 @@ func (c *Client) MonitorMicrosoftAdsAccount(ctx context.Context, p *MonitorMicro
 // MonitorTwitterAdsAccount may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "Conflict" (type *AccountMonitorConflictError): The account cannot be monitored as it stands: too many active campaigns on the shared account, a timezone off the whole UTC hour, or a recorded campaign that does not fit the account (see reason)
+//   - "Forbidden" (type *ForbiddenError): scope=account from a caller without global_marketing_ops on the project
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large

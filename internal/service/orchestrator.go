@@ -3320,6 +3320,19 @@ func (o *Orchestrator) ReadAccounts(ctx context.Context, projectID string, platf
 // recordUpstream, and treat a nil result with no error as a contract violation rather than an
 // authoritative empty answer.
 func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) (*model.AccountMonitorRead, error) {
+	return o.readAccountCampaignMetrics(ctx, projectID, platform, accountID, days, false)
+}
+
+// ReadAccountCampaignMetricsAccountWide is ReadAccountCampaignMetrics without the project scope
+// (#672): every campaign the account read returns, whoever created it, each labeled with the
+// project this service records it for (RecordedProjectID). The caller has already admitted the
+// request (global_marketing_ops and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED); this method does not
+// check either. The scoper's precheck still runs, so a malformed account id is the same 400.
+func (o *Orchestrator) ReadAccountCampaignMetricsAccountWide(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) (*model.AccountMonitorRead, error) {
+	return o.readAccountCampaignMetrics(ctx, projectID, platform, accountID, days, true)
+}
+
+func (o *Orchestrator) readAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int, accountWide bool) (*model.AccountMonitorRead, error) {
 	d, ok := o.dispatchers[platform]
 	if !ok {
 		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrAccountMetricsUnsupported, platform)
@@ -3333,7 +3346,7 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 	// upstream call, and an empty scope answers with an empty monitor without contacting the
 	// platform at all: the account read below would otherwise return every foundation's
 	// campaigns to a project that has none of its own (lfx-self-serve-ops#897).
-	scopeIDs, scoped, serr := o.scopeAccountMonitor(ctx, projectID, platform, accountID)
+	scopeIDs, scoped, serr := o.monitorScope(ctx, projectID, platform, accountID, accountWide)
 	if serr != nil {
 		return nil, serr
 	}
@@ -3380,7 +3393,47 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 		}
 		read.Rows = filterMonitorRows(read.Rows, scopeIDs)
 	}
+	if accountWide {
+		if err := o.labelRecordedProjects(ctx, platform, read.Rows); err != nil {
+			return nil, err
+		}
+	}
 	return read, nil
+}
+
+// monitorScope is scopeAccountMonitor for a project-scoped read. For an account-wide one (#672)
+// it runs only the scoper's precheck, so a malformed account id or a disabled monitor answers
+// the same 400, and reports the read as unscoped.
+func (o *Orchestrator) monitorScope(ctx context.Context, projectID string, platform model.Provider, accountID string, accountWide bool) (map[string]bool, bool, error) {
+	if !accountWide {
+		return o.scopeAccountMonitor(ctx, projectID, platform, accountID)
+	}
+	if scoper, ok := o.dispatchers[platform].(AccountMonitorScoper); ok {
+		if err := scoper.MonitorScopePrecheck(accountID); err != nil {
+			return nil, false, err
+		}
+	}
+	return nil, false, nil
+}
+
+// labelRecordedProjects sets each row's RecordedProjectID from this service's own records, in
+// one query. A failure fails the read: a row unlabeled because the lookup failed would read as
+// "created outside LFX", which is a claim nobody made.
+func (o *Orchestrator) labelRecordedProjects(ctx context.Context, platform model.Provider, rows []model.AccountCampaignMetrics) error {
+	ids := make([]string, 0, len(rows))
+	for _, r := range rows {
+		if r.PlatformCampaignID != "" {
+			ids = append(ids, r.PlatformCampaignID)
+		}
+	}
+	owners, err := o.campaigns.RecordedCampaignProjects(ctx, platform, ids)
+	if err != nil {
+		return fmt.Errorf("label account monitor rows on %s: %w", platform, err)
+	}
+	for i := range rows {
+		rows[i].RecordedProjectID = owners[rows[i].PlatformCampaignID]
+	}
+	return nil
 }
 
 // scopeAccountMonitor resolves the project's campaign scope for an account-monitor read.
