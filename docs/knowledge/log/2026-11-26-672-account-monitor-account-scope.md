@@ -7,3 +7,6 @@ that recorded it (`recorded_project_id`, absent for a campaign created outside L
 and only while `ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED` is `true` (400 otherwise; the chart sets
 `"false"`). Requests without `scope` are unchanged. See
 [Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md).
+
+`accesscheck.Checker.IsGlobalMarketingOps` now takes a project UUID as the object directly instead
+of sending it to `slug_to_uid`, which never resolves one; the connection routes accept either form.
