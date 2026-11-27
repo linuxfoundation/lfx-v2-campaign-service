@@ -4,9 +4,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -215,5 +218,27 @@ func TestUpdateCampaignTargeting_RefusedStatesBeforeTheClaim(t *testing.T) {
 				t.Error("the platform was contacted for a refusal the row decides")
 			}
 		})
+	}
+}
+
+// A decrypt failure of the LF system row is logged against that row, with the requester beside it,
+// and without the error text (cs#688 review; the bid/budget/keyword convention).
+func TestUpdateCampaignTargeting_SystemRowDecryptFailureIsAttributedToTheSystemRow(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	err := fmt.Errorf("%w: %w: encryptor-secret-detail", domain.ErrSystemConnectionOrigin, domain.ErrCredentialDecryptionFailed)
+	s, _ := budgetService(t, targetingCampaign(), &targetingWriterDispatcher{err: err})
+	if _, uerr := s.UpdateCampaignTargeting(context.Background(), targetingPayload(skillsClause)); !isInternal(uerr) {
+		t.Fatalf("want 500, got %T: %v", uerr, uerr)
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, "project_id="+model.SystemProjectID) || !strings.Contains(logged, "requested_by_project_id=cncf") {
+		t.Errorf("the log must name the failing system row and the requester.\nlog: %s", logged)
+	}
+	if strings.Contains(logged, "encryptor-secret-detail") {
+		t.Errorf("the decrypt arm must not log the error text.\nlog: %s", logged)
 	}
 }

@@ -2863,4 +2863,5 @@ both variants are written to the survey specification.
 with the snapshot the adapter recorded, worked on a copy so a refusal leaves the loaded row as
 found. `TargetingUpdateMarketingOpsInputs` names segment facets (`audienceMatchingSegments`,
 `dynamicSegments`) in any clause or in exclude; any of them takes `requireGlobalMarketingOps`
-before the row is loaded (403/503).
+before the row is loaded (403/503). A credential-decrypt failure is logged against `credentialOwnerProject` with
+`requested_by_project_id` beside it and no error text, as the bid and budget handlers log it.

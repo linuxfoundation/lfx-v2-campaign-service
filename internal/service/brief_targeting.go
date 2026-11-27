@@ -169,7 +169,12 @@ func targetingWriteError(ctx context.Context, p *briefs.UpdateCampaignTargetingP
 		slog.ErrorContext(ctx, "the LF system connection is not installed; campaign targeting changes are failing while force-system mode is on", logArgs...)
 		return &briefs.InternalServerError{Code: "500", Message: failed}
 	case errors.Is(werr, domain.ErrCredentialDecryptionFailed):
-		slog.ErrorContext(ctx, "campaign targeting change blocked: stored credentials could not be decrypted (key mismatch or corrupted row)", logArgs...)
+		// Attributed to the row that FAILED (the LF system row when the error says so), with the
+		// requester beside it, as the bid, budget and keyword handlers log it. NO error text: the
+		// chain ends in the Encryptor's own error.
+		slog.ErrorContext(ctx, "campaign targeting change blocked: stored credentials could not be decrypted (key mismatch or corrupted row)",
+			"project_id", credentialOwnerProject(werr, p.ProjectID), "requested_by_project_id", p.ProjectID,
+			"brief_id", p.BriefID, "campaign_id", p.CampaignID, "platform", existing.Platform)
 		return &briefs.InternalServerError{Code: "500", Message: failed}
 	case errors.Is(werr, domain.ErrServiceDefect):
 		slog.ErrorContext(ctx, "campaign targeting change blocked by a defect in this service, not in the connection",
