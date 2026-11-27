@@ -505,10 +505,12 @@ tenancy changes, change its dispatcher in the same change as the tables here.
 opt-in `scope=account`, which skips the project scope and returns every campaign the account read
 returns, whoever created it, with the same rules and totals over those rows (so Google Ads still
 hides the operator's "zz" scratch campaigns, as on every read). Each row carries
-`recorded_project_id`, the project this service records the campaign for: of the rows recording the
-id, live first, else the latest binding, skipping one recorded under a different account (Reddit and
-X ids are unique only within an account). It is absent when none fits, so a caller can mark
-campaigns created outside LFX. It is
+`recorded_project_id`, the project this service records the campaign for. Of the rows recording the
+id (live first, else the latest binding), the first whose provenance fits the monitored account
+labels it; failing that, the first that records no account (written before account stamping: still
+an LFX record of that id, and the label grants nothing, unlike the scoping above, which fails closed
+on it); one confirmed under a different account never does (Reddit and X ids are unique only within
+an account). It is absent when none qualifies, so a caller can mark campaigns created outside LFX. It is
 admitted only for `global_marketing_ops` of the project, which `campaign_manager` alone does not
 give (it also admits a foundation's executive director): the project-api gateway rule adds that
 check to any `/account-monitor` request carrying a `scope` key, and the service checks it again

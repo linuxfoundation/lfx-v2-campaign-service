@@ -3418,13 +3418,20 @@ func (o *Orchestrator) monitorScope(ctx context.Context, projectID string, platf
 }
 
 // labelRecordedProjects sets each row's RecordedProjectID from this service's own records, in
-// one query. Of the rows recording an id, the first (live, else latest) whose provenance fits
-// accountID labels it: on Reddit and X an id is unique only within an account, so a same-id
-// campaign recorded under ANOTHER account (the platform scoper's ErrCampaignAccountMismatch) is
-// skipped rather than lending its project to an external campaign. A row the scoper cannot place
-// for any other reason (no recorded account, say) still labels it, as the project-scoped read
-// would have counted it. A failure fails the read: a row unlabeled because the lookup failed
-// would read as "created outside LFX", which is a claim nobody made.
+// one query. On Reddit and X an id is unique only within an account, so each record is judged
+// against accountID by the platform scoper, and of the rows recording an id (live first, else
+// latest):
+//
+//   - the first whose provenance FITS accountID labels it;
+//   - failing that, the first whose provenance is UNKNOWN (a row written before account
+//     stamping: the scoper's ErrCampaignProvenanceUnknown, which it joins with
+//     ErrCampaignAccountMismatch) labels it. It is still an LFX record of that id; project
+//     scoping cannot place it either, but this label grants nothing, and dropping it would call
+//     an LFX campaign "created outside LFX";
+//   - a record CONFIRMED under another account (mismatch without unknown) never labels it.
+//
+// A failure fails the read: a row unlabeled because the lookup failed would read as "created
+// outside LFX", which is a claim nobody made.
 func (o *Orchestrator) labelRecordedProjects(ctx context.Context, platform model.Provider, accountID string, rows []model.AccountCampaignMetrics) error {
 	ids := make([]string, 0, len(rows))
 	for _, r := range rows {
@@ -3437,20 +3444,34 @@ func (o *Orchestrator) labelRecordedProjects(ctx context.Context, platform model
 		return fmt.Errorf("label account monitor rows on %s: %w", platform, err)
 	}
 	scoper, _ := o.dispatchers[platform].(AccountMonitorScoper)
-	owners := make(map[string]string, len(candidates))
+	fitting := make(map[string]string, len(candidates))
+	unknown := make(map[string]string, len(candidates))
 	for _, c := range candidates {
-		if _, done := owners[c.PlatformCampaignID]; done {
+		id := c.PlatformCampaignID
+		if _, done := fitting[id]; done {
 			continue
 		}
 		if scoper != nil {
-			if _, serr := scoper.MonitorScopeForAccount([]model.ProjectCampaignScope{c.ProjectCampaignScope}, accountID); errors.Is(serr, domain.ErrCampaignAccountMismatch) {
+			_, serr := scoper.MonitorScopeForAccount([]model.ProjectCampaignScope{c.ProjectCampaignScope}, accountID)
+			switch {
+			case errors.Is(serr, domain.ErrCampaignProvenanceUnknown):
+				if _, seen := unknown[id]; !seen {
+					unknown[id] = c.ProjectID
+				}
 				continue
+			case errors.Is(serr, domain.ErrCampaignAccountMismatch):
+				continue // confirmed under another account
 			}
 		}
-		owners[c.PlatformCampaignID] = c.ProjectID
+		fitting[id] = c.ProjectID
 	}
 	for i := range rows {
-		rows[i].RecordedProjectID = owners[rows[i].PlatformCampaignID]
+		id := rows[i].PlatformCampaignID
+		if p, ok := fitting[id]; ok {
+			rows[i].RecordedProjectID = p
+		} else {
+			rows[i].RecordedProjectID = unknown[id]
+		}
 	}
 	return nil
 }

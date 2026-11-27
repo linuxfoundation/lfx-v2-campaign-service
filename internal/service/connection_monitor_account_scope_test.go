@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
@@ -259,6 +260,67 @@ func TestMonitorAccount_AccountWideLabelSkipsAnotherAccountsRecord(t *testing.T)
 			repo.recordedOwners = c.owners
 			svc := liveScopeService(tc.provider,
 				&scopedLiveDispatcher{mockAccountMetricsReaderDispatcher: mockAccountMetricsReaderDispatcher{rows: tc.live}}, repo)
+			svc.SetMarketingOpsChecker(&fakeMarketingOps{allow: true})
+			got, err := accountWideCall(t, tc.provider, svc, tc.account)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, row := range got.Campaigns {
+				if row.PlatformCampaignID != "c2" {
+					continue
+				}
+				switch {
+				case c.want == nil && row.RecordedProjectID != nil:
+					t.Errorf("c2 recorded_project_id = %q, want absent", *row.RecordedProjectID)
+				case c.want != nil && (row.RecordedProjectID == nil || *row.RecordedProjectID != *c.want):
+					t.Errorf("c2 recorded_project_id = %v, want %s", row.RecordedProjectID, *c.want)
+				}
+			}
+		})
+	}
+}
+
+// unknownProvenanceDispatcher refuses an entry recording no account the way the Google Ads,
+// Reddit and X scopers do: ErrCampaignProvenanceUnknown joined with ErrCampaignAccountMismatch.
+type unknownProvenanceDispatcher struct {
+	*scopedLiveDispatcher
+}
+
+func (d unknownProvenanceDispatcher) MonitorScopeForAccount(scope []model.ProjectCampaignScope, accountID string) ([]string, error) {
+	for _, s := range scope {
+		if len(s.Result) == 0 {
+			return nil, errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch)
+		}
+	}
+	return fakeMonitorScope(scope, accountID)
+}
+
+// A record that does not say which account it was created under (written before account
+// stamping) still labels the row: it is an LFX record of that id. A record confirmed under
+// another account never does, and one that fits the account wins over an unknown one.
+func TestMonitorAccount_AccountWideLabelKeepsUnknownProvenance(t *testing.T) {
+	t.Setenv(constants.EnvAccountMonitorAccountScopeEnabled, "true")
+	tc := scopedLiveCases()[2] // reddit, account a2_owner
+	other := json.RawMessage(`{"account":"a2_other"}`)
+	own := json.RawMessage(`{"account":"a2_owner"}`)
+	owner := func(project string, result json.RawMessage) model.RecordedCampaignOwner {
+		return model.RecordedCampaignOwner{ProjectCampaignScope: model.ProjectCampaignScope{PlatformCampaignID: "c2", Result: result}, ProjectID: project}
+	}
+	for _, c := range []struct {
+		name   string
+		owners []model.RecordedCampaignOwner
+		want   *string
+	}{
+		{name: "only an unrecorded-account record", owners: []model.RecordedCampaignOwner{owner("legacy", nil)}, want: strPtr("legacy")},
+		{name: "a foreign record ranks first, an unrecorded one after", owners: []model.RecordedCampaignOwner{owner("q", other), owner("legacy", nil)}, want: strPtr("legacy")},
+		{name: "an unrecorded record ranks first, a fitting one after", owners: []model.RecordedCampaignOwner{owner("legacy", nil), owner("p", own)}, want: strPtr("p")},
+		{name: "only a foreign record", owners: []model.RecordedCampaignOwner{owner("q", other)}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			repo := scopeRepo([]string{"c1"}, nil)
+			repo.recordedOwners = c.owners
+			d := unknownProvenanceDispatcher{&scopedLiveDispatcher{mockAccountMetricsReaderDispatcher: mockAccountMetricsReaderDispatcher{rows: tc.live}}}
+			svc := liveScopeService(tc.provider, d, repo)
 			svc.SetMarketingOpsChecker(&fakeMarketingOps{allow: true})
 			got, err := accountWideCall(t, tc.provider, svc, tc.account)
 			if err != nil {

@@ -702,10 +702,11 @@ response is filtered, and the report's `metrics_as_of`, window and
 campaign the account read returns comes back, with rules and totals over all
 of them (Google Ads still hides the operator's "zz" scratch campaigns), and
 each row carries `recorded_project_id` from
-`CampaignRepository.RecordedCampaignOwners`: the first row recording the id
-(live, else the latest binding) whose provenance does not place it under a
-different account, since Reddit and X ids are unique only within an account;
-absent for a campaign created outside LFX. A
+`CampaignRepository.RecordedCampaignOwners`. Of the rows recording the id
+(live, else the latest binding), the first whose provenance fits the account
+labels it, else the first recording no account (a pre-stamping LFX row); one
+confirmed under a different account never does, since Reddit and X ids are
+unique only within an account. Absent for a campaign created outside LFX. A
 failed label lookup fails the read rather than labelling every row
 "outside LFX". The precheck still runs.
 

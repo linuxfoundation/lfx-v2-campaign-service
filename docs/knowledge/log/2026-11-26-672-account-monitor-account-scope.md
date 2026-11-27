@@ -14,3 +14,7 @@ of sending it to `slug_to_uid`, which never resolves one; the connection routes 
 Row labels skip a record whose provenance places the id under a different account (Reddit and X
 ids are unique only within an account), via `CampaignRepository.RecordedCampaignOwners`; Google
 Ads' scratch-campaign filter still applies to account-wide reads.
+
+A record that stores no creating account (`ErrCampaignProvenanceUnknown`, which the Google Ads,
+Reddit and X scopers join with `ErrCampaignAccountMismatch`) still labels its row when no record
+fits the account; only a record confirmed under another account is skipped.
