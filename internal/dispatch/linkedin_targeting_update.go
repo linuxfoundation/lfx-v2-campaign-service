@@ -193,7 +193,8 @@ func linkedinTargetingSnapshot(raw json.RawMessage) (*linkedinRowSnapshot, error
 }
 
 // withTargeting returns the snapshot with targeting and geoTargets replaced by what the update
-// sent. A location the snapshot already named keeps its label; a new one has none.
+// sent, and the profile keys a custom targeting leaves unread removed. A location the snapshot
+// already named keeps its label; a new one has none. Every other key is kept.
 func (s *linkedinRowSnapshot) withTargeting(u *linkedin.TargetingUpdate) (json.RawMessage, bool) {
 	labels := make(map[string]string, len(s.GeoTargets))
 	for _, g := range s.GeoTargets {
@@ -217,6 +218,11 @@ func (s *linkedinRowSnapshot) withTargeting(u *linkedin.TargetingUpdate) (json.R
 	}
 	out["targeting"] = t
 	out["geoTargets"] = g
+	// A custom targeting replaces the profile clause and job functions, which create refuses beside
+	// it; drop them so the snapshot stays a config the validator accepts and names only what serves.
+	for _, k := range []string{"targetingProfile", "targetingProfiles", "jobFunctions"} {
+		delete(out, k)
+	}
 	raw, err := json.Marshal(out)
 	if err != nil {
 		return nil, false

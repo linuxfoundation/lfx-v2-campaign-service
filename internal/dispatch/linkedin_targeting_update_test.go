@@ -21,7 +21,8 @@ import (
 // ─── targeting update lever (#666) ───
 
 const liTargetingSnapshot = `{"budgetUsd":100,"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],` +
-	`"employerExclusions":["urn:li:organization:208777"],"targetingProfile":"cloud-native","variants":[{"headline":"KubeCon"}]}`
+	`"employerExclusions":["urn:li:organization:208777"],"targetingProfile":"cloud-native","jobFunctions":["urn:li:function:8"],` +
+	`"targetingProfiles":[{"id":"cloud-native"}],"variants":[{"headline":"KubeCon"}]}`
 
 func liTargetingRow() *model.Campaign {
 	row := liRow()
@@ -68,7 +69,12 @@ func TestLinkedIn_WriteTargeting_ReadsThenWritesTheCriteriaAndRecordsIt(t *testi
 	if string(snap["geoTargets"]) != `[{"label":"United States","urn":"urn:li:geo:103644278"},{"label":"","urn":"urn:li:geo:101282230"}]` {
 		t.Errorf("snapshot geoTargets = %s, want known labels kept", snap["geoTargets"])
 	}
-	if string(snap["targetingProfile"]) != `"cloud-native"` || snap["variants"] == nil {
+	for _, gone := range []string{"targetingProfile", "targetingProfiles", "jobFunctions"} {
+		if _, ok := snap[gone]; ok {
+			t.Errorf("snapshot still names %s, which a custom targeting leaves unread", gone)
+		}
+	}
+	if snap["variants"] == nil || string(snap["budgetUsd"]) != "100" || !strings.Contains(string(snap["employerExclusions"]), "208777") {
 		t.Errorf("the rest of the snapshot must be kept: %s", row.ConfigSnapshot)
 	}
 }

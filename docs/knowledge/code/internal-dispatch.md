@@ -6094,4 +6094,5 @@ create (none or undecodable → 409), runs `linkedin.PrepareTargetingUpdate` (40
 sentence), resolves the connection, checks the account and status LinkedIn reports, and sends
 `UpdateCampaignTargeting` once. Unconfirmed → `unconfirmedTargetingWriteError`; LinkedIn's definite
 400/422 → 400. On success `campaign.ConfigSnapshot` gets the sent `targeting` and `geoTargets` (known
-labels kept, other keys untouched), which the service persists.
+labels kept; `targetingProfile`, `targetingProfiles` and `jobFunctions` dropped since a custom
+targeting leaves them unread; other keys untouched), which the service persists.

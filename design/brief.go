@@ -3519,8 +3519,13 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"the connection now resolves to, or LinkedIn reports it terminal or omits its account or status. " +
 			"**400** for a request fault: the gate off, a targeting or geo_targets the rules refuse, a platform " +
 			"without the capability, or LinkedIn's definite refusal of the targeting — the response names which. " +
+			"**404** when LinkedIn holds no campaign with the stored id (deleted upstream), or the project has no " +
+			"connection for the channel. **500** when the LF system connection is missing or unusable or stored " +
+			"credentials cannot be decrypted. " +
 			"**503** when LinkedIn could not be reached or did not confirm (a 429 is never retried in-call); verify " +
-			"the targeting in Campaign Manager before retrying.")
+			"the targeting in Campaign Manager before retrying. On success the row's config snapshot records the " +
+			"targeting and locations sent and drops targetingProfile, targetingProfiles and jobFunctions, which a " +
+			"custom targeting leaves unread.")
 		Payload(func() {
 			bearerToken()
 			// Slug-only, like create-campaigns and adopt-campaign: the segment facets' global_marketing_ops
