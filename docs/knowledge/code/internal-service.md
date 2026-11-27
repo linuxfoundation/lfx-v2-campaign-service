@@ -2855,3 +2855,13 @@ A survey's `event_details.sourceText` is never cut silently: `sourceTextTooLong`
 (`eventDetailsSourceTextTooLong`) and again at `generate-email-copy` and the wizard's generate step.
 For a survey stage the wizard's reference variant also carries the stage's `ContentPrompt`, so
 both variants are written to the survey specification.
+
+**Targeting update (#666).** `BriefService.UpdateCampaignTargeting` (`brief_targeting.go`, backing
+`PATCH .../campaigns/{id}/targeting`) is `UpdateCampaignBid`'s twin: If-Match, toggleable or
+`created_degraded` rows only, claim, `Orchestrator.WriteCampaignTargeting` (optional
+`TargetingWriter`, `ErrTargetingUnsupported` → 400, op `write_targeting`), then `ReplaceCampaign`
+with the snapshot the adapter recorded, worked on a copy so a refusal leaves the loaded row as
+found. `TargetingUpdateMarketingOpsInputs` names segment facets (`audienceMatchingSegments`,
+`dynamicSegments`) in any clause or in exclude; any of them takes `requireGlobalMarketingOps`
+before the row is loaded (403/503). A credential-decrypt failure is logged against `credentialOwnerProject` with
+`requested_by_project_id` beside it and no error text, as the bid and budget handlers log it.

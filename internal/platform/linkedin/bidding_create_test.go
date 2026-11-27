@@ -81,6 +81,9 @@ func TestCreateCampaign_ManualBidSendsTheShapeTheBidLeverAccepts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
+	if !res.CampaignCreated {
+		t.Error("CampaignCreated = false on a run that created the campaign (#666)")
+	}
 	if !res.BidApplied {
 		t.Error("BidApplied = false on a run that created the campaign")
 	}
@@ -226,6 +229,9 @@ func TestCreateCampaign_ReusedCampaignDoesNotApplyTheBid(t *testing.T) {
 	mu.Unlock()
 	if res.CampaignID != "777" || posts != 0 {
 		t.Fatalf("campaign = %q, campaign POSTs = %d; want the reused 777 and none", res.CampaignID, posts)
+	}
+	if res.CampaignCreated {
+		t.Fatal("CampaignCreated = true on a run that reused the campaign: its row would claim this request's employer exclusions (#666)")
 	}
 	if res.BidApplied {
 		t.Fatal("BidApplied = true on a run that reused the campaign")

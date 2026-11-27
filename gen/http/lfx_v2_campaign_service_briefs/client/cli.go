@@ -1363,6 +1363,113 @@ func BuildUpdateCampaignBidPayload(lfxV2CampaignServiceBriefsUpdateCampaignBidBo
 	return v, nil
 }
 
+// BuildUpdateCampaignTargetingPayload builds the payload for the
+// lfx-v2-campaign-service-briefs update-campaign-targeting endpoint from CLI
+// flags.
+func BuildUpdateCampaignTargetingPayload(lfxV2CampaignServiceBriefsUpdateCampaignTargetingBody *string, lfxV2CampaignServiceBriefsUpdateCampaignTargetingProjectID *string, lfxV2CampaignServiceBriefsUpdateCampaignTargetingBriefID *string, lfxV2CampaignServiceBriefsUpdateCampaignTargetingCampaignID *string, lfxV2CampaignServiceBriefsUpdateCampaignTargetingBearerToken *string, lfxV2CampaignServiceBriefsUpdateCampaignTargetingIfMatch *string) (*lfxv2campaignservicebriefs.UpdateCampaignTargetingPayload, error) {
+	var err error
+	var body UpdateCampaignTargetingRequestBody
+	{
+		if lfxV2CampaignServiceBriefsUpdateCampaignTargetingBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*lfxV2CampaignServiceBriefsUpdateCampaignTargetingBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"geo_targets\": [\n         \"urn:li:geo:103644278\",\n         \"urn:li:geo:101282230\"\n      ],\n      \"targeting\": {\n         \"exclude\": {\n            \"employers\": [\n               \"urn:li:organization:1337\"\n            ]\n         },\n         \"include\": [\n            {\n               \"skills\": [\n                  \"urn:li:skill:17\"\n               ]\n            },\n            {\n               \"seniorities\": [\n                  \"urn:li:seniority:5\",\n                  \"urn:li:seniority:6\"\n               ]\n            }\n         ]\n      }\n   }'")
+		}
+		if body.Targeting == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("targeting", "body"))
+		}
+		if body.GeoTargets == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("geo_targets", "body"))
+		}
+		if body.Targeting != nil {
+			if err2 := validateLinkedinTargetingUpdateRequestBody(body.Targeting, "body.targeting"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+		if len(body.GeoTargets) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.geo_targets", body.GeoTargets, len(body.GeoTargets), 1, true))
+		}
+		if len(body.GeoTargets) > 100 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.geo_targets", body.GeoTargets, len(body.GeoTargets), 100, false))
+		}
+		for _, e := range body.GeoTargets {
+			err = goa.MergeErrors(err, goa.ValidatePattern("body.geo_targets[*]", e, "^urn:li:geo:[1-9][0-9]{0,18}$"))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var projectID string
+	{
+		if lfxV2CampaignServiceBriefsUpdateCampaignTargetingProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceBriefsUpdateCampaignTargetingProjectID
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var briefID string
+	{
+		if lfxV2CampaignServiceBriefsUpdateCampaignTargetingBriefID == nil {
+			return nil, fmt.Errorf("missing required flag --brief-id")
+		}
+		briefID = *lfxV2CampaignServiceBriefsUpdateCampaignTargetingBriefID
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var campaignID string
+	{
+		if lfxV2CampaignServiceBriefsUpdateCampaignTargetingCampaignID == nil {
+			return nil, fmt.Errorf("missing required flag --campaign-id")
+		}
+		campaignID = *lfxV2CampaignServiceBriefsUpdateCampaignTargetingCampaignID
+		err = goa.MergeErrors(err, goa.ValidateFormat("campaign_id", campaignID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceBriefsUpdateCampaignTargetingBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceBriefsUpdateCampaignTargetingBearerToken
+		}
+	}
+	var ifMatch *string
+	{
+		if lfxV2CampaignServiceBriefsUpdateCampaignTargetingIfMatch != nil {
+			ifMatch = lfxV2CampaignServiceBriefsUpdateCampaignTargetingIfMatch
+		}
+	}
+	v := &lfxv2campaignservicebriefs.UpdateCampaignTargetingPayload{}
+	if body.Targeting != nil {
+		v.Targeting = marshalLinkedinTargetingUpdateRequestBodyToLfxv2campaignservicebriefsLinkedinTargetingUpdate(body.Targeting)
+	}
+	if body.GeoTargets != nil {
+		v.GeoTargets = make([]string, len(body.GeoTargets))
+		for i, val := range body.GeoTargets {
+			v.GeoTargets[i] = val
+		}
+	} else {
+		v.GeoTargets = []string{}
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.CampaignID = campaignID
+	v.BearerToken = bearerToken
+	v.IfMatch = ifMatch
+
+	return v, nil
+}
+
 // BuildApplyKeywordActionsPayload builds the payload for the
 // lfx-v2-campaign-service-briefs apply-keyword-actions endpoint from CLI flags.
 func BuildApplyKeywordActionsPayload(lfxV2CampaignServiceBriefsApplyKeywordActionsBody *string, lfxV2CampaignServiceBriefsApplyKeywordActionsProjectID *string, lfxV2CampaignServiceBriefsApplyKeywordActionsBriefID *string, lfxV2CampaignServiceBriefsApplyKeywordActionsCampaignID *string, lfxV2CampaignServiceBriefsApplyKeywordActionsBearerToken *string) (*lfxv2campaignservicebriefs.ApplyKeywordActionsPayload, error) {

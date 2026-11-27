@@ -4342,6 +4342,237 @@ func EncodeUpdateCampaignBidError(encoder func(context.Context, http.ResponseWri
 	}
 }
 
+// EncodeUpdateCampaignTargetingResponse returns an encoder for responses
+// returned by the lfx-v2-campaign-service-briefs update-campaign-targeting
+// endpoint.
+func EncodeUpdateCampaignTargetingResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignservicebriefs.Campaign)
+		enc := encoder(ctx, w)
+		body := NewUpdateCampaignTargetingResponseBody(res)
+		if res.Etag != nil {
+			w.Header().Set("Etag", *res.Etag)
+		}
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeUpdateCampaignTargetingRequest returns a decoder for requests sent to
+// the lfx-v2-campaign-service-briefs update-campaign-targeting endpoint.
+func DecodeUpdateCampaignTargetingRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignservicebriefs.UpdateCampaignTargetingPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignservicebriefs.UpdateCampaignTargetingPayload, error) {
+		var payload *lfxv2campaignservicebriefs.UpdateCampaignTargetingPayload
+		var (
+			body UpdateCampaignTargetingRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateUpdateCampaignTargetingRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+
+		var (
+			projectID   string
+			briefID     string
+			campaignID  string
+			bearerToken *string
+			ifMatch     *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
+		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		campaignID = params["campaign_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("campaign_id", campaignID, goa.FormatUUID))
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		ifMatchRaw := r.Header.Get("If-Match")
+		if ifMatchRaw != "" {
+			ifMatch = &ifMatchRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewUpdateCampaignTargetingPayload(&body, projectID, briefID, campaignID, bearerToken, ifMatch)
+		if payload.BearerToken != nil {
+			cred := *payload.BearerToken
+			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred = cred[index+1:]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeUpdateCampaignTargetingError returns an encoder for errors returned by
+// the update-campaign-targeting lfx-v2-campaign-service-briefs endpoint.
+func EncodeUpdateCampaignTargetingError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignservicebriefs.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateCampaignTargetingBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignservicebriefs.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateCampaignTargetingConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignservicebriefs.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateCampaignTargetingServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "Forbidden":
+			var res *lfxv2campaignservicebriefs.ForbiddenError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateCampaignTargetingForbiddenResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusForbidden)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignservicebriefs.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateCampaignTargetingInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignservicebriefs.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateCampaignTargetingNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignservicebriefs.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateCampaignTargetingPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "PreconditionFailed":
+			var res *lfxv2campaignservicebriefs.PreconditionFailedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateCampaignTargetingPreconditionFailedResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusPreconditionFailed)
+			return enc.Encode(body)
+		case "PreconditionRequired":
+			var res *lfxv2campaignservicebriefs.PreconditionRequiredError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateCampaignTargetingPreconditionRequiredResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusPreconditionRequired)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignservicebriefs.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateCampaignTargetingUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // EncodeApplyKeywordActionsResponse returns an encoder for responses returned
 // by the lfx-v2-campaign-service-briefs apply-keyword-actions endpoint.
 func EncodeApplyKeywordActionsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
@@ -8007,6 +8238,50 @@ func unmarshalCampaignUpdateInputRequestBodyToLfxv2campaignservicebriefsCampaign
 		CampaignName: *v.CampaignName,
 		Status:       *v.Status,
 		Config:       v.Config,
+	}
+
+	return res
+}
+
+// unmarshalLinkedinTargetingUpdateRequestBodyToLfxv2campaignservicebriefsLinkedinTargetingUpdate
+// builds a value of type *lfxv2campaignservicebriefs.LinkedinTargetingUpdate
+// from a value of type *LinkedinTargetingUpdateRequestBody.
+func unmarshalLinkedinTargetingUpdateRequestBodyToLfxv2campaignservicebriefsLinkedinTargetingUpdate(v *LinkedinTargetingUpdateRequestBody) *lfxv2campaignservicebriefs.LinkedinTargetingUpdate {
+	res := &lfxv2campaignservicebriefs.LinkedinTargetingUpdate{}
+	res.Include = make([]map[string][]string, len(v.Include))
+	for i, val := range v.Include {
+		if val == nil {
+			res.Include[i] = nil
+			continue
+		}
+		res.Include[i] = make(map[string][]string, len(val))
+		for key, val := range val {
+			tk := key
+			if val == nil {
+				res.Include[i][tk] = nil
+				continue
+			}
+			tv := make([]string, len(val))
+			for j, val := range val {
+				tv[j] = val
+			}
+			res.Include[i][tk] = tv
+		}
+	}
+	if v.Exclude != nil {
+		res.Exclude = make(map[string][]string, len(v.Exclude))
+		for key, val := range v.Exclude {
+			tk := key
+			if val == nil {
+				res.Exclude[tk] = nil
+				continue
+			}
+			tv := make([]string, len(val))
+			for i, val := range val {
+				tv[i] = val
+			}
+			res.Exclude[tk] = tv
+		}
 	}
 
 	return res

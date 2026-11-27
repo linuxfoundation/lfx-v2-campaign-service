@@ -121,6 +121,17 @@ type UpdateCampaignBidRequestBody struct {
 	BidType *string `form:"bid_type,omitempty" json:"bid_type,omitempty" xml:"bid_type,omitempty"`
 }
 
+// UpdateCampaignTargetingRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-targeting"
+// endpoint HTTP request body.
+type UpdateCampaignTargetingRequestBody struct {
+	// The complete targeting, in linkedInConfig.targeting's shape
+	Targeting *LinkedinTargetingUpdateRequestBody `form:"targeting,omitempty" json:"targeting,omitempty" xml:"targeting,omitempty"`
+	// The complete locations: 1 to 100 urn:li:geo:<id> URNs (duplicates dropped).
+	// They form the first ANDed clause, as at create.
+	GeoTargets []string `form:"geo_targets,omitempty" json:"geo_targets,omitempty" xml:"geo_targets,omitempty"`
+}
+
 // ApplyKeywordActionsRequestBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
 // HTTP request body.
@@ -1171,6 +1182,77 @@ type UpdateCampaignBudgetResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "update-campaign-bid" endpoint HTTP
 // response body.
 type UpdateCampaignBidResponseBody struct {
+	// Campaign UUID
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Parent brief
+	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
+	// Channel
+	Platform string `form:"platform" json:"platform" xml:"platform"`
+	// ID returned by the ad platform
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// Campaign name
+	CampaignName string `form:"campaign_name" json:"campaign_name" xml:"campaign_name"`
+	// Campaign status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Which campaign this is among the brief's campaigns on the same platform and
+	// channel: 1 for the first, 2 for one created on top of it with new_version,
+	// and so on. Unrelated to version.
+	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// The platform's campaign type this campaign is: the Google channel (search,
+	// demand-gen, performance-max, video, display), `default` on every other
+	// platform. With platform and slot_version it identifies the campaign among
+	// the brief's campaigns.
+	Variant *string `form:"variant,omitempty" json:"variant,omitempty" xml:"variant,omitempty"`
+	// The funnel stage the campaign was created to serve (top, mid or lower), set
+	// when it was created and never changed. ABSENT on a campaign created without
+	// one, created before the field existed, or adopted.
+	FunnelStage *string `form:"funnel_stage,omitempty" json:"funnel_stage,omitempty" xml:"funnel_stage,omitempty"`
+	// The tactic the campaign was created with, set when it was created and never
+	// changed. ABSENT on a campaign created without one, created before the field
+	// existed, or adopted.
+	Tactic *string `form:"tactic,omitempty" json:"tactic,omitempty" xml:"tactic,omitempty"`
+	// When this service recorded the campaign (its claim), RFC 3339.
+	CreatedAt *string `form:"created_at,omitempty" json:"created_at,omitempty" xml:"created_at,omitempty"`
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
+	BiddingStrategy *string `form:"bidding_strategy,omitempty" json:"bidding_strategy,omitempty" xml:"bidding_strategy,omitempty"`
+	// The manual max cost-per-click bid this service most recently set, in the
+	// currency the provider expects: the ad account's own currency for Microsoft
+	// Advertising, Meta, Reddit and X (NOT USD), and USD for LinkedIn: the
+	// starting bid of a campaign created with manual bidding, then whatever
+	// update-campaign-bid set. A request the platform confirmed, never an
+	// observation — a bid changed in the platform's own UI is not reflected.
+	// ABSENT when this service never set one.
+	MaxCpcBid *float64 `form:"max_cpc_bid,omitempty" json:"max_cpc_bid,omitempty" xml:"max_cpc_bid,omitempty"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+}
+
+// UpdateCampaignTargetingResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-targeting"
+// endpoint HTTP response body.
+type UpdateCampaignTargetingResponseBody struct {
 	// Campaign UUID
 	ID string `form:"id" json:"id" xml:"id"`
 	// Owning project
@@ -3466,6 +3548,109 @@ type UpdateCampaignBidPreconditionRequiredResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "update-campaign-bid" endpoint HTTP
 // response body for the "Unauthorized" error.
 type UpdateCampaignBidUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateCampaignTargetingBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-targeting"
+// endpoint HTTP response body for the "BadRequest" error.
+type UpdateCampaignTargetingBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateCampaignTargetingConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-targeting"
+// endpoint HTTP response body for the "Conflict" error.
+type UpdateCampaignTargetingConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// UpdateCampaignTargetingServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-targeting"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type UpdateCampaignTargetingServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateCampaignTargetingForbiddenResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-targeting"
+// endpoint HTTP response body for the "Forbidden" error.
+type UpdateCampaignTargetingForbiddenResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateCampaignTargetingInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-targeting"
+// endpoint HTTP response body for the "InternalServerError" error.
+type UpdateCampaignTargetingInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateCampaignTargetingNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-targeting"
+// endpoint HTTP response body for the "NotFound" error.
+type UpdateCampaignTargetingNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateCampaignTargetingPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-targeting"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type UpdateCampaignTargetingPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateCampaignTargetingPreconditionFailedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-targeting"
+// endpoint HTTP response body for the "PreconditionFailed" error.
+type UpdateCampaignTargetingPreconditionFailedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateCampaignTargetingPreconditionRequiredResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-targeting"
+// endpoint HTTP response body for the "PreconditionRequired" error.
+type UpdateCampaignTargetingPreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateCampaignTargetingUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-targeting"
+// endpoint HTTP response body for the "Unauthorized" error.
+type UpdateCampaignTargetingUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -6375,6 +6560,19 @@ type CampaignUpdateInputRequestBody struct {
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 }
 
+// LinkedinTargetingUpdateRequestBody is used to define fields on request body
+// types.
+type LinkedinTargetingUpdateRequestBody struct {
+	// ANDed clauses, each an object of ORed facets: {<facet>: [urn, ...]}. Facets:
+	// skills, groups, industries, titles, seniorities, jobFunctions, employers,
+	// staffCountRanges, interfaceLocales, interests, audienceMatchingSegments,
+	// dynamicSegments.
+	Include []map[string][]string `form:"include,omitempty" json:"include,omitempty" xml:"include,omitempty"`
+	// ORed exclusions: {<facet>: [urn, ...]}. groups and interfaceLocales are
+	// include-only.
+	Exclude map[string][]string `form:"exclude,omitempty" json:"exclude,omitempty" xml:"exclude,omitempty"`
+}
+
 // KeywordActionInputRequestBody is used to define fields on request body types.
 type KeywordActionInputRequestBody struct {
 	// The ad group the criterion belongs to. Digits only, and the canonical
@@ -6990,6 +7188,31 @@ func NewUpdateCampaignBudgetResponseBody(res *lfxv2campaignservicebriefs.Campaig
 // "lfx-v2-campaign-service-briefs" service.
 func NewUpdateCampaignBidResponseBody(res *lfxv2campaignservicebriefs.Campaign) *UpdateCampaignBidResponseBody {
 	body := &UpdateCampaignBidResponseBody{
+		ID:                 res.ID,
+		ProjectID:          res.ProjectID,
+		BriefID:            res.BriefID,
+		Platform:           res.Platform,
+		PlatformCampaignID: res.PlatformCampaignID,
+		CampaignName:       res.CampaignName,
+		Status:             res.Status,
+		SlotVersion:        res.SlotVersion,
+		Variant:            res.Variant,
+		FunnelStage:        res.FunnelStage,
+		Tactic:             res.Tactic,
+		CreatedAt:          res.CreatedAt,
+		BiddingStrategy:    res.BiddingStrategy,
+		MaxCpcBid:          res.MaxCpcBid,
+		Adopted:            res.Adopted,
+		Version:            res.Version,
+	}
+	return body
+}
+
+// NewUpdateCampaignTargetingResponseBody builds the HTTP response body from
+// the result of the "update-campaign-targeting" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUpdateCampaignTargetingResponseBody(res *lfxv2campaignservicebriefs.Campaign) *UpdateCampaignTargetingResponseBody {
+	body := &UpdateCampaignTargetingResponseBody{
 		ID:                 res.ID,
 		ProjectID:          res.ProjectID,
 		BriefID:            res.BriefID,
@@ -9413,6 +9636,117 @@ func NewUpdateCampaignBidUnauthorizedResponseBody(res *lfxv2campaignservicebrief
 	return body
 }
 
+// NewUpdateCampaignTargetingBadRequestResponseBody builds the HTTP response
+// body from the result of the "update-campaign-targeting" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUpdateCampaignTargetingBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *UpdateCampaignTargetingBadRequestResponseBody {
+	body := &UpdateCampaignTargetingBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateCampaignTargetingConflictResponseBody builds the HTTP response body
+// from the result of the "update-campaign-targeting" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUpdateCampaignTargetingConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *UpdateCampaignTargetingConflictResponseBody {
+	body := &UpdateCampaignTargetingConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewUpdateCampaignTargetingServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "update-campaign-targeting" endpoint of
+// the "lfx-v2-campaign-service-briefs" service.
+func NewUpdateCampaignTargetingServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *UpdateCampaignTargetingServiceUnavailableResponseBody {
+	body := &UpdateCampaignTargetingServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateCampaignTargetingForbiddenResponseBody builds the HTTP response
+// body from the result of the "update-campaign-targeting" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUpdateCampaignTargetingForbiddenResponseBody(res *lfxv2campaignservicebriefs.ForbiddenError) *UpdateCampaignTargetingForbiddenResponseBody {
+	body := &UpdateCampaignTargetingForbiddenResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateCampaignTargetingInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "update-campaign-targeting" endpoint of
+// the "lfx-v2-campaign-service-briefs" service.
+func NewUpdateCampaignTargetingInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *UpdateCampaignTargetingInternalServerErrorResponseBody {
+	body := &UpdateCampaignTargetingInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateCampaignTargetingNotFoundResponseBody builds the HTTP response body
+// from the result of the "update-campaign-targeting" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUpdateCampaignTargetingNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *UpdateCampaignTargetingNotFoundResponseBody {
+	body := &UpdateCampaignTargetingNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateCampaignTargetingPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "update-campaign-targeting" endpoint of
+// the "lfx-v2-campaign-service-briefs" service.
+func NewUpdateCampaignTargetingPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *UpdateCampaignTargetingPayloadTooLargeResponseBody {
+	body := &UpdateCampaignTargetingPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateCampaignTargetingPreconditionFailedResponseBody builds the HTTP
+// response body from the result of the "update-campaign-targeting" endpoint of
+// the "lfx-v2-campaign-service-briefs" service.
+func NewUpdateCampaignTargetingPreconditionFailedResponseBody(res *lfxv2campaignservicebriefs.PreconditionFailedError) *UpdateCampaignTargetingPreconditionFailedResponseBody {
+	body := &UpdateCampaignTargetingPreconditionFailedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateCampaignTargetingPreconditionRequiredResponseBody builds the HTTP
+// response body from the result of the "update-campaign-targeting" endpoint of
+// the "lfx-v2-campaign-service-briefs" service.
+func NewUpdateCampaignTargetingPreconditionRequiredResponseBody(res *lfxv2campaignservicebriefs.PreconditionRequiredError) *UpdateCampaignTargetingPreconditionRequiredResponseBody {
+	body := &UpdateCampaignTargetingPreconditionRequiredResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateCampaignTargetingUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "update-campaign-targeting" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUpdateCampaignTargetingUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *UpdateCampaignTargetingUnauthorizedResponseBody {
+	body := &UpdateCampaignTargetingUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewApplyKeywordActionsBadRequestResponseBody builds the HTTP response body
 // from the result of the "apply-keyword-actions" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -11265,6 +11599,24 @@ func NewUpdateCampaignBidPayload(body *UpdateCampaignBidRequestBody, projectID s
 	return v
 }
 
+// NewUpdateCampaignTargetingPayload builds a lfx-v2-campaign-service-briefs
+// service update-campaign-targeting endpoint payload.
+func NewUpdateCampaignTargetingPayload(body *UpdateCampaignTargetingRequestBody, projectID string, briefID string, campaignID string, bearerToken *string, ifMatch *string) *lfxv2campaignservicebriefs.UpdateCampaignTargetingPayload {
+	v := &lfxv2campaignservicebriefs.UpdateCampaignTargetingPayload{}
+	v.Targeting = unmarshalLinkedinTargetingUpdateRequestBodyToLfxv2campaignservicebriefsLinkedinTargetingUpdate(body.Targeting)
+	v.GeoTargets = make([]string, len(body.GeoTargets))
+	for i, val := range body.GeoTargets {
+		v.GeoTargets[i] = val
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.CampaignID = campaignID
+	v.BearerToken = bearerToken
+	v.IfMatch = ifMatch
+
+	return v
+}
+
 // NewApplyKeywordActionsPayload builds a lfx-v2-campaign-service-briefs
 // service apply-keyword-actions endpoint payload.
 func NewApplyKeywordActionsPayload(body *ApplyKeywordActionsRequestBody, projectID string, briefID string, campaignID string, bearerToken *string) *lfxv2campaignservicebriefs.ApplyKeywordActionsPayload {
@@ -11767,6 +12119,32 @@ func ValidateUpdateCampaignBidRequestBody(body *UpdateCampaignBidRequestBody) (e
 	return
 }
 
+// ValidateUpdateCampaignTargetingRequestBody runs the validations defined on
+// UpdateCampaignTargetingRequestBody
+func ValidateUpdateCampaignTargetingRequestBody(body *UpdateCampaignTargetingRequestBody) (err error) {
+	if body.Targeting == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("targeting", "body"))
+	}
+	if body.GeoTargets == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("geo_targets", "body"))
+	}
+	if body.Targeting != nil {
+		if err2 := validateLinkedinTargetingUpdateRequestBody(body.Targeting, "body.targeting"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if len(body.GeoTargets) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.geo_targets", body.GeoTargets, len(body.GeoTargets), 1, true))
+	}
+	if len(body.GeoTargets) > 100 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.geo_targets", body.GeoTargets, len(body.GeoTargets), 100, false))
+	}
+	for _, e := range body.GeoTargets {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.geo_targets[*]", e, "^urn:li:geo:[1-9][0-9]{0,18}$"))
+	}
+	return
+}
+
 // ValidateApplyKeywordActionsRequestBody runs the validations defined on
 // ApplyKeywordActionsRequestBody
 func ValidateApplyKeywordActionsRequestBody(body *ApplyKeywordActionsRequestBody) (err error) {
@@ -12197,6 +12575,36 @@ func validateCampaignUpdateInputRequestBody(body *CampaignUpdateInputRequestBody
 	}
 	if body.Status == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("status", path))
+	}
+	return
+}
+
+// ValidateLinkedinTargetingUpdateRequestBody runs the validations defined on
+// linkedin-targeting-update
+func ValidateLinkedinTargetingUpdateRequestBody(body *LinkedinTargetingUpdateRequestBody) (err error) {
+	if body.Include == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("include", "body"))
+	}
+	if len(body.Include) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.include", body.Include, len(body.Include), 1, true))
+	}
+	if len(body.Include) > 10 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.include", body.Include, len(body.Include), 10, false))
+	}
+	return
+}
+
+// validateLinkedinTargetingUpdateRequestBody checks linkedin-targeting-update
+// and reports errors using the path supplied by its caller
+func validateLinkedinTargetingUpdateRequestBody(body *LinkedinTargetingUpdateRequestBody, path string) (err error) {
+	if body.Include == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("include", path))
+	}
+	if len(body.Include) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".include", body.Include, len(body.Include), 1, true))
+	}
+	if len(body.Include) > 10 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".include", body.Include, len(body.Include), 10, false))
 	}
 	return
 }

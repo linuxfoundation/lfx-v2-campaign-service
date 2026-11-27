@@ -392,3 +392,23 @@ func linkedInAdsLookupMethods() {
 		})
 	})
 }
+
+// LinkedInTargetingUpdate is update-campaign-targeting's targeting (#666): linkedInConfig.targeting's
+// shape, validated by the same rules (linkedin.ValidateTargeting) in the service.
+var LinkedInTargetingUpdate = Type("linkedin-targeting-update", func() {
+	Attribute("include", ArrayOf(MapOf(String, ArrayOf(String))), "ANDed clauses, each an object of ORed facets: {<facet>: [urn, ...]}. Facets: skills, groups, industries, titles, seniorities, jobFunctions, employers, staffCountRanges, interfaceLocales, interests, audienceMatchingSegments, dynamicSegments.", func() {
+		MinLength(1)
+		MaxLength(10)
+	})
+	Attribute("exclude", MapOf(String, ArrayOf(String)), "ORed exclusions: {<facet>: [urn, ...]}. groups and interfaceLocales are include-only.")
+	Required("include")
+	// An explicit, valid example: Goa's generated one invents facet names and values, which
+	// ValidateTargeting refuses (cs#688 review).
+	Example(map[string]any{
+		"include": []map[string][]string{
+			{"skills": {"urn:li:skill:17"}},
+			{"seniorities": {"urn:li:seniority:5", "urn:li:seniority:6"}},
+		},
+		"exclude": map[string][]string{"employers": {"urn:li:organization:1337"}},
+	})
+})

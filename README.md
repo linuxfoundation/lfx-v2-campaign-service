@@ -847,6 +847,15 @@ openssl rand -base64 32
   The chart sets it to `"false"`
   (`app.environment.LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED.value`); enable it
   per-environment in the ArgoCD overlay once the probe passes.
+- `LINKEDIN_ADS_TARGETING_UPDATE_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to the LinkedIn targeting update lever (#666),
+  `PATCH /projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/targeting`,
+  which replaces a live campaign's `targetingCriteria` with the same builder
+  and rules as `linkedInConfig.targeting`. Only the exact value `true` enables
+  it; anything else fails closed and the endpoint answers 400 before LinkedIn
+  is contacted. The chart sets it to `"false"`
+  (`app.environment.LINKEDIN_ADS_TARGETING_UPDATE_ENABLED.value`); enable it
+  per-environment in the ArgoCD overlay once a paused probe campaign passes.
 - `LINKEDIN_ADS_LEAD_GEN_ENABLED` (default unset, i.e. OFF) — opts a deployment
   IN to LinkedIn Lead Gen Form campaigns (#664): `linkedInConfig.objective`
   `"lead_generation"` with `linkedInConfig.leadGenForm` (and the optional

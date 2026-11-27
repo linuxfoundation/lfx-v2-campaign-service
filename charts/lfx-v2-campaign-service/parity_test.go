@@ -792,6 +792,10 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// set — it changes what a live campaign pays per click — and is pinned for the budget
 		// row's reason.
 		{"/projects/p1/briefs/b-42/campaigns/c-9/bid", true},
+		// The LinkedIn targeting update (#666, update-campaign-targeting) replaces a live campaign's
+		// audience. It inherits the briefs match and the campaign_manager rule (its segment facets
+		// are ops-gated in the service); this row fails if a narrowing drops it.
+		{"/projects/p1/briefs/b-42/campaigns/c-9/targeting", true},
 		// add-negative-keywords (LFXV2-2665) is the fourth spend-affecting campaign mutation in
 		// this set, and the same shape again: it inherits the briefs match and the campaign_manager
 		// rule rather than adding its own, and this row is what fails if a narrowing drops it.

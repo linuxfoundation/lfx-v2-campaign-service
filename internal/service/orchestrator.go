@@ -402,6 +402,20 @@ type BidWriter interface {
 	WriteBid(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, bid model.BidChange) error
 }
 
+// TargetingWriter is an OPTIONAL dispatcher capability (#666): REPLACE an existing campaign's
+// audience targeting ON THE AD PLATFORM. Type-asserted like BidWriter, so a dispatcher without it
+// yields ErrTargetingUnsupported -> 400. LinkedIn alone implements it.
+//
+// BidWriter's rules apply: confirm before persisting, never report an unconfirmed write as
+// success, and enforce the account-identity invariant before the write. The change is the WHOLE
+// targeting, never a delta, because the platform's write replaces it wholesale.
+type TargetingWriter interface {
+	// WriteTargeting replaces the campaign's targeting on the platform. Returns nil ONLY when the
+	// platform confirmed it. The adapter MAY update campaign.ConfigSnapshot to record what it
+	// sent; the caller persists that on nil, and drops it on any error.
+	WriteTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, change model.TargetingChange) error
+}
+
 // AccountLister is an OPTIONAL dispatcher capability: enumerate accessible ad accounts for a
 // project's stored, encrypted connection. Not every platform's dispatcher implements it, so —
 // like StatusToggler and MetricsReader — the orchestrator type-asserts for it rather than
@@ -844,6 +858,15 @@ var (
 	// change. A permanent request fault, answered 400.
 	ErrBidAmountRejected = domain.ErrBidAmountRejected
 
+	// ErrTargetingUnsupported: the campaign's platform has no targeting-write capability wired.
+	ErrTargetingUnsupported = domain.ErrTargetingUnsupported
+	// ErrTargetingUnwritable: the targeting cannot be replaced through this service; the platform
+	// confirmed NO change.
+	ErrTargetingUnwritable = domain.ErrTargetingUnwritable
+	// ErrTargetingRejected: the requested targeting was refused and the platform confirmed NO
+	// change. A permanent request fault, answered 400.
+	ErrTargetingRejected = domain.ErrTargetingRejected
+
 	// ErrAccountsUnsupported: the platform has no account-listing capability wired.
 	ErrAccountsUnsupported = domain.ErrAccountsUnsupported
 
@@ -1026,6 +1049,7 @@ const (
 	opReadSettings               = "read_settings"
 	opWriteBudget                = "write_budget"
 	opWriteBid                   = "write_bid"
+	opWriteTargeting             = "write_targeting"
 	opListAccounts               = "list_accounts"
 	opListAccountCampaignMetrics = "list_account_campaign_metrics"
 	opSearchEmails               = "search_emails"
@@ -3147,6 +3171,30 @@ func (o *Orchestrator) WriteCampaignBid(ctx context.Context, projectID string, p
 	start := time.Now()
 	werr := writer.WriteBid(callCtx, projectID, platform, campaign, bid)
 	o.recordUpstream(ctx, platform, opWriteBid, start, werr)
+	return werr
+}
+
+// WriteCampaignTargeting replaces an already-created campaign's audience targeting on its ad
+// platform (#666). WriteCampaignBid's twin: the same pre-platform guard, the same call timeout and
+// the same confirm-then-persist split, with the targeting sentinels. Request validation is the
+// service layer's and the adapter's job.
+func (o *Orchestrator) WriteCampaignTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, change model.TargetingChange) error {
+	if campaign == nil || strings.TrimSpace(campaign.PlatformCampaignID) == "" {
+		return ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return fmt.Errorf("%w: no dispatcher registered for platform %s", ErrTargetingUnsupported, platform)
+	}
+	writer, ok := d.(TargetingWriter)
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrTargetingUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, bidWriteCallTimeout)
+	defer cancel()
+	start := time.Now()
+	werr := writer.WriteTargeting(callCtx, projectID, platform, campaign, change)
+	o.recordUpstream(ctx, platform, opWriteTargeting, start, werr)
 	return werr
 }
 

@@ -15,98 +15,100 @@ import (
 
 // Client is the "lfx-v2-campaign-service-briefs" service client.
 type Client struct {
-	CreateBriefEndpoint            goa.Endpoint
-	FindBriefEndpoint              goa.Endpoint
-	GetBriefEndpoint               goa.Endpoint
-	UpdateBriefEndpoint            goa.Endpoint
-	ApproveBriefEndpoint           goa.Endpoint
-	DeleteBriefEndpoint            goa.Endpoint
-	FetchEventURLEndpoint          goa.Endpoint
-	UploadCreativeAssetEndpoint    goa.Endpoint
-	ListCreativeAssetsEndpoint     goa.Endpoint
-	GetCreativeAssetEndpoint       goa.Endpoint
-	GetAssetPlanEndpoint           goa.Endpoint
-	DeleteCreativeAssetEndpoint    goa.Endpoint
-	CreateCampaignsEndpoint        goa.Endpoint
-	CreateSendWorkflowEndpoint     goa.Endpoint
-	AdoptCampaignEndpoint          goa.Endpoint
-	GetCampaignEndpoint            goa.Endpoint
-	GetCampaignMetricsEndpoint     goa.Endpoint
-	GetCampaignSettingsEndpoint    goa.Endpoint
-	GetBriefMetricsEndpoint        goa.Endpoint
-	GenerateEmailCopyEndpoint      goa.Endpoint
-	UpdateCampaignEndpoint         goa.Endpoint
-	ToggleCampaignStatusEndpoint   goa.Endpoint
-	UpdateCampaignBudgetEndpoint   goa.Endpoint
-	UpdateCampaignBidEndpoint      goa.Endpoint
-	ApplyKeywordActionsEndpoint    goa.Endpoint
-	AddNegativeKeywordsEndpoint    goa.Endpoint
-	GetKeywordTargetingEndpoint    goa.Endpoint
-	RemoveKeywordTargetingEndpoint goa.Endpoint
-	AddKeywordTargetingEndpoint    goa.Endpoint
-	ListMetaAdSetsEndpoint         goa.Endpoint
-	ListMetaAdsEndpoint            goa.Endpoint
-	ToggleMetaAdSetStatusEndpoint  goa.Endpoint
-	ToggleMetaAdStatusEndpoint     goa.Endpoint
-	DeleteCampaignEndpoint         goa.Endpoint
-	GetJobEndpoint                 goa.Endpoint
-	StartEmailWizardPlanEndpoint   goa.Endpoint
-	PlanEmailWizardEndpoint        goa.Endpoint
-	GenerateWizardContentEndpoint  goa.Endpoint
-	UpdateWizardSectionsEndpoint   goa.Endpoint
-	CloneWizardEmailEndpoint       goa.Endpoint
-	SetWizardSendListEndpoint      goa.Endpoint
-	ChatWizardTurnEndpoint         goa.Endpoint
-	GetWizardSessionEndpoint       goa.Endpoint
+	CreateBriefEndpoint             goa.Endpoint
+	FindBriefEndpoint               goa.Endpoint
+	GetBriefEndpoint                goa.Endpoint
+	UpdateBriefEndpoint             goa.Endpoint
+	ApproveBriefEndpoint            goa.Endpoint
+	DeleteBriefEndpoint             goa.Endpoint
+	FetchEventURLEndpoint           goa.Endpoint
+	UploadCreativeAssetEndpoint     goa.Endpoint
+	ListCreativeAssetsEndpoint      goa.Endpoint
+	GetCreativeAssetEndpoint        goa.Endpoint
+	GetAssetPlanEndpoint            goa.Endpoint
+	DeleteCreativeAssetEndpoint     goa.Endpoint
+	CreateCampaignsEndpoint         goa.Endpoint
+	CreateSendWorkflowEndpoint      goa.Endpoint
+	AdoptCampaignEndpoint           goa.Endpoint
+	GetCampaignEndpoint             goa.Endpoint
+	GetCampaignMetricsEndpoint      goa.Endpoint
+	GetCampaignSettingsEndpoint     goa.Endpoint
+	GetBriefMetricsEndpoint         goa.Endpoint
+	GenerateEmailCopyEndpoint       goa.Endpoint
+	UpdateCampaignEndpoint          goa.Endpoint
+	ToggleCampaignStatusEndpoint    goa.Endpoint
+	UpdateCampaignBudgetEndpoint    goa.Endpoint
+	UpdateCampaignBidEndpoint       goa.Endpoint
+	UpdateCampaignTargetingEndpoint goa.Endpoint
+	ApplyKeywordActionsEndpoint     goa.Endpoint
+	AddNegativeKeywordsEndpoint     goa.Endpoint
+	GetKeywordTargetingEndpoint     goa.Endpoint
+	RemoveKeywordTargetingEndpoint  goa.Endpoint
+	AddKeywordTargetingEndpoint     goa.Endpoint
+	ListMetaAdSetsEndpoint          goa.Endpoint
+	ListMetaAdsEndpoint             goa.Endpoint
+	ToggleMetaAdSetStatusEndpoint   goa.Endpoint
+	ToggleMetaAdStatusEndpoint      goa.Endpoint
+	DeleteCampaignEndpoint          goa.Endpoint
+	GetJobEndpoint                  goa.Endpoint
+	StartEmailWizardPlanEndpoint    goa.Endpoint
+	PlanEmailWizardEndpoint         goa.Endpoint
+	GenerateWizardContentEndpoint   goa.Endpoint
+	UpdateWizardSectionsEndpoint    goa.Endpoint
+	CloneWizardEmailEndpoint        goa.Endpoint
+	SetWizardSendListEndpoint       goa.Endpoint
+	ChatWizardTurnEndpoint          goa.Endpoint
+	GetWizardSessionEndpoint        goa.Endpoint
 }
 
 // NewClient initializes a "lfx-v2-campaign-service-briefs" service client
 // given the endpoints.
-func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, uploadCreativeAsset, listCreativeAssets, getCreativeAsset, getAssetPlan, deleteCreativeAsset, createCampaigns, createSendWorkflow, adoptCampaign, getCampaign, getCampaignMetrics, getCampaignSettings, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, updateCampaignBudget, updateCampaignBid, applyKeywordActions, addNegativeKeywords, getKeywordTargeting, removeKeywordTargeting, addKeywordTargeting, listMetaAdSets, listMetaAds, toggleMetaAdSetStatus, toggleMetaAdStatus, deleteCampaign, getJob, startEmailWizardPlan, planEmailWizard, generateWizardContent, updateWizardSections, cloneWizardEmail, setWizardSendList, chatWizardTurn, getWizardSession goa.Endpoint) *Client {
+func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, uploadCreativeAsset, listCreativeAssets, getCreativeAsset, getAssetPlan, deleteCreativeAsset, createCampaigns, createSendWorkflow, adoptCampaign, getCampaign, getCampaignMetrics, getCampaignSettings, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, updateCampaignBudget, updateCampaignBid, updateCampaignTargeting, applyKeywordActions, addNegativeKeywords, getKeywordTargeting, removeKeywordTargeting, addKeywordTargeting, listMetaAdSets, listMetaAds, toggleMetaAdSetStatus, toggleMetaAdStatus, deleteCampaign, getJob, startEmailWizardPlan, planEmailWizard, generateWizardContent, updateWizardSections, cloneWizardEmail, setWizardSendList, chatWizardTurn, getWizardSession goa.Endpoint) *Client {
 	return &Client{
-		CreateBriefEndpoint:            createBrief,
-		FindBriefEndpoint:              findBrief,
-		GetBriefEndpoint:               getBrief,
-		UpdateBriefEndpoint:            updateBrief,
-		ApproveBriefEndpoint:           approveBrief,
-		DeleteBriefEndpoint:            deleteBrief,
-		FetchEventURLEndpoint:          fetchEventURL,
-		UploadCreativeAssetEndpoint:    uploadCreativeAsset,
-		ListCreativeAssetsEndpoint:     listCreativeAssets,
-		GetCreativeAssetEndpoint:       getCreativeAsset,
-		GetAssetPlanEndpoint:           getAssetPlan,
-		DeleteCreativeAssetEndpoint:    deleteCreativeAsset,
-		CreateCampaignsEndpoint:        createCampaigns,
-		CreateSendWorkflowEndpoint:     createSendWorkflow,
-		AdoptCampaignEndpoint:          adoptCampaign,
-		GetCampaignEndpoint:            getCampaign,
-		GetCampaignMetricsEndpoint:     getCampaignMetrics,
-		GetCampaignSettingsEndpoint:    getCampaignSettings,
-		GetBriefMetricsEndpoint:        getBriefMetrics,
-		GenerateEmailCopyEndpoint:      generateEmailCopy,
-		UpdateCampaignEndpoint:         updateCampaign,
-		ToggleCampaignStatusEndpoint:   toggleCampaignStatus,
-		UpdateCampaignBudgetEndpoint:   updateCampaignBudget,
-		UpdateCampaignBidEndpoint:      updateCampaignBid,
-		ApplyKeywordActionsEndpoint:    applyKeywordActions,
-		AddNegativeKeywordsEndpoint:    addNegativeKeywords,
-		GetKeywordTargetingEndpoint:    getKeywordTargeting,
-		RemoveKeywordTargetingEndpoint: removeKeywordTargeting,
-		AddKeywordTargetingEndpoint:    addKeywordTargeting,
-		ListMetaAdSetsEndpoint:         listMetaAdSets,
-		ListMetaAdsEndpoint:            listMetaAds,
-		ToggleMetaAdSetStatusEndpoint:  toggleMetaAdSetStatus,
-		ToggleMetaAdStatusEndpoint:     toggleMetaAdStatus,
-		DeleteCampaignEndpoint:         deleteCampaign,
-		GetJobEndpoint:                 getJob,
-		StartEmailWizardPlanEndpoint:   startEmailWizardPlan,
-		PlanEmailWizardEndpoint:        planEmailWizard,
-		GenerateWizardContentEndpoint:  generateWizardContent,
-		UpdateWizardSectionsEndpoint:   updateWizardSections,
-		CloneWizardEmailEndpoint:       cloneWizardEmail,
-		SetWizardSendListEndpoint:      setWizardSendList,
-		ChatWizardTurnEndpoint:         chatWizardTurn,
-		GetWizardSessionEndpoint:       getWizardSession,
+		CreateBriefEndpoint:             createBrief,
+		FindBriefEndpoint:               findBrief,
+		GetBriefEndpoint:                getBrief,
+		UpdateBriefEndpoint:             updateBrief,
+		ApproveBriefEndpoint:            approveBrief,
+		DeleteBriefEndpoint:             deleteBrief,
+		FetchEventURLEndpoint:           fetchEventURL,
+		UploadCreativeAssetEndpoint:     uploadCreativeAsset,
+		ListCreativeAssetsEndpoint:      listCreativeAssets,
+		GetCreativeAssetEndpoint:        getCreativeAsset,
+		GetAssetPlanEndpoint:            getAssetPlan,
+		DeleteCreativeAssetEndpoint:     deleteCreativeAsset,
+		CreateCampaignsEndpoint:         createCampaigns,
+		CreateSendWorkflowEndpoint:      createSendWorkflow,
+		AdoptCampaignEndpoint:           adoptCampaign,
+		GetCampaignEndpoint:             getCampaign,
+		GetCampaignMetricsEndpoint:      getCampaignMetrics,
+		GetCampaignSettingsEndpoint:     getCampaignSettings,
+		GetBriefMetricsEndpoint:         getBriefMetrics,
+		GenerateEmailCopyEndpoint:       generateEmailCopy,
+		UpdateCampaignEndpoint:          updateCampaign,
+		ToggleCampaignStatusEndpoint:    toggleCampaignStatus,
+		UpdateCampaignBudgetEndpoint:    updateCampaignBudget,
+		UpdateCampaignBidEndpoint:       updateCampaignBid,
+		UpdateCampaignTargetingEndpoint: updateCampaignTargeting,
+		ApplyKeywordActionsEndpoint:     applyKeywordActions,
+		AddNegativeKeywordsEndpoint:     addNegativeKeywords,
+		GetKeywordTargetingEndpoint:     getKeywordTargeting,
+		RemoveKeywordTargetingEndpoint:  removeKeywordTargeting,
+		AddKeywordTargetingEndpoint:     addKeywordTargeting,
+		ListMetaAdSetsEndpoint:          listMetaAdSets,
+		ListMetaAdsEndpoint:             listMetaAds,
+		ToggleMetaAdSetStatusEndpoint:   toggleMetaAdSetStatus,
+		ToggleMetaAdStatusEndpoint:      toggleMetaAdStatus,
+		DeleteCampaignEndpoint:          deleteCampaign,
+		GetJobEndpoint:                  getJob,
+		StartEmailWizardPlanEndpoint:    startEmailWizardPlan,
+		PlanEmailWizardEndpoint:         planEmailWizard,
+		GenerateWizardContentEndpoint:   generateWizardContent,
+		UpdateWizardSectionsEndpoint:    updateWizardSections,
+		CloneWizardEmailEndpoint:        cloneWizardEmail,
+		SetWizardSendListEndpoint:       setWizardSendList,
+		ChatWizardTurnEndpoint:          chatWizardTurn,
+		GetWizardSessionEndpoint:        getWizardSession,
 	}
 }
 
@@ -590,6 +592,29 @@ func (c *Client) UpdateCampaignBudget(ctx context.Context, p *UpdateCampaignBudg
 func (c *Client) UpdateCampaignBid(ctx context.Context, p *UpdateCampaignBidPayload) (res *Campaign, err error) {
 	var ires any
 	ires, err = c.UpdateCampaignBidEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*Campaign), nil
+}
+
+// UpdateCampaignTargeting calls the "update-campaign-targeting" endpoint of
+// the "lfx-v2-campaign-service-briefs" service.
+// UpdateCampaignTargeting may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "Forbidden" (type *ForbiddenError): The caller lacks the role an input requires
+//   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
+//   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
+//   - error: internal error
+func (c *Client) UpdateCampaignTargeting(ctx context.Context, p *UpdateCampaignTargetingPayload) (res *Campaign, err error) {
+	var ires any
+	ires, err = c.UpdateCampaignTargetingEndpoint(ctx, p)
 	if err != nil {
 		return
 	}

@@ -282,6 +282,11 @@ func TestCreateCampaign_PartialVariantFailureReported(t *testing.T) {
 	if res.CreativeCount != 1 {
 		t.Errorf("partial result should report 1 successful creative, got %d", res.CreativeCount)
 	}
+	// This run created the campaign, so even the partial says so (#666): the dispatcher records
+	// the employer exclusions it sent.
+	if !res.CampaignCreated {
+		t.Error("partial result of a run that created the campaign has CampaignCreated false")
+	}
 }
 
 // TestCreateCampaign_UnknownAccountFailsClosed verifies that an unknown account

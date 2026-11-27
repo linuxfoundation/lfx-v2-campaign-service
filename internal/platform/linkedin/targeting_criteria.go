@@ -391,7 +391,14 @@ func facetURN(key string) string { return "urn:li:adTargetingFacet:" + key }
 // exclude.or from Exclude plus the runtime config's employer exclusions. The caller has already
 // run ValidateTargeting with the same employer exclusions.
 func (c *Client) buildCustomTargetingCriteria(t *Targeting, geoURNs []string) (map[string]any, error) {
-	employerExclusions, err := targetingEmployerExclusions(c.cfg.EmployerExclusions)
+	return customTargetingCriteria(t, geoURNs, c.cfg.EmployerExclusions)
+}
+
+// customTargetingCriteria is buildCustomTargetingCriteria with the employer exclusions passed in
+// rather than read from the client's runtime config, so the targeting update (#666), whose cached
+// client carries none, merges the row's own list through the same code.
+func customTargetingCriteria(t *Targeting, geoURNs, rawEmployerExclusions []string) (map[string]any, error) {
+	employerExclusions, err := targetingEmployerExclusions(rawEmployerExclusions)
 	if err != nil {
 		return nil, err
 	}

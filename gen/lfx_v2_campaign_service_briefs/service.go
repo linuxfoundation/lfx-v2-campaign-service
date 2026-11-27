@@ -652,6 +652,45 @@ type Service interface {
 	// retried in-call; the row is unchanged. Setting the same bid twice converges,
 	// but verify the bid in the ad platform before retrying.
 	UpdateCampaignBid(context.Context, *UpdateCampaignBidPayload) (res *Campaign, err error)
+	// REPLACE a campaign's AUDIENCE TARGETING on its ad platform after create
+	// (#666), then record it on the row's config snapshot. LinkedIn only: a
+	// campaign on any other platform is refused with 400. A MUTATION on a live
+	// paid campaign with update-campaign-bid's ONE-WAY invariant: nothing is
+	// recorded before LinkedIn confirms; a failed row write after that answers 500
+	// with LinkedIn holding the new targeting, and re-sending the same request
+	// reconciles it. THE WHOLE TARGETING, NEVER A DELTA: LinkedIn's PARTIAL_UPDATE
+	// $set replaces targetingCriteria wholesale, so `targeting` and `geo_targets`
+	// state the complete audience. `targeting` takes linkedInConfig.targeting's
+	// shape and rules (include 1 to 10 ANDed clauses of ORed facets, exclude ORed,
+	// the same facets, URN shapes, caps and refused combinations); the
+	// employerExclusions the create recorded in the row's service-owned result
+	// (never the caller-editable config snapshot) are merged into
+	// exclude.employers. When no include clause names interfaceLocales the update
+	// adds one clause {interfaceLocales: [urn:li:locale:en_US]}, the locale every
+	// create sends, so the audience keeps the language it had; ten clauses with no
+	// interfaceLocales are refused. Status, budget, bidding and the delivery
+	// options are never sent. audienceMatchingSegments and dynamicSegments name
+	// resources of the ad account and require global_marketing_ops on the project
+	// (403 otherwise, 503 when the role cannot be checked). Behind
+	// LINKEDIN_ADS_TARGETING_UPDATE_ENABLED, off by default (400 while off).
+	// **409** when refused BEFORE LinkedIn is written: the campaign is
+	// unprovisioned or still provisioning, was adopted, does not record its ad
+	// account or the employer exclusions it was created with (rows created before
+	// #666, or whose create reused a same-name campaign), belongs to another ad
+	// account than the connection now resolves to, or LinkedIn reports it terminal
+	// or omits its account or status. **400** for a request fault: the gate off, a
+	// targeting or geo_targets the rules refuse, a platform without the
+	// capability, or LinkedIn's definite refusal of the targeting — the response
+	// names which. **404** when LinkedIn holds no campaign with the stored id
+	// (deleted upstream), or the project has no connection for the channel.
+	// **500** when the LF system connection is missing or unusable or stored
+	// credentials cannot be decrypted. **503** when LinkedIn could not be reached
+	// or did not confirm (a 429 is never retried in-call); verify the targeting in
+	// Campaign Manager before retrying. On success the row's config snapshot
+	// records the targeting, locations and employer exclusions sent and drops
+	// targetingProfile, targetingProfiles and jobFunctions, which a custom
+	// targeting leaves unread.
+	UpdateCampaignTargeting(context.Context, *UpdateCampaignTargetingPayload) (res *Campaign, err error)
 	// Pause or remove Google Ads or Microsoft Advertising keywords on one
 	// campaign. A MUTATION on a live paid campaign: pausing or removing a keyword
 	// changes what serves, so it is validated exactly like a create. The batch's
@@ -1061,7 +1100,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [43]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "list-creative-assets", "get-creative-asset", "get-asset-plan", "delete-creative-asset", "create-campaigns", "create-send-workflow", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "add-keyword-targeting", "list-meta-ad-sets", "list-meta-ads", "toggle-meta-ad-set-status", "toggle-meta-ad-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
+var MethodNames = [44]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "list-creative-assets", "get-creative-asset", "get-asset-plan", "delete-creative-asset", "create-campaigns", "create-send-workflow", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "update-campaign-targeting", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "add-keyword-targeting", "list-meta-ad-sets", "list-meta-ads", "toggle-meta-ad-set-status", "toggle-meta-ad-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
 
 // AddKeywordTargetingPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service add-keyword-targeting method.
@@ -3053,6 +3092,17 @@ type KeywordTargetingRemovals struct {
 	AppliedCount int
 }
 
+type LinkedinTargetingUpdate struct {
+	// ANDed clauses, each an object of ORed facets: {<facet>: [urn, ...]}. Facets:
+	// skills, groups, industries, titles, seniorities, jobFunctions, employers,
+	// staffCountRanges, interfaceLocales, interests, audienceMatchingSegments,
+	// dynamicSegments.
+	Include []map[string][]string
+	// ORed exclusions: {<facet>: [urn, ...]}. groups and interfaceLocales are
+	// include-only.
+	Exclude map[string][]string
+}
+
 // ListCreativeAssetsPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service list-creative-assets method.
 type ListCreativeAssetsPayload struct {
@@ -3729,6 +3779,26 @@ type UpdateCampaignPayload struct {
 	// If-Match header carrying the current ETag/version
 	IfMatch  *string
 	Campaign *CampaignUpdateInput
+}
+
+// UpdateCampaignTargetingPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service update-campaign-targeting method.
+type UpdateCampaignTargetingPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Canonical LFX project slug (NOT a UUID) that scopes the resource
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+	// If-Match header carrying the current ETag/version
+	IfMatch *string
+	// The complete targeting, in linkedInConfig.targeting's shape
+	Targeting *LinkedinTargetingUpdate
+	// The complete locations: 1 to 100 urn:li:geo:<id> URNs (duplicates dropped).
+	// They form the first ANDed clause, as at create.
+	GeoTargets []string
 }
 
 // UpdateWizardSectionsPayload is the payload type of the
