@@ -52,7 +52,9 @@ are refused. The client refuses ENGAGEMENT for any other format.
 
 1. A `SPONSORED_UPDATES` campaign **without** `format` ("If no Ad format is set, it's set by the first
    creative"); name segment `Document`. The reuse lookup expects LinkedIn to report
-   `SPONSORED_UPDATE_NATIVE_DOCUMENT` and refuses a same-name campaign of another format.
+   `SPONSORED_UPDATE_NATIVE_DOCUMENT` and refuses a same-name campaign of another format. Before the
+   creative is attached LinkedIn reports `UNSUPPORTED`, which the lookup treats as unreported, so a
+   retry after a partial failure reuses the campaign (#690).
 2. The PDF: `POST /rest/documents?action=initializeUpload` (organization owner), the PUT to the
    LinkedIn upload URL, `GET /rest/documents/{urn}` until AVAILABLE within a shared 60 s wait.
 3. ONE dark post with `content.media {title, id: urn:li:document:…}` and no landing page, so a

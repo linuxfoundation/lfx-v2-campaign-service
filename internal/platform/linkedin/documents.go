@@ -63,6 +63,10 @@ const FormatDocument = "document"
 // from an image, video or carousel one.
 const campaignFormatDocument = "SPONSORED_UPDATE_NATIVE_DOCUMENT"
 
+// campaignFormatUnsupported is the format LinkedIn reports for a document campaign before its
+// creative is attached (#690). findCampaignByNameInGroup treats it as an unreported format.
+const campaignFormatUnsupported = "UNSUPPORTED"
+
 // ObjectiveEngagement and OptimizationTargetMaxReach are a document create's default objective and
 // its automated target (decision 2026-11-25).
 const (

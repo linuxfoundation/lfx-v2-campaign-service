@@ -376,6 +376,7 @@ func TestFindCampaignByNameInGroup_DocumentIsItsOwnFormat(t *testing.T) {
 		reuse                bool
 	}{
 		{"document reuses document", campaignFormatDocument, campaignFormatDocument, true},
+		{"document reuses its own campaign before the creative", campaignFormatUnsupported, campaignFormatDocument, true},
 		{"document refuses an image campaign", "STANDARD_UPDATE", campaignFormatDocument, false},
 		{"image refuses a document campaign", campaignFormatDocument, "", false},
 		{"carousel refuses a document campaign", campaignFormatDocument, campaignFormatCarousel, false},
