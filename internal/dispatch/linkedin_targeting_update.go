@@ -206,8 +206,8 @@ func linkedinTargetingSnapshot(raw json.RawMessage) *linkedinRowSnapshot {
 	return out
 }
 
-// withTargeting returns the snapshot with targeting and geoTargets replaced by what the update
-// sent, and the profile keys a custom targeting leaves unread removed. A location the snapshot
+// withTargeting returns the snapshot with targeting, geoTargets and employerExclusions replaced by
+// what the update sent, and the profile keys a custom targeting leaves unread removed. A location the snapshot
 // already named keeps its label; a new one has none. Every other key is kept.
 func (s *linkedinRowSnapshot) withTargeting(u *linkedin.TargetingUpdate) (json.RawMessage, bool) {
 	labels := make(map[string]string, len(s.GeoTargets))
@@ -230,8 +230,15 @@ func (s *linkedinRowSnapshot) withTargeting(u *linkedin.TargetingUpdate) (json.R
 	if err != nil {
 		return nil, false
 	}
+	// The trusted create-time exclusions actually merged, not whatever a caller's campaign update
+	// left in the snapshot (missing or empty), so the snapshot describes what LinkedIn serves.
+	e, err := json.Marshal(append([]string{}, u.EmployerExclusions...))
+	if err != nil {
+		return nil, false
+	}
 	out["targeting"] = t
 	out["geoTargets"] = g
+	out["employerExclusions"] = e
 	// A custom targeting replaces the profile clause and job functions, which create refuses beside
 	// it; drop them so the snapshot stays a config the validator accepts and names only what serves.
 	for _, k := range []string{"targetingProfile", "targetingProfiles", "jobFunctions"} {

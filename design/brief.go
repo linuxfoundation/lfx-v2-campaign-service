@@ -3526,7 +3526,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"credentials cannot be decrypted. " +
 			"**503** when LinkedIn could not be reached or did not confirm (a 429 is never retried in-call); verify " +
 			"the targeting in Campaign Manager before retrying. On success the row's config snapshot records the " +
-			"targeting and locations sent and drops targetingProfile, targetingProfiles and jobFunctions, which a " +
+			"targeting, locations and employer exclusions sent and drops targetingProfile, targetingProfiles and jobFunctions, which a " +
 			"custom targeting leaves unread.")
 		Payload(func() {
 			bearerToken()

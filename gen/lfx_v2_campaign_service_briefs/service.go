@@ -687,8 +687,9 @@ type Service interface {
 	// credentials cannot be decrypted. **503** when LinkedIn could not be reached
 	// or did not confirm (a 429 is never retried in-call); verify the targeting in
 	// Campaign Manager before retrying. On success the row's config snapshot
-	// records the targeting and locations sent and drops targetingProfile,
-	// targetingProfiles and jobFunctions, which a custom targeting leaves unread.
+	// records the targeting, locations and employer exclusions sent and drops
+	// targetingProfile, targetingProfiles and jobFunctions, which a custom
+	// targeting leaves unread.
 	UpdateCampaignTargeting(context.Context, *UpdateCampaignTargetingPayload) (res *Campaign, err error)
 	// Pause or remove Google Ads or Microsoft Advertising keywords on one
 	// campaign. A MUTATION on a live paid campaign: pausing or removing a keyword

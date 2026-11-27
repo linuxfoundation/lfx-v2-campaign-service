@@ -178,8 +178,15 @@ func TestLinkedIn_WriteTargeting_ExclusionsSurviveACallerReplacedSnapshot(t *tes
 			if len(posts) != 1 || !strings.Contains(posts[0].Body, "urn:li:organization:208777") {
 				t.Fatalf("the write dropped the create-time staff exclusion: %+v", posts)
 			}
-			if !strings.Contains(string(row.ConfigSnapshot), `"targeting"`) {
-				t.Errorf("snapshot = %s, want the sent targeting recorded", row.ConfigSnapshot)
+			var snap struct {
+				Targeting          json.RawMessage `json:"targeting"`
+				EmployerExclusions []string        `json:"employerExclusions"`
+			}
+			if err := json.Unmarshal(row.ConfigSnapshot, &snap); err != nil || snap.Targeting == nil {
+				t.Fatalf("snapshot = %s, want the sent targeting recorded (%v)", row.ConfigSnapshot, err)
+			}
+			if len(snap.EmployerExclusions) != 1 || snap.EmployerExclusions[0] != "urn:li:organization:208777" {
+				t.Errorf("snapshot employerExclusions = %v, want the trusted list sent, not the caller's", snap.EmployerExclusions)
 			}
 		})
 	}

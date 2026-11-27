@@ -6094,6 +6094,7 @@ result blob (`CampaignResult.EmployerExclusions`, which `campaignFromLinkedIn` r
 #666 only when `CampaignResult.CampaignCreated` says this run created the campaign; never the caller-editable `config_snapshot`; not recorded → 409), runs `linkedin.PrepareTargetingUpdate` (400 with the rule's
 sentence), resolves the connection, checks the account and status LinkedIn reports, and sends
 `UpdateCampaignTargeting` once. Unconfirmed → `unconfirmedTargetingWriteError`; LinkedIn's definite
-400/422 → 400. On success `campaign.ConfigSnapshot` gets the sent `targeting` and `geoTargets` (known
+400/422 → 400. On success `campaign.ConfigSnapshot` gets the sent `targeting`, `geoTargets` and the trusted
+`employerExclusions` (known
 labels kept; `targetingProfile`, `targetingProfiles` and `jobFunctions` dropped since a custom
 targeting leaves them unread; other keys untouched), which the service persists.
