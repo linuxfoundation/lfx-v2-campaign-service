@@ -112,6 +112,9 @@ type FlightRange struct {
 type AccountCampaignMetrics struct {
 	// PlatformCampaignID is the id the platform assigned to this campaign.
 	PlatformCampaignID string
+	// RecordedProjectID is set only on an account-wide (scope=account) read (#672): the project
+	// this service records the campaign for, empty when none does (created outside LFX).
+	RecordedProjectID string
 	// Name is the campaign's platform-side name, unparsed.
 	Name string
 	// Status is the platform's own status string (e.g. "ENABLED"/"PAUSED" for Google,

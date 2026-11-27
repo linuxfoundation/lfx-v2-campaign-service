@@ -693,6 +693,40 @@ func (r *CampaignRepo) ListProjectPlatformMonitorCampaignIDs(ctx context.Context
 	return r.queryProjectCampaignScope(ctx, listProjectPlatformMonitorCampaignIDsQuery, "project platform monitor campaign ids", projectID, platform)
 }
 
+// recordedCampaignOwnersQuery lists every row recording one of the ids, each id's rows ranked
+// as monitorCampaignNotTakenOver ranks owners: live first, then the latest binding
+// (platform_bound_at, else created_at). Deliberately NOT scoped by project: it serves the
+// account-wide monitor (#672), which only global_marketing_ops reaches, and it returns only the
+// id, project and provenance blob.
+const recordedCampaignOwnersQuery = `SELECT platform_campaign_id, project_id, result FROM campaigns
+	WHERE platform=$1 AND platform_campaign_id = ANY($2)
+	ORDER BY platform_campaign_id, (status <> 'deleted') DESC, COALESCE(platform_bound_at, created_at) DESC, id DESC`
+
+// RecordedCampaignOwners lists the rows recording ids on platform, in preference order per id.
+// An empty ids answers an empty slice without a query.
+func (r *CampaignRepo) RecordedCampaignOwners(ctx context.Context, platform model.Provider, ids []string) ([]model.RecordedCampaignOwner, error) {
+	out := make([]model.RecordedCampaignOwner, 0, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, recordedCampaignOwnersQuery, string(platform), ids)
+	if err != nil {
+		return nil, fmt.Errorf("list recorded campaign owners: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var o model.RecordedCampaignOwner
+		if serr := rows.Scan(&o.PlatformCampaignID, &o.ProjectID, &o.Result); serr != nil {
+			return nil, fmt.Errorf("scan recorded campaign owners: %w", serr)
+		}
+		out = append(out, o)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, fmt.Errorf("iterate recorded campaign owners: %w", rerr)
+	}
+	return out, nil
+}
+
 // queryProjectCampaignScope runs one of the (platform_campaign_id, result) scope queries above;
 // what names the read in its errors.
 func (r *CampaignRepo) queryProjectCampaignScope(ctx context.Context, query, what, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error) {

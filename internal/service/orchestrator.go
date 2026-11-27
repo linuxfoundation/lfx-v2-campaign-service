@@ -523,6 +523,65 @@ type AccountMonitorScoper interface {
 	MonitorScopeForAccount(scope []model.ProjectCampaignScope, accountID string) ([]string, error)
 }
 
+// MonitorProvenance classifies one recorded campaign against a monitored account (#672).
+type MonitorProvenance int
+
+const (
+	// ProvenanceUnknown: the record does not say which account it was created under (written
+	// before account stamping).
+	ProvenanceUnknown MonitorProvenance = iota
+	// ProvenanceMatch: the record says it was created under the monitored account.
+	ProvenanceMatch
+	// ProvenanceForeign: the record says it was created under a different account.
+	ProvenanceForeign
+)
+
+// AccountMonitorProvenanceClassifier is an OPTIONAL dispatcher capability: classify one record's
+// creation account against accountID with the same extractor and normalisation the platform's
+// scoper uses, but WITHOUT that scoper's policy (Google, Reddit and X refuse an unknown record,
+// LinkedIn drops it on the system row, Meta keeps it), so the account-wide monitor's row labels
+// can rank records explicitly: a match first, else an unknown one, never a foreign one.
+type AccountMonitorProvenanceClassifier interface {
+	MonitorProvenanceOf(entry model.ProjectCampaignScope, accountID string) MonitorProvenance
+}
+
+// RecordedProjectsByID picks, per campaign id, the project that labels an account-wide monitor
+// row (#672). candidates are in preference order per id (live first, else the latest binding).
+// The first candidate classified ProvenanceMatch wins; failing that, the first ProvenanceUnknown
+// one (still an LFX record of that id, and the label grants nothing, unlike project scoping,
+// which fails closed on it); a ProvenanceForeign one never labels: on Reddit and X an id is unique
+// only within an account. A nil classifier (a platform whose account is not shared) treats every
+// candidate as a match.
+func RecordedProjectsByID(candidates []model.RecordedCampaignOwner, classifier AccountMonitorProvenanceClassifier, accountID string) map[string]string {
+	matched := make(map[string]string, len(candidates))
+	unknown := make(map[string]string, len(candidates))
+	for _, c := range candidates {
+		id := c.PlatformCampaignID
+		if _, done := matched[id]; done {
+			continue
+		}
+		fit := ProvenanceMatch
+		if classifier != nil {
+			fit = classifier.MonitorProvenanceOf(c.ProjectCampaignScope, accountID)
+		}
+		switch fit {
+		case ProvenanceMatch:
+			matched[id] = c.ProjectID
+		case ProvenanceUnknown:
+			if _, seen := unknown[id]; !seen {
+				unknown[id] = c.ProjectID
+			}
+		case ProvenanceForeign:
+		}
+	}
+	for id, p := range unknown {
+		if _, ok := matched[id]; !ok {
+			matched[id] = p
+		}
+	}
+	return matched
+}
+
 // AccountMonitorConnectionScoper is an OPTIONAL capability of an AccountMonitorScoper whose scope
 // rule depends on which connection will serve the read (LinkedIn, #628). MonitorScoperForConnection
 // returns the scoper to apply to projectID's read of accountID, or a nil scoper with a nil error to
@@ -3368,6 +3427,19 @@ func (o *Orchestrator) ReadAccounts(ctx context.Context, projectID string, platf
 // recordUpstream, and treat a nil result with no error as a contract violation rather than an
 // authoritative empty answer.
 func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) (*model.AccountMonitorRead, error) {
+	return o.readAccountCampaignMetrics(ctx, projectID, platform, accountID, days, false)
+}
+
+// ReadAccountCampaignMetricsAccountWide is ReadAccountCampaignMetrics without the project scope
+// (#672): every campaign the account read returns, whoever created it, each labeled with the
+// project this service records it for (RecordedProjectID). The caller has already admitted the
+// request (global_marketing_ops and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED); this method does not
+// check either. The scoper's precheck still runs, so a malformed account id is the same 400.
+func (o *Orchestrator) ReadAccountCampaignMetricsAccountWide(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) (*model.AccountMonitorRead, error) {
+	return o.readAccountCampaignMetrics(ctx, projectID, platform, accountID, days, true)
+}
+
+func (o *Orchestrator) readAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int, accountWide bool) (*model.AccountMonitorRead, error) {
 	d, ok := o.dispatchers[platform]
 	if !ok {
 		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrAccountMetricsUnsupported, platform)
@@ -3381,7 +3453,7 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 	// upstream call, and an empty scope answers with an empty monitor without contacting the
 	// platform at all: the account read below would otherwise return every foundation's
 	// campaigns to a project that has none of its own (lfx-self-serve-ops#897).
-	scopeIDs, scoped, serr := o.scopeAccountMonitor(ctx, projectID, platform, accountID)
+	scopeIDs, scoped, serr := o.monitorScope(ctx, projectID, platform, accountID, accountWide)
 	if serr != nil {
 		return nil, serr
 	}
@@ -3419,7 +3491,8 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 	// value reaches the response, and a dispatcher that forgot would otherwise publish whatever
 	// the platform sent.
 	read.Currency = model.NormalizeCurrencyCode(read.Currency)
-	// The upstream read is account-wide; only the project's own campaigns leave this service.
+	// The upstream read is account-wide; on a project-scoped read only the project's own
+	// campaigns leave this service. An account-wide read (#672) returns them all, labeled below.
 	// Filtered before the rule engine runs, so action items and totals describe the same rows.
 	if scoped {
 		scopeIDs, serr = o.revalidateAccountMonitorScope(ctx, projectID, platform, accountID, scopeIDs)
@@ -3428,7 +3501,57 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 		}
 		read.Rows = filterMonitorRows(read.Rows, scopeIDs)
 	}
+	if accountWide {
+		if err := o.labelRecordedProjects(ctx, platform, accountID, read.Rows); err != nil {
+			return nil, err
+		}
+	}
 	return read, nil
+}
+
+// monitorScope is scopeAccountMonitor for a project-scoped read. For an account-wide one (#672)
+// it runs only the scoper's precheck, so a malformed account id or a disabled monitor answers
+// the same 400, and reports the read as unscoped.
+func (o *Orchestrator) monitorScope(ctx context.Context, projectID string, platform model.Provider, accountID string, accountWide bool) (map[string]bool, bool, error) {
+	if !accountWide {
+		return o.scopeAccountMonitor(ctx, projectID, platform, accountID)
+	}
+	if scoper, ok := o.dispatchers[platform].(AccountMonitorScoper); ok {
+		if err := scoper.MonitorScopePrecheck(accountID); err != nil {
+			return nil, false, err
+		}
+	}
+	return nil, false, nil
+}
+
+// labelRecordedProjects sets each row's RecordedProjectID from this service's own records, in
+// one query, ranked by RecordedProjectsByID with the platform's provenance classifier. A failure
+// fails the read: a row unlabeled because the lookup failed would read as "created outside LFX",
+// which is a claim nobody made.
+func (o *Orchestrator) labelRecordedProjects(ctx context.Context, platform model.Provider, accountID string, rows []model.AccountCampaignMetrics) error {
+	ids := make([]string, 0, len(rows))
+	for _, r := range rows {
+		if r.PlatformCampaignID != "" {
+			ids = append(ids, r.PlatformCampaignID)
+		}
+	}
+	candidates, err := o.campaigns.RecordedCampaignOwners(ctx, platform, ids)
+	if err != nil {
+		return fmt.Errorf("label account monitor rows on %s: %w", platform, err)
+	}
+	var classifier AccountMonitorProvenanceClassifier
+	if c, ok := o.dispatchers[platform].(AccountMonitorProvenanceClassifier); ok {
+		classifier = c
+	} else if _, scoped := o.dispatchers[platform].(AccountMonitorScoper); scoped {
+		// A shared-tenancy platform without a classifier cannot tell a foreign record from its
+		// own; label nothing rather than risk another foundation's project on this row.
+		return fmt.Errorf("label account monitor rows on %s: the dispatcher cannot classify record provenance", platform)
+	}
+	owners := RecordedProjectsByID(candidates, classifier, accountID)
+	for i := range rows {
+		rows[i].RecordedProjectID = owners[rows[i].PlatformCampaignID]
+	}
+	return nil
 }
 
 // scopeAccountMonitor resolves the project's campaign scope for an account-monitor read.

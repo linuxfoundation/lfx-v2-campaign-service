@@ -12913,6 +12913,7 @@ func DecodeMonitorGoogleAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.
 			projectID   string
 			accountID   *string
 			days        int
+			scope       *string
 			bearerToken *string
 			err         error
 
@@ -12949,6 +12950,15 @@ func DecodeMonitorGoogleAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.
 		if days > 90 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 90, false))
 		}
+		scopeRaw := qp.Get("scope")
+		if scopeRaw != "" {
+			scope = &scopeRaw
+		}
+		if scope != nil {
+			if !(*scope == "account") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("scope", *scope, []any{"account"}))
+			}
+		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
@@ -12956,7 +12966,7 @@ func DecodeMonitorGoogleAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.
 		if err != nil {
 			return payload, err
 		}
-		payload = NewMonitorGoogleAdsAccountPayload(projectID, accountID, days, bearerToken)
+		payload = NewMonitorGoogleAdsAccountPayload(projectID, accountID, days, scope, bearerToken)
 		if payload.BearerToken != nil {
 			cred := *payload.BearerToken
 			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
@@ -13018,6 +13028,19 @@ func EncodeMonitorGoogleAdsAccountError(encoder func(context.Context, http.Respo
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "Forbidden":
+			var res *lfxv2campaignserviceconnections.ForbiddenError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorGoogleAdsAccountForbiddenResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusForbidden)
 			return enc.Encode(body)
 		case "InternalServerError":
 			var res *lfxv2campaignserviceconnections.InternalServerError
@@ -13101,6 +13124,7 @@ func DecodeMonitorLinkedinAdsAccountRequest(mux goahttp.Muxer, decoder func(*htt
 			projectID   string
 			accountID   *string
 			days        int
+			scope       *string
 			bearerToken *string
 			err         error
 
@@ -13137,6 +13161,15 @@ func DecodeMonitorLinkedinAdsAccountRequest(mux goahttp.Muxer, decoder func(*htt
 		if days > 90 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 90, false))
 		}
+		scopeRaw := qp.Get("scope")
+		if scopeRaw != "" {
+			scope = &scopeRaw
+		}
+		if scope != nil {
+			if !(*scope == "account") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("scope", *scope, []any{"account"}))
+			}
+		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
@@ -13144,7 +13177,7 @@ func DecodeMonitorLinkedinAdsAccountRequest(mux goahttp.Muxer, decoder func(*htt
 		if err != nil {
 			return payload, err
 		}
-		payload = NewMonitorLinkedinAdsAccountPayload(projectID, accountID, days, bearerToken)
+		payload = NewMonitorLinkedinAdsAccountPayload(projectID, accountID, days, scope, bearerToken)
 		if payload.BearerToken != nil {
 			cred := *payload.BearerToken
 			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
@@ -13207,6 +13240,19 @@ func EncodeMonitorLinkedinAdsAccountError(encoder func(context.Context, http.Res
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "Forbidden":
+			var res *lfxv2campaignserviceconnections.ForbiddenError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorLinkedinAdsAccountForbiddenResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusForbidden)
 			return enc.Encode(body)
 		case "InternalServerError":
 			var res *lfxv2campaignserviceconnections.InternalServerError
@@ -13289,6 +13335,7 @@ func DecodeMonitorMetaAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.Re
 			projectID   string
 			accountID   string
 			days        int
+			scope       *string
 			bearerToken *string
 			err         error
 
@@ -13321,6 +13368,15 @@ func DecodeMonitorMetaAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.Re
 		if days > 90 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 90, false))
 		}
+		scopeRaw := qp.Get("scope")
+		if scopeRaw != "" {
+			scope = &scopeRaw
+		}
+		if scope != nil {
+			if !(*scope == "account") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("scope", *scope, []any{"account"}))
+			}
+		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
@@ -13328,7 +13384,7 @@ func DecodeMonitorMetaAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.Re
 		if err != nil {
 			return payload, err
 		}
-		payload = NewMonitorMetaAdsAccountPayload(projectID, accountID, days, bearerToken)
+		payload = NewMonitorMetaAdsAccountPayload(projectID, accountID, days, scope, bearerToken)
 		if payload.BearerToken != nil {
 			cred := *payload.BearerToken
 			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
@@ -13390,6 +13446,19 @@ func EncodeMonitorMetaAdsAccountError(encoder func(context.Context, http.Respons
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "Forbidden":
+			var res *lfxv2campaignserviceconnections.ForbiddenError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorMetaAdsAccountForbiddenResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusForbidden)
 			return enc.Encode(body)
 		case "InternalServerError":
 			var res *lfxv2campaignserviceconnections.InternalServerError
@@ -13472,6 +13541,7 @@ func DecodeMonitorRedditAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.
 			projectID   string
 			accountID   string
 			days        int
+			scope       *string
 			bearerToken *string
 			err         error
 
@@ -13504,6 +13574,15 @@ func DecodeMonitorRedditAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.
 		if days > 90 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 90, false))
 		}
+		scopeRaw := qp.Get("scope")
+		if scopeRaw != "" {
+			scope = &scopeRaw
+		}
+		if scope != nil {
+			if !(*scope == "account") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("scope", *scope, []any{"account"}))
+			}
+		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
@@ -13511,7 +13590,7 @@ func DecodeMonitorRedditAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.
 		if err != nil {
 			return payload, err
 		}
-		payload = NewMonitorRedditAdsAccountPayload(projectID, accountID, days, bearerToken)
+		payload = NewMonitorRedditAdsAccountPayload(projectID, accountID, days, scope, bearerToken)
 		if payload.BearerToken != nil {
 			cred := *payload.BearerToken
 			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
@@ -13573,6 +13652,19 @@ func EncodeMonitorRedditAdsAccountError(encoder func(context.Context, http.Respo
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "Forbidden":
+			var res *lfxv2campaignserviceconnections.ForbiddenError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorRedditAdsAccountForbiddenResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusForbidden)
 			return enc.Encode(body)
 		case "InternalServerError":
 			var res *lfxv2campaignserviceconnections.InternalServerError
@@ -13827,6 +13919,7 @@ func DecodeMonitorTwitterAdsAccountRequest(mux goahttp.Muxer, decoder func(*http
 			projectID   string
 			accountID   string
 			days        int
+			scope       *string
 			bearerToken *string
 			err         error
 
@@ -13859,6 +13952,15 @@ func DecodeMonitorTwitterAdsAccountRequest(mux goahttp.Muxer, decoder func(*http
 		if days > 90 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 90, false))
 		}
+		scopeRaw := qp.Get("scope")
+		if scopeRaw != "" {
+			scope = &scopeRaw
+		}
+		if scope != nil {
+			if !(*scope == "account") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("scope", *scope, []any{"account"}))
+			}
+		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
@@ -13866,7 +13968,7 @@ func DecodeMonitorTwitterAdsAccountRequest(mux goahttp.Muxer, decoder func(*http
 		if err != nil {
 			return payload, err
 		}
-		payload = NewMonitorTwitterAdsAccountPayload(projectID, accountID, days, bearerToken)
+		payload = NewMonitorTwitterAdsAccountPayload(projectID, accountID, days, scope, bearerToken)
 		if payload.BearerToken != nil {
 			cred := *payload.BearerToken
 			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
@@ -13929,6 +14031,19 @@ func EncodeMonitorTwitterAdsAccountError(encoder func(context.Context, http.Resp
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "Forbidden":
+			var res *lfxv2campaignserviceconnections.ForbiddenError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorTwitterAdsAccountForbiddenResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusForbidden)
 			return enc.Encode(body)
 		case "InternalServerError":
 			var res *lfxv2campaignserviceconnections.InternalServerError
@@ -14856,6 +14971,7 @@ func marshalLfxv2campaignserviceconnectionsAccountMonitorCampaignToAccountMonito
 		PacingPct:          v.PacingPct,
 		PacingLabel:        v.PacingLabel,
 		CampaignURL:        v.CampaignURL,
+		RecordedProjectID:  v.RecordedProjectID,
 	}
 
 	return res

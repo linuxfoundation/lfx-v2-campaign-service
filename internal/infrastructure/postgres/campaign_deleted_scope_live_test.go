@@ -162,3 +162,49 @@ func TestCampaignMonitorHistoryIndex_Live(t *testing.T) {
 			valid, allStatuses, nonUnique, definition)
 	}
 }
+
+// TestRecordedCampaignOwners_Live runs the account-wide monitor's label candidates (#672) against
+// a real database: per id, live rows before deleted ones and later bindings before earlier ones,
+// with each row's project; an id no row records has no entries.
+func TestRecordedCampaignOwners_Live(t *testing.T) {
+	pool := creativeAssetTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	briefA, projectA := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
+	briefB, projectB := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
+	id := func(name string) string { return creativeAssetUniqueID(t, name) }
+	liveB, latestA, unknown := id("live-b"), id("latest-a"), id("unknown")
+	base := time.Now().UTC().Add(-time.Hour)
+	slot := 0
+	insert := func(brief, project, platformID, status string) {
+		t.Helper()
+		slot++
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO campaigns (project_id, brief_id, platform, variant, slot_version, platform_campaign_id,
+			                       campaign_name, status, created_at)
+			VALUES ($1, $2, 'meta-ads', $5, $3, $4, 'n', $6, $7)`,
+			project, brief, slot, platformID, fmt.Sprintf("v%d", slot), status, base.Add(time.Duration(slot)*time.Second)); err != nil {
+			t.Fatalf("insert campaign: %v", err)
+		}
+	}
+	// A deleted A row then B's live row: B first.
+	insert(briefA, projectA, liveB, "deleted")
+	insert(briefB, projectB, liveB, "created")
+	// Both deleted, A's later: A first.
+	insert(briefB, projectB, latestA, "deleted")
+	insert(briefA, projectA, latestA, "deleted")
+
+	got, err := NewCampaignRepo(pool).RecordedCampaignOwners(ctx, model.ProviderMetaAds, []string{liveB, latestA, unknown})
+	if err != nil {
+		t.Fatalf("RecordedCampaignOwners: %v", err)
+	}
+	order := map[string][]string{}
+	for _, o := range got {
+		order[o.PlatformCampaignID] = append(order[o.PlatformCampaignID], o.ProjectID)
+	}
+	if fmt.Sprint(order[liveB]) != fmt.Sprint([]string{projectB, projectA}) ||
+		fmt.Sprint(order[latestA]) != fmt.Sprint([]string{projectA, projectB}) || len(order[unknown]) != 0 {
+		t.Errorf("owners = %v, want %s:[B A], %s:[A B], none for %s", order, liveB, latestA, unknown)
+	}
+}

@@ -1121,6 +1121,13 @@ type ProjectCampaignScope struct {
 	Result json.RawMessage
 }
 
+// RecordedCampaignOwner is one row recording an upstream campaign id for a project, with its
+// provenance blob, for labelling an account-wide monitor row (#672).
+type RecordedCampaignOwner struct {
+	ProjectCampaignScope
+	ProjectID string
+}
+
 // LocalCampaignRef addresses one of THIS SERVICE'S campaign rows by the pair its mutation
 // routes require.
 //

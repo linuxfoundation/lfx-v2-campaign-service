@@ -333,6 +333,11 @@ type Container struct {
 	// two paths share one NATS connection and that Close can shut it down.
 	indexPublisher indexer.Publisher
 
+	// opsChecker, when set, is the global_marketing_ops checker marketingOpsChecker returns instead
+	// of building one over indexPublisher's NATS connection. Tests set it to prove the wiring
+	// without a NATS server; NewContainer never does.
+	opsChecker service.MarketingOpsChecker
+
 	// indexRelay drains the index outbox, delivering messages whose direct publish was lost
 	// (a process that died between the commit and the publish). Nil when there is no database.
 	indexRelay *indexer.Relay
@@ -781,6 +786,7 @@ func newAudienceBuilder(repo *postgres.ConnectionRepo, enc domain.Encryptor, cfg
 func (c *Container) newConnectionService(repo domain.ConnectionRepository, enc domain.Encryptor) *service.ConnectionService {
 	s := service.NewConnectionService(repo, enc)
 	s.SetTokenVerifier(c.tokenVerifier)
+	s.SetMarketingOpsChecker(c.marketingOpsChecker())
 	return s
 }
 
@@ -1581,6 +1587,9 @@ func indexRelayResolver(on bool, conn accesscheck.Requester) indexer.ProjectUIDR
 // publisher's NATS connection, or nil when there is none (NATS_URL empty, or a Noop publisher).
 // Nil is safe: BriefService then refuses the inputs that need the check, with 503.
 func (c *Container) marketingOpsChecker() service.MarketingOpsChecker {
+	if c.opsChecker != nil {
+		return c.opsChecker
+	}
 	np, ok := c.indexPublisher.(*indexer.NATSPublisher)
 	if !ok || np.Conn() == nil {
 		return nil

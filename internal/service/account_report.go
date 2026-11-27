@@ -127,6 +127,17 @@ func (o *Orchestrator) accountReportStore() domain.AccountReportRepository {
 // while each read reported nothing wrong; the read fails with it instead, and the handler maps
 // it to a 409 the caller can act on.
 func (o *Orchestrator) ReadReportedAccountCampaigns(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) (*model.ReportedAccountRead, error) {
+	return o.readReportedAccountCampaigns(ctx, projectID, platform, accountID, days, false)
+}
+
+// ReadReportedAccountCampaignsAccountWide is ReadReportedAccountCampaigns without the project
+// scope (#672), as ReadAccountCampaignMetricsAccountWide is for the live read. The saved report
+// is the same one: it always holds the account-wide rows.
+func (o *Orchestrator) ReadReportedAccountCampaignsAccountWide(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) (*model.ReportedAccountRead, error) {
+	return o.readReportedAccountCampaigns(ctx, projectID, platform, accountID, days, true)
+}
+
+func (o *Orchestrator) readReportedAccountCampaigns(ctx context.Context, projectID string, platform model.Provider, accountID string, days int, accountWide bool) (*model.ReportedAccountRead, error) {
 	d, ok := o.dispatchers[platform]
 	if !ok {
 		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrAccountMetricsUnsupported, platform)
@@ -144,7 +155,7 @@ func (o *Orchestrator) ReadReportedAccountCampaigns(ctx context.Context, project
 	// The project's scope, before the store or the platform is touched — see
 	// ReadAccountCampaignMetrics, which gates the live read the same way. An empty scope reads
 	// nothing: no saved report, no list, no submission.
-	scopeIDs, scoped, scopeErr := o.scopeAccountMonitor(ctx, projectID, platform, accountID)
+	scopeIDs, scoped, scopeErr := o.monitorScope(ctx, projectID, platform, accountID, accountWide)
 	if scopeErr != nil {
 		return nil, scopeErr
 	}
@@ -204,6 +215,11 @@ func (o *Orchestrator) ReadReportedAccountCampaigns(ctx context.Context, project
 			return nil, scopeErr
 		}
 		read.Rows = filterMonitorRows(read.Rows, scopeIDs)
+	}
+	if accountWide {
+		if err := o.labelRecordedProjects(ctx, platform, accountID, read.Rows); err != nil {
+			return nil, err
+		}
 	}
 	return read, nil
 }

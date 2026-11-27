@@ -167,6 +167,10 @@ func toConnAccountMonitorCampaign(row model.AccountMonitorRow) *conn.AccountMoni
 		url := m.CampaignURL
 		c.CampaignURL = &url
 	}
+	if m.RecordedProjectID != "" {
+		owner := m.RecordedProjectID
+		c.RecordedProjectID = &owner
+	}
 	return c
 }
 
@@ -278,6 +282,7 @@ func (s *ConnectionService) monitorAccount(
 	ctx context.Context,
 	projectID, accountID string,
 	days int,
+	accountWide bool,
 	platform model.Provider,
 	discovery accountDiscovery,
 	evaluate func(read *model.AccountMonitorRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem),
@@ -292,7 +297,11 @@ func (s *ConnectionService) monitorAccount(
 	if err != nil {
 		return nil, err
 	}
-	read, merr := orch.ReadAccountCampaignMetrics(ctx, projectID, platform, accountID, days)
+	readFn := orch.ReadAccountCampaignMetrics
+	if accountWide {
+		readFn = orch.ReadAccountCampaignMetricsAccountWide
+	}
+	read, merr := readFn(ctx, projectID, platform, accountID, days)
 	if merr != nil {
 		return nil, s.classifyMonitorError(ctx, projectID, platform, discovery, merr)
 	}
@@ -406,6 +415,7 @@ func (s *ConnectionService) monitorReportedAccount(
 	ctx context.Context,
 	projectID, accountID string,
 	days int,
+	accountWide bool,
 	platform model.Provider,
 	discovery accountDiscovery,
 	evaluate func(read *model.ReportedAccountRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem),
@@ -420,7 +430,11 @@ func (s *ConnectionService) monitorReportedAccount(
 	if err != nil {
 		return nil, err
 	}
-	read, rerr := orch.ReadReportedAccountCampaigns(ctx, projectID, platform, accountID, days)
+	readFn := orch.ReadReportedAccountCampaigns
+	if accountWide {
+		readFn = orch.ReadReportedAccountCampaignsAccountWide
+	}
+	read, rerr := readFn(ctx, projectID, platform, accountID, days)
 	if rerr != nil {
 		return nil, s.classifyMonitorError(ctx, projectID, platform, discovery, rerr)
 	}
@@ -457,6 +471,10 @@ func (s *ConnectionService) monitorReportedAccount(
 // campaigns recorded on Google Ads gets an empty monitor with an empty account_id, without any
 // upstream call, as it would naming any customer.
 func (s *ConnectionService) MonitorGoogleAdsAccount(ctx context.Context, p *conn.MonitorGoogleAdsAccountPayload) (*conn.AccountMonitor, error) {
+	accountWide, err := s.admitAccountWideMonitor(ctx, p.ProjectID, p.Scope)
+	if err != nil {
+		return nil, err
+	}
 	accountID := ""
 	if p.AccountID != nil {
 		accountID = *p.AccountID
@@ -481,7 +499,7 @@ func (s *ConnectionService) MonitorGoogleAdsAccount(ctx context.Context, p *conn
 			return buildAccountMonitor("", p.Days, nil, nil, ""), nil
 		}
 	}
-	return s.monitorAccount(ctx, p.ProjectID, accountID, p.Days, model.ProviderGoogleAds, googleAdsMonitorDiscovery,
+	return s.monitorAccount(ctx, p.ProjectID, accountID, p.Days, accountWide, model.ProviderGoogleAds, googleAdsMonitorDiscovery,
 		func(read *model.AccountMonitorRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 			return rules.EvaluateGoogleMonitor(read.Rows, p.Days, read.Currency)
 		})
@@ -497,6 +515,10 @@ func (s *ConnectionService) MonitorGoogleAdsAccount(ctx context.Context, p *conn
 // recorded campaigns were created under (Orchestrator.DefaultMonitorAccount), which is how a
 // project creating through the system row names the default or granted account they live in.
 func (s *ConnectionService) MonitorLinkedinAdsAccount(ctx context.Context, p *conn.MonitorLinkedinAdsAccountPayload) (*conn.AccountMonitor, error) {
+	accountWide, err := s.admitAccountWideMonitor(ctx, p.ProjectID, p.Scope)
+	if err != nil {
+		return nil, err
+	}
 	accountID, done, err := s.defaultMonitorAccountID(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderLinkedInAds, linkedInAdsMonitorDiscovery)
 	if err != nil || done {
 		if err != nil {
@@ -505,7 +527,7 @@ func (s *ConnectionService) MonitorLinkedinAdsAccount(ctx context.Context, p *co
 		return buildAccountMonitor("", p.Days, nil, nil, ""), nil
 	}
 	now := time.Now()
-	return s.monitorAccount(ctx, p.ProjectID, accountID, p.Days, model.ProviderLinkedInAds, linkedInAdsMonitorDiscovery,
+	return s.monitorAccount(ctx, p.ProjectID, accountID, p.Days, accountWide, model.ProviderLinkedInAds, linkedInAdsMonitorDiscovery,
 		func(read *model.AccountMonitorRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 			return rules.EvaluateLinkedInMonitor(read.Rows, p.Days, now, read.Currency)
 		})
@@ -543,9 +565,13 @@ func (s *ConnectionService) defaultMonitorAccountID(ctx context.Context, project
 // shared across foundations, so the read is scoped to the campaigns this service recorded for the
 // project.
 func (s *ConnectionService) MonitorMetaAdsAccount(ctx context.Context, p *conn.MonitorMetaAdsAccountPayload) (*conn.AccountMonitor, error) {
+	accountWide, err := s.admitAccountWideMonitor(ctx, p.ProjectID, p.Scope)
+	if err != nil {
+		return nil, err
+	}
 	// No clock here: each row carries the Insights window its spend covers, and the rules pace
 	// against exactly those days (see rules.EvaluateMetaMonitor).
-	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderMetaAds, metaAdsMonitorDiscovery,
+	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, accountWide, model.ProviderMetaAds, metaAdsMonitorDiscovery,
 		func(read *model.AccountMonitorRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 			return rules.EvaluateMetaMonitor(read.Rows)
 		})
@@ -555,7 +581,7 @@ func (s *ConnectionService) MonitorMetaAdsAccount(ctx context.Context, p *conn.M
 // metrics from the last finished Microsoft report — see Orchestrator.ReadReportedAccountCampaigns
 // for why Microsoft cannot be read live like the other four.
 func (s *ConnectionService) MonitorMicrosoftAdsAccount(ctx context.Context, p *conn.MonitorMicrosoftAdsAccountPayload) (*conn.AccountMonitor, error) {
-	return s.monitorReportedAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderMicrosoftAds, microsoftAdsMonitorDiscovery,
+	return s.monitorReportedAccount(ctx, p.ProjectID, p.AccountID, p.Days, false, model.ProviderMicrosoftAds, microsoftAdsMonitorDiscovery,
 		func(read *model.ReportedAccountRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 			return rules.EvaluateMicrosoftMonitor(read.Rows, p.Days, read.Currency)
 		})
@@ -570,7 +596,11 @@ func (s *ConnectionService) MonitorMicrosoftAdsAccount(ctx context.Context, p *c
 // disagree with the account's days (and with the line items' account-local flight dates) for
 // part of every day.
 func (s *ConnectionService) MonitorTwitterAdsAccount(ctx context.Context, p *conn.MonitorTwitterAdsAccountPayload) (*conn.AccountMonitor, error) {
-	return s.monitorReportedAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderTwitterAds, twitterAdsMonitorDiscovery,
+	accountWide, err := s.admitAccountWideMonitor(ctx, p.ProjectID, p.Scope)
+	if err != nil {
+		return nil, err
+	}
+	return s.monitorReportedAccount(ctx, p.ProjectID, p.AccountID, p.Days, accountWide, model.ProviderTwitterAds, twitterAdsMonitorDiscovery,
 		func(read *model.ReportedAccountRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 			return rules.EvaluateTwitterMonitor(read.Rows, read.MetricsWindowStart, read.MetricsWindowEnd, read.Currency)
 		})
@@ -583,8 +613,12 @@ func (s *ConnectionService) MonitorTwitterAdsAccount(ctx context.Context, p *con
 // of the returned rows, the same as every other platform — see model.AccountMonitorTotals' own
 // doc comment for why the BFF's separate account-level call was not carried over.
 func (s *ConnectionService) MonitorRedditAdsAccount(ctx context.Context, p *conn.MonitorRedditAdsAccountPayload) (*conn.AccountMonitor, error) {
+	accountWide, err := s.admitAccountWideMonitor(ctx, p.ProjectID, p.Scope)
+	if err != nil {
+		return nil, err
+	}
 	now := time.Now()
-	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderRedditAds, redditAdsAccountDiscovery,
+	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, accountWide, model.ProviderRedditAds, redditAdsAccountDiscovery,
 		func(read *model.AccountMonitorRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 			return rules.EvaluateRedditMonitor(read.Rows, p.Days, now)
 		})

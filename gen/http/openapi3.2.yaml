@@ -9912,6 +9912,17 @@ paths:
                     minimum: 7
                     maximum: 90
                   example: 30
+                - name: scope
+                  in: query
+                  description: Optional (#672). Omitted, only this project's own recorded campaigns are returned. "account" returns every campaign on the account, whoever created it (on Google Ads, except the operator's "zz" scratch campaigns, which its rules hide on every read), each row naming the project it is recorded for (recorded_project_id, absent when it was not created or adopted through this service). Requires global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400 otherwise). Where account_id is optional (Google Ads, LinkedIn) and omitted, the account is still the one this project's campaigns were created under, so a project with none recorded gets an empty monitor; name account_id to read another.
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: Optional (#672). Omitted, only this project's own recorded campaigns are returned. "account" returns every campaign on the account, whoever created it (on Google Ads, except the operator's "zz" scratch campaigns, which its rules hide on every read), each row naming the project it is recorded for (recorded_project_id, absent when it was not created or adopted through this service). Requires global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400 otherwise). Where account_id is optional (Google Ads, LinkedIn) and omitted, the account is still the one this project's campaigns were created under, so a project with none recorded gets an empty monitor; name account_id to read another.
+                    example: account
+                    enum:
+                        - account
+                  example: account
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -10008,6 +10019,15 @@ paths:
                             example:
                                 code: "401"
                                 message: Unauthorized.
+                "403":
+                    description: 'Forbidden: scope=account from a caller without global_marketing_ops on the project'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ForbiddenError'
+                            example:
+                                code: "403"
+                                message: 'googleAdsConfig inputs that name a resource on the shared Google Ads account require the global_marketing_ops role on this project: demandGenAudience'
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -11959,6 +11979,17 @@ paths:
                     minimum: 7
                     maximum: 90
                   example: 30
+                - name: scope
+                  in: query
+                  description: Optional (#672). Omitted, only this project's own recorded campaigns are returned. "account" returns every campaign on the account, whoever created it (on Google Ads, except the operator's "zz" scratch campaigns, which its rules hide on every read), each row naming the project it is recorded for (recorded_project_id, absent when it was not created or adopted through this service). Requires global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400 otherwise). Where account_id is optional (Google Ads, LinkedIn) and omitted, the account is still the one this project's campaigns were created under, so a project with none recorded gets an empty monitor; name account_id to read another.
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: Optional (#672). Omitted, only this project's own recorded campaigns are returned. "account" returns every campaign on the account, whoever created it (on Google Ads, except the operator's "zz" scratch campaigns, which its rules hide on every read), each row naming the project it is recorded for (recorded_project_id, absent when it was not created or adopted through this service). Requires global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400 otherwise). Where account_id is optional (Google Ads, LinkedIn) and omitted, the account is still the one this project's campaigns were created under, so a project with none recorded gets an empty monitor; name account_id to read another.
+                    example: account
+                    enum:
+                        - account
+                  example: account
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -12053,6 +12084,15 @@ paths:
                             example:
                                 code: "401"
                                 message: Unauthorized.
+                "403":
+                    description: 'Forbidden: scope=account from a caller without global_marketing_ops on the project'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ForbiddenError'
+                            example:
+                                code: "403"
+                                message: 'googleAdsConfig inputs that name a resource on the shared Google Ads account require the global_marketing_ops role on this project: demandGenAudience'
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -12873,6 +12913,17 @@ paths:
                     minimum: 7
                     maximum: 90
                   example: 30
+                - name: scope
+                  in: query
+                  description: Optional (#672). Omitted, only this project's own recorded campaigns are returned. "account" returns every campaign on the account, whoever created it (on Google Ads, except the operator's "zz" scratch campaigns, which its rules hide on every read), each row naming the project it is recorded for (recorded_project_id, absent when it was not created or adopted through this service). Requires global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400 otherwise). Where account_id is optional (Google Ads, LinkedIn) and omitted, the account is still the one this project's campaigns were created under, so a project with none recorded gets an empty monitor; name account_id to read another.
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: Optional (#672). Omitted, only this project's own recorded campaigns are returned. "account" returns every campaign on the account, whoever created it (on Google Ads, except the operator's "zz" scratch campaigns, which its rules hide on every read), each row naming the project it is recorded for (recorded_project_id, absent when it was not created or adopted through this service). Requires global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400 otherwise). Where account_id is optional (Google Ads, LinkedIn) and omitted, the account is still the one this project's campaigns were created under, so a project with none recorded gets an empty monitor; name account_id to read another.
+                    example: account
+                    enum:
+                        - account
+                  example: account
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -12964,6 +13015,15 @@ paths:
                             example:
                                 code: "401"
                                 message: Unauthorized.
+                "403":
+                    description: 'Forbidden: scope=account from a caller without global_marketing_ops on the project'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ForbiddenError'
+                            example:
+                                code: "403"
+                                message: 'googleAdsConfig inputs that name a resource on the shared Google Ads account require the global_marketing_ops role on this project: demandGenAudience'
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -14683,6 +14743,17 @@ paths:
                     minimum: 7
                     maximum: 90
                   example: 30
+                - name: scope
+                  in: query
+                  description: Optional (#672). Omitted, only this project's own recorded campaigns are returned. "account" returns every campaign on the account, whoever created it (on Google Ads, except the operator's "zz" scratch campaigns, which its rules hide on every read), each row naming the project it is recorded for (recorded_project_id, absent when it was not created or adopted through this service). Requires global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400 otherwise). Where account_id is optional (Google Ads, LinkedIn) and omitted, the account is still the one this project's campaigns were created under, so a project with none recorded gets an empty monitor; name account_id to read another.
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: Optional (#672). Omitted, only this project's own recorded campaigns are returned. "account" returns every campaign on the account, whoever created it (on Google Ads, except the operator's "zz" scratch campaigns, which its rules hide on every read), each row naming the project it is recorded for (recorded_project_id, absent when it was not created or adopted through this service). Requires global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400 otherwise). Where account_id is optional (Google Ads, LinkedIn) and omitted, the account is still the one this project's campaigns were created under, so a project with none recorded gets an empty monitor; name account_id to read another.
+                    example: account
+                    enum:
+                        - account
+                  example: account
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -14774,6 +14845,15 @@ paths:
                             example:
                                 code: "401"
                                 message: Unauthorized.
+                "403":
+                    description: 'Forbidden: scope=account from a caller without global_marketing_ops on the project'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ForbiddenError'
+                            example:
+                                code: "403"
+                                message: 'googleAdsConfig inputs that name a resource on the shared Google Ads account require the global_marketing_ops role on this project: demandGenAudience'
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -15595,6 +15675,17 @@ paths:
                     minimum: 7
                     maximum: 90
                   example: 30
+                - name: scope
+                  in: query
+                  description: Optional (#672). Omitted, only this project's own recorded campaigns are returned. "account" returns every campaign on the account, whoever created it (on Google Ads, except the operator's "zz" scratch campaigns, which its rules hide on every read), each row naming the project it is recorded for (recorded_project_id, absent when it was not created or adopted through this service). Requires global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400 otherwise). Where account_id is optional (Google Ads, LinkedIn) and omitted, the account is still the one this project's campaigns were created under, so a project with none recorded gets an empty monitor; name account_id to read another.
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: Optional (#672). Omitted, only this project's own recorded campaigns are returned. "account" returns every campaign on the account, whoever created it (on Google Ads, except the operator's "zz" scratch campaigns, which its rules hide on every read), each row naming the project it is recorded for (recorded_project_id, absent when it was not created or adopted through this service). Requires global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400 otherwise). Where account_id is optional (Google Ads, LinkedIn) and omitted, the account is still the one this project's campaigns were created under, so a project with none recorded gets an empty monitor; name account_id to read another.
+                    example: account
+                    enum:
+                        - account
+                  example: account
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -15690,6 +15781,15 @@ paths:
                             example:
                                 code: "401"
                                 message: Unauthorized.
+                "403":
+                    description: 'Forbidden: scope=account from a caller without global_marketing_ops on the project'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ForbiddenError'
+                            example:
+                                code: "403"
+                                message: 'googleAdsConfig inputs that name a resource on the shared Google Ads account require the global_marketing_ops role on this project: demandGenAudience'
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -20726,6 +20826,10 @@ components:
                     type: string
                     description: The id the platform assigned to this campaign.
                     example: "24183781329"
+                recorded_project_id:
+                    type: string
+                    description: 'scope=account reads only (#672): the project (the {project_id} it was created or adopted under) this service records the campaign for; absent when no project records it, i.e. it was created outside LFX. Never set on a project-scoped read, whose rows are all the requesting project''s.'
+                    example: tlf
                 spend:
                     type: number
                     description: Total cost in the account's currency over the requested window.

@@ -180,6 +180,14 @@ type CampaignReader interface {
 	// concurrent delete/adopt cannot leave a formerly live id authorized. Errors fail closed.
 	ListProjectPlatformMonitorCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error)
 
+	// RecordedCampaignOwners returns every row on platform, across EVERY project, that records one
+	// of ids, with its project and provenance, for the account-wide monitor's row labels (#672).
+	// Ordered per id by preference: live rows first, then the latest binding (the takeover rule of
+	// the deleted monitor scope). The caller picks the first whose provenance fits the monitored
+	// account, because on Reddit and X an id is unique only within an account. An id no row
+	// records has no entries.
+	RecordedCampaignOwners(ctx context.Context, platform model.Provider, ids []string) ([]model.RecordedCampaignOwner, error)
+
 	// ListRecentProjectPlatformCampaigns returns at most limit of the project's campaigns on
 	// platform that have an upstream id — SOFT-DELETED ONES INCLUDED (a local delete does not
 	// stop or delete the upstream email; Status says which) — NEWEST FIRST (created_at, then id,

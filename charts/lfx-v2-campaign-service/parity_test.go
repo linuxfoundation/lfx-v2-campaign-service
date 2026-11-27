@@ -503,7 +503,12 @@ func assertMarketingOpsRead(t *testing.T, pattern, path string) {
 // catch.
 func assertRuleAuthz(t *testing.T, ruleset, ruleID, relation string) {
 	t.Helper()
-	block := ruleBlock(t, ruleset, ruleID)
+	assertRuleBlockAuthz(t, ruleBlock(t, ruleset, ruleID), ruleID, relation)
+}
+
+// assertRuleBlockAuthz is assertRuleAuthz on an already-extracted rule block.
+func assertRuleBlockAuthz(t *testing.T, block, ruleID, relation string) {
+	t.Helper()
 	if got := strings.Count(block, "authorizer: openfga_check"); got != 2 {
 		t.Errorf("%s rule must have exactly 2 openfga_check authorizers (one per UUID/slug branch), got %d:\n%s", ruleID, got, block)
 	}
@@ -574,7 +579,48 @@ func assertRuleAuthz(t *testing.T, ruleset, ruleID, relation string) {
 // assertProjectAPIAuthz pins project-api: campaign_manager on project:{projectId}.
 func assertProjectAPIAuthz(t *testing.T, ruleset string) {
 	t.Helper()
-	assertRuleAuthz(t, ruleset, projectAPIRuleID, "campaign_manager")
+	block := ruleBlock(t, ruleset, projectAPIRuleID)
+	block = assertAccountScopeAuthz(t, block)
+	assertRuleBlockAuthz(t, block, projectAPIRuleID, "campaign_manager")
+}
+
+// accountScopeGuard is the condition under which project-api adds global_marketing_ops to
+// campaign_manager: an account-monitor request carrying any `scope` key (#672).
+const accountScopeGuard = `Request.URL.Path.endsWith("/account-monitor") && "scope" in Request.URL.Query()'`
+
+// assertAccountScopeAuthz pins project-api's two account-scope openfga_check entries (#672):
+// global_marketing_ops, one per slug/UUID branch with that branch's object, each guarded on
+// accountScopeGuard. It returns the block without them, for the campaign_manager pinning.
+func assertAccountScopeAuthz(t *testing.T, block string) string {
+	t.Helper()
+	var scoped []string
+	for _, e := range openfgaCheckEntries(t, block) {
+		if strings.Contains(e, "Request.URL.Query()") {
+			scoped = append(scoped, e)
+		}
+	}
+	if len(scoped) != 2 {
+		t.Fatalf("project-api must have exactly 2 account-scope openfga_check entries, got %d:\n%s", len(scoped), block)
+	}
+	var slug, uuid bool
+	for _, e := range scoped {
+		if !strings.Contains(e, accountScopeGuard) || !strings.Contains(e, "relation: global_marketing_ops\n") {
+			t.Errorf("account-scope entry must be guarded on %s and check global_marketing_ops:\n%s", accountScopeGuard, e)
+		}
+		switch {
+		case strings.Contains(e, `if: '!Request.URL.Captures.projectId.matches(`) && strings.Contains(e, ".Outputs.project_slug_resolver_contextualizer.uid"):
+			slug = true
+		case strings.Contains(e, `if: 'Request.URL.Captures.projectId.matches(`) && strings.Contains(e, "object: \"project:{{- .Request.URL.Captures.projectId -}}\""):
+			uuid = true
+		default:
+			t.Errorf("account-scope entry must pair its branch guard with that branch's object:\n%s", e)
+		}
+		block = strings.Replace(block, e, "", 1)
+	}
+	if !slug || !uuid {
+		t.Errorf("account-scope entries must cover both the slug and the UUID branch:\n%s", strings.Join(scoped, "\n"))
+	}
+	return block
 }
 
 // assertMarketingOpsAuthz pins marketing-ops-api: global_marketing_ops on

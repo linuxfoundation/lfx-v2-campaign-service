@@ -190,6 +190,10 @@ func (stubCampaignRepo) ListProjectPlatformMonitorCampaignIDs(context.Context, s
 	return nil, nil
 }
 
+func (stubCampaignRepo) RecordedCampaignOwners(context.Context, model.Provider, []string) ([]model.RecordedCampaignOwner, error) {
+	return nil, nil
+}
+
 func (stubCampaignRepo) ListRecentProjectPlatformCampaigns(context.Context, string, model.Provider, int) ([]*model.Campaign, error) {
 	return nil, nil
 }
@@ -1928,4 +1932,21 @@ func TestRegisterDispatchers_AcceptsNAT64Prefixes(t *testing.T) {
 	if _, ok := registerDispatchers(nil, nil, nil, nil, nil)[model.ProviderHubSpot]; !ok {
 		t.Fatal("no HubSpot dispatcher was registered without prefixes")
 	}
+}
+
+// stubOpsChecker grants every global_marketing_ops check.
+type stubOpsChecker struct{}
+
+func (stubOpsChecker) IsGlobalMarketingOps(context.Context, string, string) (bool, error) {
+	return true, nil
+}
+
+// TestNewConnectionService_InjectsMarketingOpsChecker pins the wiring the account monitors'
+// scope=account read needs (#672): without it every such read is refused with 503.
+func TestNewConnectionService_InjectsMarketingOpsChecker(t *testing.T) {
+	c := &Container{indexPublisher: indexer.Noop{}, opsChecker: stubOpsChecker{}}
+	assert.True(t, c.newConnectionService(nil, nil).HasMarketingOpsChecker(),
+		"the container's marketing-ops checker must reach the ConnectionService")
+	assert.False(t, (&Container{indexPublisher: indexer.Noop{}}).newConnectionService(nil, nil).HasMarketingOpsChecker(),
+		"a Noop publisher has no NATS connection, so there is no checker")
 }

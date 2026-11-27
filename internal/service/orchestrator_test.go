@@ -190,6 +190,12 @@ type fakeCampaignRepo struct {
 	// scopeErr makes the scope lookup fail, so a test can assert the read does not fall back
 	// to an unscoped platform call when the scope cannot be established.
 	scopeErr error
+	// recordedProjects backs RecordedCampaignOwners (the account-wide monitor's row labels, #672)
+	// with one owner per id and no provenance; recordedOwners, when set, is returned as is, in
+	// order; recordedErr makes it fail.
+	recordedProjects map[string]string
+	recordedOwners   []model.RecordedCampaignOwner
+	recordedErr      error
 	// existing maps briefID+"|"+platform to a pre-existing campaign, letting a
 	// test simulate a brief already dispatched to a platform (idempotency guard).
 	existing map[string]*model.Campaign
@@ -323,6 +329,22 @@ func (r *fakeCampaignRepo) ListProjectPlatformDeletedCampaignIDs(_ context.Conte
 		}
 		seen[c.PlatformCampaignID] = true
 		out = append(out, model.ProjectCampaignScope{PlatformCampaignID: c.PlatformCampaignID, Result: c.Result})
+	}
+	return out, nil
+}
+
+func (r *fakeCampaignRepo) RecordedCampaignOwners(_ context.Context, _ model.Provider, ids []string) ([]model.RecordedCampaignOwner, error) {
+	if r.recordedErr != nil {
+		return nil, r.recordedErr
+	}
+	if r.recordedOwners != nil {
+		return r.recordedOwners, nil
+	}
+	out := make([]model.RecordedCampaignOwner, 0, len(ids))
+	for _, id := range ids {
+		if p, ok := r.recordedProjects[id]; ok {
+			out = append(out, model.RecordedCampaignOwner{ProjectCampaignScope: model.ProjectCampaignScope{PlatformCampaignID: id}, ProjectID: p})
+		}
 	}
 	return out, nil
 }

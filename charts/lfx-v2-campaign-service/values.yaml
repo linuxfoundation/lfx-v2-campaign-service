@@ -995,6 +995,16 @@ app:
     LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to the account monitors' scope=account read
+    # (#672): every campaign on a shared ad account (Google Ads, Meta, Reddit,
+    # X, LinkedIn), whoever created it, each row naming the project that
+    # recorded it. Only global_marketing_ops may ask for it (gateway and
+    # service). It widens the project scoping of lfx-self-serve-ops#897, so it
+    # stays off until that change is agreed; while off, scope=account is
+    # refused with 400. Any value other than "true" is treated as off.
+    ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to linkedInConfig.format "text" (#586): a TEXT_AD
     # campaign whose creatives are linkedInConfig.textAds (headline,
     # description, optional 100x100 image) instead of single-image dark posts.

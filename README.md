@@ -787,6 +787,15 @@ openssl rand -base64 32
   only) and `GET /projects/{project_id}/linkedin-ads/adoptable-campaigns`.
   The chart sets it to `"false"`
   (`app.environment.LINKEDIN_ADS_ACCOUNT_SELECTION_ENABLED.value`).
+- `ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to `scope=account` on the Google Ads, LinkedIn, Meta, Reddit
+  and X `account-monitor` reads (#672): every campaign on the account, whoever
+  created it, each row carrying `recorded_project_id` (absent when no project
+  records it). Only `global_marketing_ops` may ask for it (gateway rule and a
+  service-side 403). Only the exact value `true` enables it; anything else
+  refuses `scope=account` with a 400. It widens the project scoping of
+  lfx-self-serve-ops#897 and stays off until that change is agreed. The chart
+  sets it to `"false"` (`app.environment.ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED.value`).
 - `LINKEDIN_ADS_TEXT_ADS_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to `linkedInConfig.format: "text"` (#586), a LinkedIn Text
   Ad (TEXT_AD) campaign built from `linkedInConfig.textAds` instead of

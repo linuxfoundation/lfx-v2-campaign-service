@@ -1227,6 +1227,11 @@ type AccountMonitorCampaign struct {
 	PacingLabel string
 	// Google Ads only: direct link to the campaign in the Google Ads UI.
 	CampaignURL *string
+	// scope=account reads only (#672): the project (the {project_id} it was
+	// created or adopted under) this service records the campaign for; absent when
+	// no project records it, i.e. it was created outside LFX. Never set on a
+	// project-scoped read, whose rows are all the requesting project's.
+	RecordedProjectID *string
 }
 
 type AccountMonitorConflictError struct {
@@ -1485,6 +1490,13 @@ type DeleteTwitterAdsPayload struct {
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
 	ProjectID string
+}
+
+type ForbiddenError struct {
+	// HTTP status code
+	Code string
+	// Error message
+	Message string
 }
 
 // GetGoogleAdsAudiencePayload is the payload type of the
@@ -3192,6 +3204,18 @@ type MonitorGoogleAdsAccountPayload struct {
 	AccountID *string
 	// Trailing days to read metrics over.
 	Days int
+	// Optional (#672). Omitted, only this project's own recorded campaigns are
+	// returned. "account" returns every campaign on the account, whoever created
+	// it (on Google Ads, except the operator's "zz" scratch campaigns, which its
+	// rules hide on every read), each row naming the project it is recorded for
+	// (recorded_project_id, absent when it was not created or adopted through this
+	// service). Requires global_marketing_ops on the project (403 otherwise, 503
+	// when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED
+	// on the deployment (400 otherwise). Where account_id is optional (Google Ads,
+	// LinkedIn) and omitted, the account is still the one this project's campaigns
+	// were created under, so a project with none recorded gets an empty monitor;
+	// name account_id to read another.
+	Scope *string
 }
 
 // MonitorHubspotAccountPayload is the payload type of the
@@ -3218,6 +3242,18 @@ type MonitorLinkedinAdsAccountPayload struct {
 	AccountID *string
 	// Trailing days to read metrics over.
 	Days int
+	// Optional (#672). Omitted, only this project's own recorded campaigns are
+	// returned. "account" returns every campaign on the account, whoever created
+	// it (on Google Ads, except the operator's "zz" scratch campaigns, which its
+	// rules hide on every read), each row naming the project it is recorded for
+	// (recorded_project_id, absent when it was not created or adopted through this
+	// service). Requires global_marketing_ops on the project (403 otherwise, 503
+	// when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED
+	// on the deployment (400 otherwise). Where account_id is optional (Google Ads,
+	// LinkedIn) and omitted, the account is still the one this project's campaigns
+	// were created under, so a project with none recorded gets an empty monitor;
+	// name account_id to read another.
+	Scope *string
 }
 
 // MonitorMetaAdsAccountPayload is the payload type of the
@@ -3231,6 +3267,18 @@ type MonitorMetaAdsAccountPayload struct {
 	AccountID string
 	// Trailing days to read metrics over.
 	Days int
+	// Optional (#672). Omitted, only this project's own recorded campaigns are
+	// returned. "account" returns every campaign on the account, whoever created
+	// it (on Google Ads, except the operator's "zz" scratch campaigns, which its
+	// rules hide on every read), each row naming the project it is recorded for
+	// (recorded_project_id, absent when it was not created or adopted through this
+	// service). Requires global_marketing_ops on the project (403 otherwise, 503
+	// when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED
+	// on the deployment (400 otherwise). Where account_id is optional (Google Ads,
+	// LinkedIn) and omitted, the account is still the one this project's campaigns
+	// were created under, so a project with none recorded gets an empty monitor;
+	// name account_id to read another.
+	Scope *string
 }
 
 // MonitorMicrosoftAdsAccountPayload is the payload type of the
@@ -3259,6 +3307,18 @@ type MonitorRedditAdsAccountPayload struct {
 	AccountID string
 	// Trailing days to read metrics over.
 	Days int
+	// Optional (#672). Omitted, only this project's own recorded campaigns are
+	// returned. "account" returns every campaign on the account, whoever created
+	// it (on Google Ads, except the operator's "zz" scratch campaigns, which its
+	// rules hide on every read), each row naming the project it is recorded for
+	// (recorded_project_id, absent when it was not created or adopted through this
+	// service). Requires global_marketing_ops on the project (403 otherwise, 503
+	// when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED
+	// on the deployment (400 otherwise). Where account_id is optional (Google Ads,
+	// LinkedIn) and omitted, the account is still the one this project's campaigns
+	// were created under, so a project with none recorded gets an empty monitor;
+	// name account_id to read another.
+	Scope *string
 }
 
 // MonitorTwitterAdsAccountPayload is the payload type of the
@@ -3273,6 +3333,18 @@ type MonitorTwitterAdsAccountPayload struct {
 	AccountID string
 	// Trailing days to read metrics over.
 	Days int
+	// Optional (#672). Omitted, only this project's own recorded campaigns are
+	// returned. "account" returns every campaign on the account, whoever created
+	// it (on Google Ads, except the operator's "zz" scratch campaigns, which its
+	// rules hide on every read), each row naming the project it is recorded for
+	// (recorded_project_id, absent when it was not created or adopted through this
+	// service). Requires global_marketing_ops on the project (403 otherwise, 503
+	// when the role cannot be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED
+	// on the deployment (400 otherwise). Where account_id is optional (Google Ads,
+	// LinkedIn) and omitted, the account is still the one this project's campaigns
+	// were created under, so a project with none recorded gets an empty monitor;
+	// name account_id to read another.
+	Scope *string
 }
 
 type NotFoundError struct {
@@ -4124,6 +4196,23 @@ func (e *ConnServiceUnavailableError) ErrorName() string {
 // GoaErrorName returns the error name.
 func (e *ConnServiceUnavailableError) GoaErrorName() string {
 	return "ServiceUnavailable"
+}
+
+// Error returns an error description.
+func (e *ForbiddenError) Error() string {
+	return ""
+}
+
+// ErrorName returns the error name.
+//
+// Deprecated: Use GoaErrorName - https://github.com/goadesign/goa/issues/3105
+func (e *ForbiddenError) ErrorName() string {
+	return e.GoaErrorName()
+}
+
+// GoaErrorName returns the error name.
+func (e *ForbiddenError) GoaErrorName() string {
+	return "Forbidden"
 }
 
 // Error returns an error description.
