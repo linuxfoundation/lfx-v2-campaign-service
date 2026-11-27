@@ -312,6 +312,24 @@ var (
 	// returned to the caller.
 	ErrBidAmountRejected = errors.New("the requested bid amount was rejected by the platform's rules")
 
+	// ErrTargetingUnsupported indicates the campaign's platform has no targeting-write capability
+	// wired (no dispatcher, or the dispatcher is not a TargetingWriter). The platform is never
+	// contacted. Maps to 400. LinkedIn alone implements it (#666).
+	ErrTargetingUnsupported = errors.New("targeting updates are not supported for this platform")
+
+	// ErrTargetingUnwritable indicates the campaign's targeting cannot be replaced through this
+	// service, and the platform was NOT changed: the campaign was adopted, its row does not record
+	// the config it was created with, its stored id cannot address a request, or the platform
+	// reports it terminal or does not report its account or status. Maps to 409: no retry
+	// improves it. An outcome the platform did not confirm is never this sentinel.
+	ErrTargetingUnwritable = errors.New("the campaign's targeting could not be replaced")
+
+	// ErrTargetingRejected indicates the requested TARGETING was refused and the platform was NOT
+	// changed: by the deployment gate, by the adapter's own rules before the write, or by the
+	// platform's definite refusal of the write. Maps to 400. The adapter's sentence is
+	// service-authored (caller values quoted through CallerValue) and is returned to the caller.
+	ErrTargetingRejected = errors.New("the requested targeting was rejected")
+
 	// ErrMetricsWindowUnsupported indicates the requested window is one of the seven
 	// closed model.MetricsWindow values but this platform's MetricsReader does not
 	// support it (e.g. X Ads caps windows at 7 days and rejects last_30_days). This is

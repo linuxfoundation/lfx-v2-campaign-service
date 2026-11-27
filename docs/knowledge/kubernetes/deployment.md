@@ -248,6 +248,11 @@ a job exists. Not role-gated.
 sent to a live LinkedIn account. Only exactly `"true"` enables it; off, a create naming one is
 refused with a 400 before a job exists.
 
+`LINKEDIN_ADS_TARGETING_UPDATE_ENABLED` defaults to `"false"` (#666) and is the same kind of gate
+for the targeting update lever (`PATCH .../campaigns/{id}/targeting`): a `targetingCriteria`
+PARTIAL_UPDATE has not been sent to a live LinkedIn account. Only exactly `"true"` enables it; off,
+the endpoint answers 400 before LinkedIn is contacted.
+
 `LINKEDIN_ADS_DELIVERY_OPTIONS_ENABLED` defaults to `"false"` (#667) and is the same kind of gate
 for `linkedInConfig.audienceExpansionEnabled` and `linkedInConfig.offsiteDeliveryEnabled`, the
 campaign's Audience Expansion and LinkedIn Audience Network choices. Off, every create sends

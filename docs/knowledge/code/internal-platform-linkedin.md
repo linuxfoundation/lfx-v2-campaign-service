@@ -1527,3 +1527,16 @@ included since 202504), and no two names may match once normalized. `CreateCampa
 before the campaign group — LinkedIn would refuse a bad label only on the dark post, after the
 group and campaign exist — and the dispatcher's `PreflightCreate` runs it for the synchronous 400.
 A call to action on an article dark post has not been sent to a live account yet.
+
+## Targeting update (`targeting_update.go`, #666)
+
+`PrepareTargetingUpdate(t, geoURNs, employerExclusions)` is pure: 1-100 distinct canonical
+`urn:li:geo:<id>` locations, `ValidateTargeting` with the exclusions merged, and — when no include
+clause names `interfaceLocales` — one added clause `{interfaceLocales: [UpdateLocale]}`
+(`urn:li:locale:en_US`, the locale every create sends); ten clauses without one are refused.
+`UpdateCampaignTargeting` re-prepares, renders the criteria with `customTargetingCriteria` (the
+create's builder, now taking the exclusions as an argument so the cached lever client, which has
+none in its runtime config, can use it) and sends one `PARTIAL_UPDATE` whose `$set` holds
+`targetingCriteria` alone (`withSendOnce`). A definite 400/422 is `ErrTargetingUpdateRefused`;
+`TargetingUpdateReason` returns the client-safe sentence for it and for `ErrTargetingInvalid`. Not
+probed live.

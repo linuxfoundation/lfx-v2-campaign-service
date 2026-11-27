@@ -114,6 +114,10 @@ type Client struct {
 	// update-campaign-bid endpoint.
 	UpdateCampaignBidDoer goahttp.Doer
 
+	// UpdateCampaignTargeting Doer is the HTTP client used to make requests to the
+	// update-campaign-targeting endpoint.
+	UpdateCampaignTargetingDoer goahttp.Doer
+
 	// ApplyKeywordActions Doer is the HTTP client used to make requests to the
 	// apply-keyword-actions endpoint.
 	ApplyKeywordActionsDoer goahttp.Doer
@@ -210,54 +214,55 @@ func NewClient(
 	restoreBody bool,
 ) *Client {
 	return &Client{
-		CreateBriefDoer:            doer,
-		FindBriefDoer:              doer,
-		GetBriefDoer:               doer,
-		UpdateBriefDoer:            doer,
-		ApproveBriefDoer:           doer,
-		DeleteBriefDoer:            doer,
-		FetchEventURLDoer:          doer,
-		UploadCreativeAssetDoer:    doer,
-		ListCreativeAssetsDoer:     doer,
-		GetCreativeAssetDoer:       doer,
-		GetAssetPlanDoer:           doer,
-		DeleteCreativeAssetDoer:    doer,
-		CreateCampaignsDoer:        doer,
-		CreateSendWorkflowDoer:     doer,
-		AdoptCampaignDoer:          doer,
-		GetCampaignDoer:            doer,
-		GetCampaignMetricsDoer:     doer,
-		GetCampaignSettingsDoer:    doer,
-		GetBriefMetricsDoer:        doer,
-		GenerateEmailCopyDoer:      doer,
-		UpdateCampaignDoer:         doer,
-		ToggleCampaignStatusDoer:   doer,
-		UpdateCampaignBudgetDoer:   doer,
-		UpdateCampaignBidDoer:      doer,
-		ApplyKeywordActionsDoer:    doer,
-		AddNegativeKeywordsDoer:    doer,
-		GetKeywordTargetingDoer:    doer,
-		RemoveKeywordTargetingDoer: doer,
-		AddKeywordTargetingDoer:    doer,
-		ListMetaAdSetsDoer:         doer,
-		ListMetaAdsDoer:            doer,
-		ToggleMetaAdSetStatusDoer:  doer,
-		ToggleMetaAdStatusDoer:     doer,
-		DeleteCampaignDoer:         doer,
-		GetJobDoer:                 doer,
-		StartEmailWizardPlanDoer:   doer,
-		PlanEmailWizardDoer:        doer,
-		GenerateWizardContentDoer:  doer,
-		UpdateWizardSectionsDoer:   doer,
-		CloneWizardEmailDoer:       doer,
-		SetWizardSendListDoer:      doer,
-		ChatWizardTurnDoer:         doer,
-		GetWizardSessionDoer:       doer,
-		RestoreResponseBody:        restoreBody,
-		scheme:                     scheme,
-		host:                       host,
-		decoder:                    dec,
-		encoder:                    enc,
+		CreateBriefDoer:             doer,
+		FindBriefDoer:               doer,
+		GetBriefDoer:                doer,
+		UpdateBriefDoer:             doer,
+		ApproveBriefDoer:            doer,
+		DeleteBriefDoer:             doer,
+		FetchEventURLDoer:           doer,
+		UploadCreativeAssetDoer:     doer,
+		ListCreativeAssetsDoer:      doer,
+		GetCreativeAssetDoer:        doer,
+		GetAssetPlanDoer:            doer,
+		DeleteCreativeAssetDoer:     doer,
+		CreateCampaignsDoer:         doer,
+		CreateSendWorkflowDoer:      doer,
+		AdoptCampaignDoer:           doer,
+		GetCampaignDoer:             doer,
+		GetCampaignMetricsDoer:      doer,
+		GetCampaignSettingsDoer:     doer,
+		GetBriefMetricsDoer:         doer,
+		GenerateEmailCopyDoer:       doer,
+		UpdateCampaignDoer:          doer,
+		ToggleCampaignStatusDoer:    doer,
+		UpdateCampaignBudgetDoer:    doer,
+		UpdateCampaignBidDoer:       doer,
+		UpdateCampaignTargetingDoer: doer,
+		ApplyKeywordActionsDoer:     doer,
+		AddNegativeKeywordsDoer:     doer,
+		GetKeywordTargetingDoer:     doer,
+		RemoveKeywordTargetingDoer:  doer,
+		AddKeywordTargetingDoer:     doer,
+		ListMetaAdSetsDoer:          doer,
+		ListMetaAdsDoer:             doer,
+		ToggleMetaAdSetStatusDoer:   doer,
+		ToggleMetaAdStatusDoer:      doer,
+		DeleteCampaignDoer:          doer,
+		GetJobDoer:                  doer,
+		StartEmailWizardPlanDoer:    doer,
+		PlanEmailWizardDoer:         doer,
+		GenerateWizardContentDoer:   doer,
+		UpdateWizardSectionsDoer:    doer,
+		CloneWizardEmailDoer:        doer,
+		SetWizardSendListDoer:       doer,
+		ChatWizardTurnDoer:          doer,
+		GetWizardSessionDoer:        doer,
+		RestoreResponseBody:         restoreBody,
+		scheme:                      scheme,
+		host:                        host,
+		decoder:                     dec,
+		encoder:                     enc,
 	}
 }
 
@@ -832,6 +837,30 @@ func (c *Client) UpdateCampaignBid() goa.Endpoint {
 		resp, err := c.UpdateCampaignBidDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// UpdateCampaignTargeting returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service update-campaign-targeting server.
+func (c *Client) UpdateCampaignTargeting() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeUpdateCampaignTargetingRequest(c.encoder)
+		decodeResponse = DecodeUpdateCampaignTargetingResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildUpdateCampaignTargetingRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.UpdateCampaignTargetingDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
 		}
 		return decodeResponse(resp)
 	}

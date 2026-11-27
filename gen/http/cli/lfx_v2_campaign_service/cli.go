@@ -30,8 +30,8 @@ func UsageCommands() []string {
 	return []string{
 		"lfx-v2-campaign-service-audiences (create-audience|get-audience|list-audiences|update-audience|build-audience)",
 		"lfx-v2-campaign-service-audience-builder (get-audience-builder-capabilities|discover-audience-lists|search-audience-lists|get-audience-suppression-lists|get-audience-last-sent|get-audience-newsletter-brands|get-audience-brand-newsletters|get-existing-audience-master-lists|preview-audience-count|describe-audience-lists|compose-audience-master|attach-existing-audience|run-audience-qa|interpret-custom-audience|preview-custom-audience|create-custom-audience)",
-		"lfx-v2-campaign-service-briefs (create-brief|find-brief|get-brief|update-brief|approve-brief|delete-brief|fetch-event-url|upload-creative-asset|list-creative-assets|get-creative-asset|get-asset-plan|delete-creative-asset|create-campaigns|create-send-workflow|adopt-campaign|get-campaign|get-campaign-metrics|get-campaign-settings|get-brief-metrics|generate-email-copy|update-campaign|toggle-campaign-status|update-campaign-budget|update-campaign-bid|apply-keyword-actions|add-negative-keywords|get-keyword-targeting|remove-keyword-targeting|add-keyword-targeting|list-meta-ad-sets|list-meta-ads|toggle-meta-ad-set-status|toggle-meta-ad-status|delete-campaign|get-job|start-email-wizard-plan|plan-email-wizard|generate-wizard-content|update-wizard-sections|clone-wizard-email|set-wizard-send-list|chat-wizard-turn|get-wizard-session)",
 		"lfx-v2-campaign-service-svc (readyz|livez)",
+		"lfx-v2-campaign-service-briefs (create-brief|find-brief|get-brief|update-brief|approve-brief|delete-brief|fetch-event-url|upload-creative-asset|list-creative-assets|get-creative-asset|get-asset-plan|delete-creative-asset|create-campaigns|create-send-workflow|adopt-campaign|get-campaign|get-campaign-metrics|get-campaign-settings|get-brief-metrics|generate-email-copy|update-campaign|toggle-campaign-status|update-campaign-budget|update-campaign-bid|update-campaign-targeting|apply-keyword-actions|add-negative-keywords|get-keyword-targeting|remove-keyword-targeting|add-keyword-targeting|list-meta-ad-sets|list-meta-ads|toggle-meta-ad-set-status|toggle-meta-ad-status|delete-campaign|get-job|start-email-wizard-plan|plan-email-wizard|generate-wizard-content|update-wizard-sections|clone-wizard-email|set-wizard-send-list|chat-wizard-turn|get-wizard-session)",
 		"lfx-v2-campaign-service-signed-assets get-signed-creative-asset",
 		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts|get-google-ads-keywords|get-google-ads-audience|suggest-google-ads-geo-targets|list-google-ads-user-lists|list-google-ads-conversion-actions|list-google-ads-audiences|list-meta-custom-audiences|search-meta-targeting-options|list-meta-lead-forms|list-reddit-ads-custom-audiences|list-reddit-ads-pixels|list-twitter-ads-custom-audiences|list-microsoft-ads-remarketing-lists|list-microsoft-ads-conversion-goals|get-meta-ads-audience|get-twitter-ads-audience|get-linkedin-ads-audience|list-linkedin-ads-audiences|list-linkedin-ads-conversions|list-linkedin-ads-lead-forms|list-linkedin-ads-adoptable-campaigns|get-linkedin-ads-create-account|search-linkedin-ads-targeting-entities|get-microsoft-ads-keywords|get-microsoft-ads-audience|get-reddit-ads-audience|get-reddit-ads-keywords|resolve-google-ads-campaign|resolve-microsoft-ads-campaign|resolve-meta-ads-campaign|resolve-reddit-ads-campaign|resolve-twitter-ads-campaign|resolve-linkedin-ads-campaign|list-meta-ads-accounts|list-linkedin-ads-accounts|list-microsoft-ads-accounts|list-twitter-ads-accounts|list-reddit-ads-accounts|list-hubspot-emails|search-hubspot-campaigns|create-hubspot-campaign|monitor-google-ads-account|monitor-linkedin-ads-account|monitor-meta-ads-account|monitor-reddit-ads-account|monitor-microsoft-ads-account|monitor-twitter-ads-account|monitor-hubspot-account)",
 	}
@@ -41,8 +41,8 @@ func UsageCommands() []string {
 func UsageExamples() string {
 	return os.Args[0] + " " + "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Quia qui consequatur fuga earum eius labore.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Repudiandae reprehenderit est corporis voluptatem.\",\n         \"status\": \"built\",\n         \"suppression_list_ids\": [\n            \"Iure in soluta incidunt vel enim fugiat.\",\n            \"Sint ducimus.\",\n            \"Recusandae eius possimus sint veniam molestiae.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"e575cb24-cfb6-4493-96e3-c9e7f5b21198\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-audience-builder get-audience-builder-capabilities --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
-		os.Args[0] + " " + "lfx-v2-campaign-service-briefs create-brief --body '{\n      \"brief\": {\n         \"copy\": \"Molestias libero qui iure minima dolor.\",\n         \"delivery_type\": \"email\",\n         \"event_details\": \"Aut qui voluptatem omnis.\",\n         \"event_slug\": \"mr\",\n         \"keywords\": \"Error deleniti.\",\n         \"platforms\": [\n            \"Facere ex.\",\n            \"Pariatur libero officia ut.\"\n         ],\n         \"program_type\": \"education\",\n         \"stage\": \"Registration Push\",\n         \"targeting\": \"Minima itaque.\",\n         \"url\": \"Non delectus ut omnis.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-svc readyz" + "\n" +
+		os.Args[0] + " " + "lfx-v2-campaign-service-briefs create-brief --body '{\n      \"brief\": {\n         \"copy\": \"Molestias libero qui iure minima dolor.\",\n         \"delivery_type\": \"email\",\n         \"event_details\": \"Aut qui voluptatem omnis.\",\n         \"event_slug\": \"mr\",\n         \"keywords\": \"Error deleniti.\",\n         \"platforms\": [\n            \"Facere ex.\",\n            \"Pariatur libero officia ut.\"\n         ],\n         \"program_type\": \"education\",\n         \"stage\": \"Registration Push\",\n         \"targeting\": \"Minima itaque.\",\n         \"url\": \"Non delectus ut omnis.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-signed-assets get-signed-creative-asset --project-id \"Jw\" --brief-id \"97798b82-bae1-4ad6-9b5b-85133b148acc\" --asset-id \"438e2c0c-6b43-46f2-84bd-6120abc6e4cf\" --exp 1904781533029344288 --sig \"6hpfZYhHyKzCBrdl7Z8R67pG4plsWyYNH-IQPX62j70\" --kind \"video\"" + "\n" +
 		""
 }
@@ -193,6 +193,12 @@ func ParseEndpoint(
 		lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBodyFlag        = new(cliStringFlag)
 		lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceProjectIDFlag   = new(cliStringFlag)
 		lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBearerTokenFlag = new(cliStringFlag)
+
+		lfxV2CampaignServiceSvcFlags = flag.NewFlagSet("lfx-v2-campaign-service-svc", flag.ContinueOnError)
+
+		lfxV2CampaignServiceSvcReadyzFlags = flag.NewFlagSet("readyz", flag.ExitOnError)
+
+		lfxV2CampaignServiceSvcLivezFlags = flag.NewFlagSet("livez", flag.ExitOnError)
 
 		lfxV2CampaignServiceBriefsFlags = flag.NewFlagSet("lfx-v2-campaign-service-briefs", flag.ContinueOnError)
 
@@ -347,6 +353,14 @@ func ParseEndpoint(
 		lfxV2CampaignServiceBriefsUpdateCampaignBidBearerTokenFlag = new(cliStringFlag)
 		lfxV2CampaignServiceBriefsUpdateCampaignBidIfMatchFlag     = new(cliStringFlag)
 
+		lfxV2CampaignServiceBriefsUpdateCampaignTargetingFlags           = flag.NewFlagSet("update-campaign-targeting", flag.ExitOnError)
+		lfxV2CampaignServiceBriefsUpdateCampaignTargetingBodyFlag        = new(cliStringFlag)
+		lfxV2CampaignServiceBriefsUpdateCampaignTargetingProjectIDFlag   = new(cliStringFlag)
+		lfxV2CampaignServiceBriefsUpdateCampaignTargetingBriefIDFlag     = new(cliStringFlag)
+		lfxV2CampaignServiceBriefsUpdateCampaignTargetingCampaignIDFlag  = new(cliStringFlag)
+		lfxV2CampaignServiceBriefsUpdateCampaignTargetingBearerTokenFlag = new(cliStringFlag)
+		lfxV2CampaignServiceBriefsUpdateCampaignTargetingIfMatchFlag     = new(cliStringFlag)
+
 		lfxV2CampaignServiceBriefsApplyKeywordActionsFlags           = flag.NewFlagSet("apply-keyword-actions", flag.ExitOnError)
 		lfxV2CampaignServiceBriefsApplyKeywordActionsBodyFlag        = new(cliStringFlag)
 		lfxV2CampaignServiceBriefsApplyKeywordActionsProjectIDFlag   = new(cliStringFlag)
@@ -474,12 +488,6 @@ func ParseEndpoint(
 		lfxV2CampaignServiceBriefsGetWizardSessionBriefIDFlag     = new(cliStringFlag)
 		lfxV2CampaignServiceBriefsGetWizardSessionSessionIDFlag   = new(cliStringFlag)
 		lfxV2CampaignServiceBriefsGetWizardSessionBearerTokenFlag = new(cliStringFlag)
-
-		lfxV2CampaignServiceSvcFlags = flag.NewFlagSet("lfx-v2-campaign-service-svc", flag.ContinueOnError)
-
-		lfxV2CampaignServiceSvcReadyzFlags = flag.NewFlagSet("readyz", flag.ExitOnError)
-
-		lfxV2CampaignServiceSvcLivezFlags = flag.NewFlagSet("livez", flag.ExitOnError)
 
 		lfxV2CampaignServiceSignedAssetsFlags = flag.NewFlagSet("lfx-v2-campaign-service-signed-assets", flag.ContinueOnError)
 
@@ -1104,6 +1112,12 @@ func ParseEndpoint(
 	lfxV2CampaignServiceBriefsUpdateCampaignBidFlags.Var(lfxV2CampaignServiceBriefsUpdateCampaignBidCampaignIDFlag, "campaign-id", "Campaign UUID")
 	lfxV2CampaignServiceBriefsUpdateCampaignBidFlags.Var(lfxV2CampaignServiceBriefsUpdateCampaignBidBearerTokenFlag, "bearer-token", "")
 	lfxV2CampaignServiceBriefsUpdateCampaignBidFlags.Var(lfxV2CampaignServiceBriefsUpdateCampaignBidIfMatchFlag, "if-match", "")
+	lfxV2CampaignServiceBriefsUpdateCampaignTargetingFlags.Var(lfxV2CampaignServiceBriefsUpdateCampaignTargetingBodyFlag, "body", "")
+	lfxV2CampaignServiceBriefsUpdateCampaignTargetingFlags.Var(lfxV2CampaignServiceBriefsUpdateCampaignTargetingProjectIDFlag, "project-id", "Canonical LFX project slug (NOT a UUID) that scopes the resource")
+	lfxV2CampaignServiceBriefsUpdateCampaignTargetingFlags.Var(lfxV2CampaignServiceBriefsUpdateCampaignTargetingBriefIDFlag, "brief-id", "Brief UUID")
+	lfxV2CampaignServiceBriefsUpdateCampaignTargetingFlags.Var(lfxV2CampaignServiceBriefsUpdateCampaignTargetingCampaignIDFlag, "campaign-id", "Campaign UUID")
+	lfxV2CampaignServiceBriefsUpdateCampaignTargetingFlags.Var(lfxV2CampaignServiceBriefsUpdateCampaignTargetingBearerTokenFlag, "bearer-token", "")
+	lfxV2CampaignServiceBriefsUpdateCampaignTargetingFlags.Var(lfxV2CampaignServiceBriefsUpdateCampaignTargetingIfMatchFlag, "if-match", "")
 	lfxV2CampaignServiceBriefsApplyKeywordActionsFlags.Var(lfxV2CampaignServiceBriefsApplyKeywordActionsBodyFlag, "body", "")
 	lfxV2CampaignServiceBriefsApplyKeywordActionsFlags.Var(lfxV2CampaignServiceBriefsApplyKeywordActionsProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceBriefsApplyKeywordActionsFlags.Var(lfxV2CampaignServiceBriefsApplyKeywordActionsBriefIDFlag, "brief-id", "Brief UUID")
@@ -1484,6 +1498,10 @@ func ParseEndpoint(
 	lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceFlags.Usage = lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceUsage
 	lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceFlags.Usage = lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceUsage
 
+	lfxV2CampaignServiceSvcFlags.Usage = lfxV2CampaignServiceSvcUsage
+	lfxV2CampaignServiceSvcReadyzFlags.Usage = lfxV2CampaignServiceSvcReadyzUsage
+	lfxV2CampaignServiceSvcLivezFlags.Usage = lfxV2CampaignServiceSvcLivezUsage
+
 	lfxV2CampaignServiceBriefsFlags.Usage = lfxV2CampaignServiceBriefsUsage
 	lfxV2CampaignServiceBriefsCreateBriefFlags.Usage = lfxV2CampaignServiceBriefsCreateBriefUsage
 	lfxV2CampaignServiceBriefsFindBriefFlags.Usage = lfxV2CampaignServiceBriefsFindBriefUsage
@@ -1509,6 +1527,7 @@ func ParseEndpoint(
 	lfxV2CampaignServiceBriefsToggleCampaignStatusFlags.Usage = lfxV2CampaignServiceBriefsToggleCampaignStatusUsage
 	lfxV2CampaignServiceBriefsUpdateCampaignBudgetFlags.Usage = lfxV2CampaignServiceBriefsUpdateCampaignBudgetUsage
 	lfxV2CampaignServiceBriefsUpdateCampaignBidFlags.Usage = lfxV2CampaignServiceBriefsUpdateCampaignBidUsage
+	lfxV2CampaignServiceBriefsUpdateCampaignTargetingFlags.Usage = lfxV2CampaignServiceBriefsUpdateCampaignTargetingUsage
 	lfxV2CampaignServiceBriefsApplyKeywordActionsFlags.Usage = lfxV2CampaignServiceBriefsApplyKeywordActionsUsage
 	lfxV2CampaignServiceBriefsAddNegativeKeywordsFlags.Usage = lfxV2CampaignServiceBriefsAddNegativeKeywordsUsage
 	lfxV2CampaignServiceBriefsGetKeywordTargetingFlags.Usage = lfxV2CampaignServiceBriefsGetKeywordTargetingUsage
@@ -1528,10 +1547,6 @@ func ParseEndpoint(
 	lfxV2CampaignServiceBriefsSetWizardSendListFlags.Usage = lfxV2CampaignServiceBriefsSetWizardSendListUsage
 	lfxV2CampaignServiceBriefsChatWizardTurnFlags.Usage = lfxV2CampaignServiceBriefsChatWizardTurnUsage
 	lfxV2CampaignServiceBriefsGetWizardSessionFlags.Usage = lfxV2CampaignServiceBriefsGetWizardSessionUsage
-
-	lfxV2CampaignServiceSvcFlags.Usage = lfxV2CampaignServiceSvcUsage
-	lfxV2CampaignServiceSvcReadyzFlags.Usage = lfxV2CampaignServiceSvcReadyzUsage
-	lfxV2CampaignServiceSvcLivezFlags.Usage = lfxV2CampaignServiceSvcLivezUsage
 
 	lfxV2CampaignServiceSignedAssetsFlags.Usage = lfxV2CampaignServiceSignedAssetsUsage
 	lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetFlags.Usage = lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetUsage
@@ -1648,10 +1663,10 @@ func ParseEndpoint(
 			svcf = lfxV2CampaignServiceAudiencesFlags
 		case "lfx-v2-campaign-service-audience-builder":
 			svcf = lfxV2CampaignServiceAudienceBuilderFlags
-		case "lfx-v2-campaign-service-briefs":
-			svcf = lfxV2CampaignServiceBriefsFlags
 		case "lfx-v2-campaign-service-svc":
 			svcf = lfxV2CampaignServiceSvcFlags
+		case "lfx-v2-campaign-service-briefs":
+			svcf = lfxV2CampaignServiceBriefsFlags
 		case "lfx-v2-campaign-service-signed-assets":
 			svcf = lfxV2CampaignServiceSignedAssetsFlags
 		case "lfx-v2-campaign-service-connections":
@@ -1742,6 +1757,16 @@ func ParseEndpoint(
 
 			}
 
+		case "lfx-v2-campaign-service-svc":
+			switch epn {
+			case "readyz":
+				epf = lfxV2CampaignServiceSvcReadyzFlags
+
+			case "livez":
+				epf = lfxV2CampaignServiceSvcLivezFlags
+
+			}
+
 		case "lfx-v2-campaign-service-briefs":
 			switch epn {
 			case "create-brief":
@@ -1816,6 +1841,9 @@ func ParseEndpoint(
 			case "update-campaign-bid":
 				epf = lfxV2CampaignServiceBriefsUpdateCampaignBidFlags
 
+			case "update-campaign-targeting":
+				epf = lfxV2CampaignServiceBriefsUpdateCampaignTargetingFlags
+
 			case "apply-keyword-actions":
 				epf = lfxV2CampaignServiceBriefsApplyKeywordActionsFlags
 
@@ -1872,16 +1900,6 @@ func ParseEndpoint(
 
 			case "get-wizard-session":
 				epf = lfxV2CampaignServiceBriefsGetWizardSessionFlags
-
-			}
-
-		case "lfx-v2-campaign-service-svc":
-			switch epn {
-			case "readyz":
-				epf = lfxV2CampaignServiceSvcReadyzFlags
-
-			case "livez":
-				epf = lfxV2CampaignServiceSvcLivezFlags
 
 			}
 
@@ -2260,6 +2278,14 @@ func ParseEndpoint(
 				endpoint = c.CreateCustomAudience()
 				data, err = lfxv2campaignserviceaudiencebuilderc.BuildCreateCustomAudiencePayload(lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBodyFlag.value, lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceProjectIDFlag.value, lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBearerTokenFlag.value)
 			}
+		case "lfx-v2-campaign-service-svc":
+			c := lfxv2campaignservicesvcc.NewClient(scheme, host, doer, enc, dec, restore)
+			switch epn {
+			case "readyz":
+				endpoint = c.Readyz()
+			case "livez":
+				endpoint = c.Livez()
+			}
 		case "lfx-v2-campaign-service-briefs":
 			c := lfxv2campaignservicebriefsc.NewClient(scheme, host, doer, enc, dec, restore)
 			switch epn {
@@ -2335,6 +2361,9 @@ func ParseEndpoint(
 			case "update-campaign-bid":
 				endpoint = c.UpdateCampaignBid()
 				data, err = lfxv2campaignservicebriefsc.BuildUpdateCampaignBidPayload(lfxV2CampaignServiceBriefsUpdateCampaignBidBodyFlag.value, lfxV2CampaignServiceBriefsUpdateCampaignBidProjectIDFlag.value, lfxV2CampaignServiceBriefsUpdateCampaignBidBriefIDFlag.value, lfxV2CampaignServiceBriefsUpdateCampaignBidCampaignIDFlag.value, lfxV2CampaignServiceBriefsUpdateCampaignBidBearerTokenFlag.value, lfxV2CampaignServiceBriefsUpdateCampaignBidIfMatchFlag.value)
+			case "update-campaign-targeting":
+				endpoint = c.UpdateCampaignTargeting()
+				data, err = lfxv2campaignservicebriefsc.BuildUpdateCampaignTargetingPayload(lfxV2CampaignServiceBriefsUpdateCampaignTargetingBodyFlag.value, lfxV2CampaignServiceBriefsUpdateCampaignTargetingProjectIDFlag.value, lfxV2CampaignServiceBriefsUpdateCampaignTargetingBriefIDFlag.value, lfxV2CampaignServiceBriefsUpdateCampaignTargetingCampaignIDFlag.value, lfxV2CampaignServiceBriefsUpdateCampaignTargetingBearerTokenFlag.value, lfxV2CampaignServiceBriefsUpdateCampaignTargetingIfMatchFlag.value)
 			case "apply-keyword-actions":
 				endpoint = c.ApplyKeywordActions()
 				data, err = lfxv2campaignservicebriefsc.BuildApplyKeywordActionsPayload(lfxV2CampaignServiceBriefsApplyKeywordActionsBodyFlag.value, lfxV2CampaignServiceBriefsApplyKeywordActionsProjectIDFlag.value, lfxV2CampaignServiceBriefsApplyKeywordActionsBriefIDFlag.value, lfxV2CampaignServiceBriefsApplyKeywordActionsCampaignIDFlag.value, lfxV2CampaignServiceBriefsApplyKeywordActionsBearerTokenFlag.value)
@@ -2392,14 +2421,6 @@ func ParseEndpoint(
 			case "get-wizard-session":
 				endpoint = c.GetWizardSession()
 				data, err = lfxv2campaignservicebriefsc.BuildGetWizardSessionPayload(lfxV2CampaignServiceBriefsGetWizardSessionProjectIDFlag.value, lfxV2CampaignServiceBriefsGetWizardSessionBriefIDFlag.value, lfxV2CampaignServiceBriefsGetWizardSessionSessionIDFlag.value, lfxV2CampaignServiceBriefsGetWizardSessionBearerTokenFlag.value)
-			}
-		case "lfx-v2-campaign-service-svc":
-			c := lfxv2campaignservicesvcc.NewClient(scheme, host, doer, enc, dec, restore)
-			switch epn {
-			case "readyz":
-				endpoint = c.Readyz()
-			case "livez":
-				endpoint = c.Livez()
 			}
 		case "lfx-v2-campaign-service-signed-assets":
 			c := lfxv2campaignservicesignedassetsc.NewClient(scheme, host, doer, enc, dec, restore)
@@ -3215,6 +3236,50 @@ func lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceUsage() {
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder create-custom-audience --body '{\n      \"custom\": {\n         \"criteria\": {\n            \"cities\": [\n               \"Seoul\"\n            ],\n            \"contact_location\": true,\n            \"countries\": [\n               \"South Korea\"\n            ],\n            \"gate_list_id\": \"26716\",\n            \"label\": \"OSS Korea\"\n         }\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
+// lfxV2CampaignServiceSvcUsage displays the usage of the
+// lfx-v2-campaign-service-svc command and its subcommands.
+func lfxV2CampaignServiceSvcUsage() {
+	fmt.Fprintln(os.Stderr, `The campaign service supports Marketing Operations campaign creation and management.`)
+	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] lfx-v2-campaign-service-svc COMMAND [flags]\n\n", os.Args[0])
+	fmt.Fprintln(os.Stderr, "COMMAND:")
+	fmt.Fprintln(os.Stderr, `    readyz: Check if the service is able to take inbound requests.`)
+	fmt.Fprintln(os.Stderr, `    livez: Check if the service is alive.`)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Additional help:")
+	fmt.Fprintf(os.Stderr, "    %s lfx-v2-campaign-service-svc COMMAND --help\n", os.Args[0])
+}
+func lfxV2CampaignServiceSvcReadyzUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-svc readyz", os.Args[0])
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Check if the service is able to take inbound requests.`)
+
+	// Flags list
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-svc readyz")
+}
+
+func lfxV2CampaignServiceSvcLivezUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-svc livez", os.Args[0])
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Check if the service is alive.`)
+
+	// Flags list
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-svc livez")
+}
+
 // lfxV2CampaignServiceBriefsUsage displays the usage of the
 // lfx-v2-campaign-service-briefs command and its subcommands.
 func lfxV2CampaignServiceBriefsUsage() {
@@ -3245,6 +3310,7 @@ func lfxV2CampaignServiceBriefsUsage() {
 	fmt.Fprintln(os.Stderr, `    toggle-campaign-status: Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist the new status. Unlike update-campaign (which only writes the DB row), this dispatches the status change to the platform and updates the row only after the platform confirms. Support is per-platform: a campaign whose platform has no status-toggle dispatcher wired returns 400. Reddit, LinkedIn, Meta, X, Google Ads and Microsoft Ads are wired; HubSpot is not, because an email send has no run state to pause. ONE EXCEPTION to the persist: pausing a campaign in 'created_degraded' pauses it upstream and returns 200 with the status and ETag UNCHANGED. 'created_degraded' records that the campaign's wiring was never verified, and this schema has one status column, so writing 'paused' would spend the reconciliation marker to record a run state the platform already holds authoritatively. Resuming such a campaign is refused outright (409). ADOPTED campaigns (campaign `+"`"+`adopted: true`+"`"+`) can be paused but not resumed here: a resume is refused 409 with reason=campaign_adopted, distinct from the reason-less 409 for a campaign that is not fully provisioned, and the campaign is resumed in the ad platform's own UI. Read the pause's effect from the ad platform, not from this row. META: ACTIVE cascades to the campaign's recorded ad set and its ads, EXCEPT that a recorded ad set deliberately paused through toggle-meta-ad-set-status (list-meta-ad-sets `+"`"+`deliberately_paused`+"`"+`) is left PAUSED — its ads and the campaign are still activated. That record is this service's, not Meta's, so the held ad set is READ first (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and nothing is written unless Meta reports it PAUSED (or DELETED/ARCHIVED, which cannot serve): an ad set Meta reports ACTIVE is 409 (pause it, or resume it to clear the record, through toggle-meta-ad-set-status first), and an unreadable one is 503 with the campaign not modified. Likewise every ad deliberately paused through toggle-meta-ad-status (list-meta-ads `+"`"+`deliberately_paused`+"`"+`) is left PAUSED while its siblings, the ad set and the campaign are activated; each held ad is READ first (GET /{ad_id}?fields=id,adset_id,campaign_id,account_id,status), an ad Meta reports ACTIVE is 409 (pause it, or resume it to clear the record, through toggle-meta-ad-status first), and an unreadable one is 503 with the campaign not modified.`)
 	fmt.Fprintln(os.Stderr, `    update-campaign-budget: Change how much a campaign may spend, on its ad platform, then persist the new amount. A MUTATION on a live paid campaign, dispatched to the platform first. The invariant is ONE-WAY: the new amount is never persisted before the platform confirms it, so no refusal or platform failure can leave the row reporting an amount the platform was never given. The converse is not promised, because it cannot be — once the platform has confirmed, the row write can still fail, and that case answers 500 with the platform holding the new amount and the row still reporting the old one. It is logged as a divergence, the platform is authoritative, and re-applying the same amount reconciles it. Unlike update-campaign, which writes the DB row alone. AMOUNT ONLY — never the pacing model. `+"`"+`budget_type`+"`"+` must be the pacing the campaign ALREADY has upstream; a request naming the other one is refused (409) rather than translated. Switching a live campaign between daily pacing and a whole-flight cap reinterprets everything it has already spent against, and the platforms do not even name the same two ideas (Google has no LIFETIME period; its counterpart, CUSTOM_PERIOD, is a narrower thing). Change the pacing in the ad platform, then set the amount here. The amount is in the AD ACCOUNT's own currency, not USD, and this service neither knows nor converts it. Google Ads, LinkedIn, Meta, Microsoft Advertising, Reddit and X today: a campaign on any other platform is refused with 400. Budget writing is added per platform, because each platform's budget model is its own deliberate decision, and the refusals below are the union of what those models can refuse — a platform whose model has no analogue of a given refusal simply never raises it (LinkedIn budgets are fields on the campaign and cannot be shared, so the shared-budget 409 is a Google, Meta and Microsoft answer; Meta's form of it is a campaign-level, ad-set-spanning budget, Microsoft's a campaign attached to a shared Budget). Microsoft Search campaigns are paced DAILY only, so a lifetime request for one is the pacing refusal (409). A Reddit campaign's budget is its campaign-level spend goal (Campaign Budget Optimization on); one whose budget is governed per ad group (CBO off) is refused (409) rather than allocated, and Reddit has no shared-budget analogue. An X campaign's budget is written only as its own daily_budget_amount_local_micro, and only when X reports campaign budget optimization (budget_optimization CAMPAIGN). That this is the shape campaigns created here have is inferred from the create path (a daily budget on the campaign, no budget_optimization sent) and is unverified against a live account; X's current reference lists LINE_ITEM as the only value. A campaign reporting LINE_ITEM or omitting budget_optimization, one without a daily budget, or one that also carries a total cap is refused (409) before any write. A `+"`"+`lifetime`+"`"+` request for an X campaign is always refused (409): under campaign budget optimization X requires the daily budget, so the campaign is paced daily. X has no shared-budget analogue. **409** when the change is refused BEFORE the platform is written, so nothing has changed: the campaign is unprovisioned (no platform campaign id); the campaign belongs to a different ad account than the project's connection now resolves to, or does not record which ad account it was created under; the campaign's budget is SHARED across campaigns, where changing the amount would change the spend of campaigns this request never named — including campaigns this service does not own and cannot see (give the campaign its own budget in the ad platform, or make the change there where its full effect is visible); or the budget could not be addressed at all — the platform did not report which budget resource is attached, did not report whether it is shared, did not report its pacing, or reports a pacing this service has no mapping for. An unreported fact is refused rather than assumed: 'we could not establish that this budget is private' and 'this budget is private' are opposite facts, and only one of them justifies a write that could move a stranger's spend. None of the 409s is retryable — each needs a change in the ad platform or a re-dispatch. **400** for a request fault: a non-positive, non-finite or out-of-range amount, an unknown budget type, a platform with no budget-write capability wired, or an amount the campaign's own platform refuses on its published minimums — the service validates only the bounds every platform shares, so a platform's stricter floor is a permanent request fault and the response names what it was. **503** when the platform could not be reached or did not confirm; the row is unchanged, and re-applying the same amount converges on the same state, so a retry is safe.`)
 	fmt.Fprintln(os.Stderr, `    update-campaign-bid: Change a campaign's MAX COST-PER-CLICK BID on its ad platform, then persist the new bid. A MUTATION on a live paid campaign, dispatched to the platform first, with the same ONE-WAY invariant as update-campaign-budget: the new bid is never persisted before the platform confirms it; once confirmed, a failed row write answers 500 with the platform holding the new bid, logged as a divergence, and re-applying the same bid reconciles it. ONE MANUAL CPC BID, AT THE LEVEL THIS SERVICE'S CREATE PATH PUTS IT — never a bid strategy. Google Ads: the cpc_bid_micros of the ad group this service created for the campaign (keywords are created without their own bids, so they inherit it); it is the one platform whose row can record SEVERAL ad groups, and because siblings carry independent max CPC bids a row recording more than one is refused (409) rather than resolved — set the bid on the ad group you mean in Google Ads. Microsoft Advertising: the default CpcBid of the ONE ad group this service created for the campaign (keywords are created without their own bids, so they inherit it). Reddit: the bid_value of the ONE ad group this service created. Meta: the bid_amount (a bid cap, in the account currency's minor units) of the ONE ad set this service created. X: the bid_amount_local_micro of the ONE line item this service created. A campaign whose row records none (an adopted campaign, or one whose creation never reached it) is refused (409): the service will not choose which of several to re-bid. LinkedIn: the campaign's own unitCost (a decimal amount, written in USD at whole cents — a sub-cent amount is refused 400 rather than rounded); an ADOPTED LinkedIn campaign is refused (409). REFUSED (409) WHEN THE BID WOULD BE IGNORED OR IS NOT A COST PER CLICK. A manual bid only does something under a bid strategy that reads it — Google's MANUAL_CPC; Microsoft's EnhancedCpc or ManualCpc; Reddit's MANUAL_BIDDING with bid_type CPC; Meta's LOWEST_COST_WITH_BID_CAP with billing_event AND optimization_goal both LINK_CLICKS (a Meta bid cap is per optimization event and, billed on impressions, per 1,000 impressions — so only that pairing is a max cost per click); X's MAX with pay_by LINK_CLICK; LinkedIn's costType CPC with optimizationTargetType NONE or ENHANCED_CONVERSION (its two manual-bidding modes). Under an automated or target strategy (Google TARGET_CPA, TARGET_ROAS, TARGET_SPEND, MAXIMIZE_CLICKS, MAXIMIZE_CONVERSIONS, MAXIMIZE_CONVERSION_VALUE, TARGET_IMPRESSION_SHARE, MANUAL_CPM, MANUAL_CPV, or any portfolio strategy — Google offers no portfolio MANUAL_CPC, so a campaign on one never reports MANUAL_CPC and is refused by the same check; Microsoft MaxClicks, MaxConversions, TargetCpa, TargetRoas, MaxConversionValue, TargetImpressionShare, a portfolio strategy the read cannot name; Reddit BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX; Meta LOWEST_COST_WITHOUT_CAP, COST_CAP, LOWEST_COST_WITH_MIN_ROAS; X AUTO, TARGET; LinkedIn MAX_*, TARGET_COST_PER_*, CAP_COST_AND_*, or any CPM/CPV campaign) the platform would ignore it or, worse, the write would be read as a request to switch strategy — and this endpoint NEVER switches strategy, billing or charge unit. An unreported strategy is refused the same way rather than assumed manual. On Reddit the CAMPAIGN's strategy is checked first and then the ad group's: with Campaign Budget Optimization on (as on every campaign this service creates) the ad group's strategy must match the campaign's, so both must be MANUAL_BIDDING. ELIGIBILITY FOLLOWS THE PLATFORM'S CURRENT STRATEGY, not how the campaign was created: campaigns created with strategy manual are immediately eligible, an automatic one an operator later switches to a manual per-click bid becomes eligible, and a manual one switched to automatic becomes ineligible. Since LFXV2-2665 a Microsoft campaign created without `+"`"+`bidding`+"`"+` (and without cpcBid) is MaxClicks, not Microsoft's EnhancedCpc default, so this endpoint answers 409 for it until switched, and a LinkedIn one is WEBSITE_VISIT + MAX_CLICK. CAMPAIGNS THIS SERVICE CREATES: one created with the dispatch config's `+"`"+`bidding.strategy`+"`"+` `+"`"+`manual`+"`"+` (create-campaigns) is created in exactly the shape this endpoint accepts on its platform — Microsoft EnhancedCpc with the ad group's CpcBid, Meta a link-click bid cap, Reddit MANUAL_BIDDING CPC on campaign and ad group, X MAX per link click, LinkedIn CPC with optimizationTargetType NONE and unitCost — so it can be re-bid here. One created with AUTOMATIC bidding (the default) is refused (409) until an operator moves it to a manual per-click bid in the platform's own UI: Microsoft MaxClicks, Meta LOWEST_COST_WITHOUT_CAP, Reddit BIDLESS, X AUTO, LinkedIn WEBSITE_VISIT + MAX_CLICK. GOOGLE ADS, which `+"`"+`bidding`+"`"+` does not cover, is the exception: a SEARCH campaign this service creates defaults to MANUAL_CPC, so the guard is expected to pass there without any operator change — while a Demand Gen, Performance Max, Video or Display campaign defaults to an automated strategy and is refused. Either way the guard decides on what the platform REPORTS, never on what was created. On every adapter but LinkedIn the amount is in the AD ACCOUNT's own currency, not USD, and this service neither knows nor converts it; the LinkedIn adapter writes USD and refuses (409) a campaign whose bid is in any other or an unreported currency. Google Ads, Microsoft Advertising, Reddit, Meta, X and LinkedIn today: a campaign on any other platform is refused with 400. **409** when the change is refused BEFORE the platform is written, so nothing has changed: the campaign is unprovisioned; it belongs to a different ad account than the project's connection now resolves to, or does not record which ad account it was created under; its bid strategy is automated, a target, or unreported; or the bid could not be addressed (no recorded ad group, ad set or line item, one reporting another campaign or deleted, or one bidding in a unit other than `+"`"+`bid_type`+"`"+`). None is retryable. **400** for a request fault: a non-positive, non-finite or out-of-range bid, an unknown bid type, a platform with no bid-write capability wired, or a bid the campaign's platform refuses on its own minimum or maximum — the response names what it was. **503** when the platform could not be reached or did not confirm — including a throttled Meta, X or LinkedIn write, which is never retried in-call; the row is unchanged. Setting the same bid twice converges, but verify the bid in the ad platform before retrying.`)
+	fmt.Fprintln(os.Stderr, `    update-campaign-targeting: REPLACE a campaign's AUDIENCE TARGETING on its ad platform after create (#666), then record it on the row's config snapshot. LinkedIn only: a campaign on any other platform is refused with 400. A MUTATION on a live paid campaign with update-campaign-bid's ONE-WAY invariant: nothing is recorded before LinkedIn confirms; a failed row write after that answers 500 with LinkedIn holding the new targeting, and re-sending the same request reconciles it. THE WHOLE TARGETING, NEVER A DELTA: LinkedIn's PARTIAL_UPDATE $set replaces targetingCriteria wholesale, so `+"`"+`targeting`+"`"+` and `+"`"+`geo_targets`+"`"+` state the complete audience. `+"`"+`targeting`+"`"+` takes linkedInConfig.targeting's shape and rules (include 1 to 10 ANDed clauses of ORed facets, exclude ORed, the same facets, URN shapes, caps and refused combinations); the employerExclusions the row recorded at create are merged into exclude.employers, as at create. When no include clause names interfaceLocales the update adds one clause {interfaceLocales: [urn:li:locale:en_US]}, the locale every create sends, so the audience keeps the language it had; ten clauses with no interfaceLocales are refused. Status, budget, bidding and the delivery options are never sent. audienceMatchingSegments and dynamicSegments name resources of the ad account and require global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked). Behind LINKEDIN_ADS_TARGETING_UPDATE_ENABLED, off by default (400 while off). **409** when refused BEFORE LinkedIn is written: the campaign is unprovisioned or still provisioning, was adopted, does not record its ad account or its config snapshot, belongs to another ad account than the connection now resolves to, or LinkedIn reports it terminal or omits its account or status. **400** for a request fault: the gate off, a targeting or geo_targets the rules refuse, a platform without the capability, or LinkedIn's definite refusal of the targeting — the response names which. **503** when LinkedIn could not be reached or did not confirm (a 429 is never retried in-call); verify the targeting in Campaign Manager before retrying.`)
 	fmt.Fprintln(os.Stderr, `    apply-keyword-actions: Pause or remove Google Ads or Microsoft Advertising keywords on one campaign. A MUTATION on a live paid campaign: pausing or removing a keyword changes what serves, so it is validated exactly like a create. The batch's syntax, the campaign's provisioning and the campaign's ad account are checked against the project's current connection BEFORE the ad platform is contacted at all; each keyword is then resolved on the platform and confirmed to be a live POSITIVE keyword in this campaign's ad group BEFORE ANY MUTATION is issued — a read, so nothing has changed if that check refuses. GOOGLE ADS IS ALL-OR-NOTHING: the batch is one atomic adGroupCriteria:mutate with partial failure disabled, so either every action applied or none did. A caller is never left working out which half of a spend-stopping request took effect. MICROSOFT ADVERTISING IS NOT: PAUSE is one UpdateKeywords call and REMOVE one DeleteKeywords call, and Microsoft applies each item independently. The same ownership guards run first (each keyword id must be a live keyword in THIS campaign's ad group, read before anything is changed), and the 200 then carries one result per action, in request order, each with its own outcome — APPLIED, FAILED or UNCONFIRMED — and applied_count counts only APPLIED. A Microsoft request answers 503 only when no call was answered item by item. KNOWN LIMITATION (Microsoft Advertising): a keyword PAUSED here is RE-ENABLED by the next activation of the campaign through the status endpoint, because that cascade enables every keyword the campaign was created with and this endpoint persists nothing that distinguishes an operator's pause from the Paused state keywords are created in. Pause it again after activating, or pause it in Microsoft Advertising. There is no ENABLE action: a paused keyword is un-paused by activating the campaign or in Microsoft Advertising. A REMOVED keyword is never re-created. REMOVE IS IRREVERSIBLE on both platforms — a removed keyword cannot be re-enabled, only re-created with a new id. Any other platform is refused with 400. **409** when the change is refused before the ad platform is contacted: the campaign is unprovisioned (no platform campaign id, or no ad group), the campaign belongs to a different ad account than the project's connection now resolves to, the campaign does not record which ad account it was created under (it must be re-dispatched before its keywords can be acted on — a different remedy from reconnecting, which is why it is reported separately), or the connection row itself is unusable. Those are non-retryable, which is why none of them is a 503. A malformed batch is **400 even when the campaign is also unprovisioned**: a permanent input fault the caller must fix dominates a contingent state fault they can only wait on, matching the order the adapter validates in. **503** carries two distinct outcomes and the MESSAGE separates them, so do not branch on the status alone: a DEFINITE failure (nothing was applied — retry), and an UNCONFIRMED one where the mutate may ALREADY have been applied (a short or mismatched mutate response, a 5xx, a timeout). The unconfirmed message tells the caller to VERIFY the campaign's keywords in the platform before retrying, because retrying an irreversible REMOVE that already ran cannot undo it.`)
 	fmt.Fprintln(os.Stderr, `    add-negative-keywords: Add negative keywords to one live campaign (LFXV2-2665). Four platforms, each at its own level: Google Ads at CAMPAIGN level (campaignCriteria:mutate, negative KEYWORD criteria — the same level and resource its create path attaches an exclusion list through); Microsoft Advertising at CAMPAIGN level (AddNegativeKeywordsToEntities, EntityType Campaign); Reddit in the excluded_keywords of the ONE ad group this service created (a whole-targeting PATCH, behind REDDIT_KEYWORD_TARGETING_WRITES_ENABLED — off is 400 before Reddit is contacted); X as one negated keyword targeting criterion (operator_type NE) per keyword on the ONE line item this service created. A campaign on any other platform is refused with 400 before anything is contacted. Match types per platform: Google Ads Broad, Phrase or Exact (BROAD/PHRASE/EXACT); Microsoft Exact or Phrase; X Broad, Phrase or Exact (BROAD_/PHRASE_/EXACT_KEYWORD); Reddit Broad only, because Reddit's excluded keywords carry no match type. Any other is 400. A MUTATION on a live paid campaign — a negative keyword stops the campaign serving on matching queries, so it only narrows delivery — and it carries the keyword levers' guard set, all before the platform is mutated: the batch's syntax, the campaign's provisioning, the campaign's ad account against the project's current connection (a campaign that does not record its ad account is refused, never assumed), and on Reddit and X a READ proving the ad group / line item is live and reported under THIS campaign. Reddit also requires `+"`"+`revision`+"`"+`, the fingerprint get-keyword-targeting returned, and refuses (409) when the ad group's targeting has changed since, and a blank one is 400; Google Ads, Microsoft and X refuse a present revision, even an empty one (400). Like apply-keyword-actions it persists nothing — the negatives live on the platform — so it takes no If-Match and returns no ETag. Every write is sent ONCE and never retried on a 429. The 200 carries one result per requested keyword, in request order, each with its own outcome. A negative already there is ALREADY_PRESENT, a success, and is not sent again. On Google Ads that is established by a READ of the campaign's existing negatives before anything is written, and it is not an optimisation: Google's campaignCriteria:mutate is ATOMIC, so one duplicate would fail the whole batch and take every acceptable keyword with it. For the same atomicity every Google keyword actually SENT shares one outcome — all APPLIED, all FAILED or all UNCONFIRMED; there is no partial result and none is invented. Microsoft adds each negative independently; Reddit's one PATCH carries every new one, so they share its outcome (confirmed by a re-read) while ALREADY_PRESENT ones keep theirs — a batch with any ALREADY_PRESENT item always answers per item; X sends one POST per keyword, at most 20 per request (X's one-write-per-second account pacing), each APPLIED, FAILED (NOT_SENT, REJECTED) or UNCONFIRMED. **400** for a malformed batch (empty or over 60 — over 20 on X —, a text over 100 characters — over 80 on Google Ads — or outside the allowed characters, consecutive punctuation, a match type the platform does not offer, the same keyword twice, a missing or misplaced revision), an unsupported platform, or Reddit writes switched off. A malformed batch is 400 even when the campaign is also unprovisioned. **409** when refused before anything is written: unprovisioned, a different ad account, an unrecorded ad account (re-dispatch), an unusable connection, an ad group / line item this service did not record or the platform no longer reports under this campaign, a stale Reddit revision, another LFX change to the same Reddit ad group's targeting still in progress after a short wait (retry after reading it again), or a Reddit ad group whose excluded keywords would exceed Reddit's 2,000. **503** only when the platform answered nothing per keyword. The MESSAGE separates a DEFINITE failure (nothing was added — retry) from an UNCONFIRMED one (a 5xx, a timeout, a rate limit, an unreadable answer — verify the campaign's negative keywords before retrying).`)
 	fmt.Fprintln(os.Stderr, `    get-keyword-targeting: Read the keyword TARGETING of a Reddit or X campaign (LFXV2-2665): the positive keywords on the ONE ad group (Reddit) or line item (X) this service created for it, read live from the platform and never persisted. On these two platforms a keyword is an entry in the targeting, not a criterion with its own status, so it cannot be paused — only removed (remove-keyword-targeting). Reddit: the keywords in the ad group's targeting, which the create path sets from redditConfig.keywords; the response also carries `+"`"+`revision`+"`"+`, a fingerprint of the ad group's whole targeting, which a removal must send back. X: the line item's keyword targeting criteria (BROAD/PHRASE/EXACT/UNORDERED_KEYWORD, not negated). The X create path sets NO targeting criteria, so a campaign this service created reports an empty list until an operator adds keywords in X Ads Manager. Before the platform is read, the ad group / line item must be one the row records, and the campaign's ad account must match the project's connection; the platform must then report it under THIS campaign. Any other platform is **400**. **409** when the campaign is unprovisioned, records no ad group / line item, belongs to a different ad account, the ad group / line item is gone or reports another campaign, or its targeting could not be read as a keyword list. **503** when the platform could not be read.`)
@@ -3858,6 +3924,34 @@ func lfxV2CampaignServiceBriefsUpdateCampaignBidUsage() {
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs update-campaign-bid --body '{\n      \"bid\": 2.5,\n      \"bid_type\": \"cpc\"\n   }' --project-id \"cncf\" --brief-id \"011e0ced-b25c-4256-b54d-c3b79b96be71\" --campaign-id \"31edbdd1-6ada-49ef-9141-9001cc27dc86\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
 }
 
+func lfxV2CampaignServiceBriefsUpdateCampaignTargetingUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-briefs update-campaign-targeting", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -brief-id STRING")
+	fmt.Fprint(os.Stderr, " -campaign-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprint(os.Stderr, " -if-match STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `REPLACE a campaign's AUDIENCE TARGETING on its ad platform after create (#666), then record it on the row's config snapshot. LinkedIn only: a campaign on any other platform is refused with 400. A MUTATION on a live paid campaign with update-campaign-bid's ONE-WAY invariant: nothing is recorded before LinkedIn confirms; a failed row write after that answers 500 with LinkedIn holding the new targeting, and re-sending the same request reconciles it. THE WHOLE TARGETING, NEVER A DELTA: LinkedIn's PARTIAL_UPDATE $set replaces targetingCriteria wholesale, so `+"`"+`targeting`+"`"+` and `+"`"+`geo_targets`+"`"+` state the complete audience. `+"`"+`targeting`+"`"+` takes linkedInConfig.targeting's shape and rules (include 1 to 10 ANDed clauses of ORed facets, exclude ORed, the same facets, URN shapes, caps and refused combinations); the employerExclusions the row recorded at create are merged into exclude.employers, as at create. When no include clause names interfaceLocales the update adds one clause {interfaceLocales: [urn:li:locale:en_US]}, the locale every create sends, so the audience keeps the language it had; ten clauses with no interfaceLocales are refused. Status, budget, bidding and the delivery options are never sent. audienceMatchingSegments and dynamicSegments name resources of the ad account and require global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked). Behind LINKEDIN_ADS_TARGETING_UPDATE_ENABLED, off by default (400 while off). **409** when refused BEFORE LinkedIn is written: the campaign is unprovisioned or still provisioning, was adopted, does not record its ad account or its config snapshot, belongs to another ad account than the connection now resolves to, or LinkedIn reports it terminal or omits its account or status. **400** for a request fault: the gate off, a targeting or geo_targets the rules refuse, a platform without the capability, or LinkedIn's definite refusal of the targeting — the response names which. **503** when LinkedIn could not be reached or did not confirm (a 429 is never retried in-call); verify the targeting in Campaign Manager before retrying.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Canonical LFX project slug (NOT a UUID) that scopes the resource`)
+	fmt.Fprintln(os.Stderr, `    -brief-id STRING: Brief UUID`)
+	fmt.Fprintln(os.Stderr, `    -campaign-id STRING: Campaign UUID`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+	fmt.Fprintln(os.Stderr, `    -if-match STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs update-campaign-targeting --body '{\n      \"geo_targets\": [\n         \"urn:li:geo:103644278\",\n         \"urn:li:geo:103644278\"\n      ],\n      \"targeting\": {\n         \"exclude\": {\n            \"Asperiores repellat.\": [\n               \"Voluptatem doloremque qui non non tenetur.\",\n               \"Provident qui.\",\n               \"Voluptatem nemo excepturi pariatur.\"\n            ],\n            \"Distinctio autem eius sed.\": [\n               \"Blanditiis eos asperiores quod iusto qui.\",\n               \"Doloribus sunt sunt quas.\",\n               \"Laudantium officia.\",\n               \"Necessitatibus recusandae neque.\"\n            ],\n            \"Nemo dolores.\": [\n               \"Eum est omnis suscipit.\",\n               \"Soluta sint.\"\n            ]\n         },\n         \"include\": [\n            {\n               \"Praesentium molestiae.\": [\n                  \"Dolorem quas soluta.\",\n                  \"Hic quasi molestias.\",\n                  \"Laborum consectetur totam aliquid ut.\",\n                  \"Corrupti dolorum fuga velit.\"\n               ],\n               \"Quidem magni quia voluptatem.\": [\n                  \"Eos aut maxime.\",\n                  \"Odit recusandae voluptatem explicabo in est.\",\n                  \"Nihil earum quo.\"\n               ]\n            },\n            {\n               \"Architecto porro aliquam aut.\": [\n                  \"Consequatur alias quisquam laudantium molestias quia quia.\",\n                  \"Animi nihil labore.\",\n                  \"Accusantium a est nisi saepe.\",\n                  \"Iste eveniet in.\"\n               ]\n            },\n            {\n               \"Et exercitationem.\": [\n                  \"Ut molestiae suscipit aspernatur maiores quasi cupiditate.\",\n                  \"Reiciendis quidem nostrum sint.\"\n               ]\n            }\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"862c30f3-9784-45a5-ab89-711c920694ff\" --campaign-id \"72638348-2dd1-4486-add8-880bffae4d3c\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
+}
+
 func lfxV2CampaignServiceBriefsApplyKeywordActionsUsage() {
 	// Header with flags
 	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-briefs apply-keyword-actions", os.Args[0])
@@ -4340,50 +4434,6 @@ func lfxV2CampaignServiceBriefsGetWizardSessionUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs get-wizard-session --project-id \"cncf\" --brief-id \"ce6741d4-654c-435f-852b-24e4d7c48cde\" --session-id \"47064074-2dd5-4b25-a230-9027bf7e402e\" --bearer-token \"eyJhbGci...\"")
-}
-
-// lfxV2CampaignServiceSvcUsage displays the usage of the
-// lfx-v2-campaign-service-svc command and its subcommands.
-func lfxV2CampaignServiceSvcUsage() {
-	fmt.Fprintln(os.Stderr, `The campaign service supports Marketing Operations campaign creation and management.`)
-	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] lfx-v2-campaign-service-svc COMMAND [flags]\n\n", os.Args[0])
-	fmt.Fprintln(os.Stderr, "COMMAND:")
-	fmt.Fprintln(os.Stderr, `    readyz: Check if the service is able to take inbound requests.`)
-	fmt.Fprintln(os.Stderr, `    livez: Check if the service is alive.`)
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Additional help:")
-	fmt.Fprintf(os.Stderr, "    %s lfx-v2-campaign-service-svc COMMAND --help\n", os.Args[0])
-}
-func lfxV2CampaignServiceSvcReadyzUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-svc readyz", os.Args[0])
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Check if the service is able to take inbound requests.`)
-
-	// Flags list
-
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-svc readyz")
-}
-
-func lfxV2CampaignServiceSvcLivezUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-svc livez", os.Args[0])
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Check if the service is alive.`)
-
-	// Flags list
-
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-svc livez")
 }
 
 // lfxV2CampaignServiceSignedAssetsUsage displays the usage of the

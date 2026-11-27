@@ -3497,6 +3497,65 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		})
 	})
 
+	Method("update-campaign-targeting", func() {
+		Description("REPLACE a campaign's AUDIENCE TARGETING on its ad platform after create (#666), then record " +
+			"it on the row's config snapshot. LinkedIn only: a campaign on any other platform is refused with 400. " +
+			"A MUTATION on a live paid campaign with update-campaign-bid's ONE-WAY invariant: nothing is recorded " +
+			"before LinkedIn confirms; a failed row write after that answers 500 with LinkedIn holding the new " +
+			"targeting, and re-sending the same request reconciles it. " +
+			"THE WHOLE TARGETING, NEVER A DELTA: LinkedIn's PARTIAL_UPDATE $set replaces targetingCriteria " +
+			"wholesale, so `targeting` and `geo_targets` state the complete audience. `targeting` takes " +
+			"linkedInConfig.targeting's shape and rules (include 1 to 10 ANDed clauses of ORed facets, exclude " +
+			"ORed, the same facets, URN shapes, caps and refused combinations); the employerExclusions the row " +
+			"recorded at create are merged into exclude.employers, as at create. When no include clause names " +
+			"interfaceLocales the update adds one clause {interfaceLocales: [urn:li:locale:en_US]}, the locale " +
+			"every create sends, so the audience keeps the language it had; ten clauses with no interfaceLocales " +
+			"are refused. Status, budget, bidding and the delivery options are never sent. " +
+			"audienceMatchingSegments and dynamicSegments name resources of the ad account and require " +
+			"global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked). " +
+			"Behind LINKEDIN_ADS_TARGETING_UPDATE_ENABLED, off by default (400 while off). " +
+			"**409** when refused BEFORE LinkedIn is written: the campaign is unprovisioned or still provisioning, " +
+			"was adopted, does not record its ad account or its config snapshot, belongs to another ad account than " +
+			"the connection now resolves to, or LinkedIn reports it terminal or omits its account or status. " +
+			"**400** for a request fault: the gate off, a targeting or geo_targets the rules refuse, a platform " +
+			"without the capability, or LinkedIn's definite refusal of the targeting — the response names which. " +
+			"**503** when LinkedIn could not be reached or did not confirm (a 429 is never retried in-call); verify " +
+			"the targeting in Campaign Manager before retrying.")
+		Payload(func() {
+			bearerToken()
+			// Slug-only, like create-campaigns and adopt-campaign: the segment facets' global_marketing_ops
+			// check is keyed by the project slug.
+			projectSlugAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			ifMatchAttr()
+			Attribute("targeting", LinkedInTargetingUpdate, "The complete targeting, in linkedInConfig.targeting's shape")
+			Attribute("geo_targets", ArrayOf(String, func() {
+				Pattern(`^urn:li:geo:[1-9][0-9]{0,18}$`)
+				Example("urn:li:geo:103644278")
+			}), "The complete locations: 1 to 100 urn:li:geo:<id> URNs (duplicates dropped). They form the first ANDed clause, as at create.", func() {
+				MinLength(1)
+				MaxLength(100)
+			})
+			Required("project_id", "brief_id", "campaign_id", "targeting", "geo_targets")
+		})
+		Result(Campaign)
+		commonBriefErrors()
+		Error("Forbidden", ForbiddenError, "The caller lacks the role an input requires")
+		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
+		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
+		HTTP(func() {
+			PATCH("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/targeting")
+			Header("bearer_token:Authorization")
+			Header("if_match:If-Match")
+			Response(StatusOK, func() { Header("etag:ETag") })
+			briefErrorResponses()
+			Response("Forbidden", StatusForbidden)
+			Response("PreconditionFailed", StatusPreconditionFailed)
+			Response("PreconditionRequired", StatusPreconditionRequired)
+		})
+	})
+
 	Method("apply-keyword-actions", func() {
 		Description("Pause or remove Google Ads or Microsoft Advertising keywords on one campaign. " +
 			"A MUTATION on a live paid campaign: pausing or removing a keyword changes what serves, so it " +
