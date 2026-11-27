@@ -633,6 +633,10 @@ func (d upstreamCapableDispatcher) WriteBid(context.Context, string, model.Provi
 	return d.err
 }
 
+func (d upstreamCapableDispatcher) WriteTargeting(context.Context, string, model.Provider, *model.Campaign, model.TargetingChange) error {
+	return d.err
+}
+
 // ReadMetaAdSets / ToggleMetaAdSetStatus implement the two Meta ad-set capabilities so this fake
 // drives their instrumented upstream calls.
 func (d upstreamCapableDispatcher) ReadMetaAdSets(context.Context, string, model.Provider, *model.Campaign, model.MetricsWindow) (*model.MetaAdSets, error) {
@@ -1085,6 +1089,13 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opWriteBid,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				return o.WriteCampaignBid(ctx, "p1", platform, campaign, model.BidChange{Amount: 2, Type: model.BidTypeCPC})
+			},
+		},
+		{
+			name: "write targeting",
+			op:   opWriteTargeting,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				return o.WriteCampaignTargeting(ctx, "p1", platform, campaign, model.TargetingChange{GeoTargets: []string{"urn:li:geo:1"}})
 			},
 		},
 		{

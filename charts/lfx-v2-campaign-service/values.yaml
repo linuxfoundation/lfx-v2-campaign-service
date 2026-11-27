@@ -959,6 +959,18 @@ app:
     LINKEDIN_ADS_TARGETING_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to the LinkedIn targeting update lever (#666):
+    # PATCH .../campaigns/{campaign_id}/targeting replaces an existing
+    # campaign's targetingCriteria (a PARTIAL_UPDATE) with the same builder and
+    # refusal rules as linkedInConfig.targeting, adding an interfaceLocales
+    # clause (en_US) when the caller names none. No targeting update has been
+    # sent to a live LinkedIn account. Set it to exactly "true" in
+    # lfx-v2-argocd once a paused probe campaign confirms it. While off, the
+    # endpoint answers 400 before LinkedIn is contacted. Any value other than
+    # "true" is treated as off.
+    LINKEDIN_ADS_TARGETING_UPDATE_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to linkedInConfig.conversions (#552): conversion
     # rule ids associated with the campaign through a Campaign Conversions PUT
     # once it exists. The PUT has not been exercised against a live LinkedIn

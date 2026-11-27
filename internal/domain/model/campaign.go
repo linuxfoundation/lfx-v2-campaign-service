@@ -83,6 +83,18 @@ type BidChange struct {
 	Type BidType
 }
 
+// TargetingChange is a request to REPLACE an existing campaign's audience targeting on its ad
+// platform: the payload of the TargetingWriter capability (#666). A REQUEST, never an
+// observation. It is the whole targeting, never a delta: the platform's write replaces the
+// criteria wholesale, so a caller that wants one facet changed sends the rest as it sees them.
+// The shape is LinkedIn's (the only platform wired): Include is the ANDed list of ORed facet
+// clauses, Exclude the ORed exclusions, GeoTargets the location URNs, each in LinkedIn's URN form.
+type TargetingChange struct {
+	Include    []map[string][]string
+	Exclude    map[string][]string
+	GeoTargets []string
+}
+
 // Campaign is one platform's campaign, subordinate to a brief. A brief drives
 // many campaigns (one per platform), discriminated by Platform and sharing
 // BriefID. The row is updated in place (not recreated) when a brief changes

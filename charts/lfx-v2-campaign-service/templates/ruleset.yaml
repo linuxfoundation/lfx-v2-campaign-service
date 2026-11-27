@@ -208,7 +208,7 @@ spec:
           # (POST /briefs, GET /jobs) are kept as their own entries so they're
           # matched regardless of whether ** matches zero segments.
           # Every per-campaign route nests here and needs no entry of its own — e.g.
-          # /campaigns/{id}/status|metrics|settings|budget|bid|keyword-targeting (and its
+          # /campaigns/{id}/status|metrics|settings|budget|bid|targeting|keyword-targeting (and its
           # /removals and, #564 gap 12, /additions) and the
           # Meta ad-set read and pause/resume, /campaigns/{id}/meta-ad-sets[/{adSetId}/status]
           # (LFXV2-2665), the read-only ad listing /campaigns/{id}/meta-ad-sets/{adSetId}/ads and

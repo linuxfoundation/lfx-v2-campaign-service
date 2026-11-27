@@ -752,6 +752,17 @@ const (
 	// the project (service.LinkedInMarketingOpsInputs).
 	EnvLinkedInAdsTargetingEnabled = "LINKEDIN_ADS_TARGETING_ENABLED"
 
+	// EnvLinkedInAdsTargetingUpdateEnabled opts a deployment IN to the LinkedIn targeting update
+	// lever (#666, #552 gap 10): update-campaign-targeting, a PARTIAL_UPDATE of an existing
+	// campaign's targetingCriteria built by the same builder and refusal rules as
+	// linkedInConfig.targeting. Only the exact value "true" enables it; unset or any other value
+	// fails closed, and the endpoint answers 400 before LinkedIn is contacted. It keeps an
+	// UNVERIFIED request shape (a targetingCriteria $set, with the interfaceLocales clause the
+	// update adds) off the live ad account until a paused probe campaign confirms it. Independent of
+	// EnvLinkedInAdsTargetingEnabled, which gates the create. Ad-segment facets also require
+	// global_marketing_ops on the project, as at create.
+	EnvLinkedInAdsTargetingUpdateEnabled = "LINKEDIN_ADS_TARGETING_UPDATE_ENABLED"
+
 	// EnvLinkedInAdsConversionsEnabled opts a deployment IN to linkedInConfig.conversions (#552):
 	// conversion rule ids associated with the campaign through Campaign Conversions once it exists.
 	// Only the exact value "true" enables it; unset or any other value fails closed, and a create

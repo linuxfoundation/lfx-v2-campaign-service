@@ -2313,6 +2313,16 @@ func campaignFromLinkedIn(ctx context.Context, r *linkedin.CampaignResult, reque
 	// lifetime-vs-daily budget flag). ConfigSnapshot captures the validated config with its
 	// caller free text redacted — see linkedinSnapshotConfig.
 	applyCampaignConfig(ctx, c, cfg.BudgetUSD, cfg.LifetimeBudget, cfg.StartDate, cfg.EndDate, linkedinSnapshotConfig(cfg))
+	// Record the create-time employer exclusions in the service-owned result blob (#666): the
+	// config snapshot can be replaced by a caller's campaign update, so the targeting update lever
+	// reads them from here. Only when THIS run created the campaign (r.CampaignCreated, set on
+	// partial results too): a campaign found by name keeps the targeting it had, so this request's
+	// list would misstate it. Non-nil when recorded, so "recorded as none" differs from "not
+	// recorded", which the lever refuses.
+	if r.CampaignCreated {
+		exclusions := append([]string{}, cfg.EmployerExclusions...)
+		r.EmployerExclusions = &exclusions
+	}
 	if raw, err := json.Marshal(r); err != nil {
 		// A marshal failure should be near-impossible for this plain struct, but do NOT
 		// swallow it: leaving Result empty would make an orphaned campaign harder to

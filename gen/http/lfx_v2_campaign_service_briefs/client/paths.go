@@ -129,6 +129,11 @@ func UpdateCampaignBidLfxV2CampaignServiceBriefsPath(projectID string, briefID s
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/bid", projectID, briefID, campaignID)
 }
 
+// UpdateCampaignTargetingLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service update-campaign-targeting HTTP endpoint.
+func UpdateCampaignTargetingLfxV2CampaignServiceBriefsPath(projectID string, briefID string, campaignID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/targeting", projectID, briefID, campaignID)
+}
+
 // ApplyKeywordActionsLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service apply-keyword-actions HTTP endpoint.
 func ApplyKeywordActionsLfxV2CampaignServiceBriefsPath(projectID string, briefID string, campaignID string) string {
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/keyword-actions", projectID, briefID, campaignID)

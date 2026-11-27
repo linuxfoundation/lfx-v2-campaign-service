@@ -16,49 +16,50 @@ import (
 
 // Endpoints wraps the "lfx-v2-campaign-service-briefs" service endpoints.
 type Endpoints struct {
-	CreateBrief            goa.Endpoint
-	FindBrief              goa.Endpoint
-	GetBrief               goa.Endpoint
-	UpdateBrief            goa.Endpoint
-	ApproveBrief           goa.Endpoint
-	DeleteBrief            goa.Endpoint
-	FetchEventURL          goa.Endpoint
-	UploadCreativeAsset    goa.Endpoint
-	ListCreativeAssets     goa.Endpoint
-	GetCreativeAsset       goa.Endpoint
-	GetAssetPlan           goa.Endpoint
-	DeleteCreativeAsset    goa.Endpoint
-	CreateCampaigns        goa.Endpoint
-	CreateSendWorkflow     goa.Endpoint
-	AdoptCampaign          goa.Endpoint
-	GetCampaign            goa.Endpoint
-	GetCampaignMetrics     goa.Endpoint
-	GetCampaignSettings    goa.Endpoint
-	GetBriefMetrics        goa.Endpoint
-	GenerateEmailCopy      goa.Endpoint
-	UpdateCampaign         goa.Endpoint
-	ToggleCampaignStatus   goa.Endpoint
-	UpdateCampaignBudget   goa.Endpoint
-	UpdateCampaignBid      goa.Endpoint
-	ApplyKeywordActions    goa.Endpoint
-	AddNegativeKeywords    goa.Endpoint
-	GetKeywordTargeting    goa.Endpoint
-	RemoveKeywordTargeting goa.Endpoint
-	AddKeywordTargeting    goa.Endpoint
-	ListMetaAdSets         goa.Endpoint
-	ListMetaAds            goa.Endpoint
-	ToggleMetaAdSetStatus  goa.Endpoint
-	ToggleMetaAdStatus     goa.Endpoint
-	DeleteCampaign         goa.Endpoint
-	GetJob                 goa.Endpoint
-	StartEmailWizardPlan   goa.Endpoint
-	PlanEmailWizard        goa.Endpoint
-	GenerateWizardContent  goa.Endpoint
-	UpdateWizardSections   goa.Endpoint
-	CloneWizardEmail       goa.Endpoint
-	SetWizardSendList      goa.Endpoint
-	ChatWizardTurn         goa.Endpoint
-	GetWizardSession       goa.Endpoint
+	CreateBrief             goa.Endpoint
+	FindBrief               goa.Endpoint
+	GetBrief                goa.Endpoint
+	UpdateBrief             goa.Endpoint
+	ApproveBrief            goa.Endpoint
+	DeleteBrief             goa.Endpoint
+	FetchEventURL           goa.Endpoint
+	UploadCreativeAsset     goa.Endpoint
+	ListCreativeAssets      goa.Endpoint
+	GetCreativeAsset        goa.Endpoint
+	GetAssetPlan            goa.Endpoint
+	DeleteCreativeAsset     goa.Endpoint
+	CreateCampaigns         goa.Endpoint
+	CreateSendWorkflow      goa.Endpoint
+	AdoptCampaign           goa.Endpoint
+	GetCampaign             goa.Endpoint
+	GetCampaignMetrics      goa.Endpoint
+	GetCampaignSettings     goa.Endpoint
+	GetBriefMetrics         goa.Endpoint
+	GenerateEmailCopy       goa.Endpoint
+	UpdateCampaign          goa.Endpoint
+	ToggleCampaignStatus    goa.Endpoint
+	UpdateCampaignBudget    goa.Endpoint
+	UpdateCampaignBid       goa.Endpoint
+	UpdateCampaignTargeting goa.Endpoint
+	ApplyKeywordActions     goa.Endpoint
+	AddNegativeKeywords     goa.Endpoint
+	GetKeywordTargeting     goa.Endpoint
+	RemoveKeywordTargeting  goa.Endpoint
+	AddKeywordTargeting     goa.Endpoint
+	ListMetaAdSets          goa.Endpoint
+	ListMetaAds             goa.Endpoint
+	ToggleMetaAdSetStatus   goa.Endpoint
+	ToggleMetaAdStatus      goa.Endpoint
+	DeleteCampaign          goa.Endpoint
+	GetJob                  goa.Endpoint
+	StartEmailWizardPlan    goa.Endpoint
+	PlanEmailWizard         goa.Endpoint
+	GenerateWizardContent   goa.Endpoint
+	UpdateWizardSections    goa.Endpoint
+	CloneWizardEmail        goa.Endpoint
+	SetWizardSendList       goa.Endpoint
+	ChatWizardTurn          goa.Endpoint
+	GetWizardSession        goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "lfx-v2-campaign-service-briefs"
@@ -67,49 +68,50 @@ func NewEndpoints(s Service) *Endpoints {
 	// Casting service to Auther interface
 	a := s.(Auther)
 	return &Endpoints{
-		CreateBrief:            NewCreateBriefEndpoint(s, a.JWTAuth),
-		FindBrief:              NewFindBriefEndpoint(s, a.JWTAuth),
-		GetBrief:               NewGetBriefEndpoint(s, a.JWTAuth),
-		UpdateBrief:            NewUpdateBriefEndpoint(s, a.JWTAuth),
-		ApproveBrief:           NewApproveBriefEndpoint(s, a.JWTAuth),
-		DeleteBrief:            NewDeleteBriefEndpoint(s, a.JWTAuth),
-		FetchEventURL:          NewFetchEventURLEndpoint(s, a.JWTAuth),
-		UploadCreativeAsset:    NewUploadCreativeAssetEndpoint(s, a.JWTAuth),
-		ListCreativeAssets:     NewListCreativeAssetsEndpoint(s, a.JWTAuth),
-		GetCreativeAsset:       NewGetCreativeAssetEndpoint(s, a.JWTAuth),
-		GetAssetPlan:           NewGetAssetPlanEndpoint(s, a.JWTAuth),
-		DeleteCreativeAsset:    NewDeleteCreativeAssetEndpoint(s, a.JWTAuth),
-		CreateCampaigns:        NewCreateCampaignsEndpoint(s, a.JWTAuth),
-		CreateSendWorkflow:     NewCreateSendWorkflowEndpoint(s, a.JWTAuth),
-		AdoptCampaign:          NewAdoptCampaignEndpoint(s, a.JWTAuth),
-		GetCampaign:            NewGetCampaignEndpoint(s, a.JWTAuth),
-		GetCampaignMetrics:     NewGetCampaignMetricsEndpoint(s, a.JWTAuth),
-		GetCampaignSettings:    NewGetCampaignSettingsEndpoint(s, a.JWTAuth),
-		GetBriefMetrics:        NewGetBriefMetricsEndpoint(s, a.JWTAuth),
-		GenerateEmailCopy:      NewGenerateEmailCopyEndpoint(s, a.JWTAuth),
-		UpdateCampaign:         NewUpdateCampaignEndpoint(s, a.JWTAuth),
-		ToggleCampaignStatus:   NewToggleCampaignStatusEndpoint(s, a.JWTAuth),
-		UpdateCampaignBudget:   NewUpdateCampaignBudgetEndpoint(s, a.JWTAuth),
-		UpdateCampaignBid:      NewUpdateCampaignBidEndpoint(s, a.JWTAuth),
-		ApplyKeywordActions:    NewApplyKeywordActionsEndpoint(s, a.JWTAuth),
-		AddNegativeKeywords:    NewAddNegativeKeywordsEndpoint(s, a.JWTAuth),
-		GetKeywordTargeting:    NewGetKeywordTargetingEndpoint(s, a.JWTAuth),
-		RemoveKeywordTargeting: NewRemoveKeywordTargetingEndpoint(s, a.JWTAuth),
-		AddKeywordTargeting:    NewAddKeywordTargetingEndpoint(s, a.JWTAuth),
-		ListMetaAdSets:         NewListMetaAdSetsEndpoint(s, a.JWTAuth),
-		ListMetaAds:            NewListMetaAdsEndpoint(s, a.JWTAuth),
-		ToggleMetaAdSetStatus:  NewToggleMetaAdSetStatusEndpoint(s, a.JWTAuth),
-		ToggleMetaAdStatus:     NewToggleMetaAdStatusEndpoint(s, a.JWTAuth),
-		DeleteCampaign:         NewDeleteCampaignEndpoint(s, a.JWTAuth),
-		GetJob:                 NewGetJobEndpoint(s, a.JWTAuth),
-		StartEmailWizardPlan:   NewStartEmailWizardPlanEndpoint(s, a.JWTAuth),
-		PlanEmailWizard:        NewPlanEmailWizardEndpoint(s, a.JWTAuth),
-		GenerateWizardContent:  NewGenerateWizardContentEndpoint(s, a.JWTAuth),
-		UpdateWizardSections:   NewUpdateWizardSectionsEndpoint(s, a.JWTAuth),
-		CloneWizardEmail:       NewCloneWizardEmailEndpoint(s, a.JWTAuth),
-		SetWizardSendList:      NewSetWizardSendListEndpoint(s, a.JWTAuth),
-		ChatWizardTurn:         NewChatWizardTurnEndpoint(s, a.JWTAuth),
-		GetWizardSession:       NewGetWizardSessionEndpoint(s, a.JWTAuth),
+		CreateBrief:             NewCreateBriefEndpoint(s, a.JWTAuth),
+		FindBrief:               NewFindBriefEndpoint(s, a.JWTAuth),
+		GetBrief:                NewGetBriefEndpoint(s, a.JWTAuth),
+		UpdateBrief:             NewUpdateBriefEndpoint(s, a.JWTAuth),
+		ApproveBrief:            NewApproveBriefEndpoint(s, a.JWTAuth),
+		DeleteBrief:             NewDeleteBriefEndpoint(s, a.JWTAuth),
+		FetchEventURL:           NewFetchEventURLEndpoint(s, a.JWTAuth),
+		UploadCreativeAsset:     NewUploadCreativeAssetEndpoint(s, a.JWTAuth),
+		ListCreativeAssets:      NewListCreativeAssetsEndpoint(s, a.JWTAuth),
+		GetCreativeAsset:        NewGetCreativeAssetEndpoint(s, a.JWTAuth),
+		GetAssetPlan:            NewGetAssetPlanEndpoint(s, a.JWTAuth),
+		DeleteCreativeAsset:     NewDeleteCreativeAssetEndpoint(s, a.JWTAuth),
+		CreateCampaigns:         NewCreateCampaignsEndpoint(s, a.JWTAuth),
+		CreateSendWorkflow:      NewCreateSendWorkflowEndpoint(s, a.JWTAuth),
+		AdoptCampaign:           NewAdoptCampaignEndpoint(s, a.JWTAuth),
+		GetCampaign:             NewGetCampaignEndpoint(s, a.JWTAuth),
+		GetCampaignMetrics:      NewGetCampaignMetricsEndpoint(s, a.JWTAuth),
+		GetCampaignSettings:     NewGetCampaignSettingsEndpoint(s, a.JWTAuth),
+		GetBriefMetrics:         NewGetBriefMetricsEndpoint(s, a.JWTAuth),
+		GenerateEmailCopy:       NewGenerateEmailCopyEndpoint(s, a.JWTAuth),
+		UpdateCampaign:          NewUpdateCampaignEndpoint(s, a.JWTAuth),
+		ToggleCampaignStatus:    NewToggleCampaignStatusEndpoint(s, a.JWTAuth),
+		UpdateCampaignBudget:    NewUpdateCampaignBudgetEndpoint(s, a.JWTAuth),
+		UpdateCampaignBid:       NewUpdateCampaignBidEndpoint(s, a.JWTAuth),
+		UpdateCampaignTargeting: NewUpdateCampaignTargetingEndpoint(s, a.JWTAuth),
+		ApplyKeywordActions:     NewApplyKeywordActionsEndpoint(s, a.JWTAuth),
+		AddNegativeKeywords:     NewAddNegativeKeywordsEndpoint(s, a.JWTAuth),
+		GetKeywordTargeting:     NewGetKeywordTargetingEndpoint(s, a.JWTAuth),
+		RemoveKeywordTargeting:  NewRemoveKeywordTargetingEndpoint(s, a.JWTAuth),
+		AddKeywordTargeting:     NewAddKeywordTargetingEndpoint(s, a.JWTAuth),
+		ListMetaAdSets:          NewListMetaAdSetsEndpoint(s, a.JWTAuth),
+		ListMetaAds:             NewListMetaAdsEndpoint(s, a.JWTAuth),
+		ToggleMetaAdSetStatus:   NewToggleMetaAdSetStatusEndpoint(s, a.JWTAuth),
+		ToggleMetaAdStatus:      NewToggleMetaAdStatusEndpoint(s, a.JWTAuth),
+		DeleteCampaign:          NewDeleteCampaignEndpoint(s, a.JWTAuth),
+		GetJob:                  NewGetJobEndpoint(s, a.JWTAuth),
+		StartEmailWizardPlan:    NewStartEmailWizardPlanEndpoint(s, a.JWTAuth),
+		PlanEmailWizard:         NewPlanEmailWizardEndpoint(s, a.JWTAuth),
+		GenerateWizardContent:   NewGenerateWizardContentEndpoint(s, a.JWTAuth),
+		UpdateWizardSections:    NewUpdateWizardSectionsEndpoint(s, a.JWTAuth),
+		CloneWizardEmail:        NewCloneWizardEmailEndpoint(s, a.JWTAuth),
+		SetWizardSendList:       NewSetWizardSendListEndpoint(s, a.JWTAuth),
+		ChatWizardTurn:          NewChatWizardTurnEndpoint(s, a.JWTAuth),
+		GetWizardSession:        NewGetWizardSessionEndpoint(s, a.JWTAuth),
 	}
 }
 
@@ -140,6 +142,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ToggleCampaignStatus = m(e.ToggleCampaignStatus)
 	e.UpdateCampaignBudget = m(e.UpdateCampaignBudget)
 	e.UpdateCampaignBid = m(e.UpdateCampaignBid)
+	e.UpdateCampaignTargeting = m(e.UpdateCampaignTargeting)
 	e.ApplyKeywordActions = m(e.ApplyKeywordActions)
 	e.AddNegativeKeywords = m(e.AddNegativeKeywords)
 	e.GetKeywordTargeting = m(e.GetKeywordTargeting)
@@ -710,6 +713,30 @@ func NewUpdateCampaignBidEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa
 			return nil, err
 		}
 		return s.UpdateCampaignBid(ctx, p)
+	}
+}
+
+// NewUpdateCampaignTargetingEndpoint returns an endpoint function that calls
+// the method "update-campaign-targeting" of service
+// "lfx-v2-campaign-service-briefs".
+func NewUpdateCampaignTargetingEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*UpdateCampaignTargetingPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.UpdateCampaignTargeting(ctx, p)
 	}
 }
 

@@ -5575,6 +5575,284 @@ func DecodeUpdateCampaignBidResponse(decoder func(*http.Response) goahttp.Decode
 	}
 }
 
+// BuildUpdateCampaignTargetingRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-briefs" service
+// "update-campaign-targeting" endpoint
+func (c *Client) BuildUpdateCampaignTargetingRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID  string
+		briefID    string
+		campaignID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.UpdateCampaignTargetingPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "update-campaign-targeting", "*lfxv2campaignservicebriefs.UpdateCampaignTargetingPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+		campaignID = p.CampaignID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: UpdateCampaignTargetingLfxV2CampaignServiceBriefsPath(projectID, briefID, campaignID)}
+	req, err := http.NewRequest("PATCH", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "update-campaign-targeting", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeUpdateCampaignTargetingRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-briefs update-campaign-targeting server.
+func EncodeUpdateCampaignTargetingRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.UpdateCampaignTargetingPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "update-campaign-targeting", "*lfxv2campaignservicebriefs.UpdateCampaignTargetingPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		if p.IfMatch != nil {
+			head := *p.IfMatch
+			req.Header.Set("If-Match", head)
+		}
+		body := NewUpdateCampaignTargetingRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+		}
+		return nil
+	}
+}
+
+// DecodeUpdateCampaignTargetingResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-briefs update-campaign-targeting
+// endpoint. restoreBody controls whether the response body should be restored
+// after having been read.
+// DecodeUpdateCampaignTargetingResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "Forbidden" (type *lfxv2campaignservicebriefs.ForbiddenError): http.StatusForbidden
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "PreconditionFailed" (type *lfxv2campaignservicebriefs.PreconditionFailedError): http.StatusPreconditionFailed
+//   - "PreconditionRequired" (type *lfxv2campaignservicebriefs.PreconditionRequiredError): http.StatusPreconditionRequired
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeUpdateCampaignTargetingResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body UpdateCampaignTargetingResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			err = ValidateUpdateCampaignTargetingResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			var (
+				etag *string
+			)
+			etagRaw := resp.Header.Get("Etag")
+			if etagRaw != "" {
+				etag = &etagRaw
+			}
+			res := NewUpdateCampaignTargetingCampaignOK(&body, etag)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body UpdateCampaignTargetingBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			err = ValidateUpdateCampaignTargetingBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			return nil, NewUpdateCampaignTargetingBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body UpdateCampaignTargetingConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			err = ValidateUpdateCampaignTargetingConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			return nil, NewUpdateCampaignTargetingConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body UpdateCampaignTargetingServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			err = ValidateUpdateCampaignTargetingServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			return nil, NewUpdateCampaignTargetingServiceUnavailable(&body)
+		case http.StatusForbidden:
+			var (
+				body UpdateCampaignTargetingForbiddenResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			err = ValidateUpdateCampaignTargetingForbiddenResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			return nil, NewUpdateCampaignTargetingForbidden(&body)
+		case http.StatusInternalServerError:
+			var (
+				body UpdateCampaignTargetingInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			err = ValidateUpdateCampaignTargetingInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			return nil, NewUpdateCampaignTargetingInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body UpdateCampaignTargetingNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			err = ValidateUpdateCampaignTargetingNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			return nil, NewUpdateCampaignTargetingNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body UpdateCampaignTargetingPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			err = ValidateUpdateCampaignTargetingPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			return nil, NewUpdateCampaignTargetingPayloadTooLarge(&body)
+		case http.StatusPreconditionFailed:
+			var (
+				body UpdateCampaignTargetingPreconditionFailedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			err = ValidateUpdateCampaignTargetingPreconditionFailedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			return nil, NewUpdateCampaignTargetingPreconditionFailed(&body)
+		case http.StatusPreconditionRequired:
+			var (
+				body UpdateCampaignTargetingPreconditionRequiredResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			err = ValidateUpdateCampaignTargetingPreconditionRequiredResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			return nil, NewUpdateCampaignTargetingPreconditionRequired(&body)
+		case http.StatusUnauthorized:
+			var (
+				body UpdateCampaignTargetingUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			err = ValidateUpdateCampaignTargetingUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			return nil, NewUpdateCampaignTargetingUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-targeting", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "update-campaign-targeting", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildApplyKeywordActionsRequest instantiates a HTTP request object with
 // method and path set to call the "lfx-v2-campaign-service-briefs" service
 // "apply-keyword-actions" endpoint
@@ -10233,6 +10511,102 @@ func marshalCampaignUpdateInputRequestBodyToLfxv2campaignservicebriefsCampaignUp
 		CampaignName: v.CampaignName,
 		Status:       v.Status,
 		Config:       v.Config,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsLinkedinTargetingUpdateToLinkedinTargetingUpdateRequestBody
+// builds a value of type *LinkedinTargetingUpdateRequestBody from a value of
+// type *lfxv2campaignservicebriefs.LinkedinTargetingUpdate.
+func marshalLfxv2campaignservicebriefsLinkedinTargetingUpdateToLinkedinTargetingUpdateRequestBody(v *lfxv2campaignservicebriefs.LinkedinTargetingUpdate) *LinkedinTargetingUpdateRequestBody {
+	res := &LinkedinTargetingUpdateRequestBody{}
+	if v.Include != nil {
+		res.Include = make([]map[string][]string, len(v.Include))
+		for i, val := range v.Include {
+			if val == nil {
+				res.Include[i] = nil
+				continue
+			}
+			res.Include[i] = make(map[string][]string, len(val))
+			for key, val := range val {
+				tk := key
+				if val == nil {
+					res.Include[i][tk] = nil
+					continue
+				}
+				tv := make([]string, len(val))
+				for j, val := range val {
+					tv[j] = val
+				}
+				res.Include[i][tk] = tv
+			}
+		}
+	} else {
+		res.Include = []map[string][]string{}
+	}
+	if v.Exclude != nil {
+		res.Exclude = make(map[string][]string, len(v.Exclude))
+		for key, val := range v.Exclude {
+			tk := key
+			if val == nil {
+				res.Exclude[tk] = nil
+				continue
+			}
+			tv := make([]string, len(val))
+			for i, val := range val {
+				tv[i] = val
+			}
+			res.Exclude[tk] = tv
+		}
+	}
+
+	return res
+}
+
+// marshalLinkedinTargetingUpdateRequestBodyToLfxv2campaignservicebriefsLinkedinTargetingUpdate
+// builds a value of type *lfxv2campaignservicebriefs.LinkedinTargetingUpdate
+// from a value of type *LinkedinTargetingUpdateRequestBody.
+func marshalLinkedinTargetingUpdateRequestBodyToLfxv2campaignservicebriefsLinkedinTargetingUpdate(v *LinkedinTargetingUpdateRequestBody) *lfxv2campaignservicebriefs.LinkedinTargetingUpdate {
+	res := &lfxv2campaignservicebriefs.LinkedinTargetingUpdate{}
+	if v.Include != nil {
+		res.Include = make([]map[string][]string, len(v.Include))
+		for i, val := range v.Include {
+			if val == nil {
+				res.Include[i] = nil
+				continue
+			}
+			res.Include[i] = make(map[string][]string, len(val))
+			for key, val := range val {
+				tk := key
+				if val == nil {
+					res.Include[i][tk] = nil
+					continue
+				}
+				tv := make([]string, len(val))
+				for j, val := range val {
+					tv[j] = val
+				}
+				res.Include[i][tk] = tv
+			}
+		}
+	} else {
+		res.Include = []map[string][]string{}
+	}
+	if v.Exclude != nil {
+		res.Exclude = make(map[string][]string, len(v.Exclude))
+		for key, val := range v.Exclude {
+			tk := key
+			if val == nil {
+				res.Exclude[tk] = nil
+				continue
+			}
+			tv := make([]string, len(val))
+			for i, val := range val {
+				tv[i] = val
+			}
+			res.Exclude[tk] = tv
+		}
 	}
 
 	return res
