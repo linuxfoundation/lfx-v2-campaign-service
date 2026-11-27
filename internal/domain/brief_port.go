@@ -180,13 +180,13 @@ type CampaignReader interface {
 	// concurrent delete/adopt cannot leave a formerly live id authorized. Errors fail closed.
 	ListProjectPlatformMonitorCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error)
 
-	// RecordedCampaignProjects maps each of ids to the project this service records it for on
-	// platform, across EVERY project: the account-wide monitor (#672) labels rows with it. The
-	// owner is the project holding it live, else the one that bound it last (the takeover rule
-	// of the deleted monitor scope). An id no row records is absent from the map. Matched on the
-	// id alone, so on a platform whose ids are unique only within an account a same-id campaign
-	// of another account could label a row; the label is informational and grants nothing.
-	RecordedCampaignProjects(ctx context.Context, platform model.Provider, ids []string) (map[string]string, error)
+	// RecordedCampaignOwners returns every row on platform, across EVERY project, that records one
+	// of ids, with its project and provenance, for the account-wide monitor's row labels (#672).
+	// Ordered per id by preference: live rows first, then the latest binding (the takeover rule of
+	// the deleted monitor scope). The caller picks the first whose provenance fits the monitored
+	// account, because on Reddit and X an id is unique only within an account. An id no row
+	// records has no entries.
+	RecordedCampaignOwners(ctx context.Context, platform model.Provider, ids []string) ([]model.RecordedCampaignOwner, error)
 
 	// ListRecentProjectPlatformCampaigns returns at most limit of the project's campaigns on
 	// platform that have an upstream id — SOFT-DELETED ONES INCLUDED (a local delete does not

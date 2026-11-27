@@ -23,6 +23,12 @@ func (s *ConnectionService) SetMarketingOpsChecker(c MarketingOpsChecker) {
 	s.marketingOps = c
 }
 
+// HasMarketingOpsChecker reports whether a checker is injected, so the container can prove its
+// wiring: without one every scope=account read is refused with 503.
+func (s *ConnectionService) HasMarketingOpsChecker() bool {
+	return s.marketingOpsChecker() != nil
+}
+
 func (s *ConnectionService) marketingOpsChecker() MarketingOpsChecker {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

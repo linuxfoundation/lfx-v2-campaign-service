@@ -823,8 +823,8 @@ func (r *campaignEditRepo) ListProjectPlatformMonitorCampaignIDs(context.Context
 	return nil, nil
 }
 
-func (r *campaignEditRepo) RecordedCampaignProjects(context.Context, model.Provider, []string) (map[string]string, error) {
-	return map[string]string{}, nil
+func (r *campaignEditRepo) RecordedCampaignOwners(context.Context, model.Provider, []string) ([]model.RecordedCampaignOwner, error) {
+	return nil, nil
 }
 
 func (r *campaignEditRepo) ListRecentProjectPlatformCampaigns(context.Context, string, model.Provider, int) ([]*model.Campaign, error) {

@@ -3395,7 +3395,7 @@ func (o *Orchestrator) readAccountCampaignMetrics(ctx context.Context, projectID
 		read.Rows = filterMonitorRows(read.Rows, scopeIDs)
 	}
 	if accountWide {
-		if err := o.labelRecordedProjects(ctx, platform, read.Rows); err != nil {
+		if err := o.labelRecordedProjects(ctx, platform, accountID, read.Rows); err != nil {
 			return nil, err
 		}
 	}
@@ -3418,18 +3418,36 @@ func (o *Orchestrator) monitorScope(ctx context.Context, projectID string, platf
 }
 
 // labelRecordedProjects sets each row's RecordedProjectID from this service's own records, in
-// one query. A failure fails the read: a row unlabeled because the lookup failed would read as
-// "created outside LFX", which is a claim nobody made.
-func (o *Orchestrator) labelRecordedProjects(ctx context.Context, platform model.Provider, rows []model.AccountCampaignMetrics) error {
+// one query. Of the rows recording an id, the first (live, else latest) whose provenance fits
+// accountID labels it: on Reddit and X an id is unique only within an account, so a same-id
+// campaign recorded under ANOTHER account (the platform scoper's ErrCampaignAccountMismatch) is
+// skipped rather than lending its project to an external campaign. A row the scoper cannot place
+// for any other reason (no recorded account, say) still labels it, as the project-scoped read
+// would have counted it. A failure fails the read: a row unlabeled because the lookup failed
+// would read as "created outside LFX", which is a claim nobody made.
+func (o *Orchestrator) labelRecordedProjects(ctx context.Context, platform model.Provider, accountID string, rows []model.AccountCampaignMetrics) error {
 	ids := make([]string, 0, len(rows))
 	for _, r := range rows {
 		if r.PlatformCampaignID != "" {
 			ids = append(ids, r.PlatformCampaignID)
 		}
 	}
-	owners, err := o.campaigns.RecordedCampaignProjects(ctx, platform, ids)
+	candidates, err := o.campaigns.RecordedCampaignOwners(ctx, platform, ids)
 	if err != nil {
 		return fmt.Errorf("label account monitor rows on %s: %w", platform, err)
+	}
+	scoper, _ := o.dispatchers[platform].(AccountMonitorScoper)
+	owners := make(map[string]string, len(candidates))
+	for _, c := range candidates {
+		if _, done := owners[c.PlatformCampaignID]; done {
+			continue
+		}
+		if scoper != nil {
+			if _, serr := scoper.MonitorScopeForAccount([]model.ProjectCampaignScope{c.ProjectCampaignScope}, accountID); errors.Is(serr, domain.ErrCampaignAccountMismatch) {
+				continue
+			}
+		}
+		owners[c.PlatformCampaignID] = c.ProjectID
 	}
 	for i := range rows {
 		rows[i].RecordedProjectID = owners[rows[i].PlatformCampaignID]

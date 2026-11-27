@@ -1099,6 +1099,14 @@ func (r *CampaignSettingsReadback) SummariseSettings() {
 // would let a stale id address a DIFFERENT customer's campaign of the same number — the very
 // invariant ReadMetrics and the keyword mutation already fail closed on. Carrying Result means
 // the adapter can apply that same check rather than trusting the id.
+// RecordedCampaignOwner is one row recording an upstream campaign id for a project, with its
+// provenance blob, for labelling an account-wide monitor row (#672).
+type RecordedCampaignOwner struct {
+	ProjectCampaignScope
+	ProjectID string
+}
+
+// ProjectCampaignScope is one recorded upstream campaign id and its provenance.
 type ProjectCampaignScope struct {
 	// PlatformCampaignID is the upstream campaign id, as recorded when it was dispatched.
 	PlatformCampaignID string

@@ -59,7 +59,8 @@ const (
 // Microsoft's monitor is account-wide already.
 func monitorScopeAttr() {
 	Attribute("scope", String, "Optional (#672). Omitted, only this project's own recorded campaigns are returned. "+
-		"\"account\" returns every campaign on the account, whoever created it, each row naming the project it is "+
+		"\"account\" returns every campaign on the account, whoever created it (on Google Ads, except the operator's "+
+		"\"zz\" scratch campaigns, which its rules hide on every read), each row naming the project it is "+
 		"recorded for (recorded_project_id, absent when it was not created or adopted through this service). "+
 		"Requires global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked) and "+
 		"ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400 otherwise). Where account_id is optional "+

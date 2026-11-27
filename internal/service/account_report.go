@@ -217,7 +217,7 @@ func (o *Orchestrator) readReportedAccountCampaigns(ctx context.Context, project
 		read.Rows = filterMonitorRows(read.Rows, scopeIDs)
 	}
 	if accountWide {
-		if err := o.labelRecordedProjects(ctx, platform, read.Rows); err != nil {
+		if err := o.labelRecordedProjects(ctx, platform, accountID, read.Rows); err != nil {
 			return nil, err
 		}
 	}

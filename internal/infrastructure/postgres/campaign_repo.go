@@ -693,35 +693,36 @@ func (r *CampaignRepo) ListProjectPlatformMonitorCampaignIDs(ctx context.Context
 	return r.queryProjectCampaignScope(ctx, listProjectPlatformMonitorCampaignIDsQuery, "project platform monitor campaign ids", projectID, platform)
 }
 
-// recordedCampaignProjectsQuery names one owning project per upstream id: a live row first, then
-// the latest binding (platform_bound_at, else created_at), as monitorCampaignNotTakenOver ranks
-// them. Deliberately NOT scoped by project: it serves the account-wide monitor (#672), which only
-// global_marketing_ops reaches, and it returns project ids, nothing else from the rows.
-const recordedCampaignProjectsQuery = `SELECT DISTINCT ON (platform_campaign_id) platform_campaign_id, project_id FROM campaigns
+// recordedCampaignOwnersQuery lists every row recording one of the ids, each id's rows ranked
+// as monitorCampaignNotTakenOver ranks owners: live first, then the latest binding
+// (platform_bound_at, else created_at). Deliberately NOT scoped by project: it serves the
+// account-wide monitor (#672), which only global_marketing_ops reaches, and it returns only the
+// id, project and provenance blob.
+const recordedCampaignOwnersQuery = `SELECT platform_campaign_id, project_id, result FROM campaigns
 	WHERE platform=$1 AND platform_campaign_id = ANY($2)
 	ORDER BY platform_campaign_id, (status <> 'deleted') DESC, COALESCE(platform_bound_at, created_at) DESC, id DESC`
 
-// RecordedCampaignProjects maps each of ids to the project recording it on platform. An empty
-// ids answers an empty map without a query.
-func (r *CampaignRepo) RecordedCampaignProjects(ctx context.Context, platform model.Provider, ids []string) (map[string]string, error) {
-	out := make(map[string]string, len(ids))
+// RecordedCampaignOwners lists the rows recording ids on platform, in preference order per id.
+// An empty ids answers an empty slice without a query.
+func (r *CampaignRepo) RecordedCampaignOwners(ctx context.Context, platform model.Provider, ids []string) ([]model.RecordedCampaignOwner, error) {
+	out := make([]model.RecordedCampaignOwner, 0, len(ids))
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := r.db.Query(ctx, recordedCampaignProjectsQuery, string(platform), ids)
+	rows, err := r.db.Query(ctx, recordedCampaignOwnersQuery, string(platform), ids)
 	if err != nil {
-		return nil, fmt.Errorf("list recorded campaign projects: %w", err)
+		return nil, fmt.Errorf("list recorded campaign owners: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, projectID string
-		if serr := rows.Scan(&id, &projectID); serr != nil {
-			return nil, fmt.Errorf("scan recorded campaign projects: %w", serr)
+		var o model.RecordedCampaignOwner
+		if serr := rows.Scan(&o.PlatformCampaignID, &o.ProjectID, &o.Result); serr != nil {
+			return nil, fmt.Errorf("scan recorded campaign owners: %w", serr)
 		}
-		out[id] = projectID
+		out = append(out, o)
 	}
 	if rerr := rows.Err(); rerr != nil {
-		return nil, fmt.Errorf("iterate recorded campaign projects: %w", rerr)
+		return nil, fmt.Errorf("iterate recorded campaign owners: %w", rerr)
 	}
 	return out, nil
 }

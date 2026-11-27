@@ -10,3 +10,7 @@ and only while `ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED` is `true` (400 otherwise;
 
 `accesscheck.Checker.IsGlobalMarketingOps` now takes a project UUID as the object directly instead
 of sending it to `slug_to_uid`, which never resolves one; the connection routes accept either form.
+
+Row labels skip a record whose provenance places the id under a different account (Reddit and X
+ids are unique only within an account), via `CampaignRepository.RecordedCampaignOwners`; Google
+Ads' scratch-campaign filter still applies to account-wide reads.

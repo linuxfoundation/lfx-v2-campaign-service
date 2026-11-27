@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -16,8 +17,8 @@ import (
 // The account monitors' scope=account read (#672): every campaign on the account, labeled with
 // the project that recorded it, for global_marketing_ops only and only while the flag is on.
 //
-// These tests inject the checker themselves. The container's newConnectionService wiring of
-// marketingOpsChecker is not covered here: without it the read fails closed (503), never open.
+// These tests inject the checker themselves; container_test's
+// TestNewConnectionService_InjectsMarketingOpsChecker covers the container's wiring.
 
 func TestAdmitAccountWideMonitor(t *testing.T) {
 	scope := strPtr(monitorScopeAccount)
@@ -230,4 +231,50 @@ func accountWideCall(t *testing.T, provider model.Provider, svc *ConnectionServi
 	}
 	t.Fatalf("no account-wide call for %s", provider)
 	return nil, nil
+}
+
+// On an account-local id (Reddit, X), a same-id campaign recorded under ANOTHER account must not
+// label this account's row: the first candidate whose provenance fits the monitored account wins,
+// and with none the row reads as created outside LFX.
+func TestMonitorAccount_AccountWideLabelSkipsAnotherAccountsRecord(t *testing.T) {
+	t.Setenv(constants.EnvAccountMonitorAccountScopeEnabled, "true")
+	tc := scopedLiveCases()[2] // reddit, account a2_owner
+	other := json.RawMessage(`{"account":"a2_other"}`)
+	own := json.RawMessage(`{"account":"a2_owner"}`)
+	for _, c := range []struct {
+		name   string
+		owners []model.RecordedCampaignOwner
+		want   *string
+	}{
+		{name: "only another account records it", owners: []model.RecordedCampaignOwner{
+			{ProjectCampaignScope: model.ProjectCampaignScope{PlatformCampaignID: "c2", Result: other}, ProjectID: "q"},
+		}},
+		{name: "another account's record ranks first", owners: []model.RecordedCampaignOwner{
+			{ProjectCampaignScope: model.ProjectCampaignScope{PlatformCampaignID: "c2", Result: other}, ProjectID: "q"},
+			{ProjectCampaignScope: model.ProjectCampaignScope{PlatformCampaignID: "c2", Result: own}, ProjectID: "p"},
+		}, want: strPtr("p")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			repo := scopeRepo([]string{"c1"}, nil)
+			repo.recordedOwners = c.owners
+			svc := liveScopeService(tc.provider,
+				&scopedLiveDispatcher{mockAccountMetricsReaderDispatcher: mockAccountMetricsReaderDispatcher{rows: tc.live}}, repo)
+			svc.SetMarketingOpsChecker(&fakeMarketingOps{allow: true})
+			got, err := accountWideCall(t, tc.provider, svc, tc.account)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, row := range got.Campaigns {
+				if row.PlatformCampaignID != "c2" {
+					continue
+				}
+				switch {
+				case c.want == nil && row.RecordedProjectID != nil:
+					t.Errorf("c2 recorded_project_id = %q, want absent", *row.RecordedProjectID)
+				case c.want != nil && (row.RecordedProjectID == nil || *row.RecordedProjectID != *c.want):
+					t.Errorf("c2 recorded_project_id = %v, want %s", row.RecordedProjectID, *c.want)
+				}
+			}
+		})
+	}
 }
