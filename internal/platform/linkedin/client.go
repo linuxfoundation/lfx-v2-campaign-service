@@ -1747,7 +1747,7 @@ func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, n
 		// videos and post the dark posts before LinkedIn refused the first creative. Refused here,
 		// before any upload. An unreported format cannot contradict: a campaign with no creative
 		// yet takes its format from the first one. Nor can UNSUPPORTED, which LinkedIn reports for
-		// a document campaign until its creative is attached (#690).
+		// a document campaign until its creative is attached (#690), whatever format is requested.
 		// A CAROUSEL campaign (#665) is told apart the same way: it takes only carousel creatives.
 		if el.Format != "" && el.Format != campaignFormatUnsupported && campaignType == campaignTypeSponsoredUpdates && sponsoredFormatKind(el.Format) != sponsoredFormatKind(campaignFormat) {
 			want := "an image format"

@@ -7,7 +7,10 @@ partial failure (campaign created, dark post or creative failed) aborted with "a
 with format UNSUPPORTED".
 
 - `UNSUPPORTED` (`campaignFormatUnsupported`) is now treated like an unreported format in the
-  format check: it cannot contradict the requested format. Image campaigns were not affected, and
+  format check: it cannot contradict the requested format, whichever that is. Like an unreported
+  format, it marks a campaign with no creative yet, which takes its format from the first one, so a
+  same-name `UNSUPPORTED` campaign is reused by a video or carousel create too (only a hand-made one
+  can collide, since the Ad Format name segment differs). Image creates already reused it, and
   video and carousel campaigns set their format at create.
 
 Tests: `TestFindCampaignByNameInGroup_DocumentIsItsOwnFormat` gains a row where a document retry
