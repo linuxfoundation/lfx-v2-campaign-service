@@ -6089,8 +6089,9 @@ compares `AdCount` against `metaRequestedAds` (one for a carousel), so a created
 `LinkedInDispatcher` a `service.TargetingWriter`. `WriteTargeting` refuses (400, `rejectedTargetingError`
 wrapping `domain.ErrTargetingRejected`) while `LINKEDIN_ADS_TARGETING_UPDATE_ENABLED` is not exactly
 `"true"`, then applies the bid lever's row guards (provenance, adopted, verbatim campaign id →
-`ErrTargetingUnwritable`), reads the row's `config_snapshot` for the `employerExclusions` recorded at
-create (none or undecodable → 409), runs `linkedin.PrepareTargetingUpdate` (400 with the rule's
+`ErrTargetingUnwritable`), reads the create-time `employerExclusions` from the row's service-owned
+result blob (`CampaignResult.EmployerExclusions`, which `campaignFromLinkedIn` records non-nil since
+#666; never the caller-editable `config_snapshot`; not recorded → 409), runs `linkedin.PrepareTargetingUpdate` (400 with the rule's
 sentence), resolves the connection, checks the account and status LinkedIn reports, and sends
 `UpdateCampaignTargeting` once. Unconfirmed → `unconfirmedTargetingWriteError`; LinkedIn's definite
 400/422 → 400. On success `campaign.ConfigSnapshot` gets the sent `targeting` and `geoTargets` (known

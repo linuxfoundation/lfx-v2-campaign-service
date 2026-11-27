@@ -60,10 +60,10 @@ var errLinkedInTargetingUpdateDisabled = fmt.Sprintf("LinkedIn targeting updates
 // the campaign's targetingCriteria with change, built by the same builder and refusal rules as
 // linkedInConfig.targeting at create (#557), after the same identity guards as the bid lever.
 //
-// THE ROW SUPPLIES WHAT THE REQUEST DOES NOT. The update merges the employerExclusions the row's
-// config snapshot recorded at create (the staff exclusions the self-serve BFF fills from its
-// ConfigMap), so an update cannot silently drop them. A row with no snapshot, or one that does
-// not decode, is refused (409) rather than updated without them.
+// THE ROW SUPPLIES WHAT THE REQUEST DOES NOT. The update merges the employerExclusions the create
+// recorded in the row's service-owned result blob (the staff exclusions the self-serve BFF fills
+// from its ConfigMap), never the caller-replaceable config snapshot, so an update cannot silently
+// drop them. A row that does not record them is refused (409) rather than updated without them.
 //
 // ADOPTED ROWS ARE REFUSED, as by the bid lever: adoption verified identity, not the locale or the
 // staff exclusions this update would assume.
@@ -88,13 +88,14 @@ func (d *LinkedInDispatcher) WriteTargeting(ctx context.Context, projectID strin
 	if err := linkedin.ValidateCampaignID(campaignID); err != nil {
 		return fmt.Errorf("write linkedin campaign targeting: the campaign row's platform campaign id cannot address a linkedin request: %w: %w", err, domain.ErrTargetingUnwritable)
 	}
-	snap, err := linkedinTargetingSnapshot(campaign.ConfigSnapshot)
+	exclusions, err := linkedinRecordedEmployerExclusions(campaign)
 	if err != nil {
 		return fmt.Errorf("write linkedin campaign targeting: campaign %s: %w: %w", campaignID, err, domain.ErrTargetingUnwritable)
 	}
+	snap := linkedinTargetingSnapshot(campaign.ConfigSnapshot)
 
 	// THE REQUEST — a pure function of it and the row, refused before any call (400).
-	update, err := linkedin.PrepareTargetingUpdate(&linkedin.Targeting{Include: change.Include, Exclude: change.Exclude}, change.GeoTargets, snap.EmployerExclusions)
+	update, err := linkedin.PrepareTargetingUpdate(&linkedin.Targeting{Include: change.Include, Exclude: change.Exclude}, change.GeoTargets, exclusions)
 	if err != nil {
 		reason, _ := linkedin.TargetingUpdateReason(err)
 		return targetingRejected("targeting: "+reason, err)
@@ -163,33 +164,46 @@ func (d *LinkedInDispatcher) WriteTargeting(ctx context.Context, projectID strin
 	return nil
 }
 
-// linkedinRowSnapshot is the part of a LinkedIn row's config_snapshot the update reads, plus the
-// decoded object it rewrites.
-type linkedinRowSnapshot struct {
-	EmployerExclusions []string
-	GeoTargets         []linkedin.GeoTarget
-	fields             map[string]json.RawMessage
+// linkedinRecordedEmployerExclusions returns the employer exclusions the create recorded in the
+// row's service-owned result blob (CampaignResult.EmployerExclusions). They are read from there,
+// never from config_snapshot, which a caller's campaign update (PUT .../campaigns/{id}) can
+// replace: a snapshot edited to {} would otherwise let the next update drop the staff exclusions
+// silently. A row that does not record them (created before #666, or a result that does not
+// decode) is an error, so the update is refused rather than sent without them.
+func linkedinRecordedEmployerExclusions(campaign *model.Campaign) ([]string, error) {
+	var blob struct {
+		EmployerExclusions *[]string `json:"employerExclusions"`
+	}
+	if len(campaign.Result) == 0 || json.Unmarshal(campaign.Result, &blob) != nil || blob.EmployerExclusions == nil {
+		return nil, errors.New("the campaign row does not record the employer exclusions it was created with (rows created before #666 do not), so an update cannot carry them; change the targeting in LinkedIn Campaign Manager")
+	}
+	return *blob.EmployerExclusions, nil
 }
 
-// linkedinTargetingSnapshot decodes a LinkedIn row's config_snapshot (linkedinSnapshotConfig's
-// JSON). An empty or undecodable snapshot is an error: the row does not record the employer
-// exclusions the update must carry.
-func linkedinTargetingSnapshot(raw json.RawMessage) (*linkedinRowSnapshot, error) {
-	if len(raw) == 0 || isJSONNull(raw) {
-		return nil, errors.New("the campaign row records no config snapshot, so the employer exclusions it was created with cannot be carried into an update")
-	}
+// linkedinRowSnapshot is the decoded config_snapshot the update rewrites. Only its geo labels are
+// read, for display; nothing the write depends on comes from it.
+type linkedinRowSnapshot struct {
+	GeoTargets []linkedin.GeoTarget
+	fields     map[string]json.RawMessage
+}
+
+// linkedinTargetingSnapshot decodes a LinkedIn row's config_snapshot for the rewrite. A missing or
+// non-object snapshot (a caller may have replaced it) is treated as empty: the rewrite then records
+// just the targeting and locations sent.
+func linkedinTargetingSnapshot(raw json.RawMessage) *linkedinRowSnapshot {
+	out := &linkedinRowSnapshot{fields: map[string]json.RawMessage{}}
 	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
-		return nil, errors.New("the campaign row's config snapshot is not a JSON object")
+	if len(raw) == 0 || json.Unmarshal(raw, &fields) != nil || fields == nil {
+		return out
 	}
+	out.fields = fields
 	var typed struct {
-		EmployerExclusions []string             `json:"employerExclusions"`
-		GeoTargets         []linkedin.GeoTarget `json:"geoTargets"`
+		GeoTargets []linkedin.GeoTarget `json:"geoTargets"`
 	}
-	if err := json.Unmarshal(raw, &typed); err != nil {
-		return nil, errors.New("the campaign row's config snapshot does not decode as a LinkedIn config")
+	if json.Unmarshal(raw, &typed) == nil {
+		out.GeoTargets = typed.GeoTargets
 	}
-	return &linkedinRowSnapshot{EmployerExclusions: typed.EmployerExclusions, GeoTargets: typed.GeoTargets, fields: fields}, nil
+	return out
 }
 
 // withTargeting returns the snapshot with targeting and geoTargets replaced by what the update

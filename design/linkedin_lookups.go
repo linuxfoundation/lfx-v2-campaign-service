@@ -402,4 +402,13 @@ var LinkedInTargetingUpdate = Type("linkedin-targeting-update", func() {
 	})
 	Attribute("exclude", MapOf(String, ArrayOf(String)), "ORed exclusions: {<facet>: [urn, ...]}. groups and interfaceLocales are include-only.")
 	Required("include")
+	// An explicit, valid example: Goa's generated one invents facet names and values, which
+	// ValidateTargeting refuses (cs#688 review).
+	Example(map[string]any{
+		"include": []map[string][]string{
+			{"skills": {"urn:li:skill:17"}},
+			{"seniorities": {"urn:li:seniority:5", "urn:li:seniority:6"}},
+		},
+		"exclude": map[string][]string{"employers": {"urn:li:organization:1337"}},
+	})
 })

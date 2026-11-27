@@ -3506,8 +3506,9 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"THE WHOLE TARGETING, NEVER A DELTA: LinkedIn's PARTIAL_UPDATE $set replaces targetingCriteria " +
 			"wholesale, so `targeting` and `geo_targets` state the complete audience. `targeting` takes " +
 			"linkedInConfig.targeting's shape and rules (include 1 to 10 ANDed clauses of ORed facets, exclude " +
-			"ORed, the same facets, URN shapes, caps and refused combinations); the employerExclusions the row " +
-			"recorded at create are merged into exclude.employers, as at create. When no include clause names " +
+			"ORed, the same facets, URN shapes, caps and refused combinations); the employerExclusions the create " +
+			"recorded in the row's service-owned result (never the caller-editable config snapshot) are merged into " +
+			"exclude.employers. When no include clause names " +
 			"interfaceLocales the update adds one clause {interfaceLocales: [urn:li:locale:en_US]}, the locale " +
 			"every create sends, so the audience keeps the language it had; ten clauses with no interfaceLocales " +
 			"are refused. Status, budget, bidding and the delivery options are never sent. " +
@@ -3515,7 +3516,8 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked). " +
 			"Behind LINKEDIN_ADS_TARGETING_UPDATE_ENABLED, off by default (400 while off). " +
 			"**409** when refused BEFORE LinkedIn is written: the campaign is unprovisioned or still provisioning, " +
-			"was adopted, does not record its ad account or its config snapshot, belongs to another ad account than " +
+			"was adopted, does not record its ad account or the employer exclusions it was created with (rows created " +
+			"before #666), belongs to another ad account than " +
 			"the connection now resolves to, or LinkedIn reports it terminal or omits its account or status. " +
 			"**400** for a request fault: the gate off, a targeting or geo_targets the rules refuse, a platform " +
 			"without the capability, or LinkedIn's definite refusal of the targeting — the response names which. " +
@@ -3541,6 +3543,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			}), "The complete locations: 1 to 100 urn:li:geo:<id> URNs (duplicates dropped). They form the first ANDed clause, as at create.", func() {
 				MinLength(1)
 				MaxLength(100)
+				Example([]string{"urn:li:geo:103644278", "urn:li:geo:101282230"})
 			})
 			Required("project_id", "brief_id", "campaign_id", "targeting", "geo_targets")
 		})

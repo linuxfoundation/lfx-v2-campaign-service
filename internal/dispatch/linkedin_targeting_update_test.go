@@ -24,8 +24,13 @@ const liTargetingSnapshot = `{"budgetUsd":100,"geoTargets":[{"label":"United Sta
 	`"employerExclusions":["urn:li:organization:208777"],"targetingProfile":"cloud-native","jobFunctions":["urn:li:function:8"],` +
 	`"targetingProfiles":[{"id":"cloud-native"}],"variants":[{"headline":"KubeCon"}]}`
 
+// liTargetingResult is a row's result blob as campaignFromLinkedIn records it since #666: the
+// create-time employer exclusions sit in service-owned data.
+const liTargetingResult = `{"accountId":"123456789","campaignId":"777","campaignGroupId":"42","employerExclusions":["urn:li:organization:208777"]}`
+
 func liTargetingRow() *model.Campaign {
 	row := liRow()
+	row.Result = []byte(liTargetingResult)
 	row.ConfigSnapshot = json.RawMessage(liTargetingSnapshot)
 	return row
 }
@@ -82,14 +87,14 @@ func TestLinkedIn_WriteTargeting_ReadsThenWritesTheCriteriaAndRecordsIt(t *testi
 // Every refusal decided by the gate, the row or the request alone sends nothing.
 func TestLinkedIn_WriteTargeting_RefusesBeforeAnyRequest(t *testing.T) {
 	adopted := liTargetingRow()
-	adopted.Result = []byte(`{"accountId":"123456789","adopted":true}`)
+	adopted.Result = []byte(`{"accountId":"123456789","adopted":true,"employerExclusions":[]}`)
 	unknown := liTargetingRow()
 	unknown.Result = []byte(`{}`)
 	padded := liTargetingRow()
 	padded.PlatformCampaignID = " 777"
-	noSnapshot := liRow()
-	badSnapshot := liTargetingRow()
-	badSnapshot.ConfigSnapshot = json.RawMessage(`[1]`)
+	// A row created before #666 records no exclusions in its result: refused, never sent without them.
+	unrecorded := liTargetingRow()
+	unrecorded.Result = liRow().Result
 	badTargeting := liTargetingChange()
 	badTargeting.Include = []map[string][]string{{"titles": {"urn:li:title:1"}, "seniorities": {"urn:li:seniority:3"}}}
 	noGeo := liTargetingChange()
@@ -114,8 +119,7 @@ func TestLinkedIn_WriteTargeting_RefusesBeforeAnyRequest(t *testing.T) {
 			return errors.Is(e, domain.ErrCampaignProvenanceUnknown) && errors.Is(e, domain.ErrCampaignAccountMismatch)
 		}},
 		{"padded stored id", "true", padded, liTargetingChange(), func(e error) bool { return errors.Is(e, domain.ErrTargetingUnwritable) }},
-		{"no snapshot", "true", noSnapshot, liTargetingChange(), func(e error) bool { return errors.Is(e, domain.ErrTargetingUnwritable) }},
-		{"snapshot not an object", "true", badSnapshot, liTargetingChange(), func(e error) bool { return errors.Is(e, domain.ErrTargetingUnwritable) }},
+		{"exclusions not recorded", "true", unrecorded, liTargetingChange(), func(e error) bool { return errors.Is(e, domain.ErrTargetingUnwritable) }},
 		{"invalid combination", "true", liTargetingRow(), badTargeting, func(e error) bool {
 			return errors.Is(e, domain.ErrTargetingRejected) && strings.HasPrefix(rejectedReason(e), "targeting: ")
 		}},
@@ -150,6 +154,61 @@ func rejectedReason(err error) string {
 		return r.TargetingRejectedReason()
 	}
 	return ""
+}
+
+// The create-time exclusions come from the service-owned result blob, so a caller's campaign
+// update that replaced config_snapshot (PUT .../campaigns/{id} with config {} or a forged empty
+// list) cannot make the next targeting update drop them (cs#688 review).
+func TestLinkedIn_WriteTargeting_ExclusionsSurviveACallerReplacedSnapshot(t *testing.T) {
+	t.Setenv(constants.EnvLinkedInAdsTargetingUpdateEnabled, "true")
+	for name, snapshot := range map[string]string{
+		"config {}":          `{}`,
+		"forged empty list":  `{"employerExclusions":[]}`,
+		"not an object":      `[1]`,
+		"no snapshot at all": ``,
+	} {
+		t.Run(name, func(t *testing.T) {
+			d, api := liLeverDispatcher(t, map[string]settingsRoute{liCampaignPath: {status: 200, body: liCampaignJSON()}})
+			row := liTargetingRow()
+			row.ConfigSnapshot = json.RawMessage(snapshot)
+			if err := writeLITargeting(d, row, liTargetingChange()); err != nil {
+				t.Fatalf("WriteTargeting: %v", err)
+			}
+			posts := liPosts(api.requests())
+			if len(posts) != 1 || !strings.Contains(posts[0].Body, "urn:li:organization:208777") {
+				t.Fatalf("the write dropped the create-time staff exclusion: %+v", posts)
+			}
+			if !strings.Contains(string(row.ConfigSnapshot), `"targeting"`) {
+				t.Errorf("snapshot = %s, want the sent targeting recorded", row.ConfigSnapshot)
+			}
+		})
+	}
+}
+
+// The create records its employer exclusions in the result blob, non-nil even when there are none,
+// so the lever can tell "none" from "not recorded".
+func TestCampaignFromLinkedIn_RecordsEmployerExclusionsInTheResult(t *testing.T) {
+	for name, tc := range map[string]struct {
+		cfg  []string
+		want string
+	}{
+		"some": {[]string{"urn:li:organization:208777"}, `["urn:li:organization:208777"]`},
+		"none": {nil, `[]`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := campaignFromLinkedIn(context.Background(), &linkedin.CampaignResult{CampaignID: "777"}, 0, linkedinConfig{EmployerExclusions: tc.cfg})
+			var blob struct {
+				EmployerExclusions json.RawMessage `json:"employerExclusions"`
+			}
+			if err := json.Unmarshal(c.Result, &blob); err != nil || string(blob.EmployerExclusions) != tc.want {
+				t.Fatalf("result = %s, want employerExclusions %s", c.Result, tc.want)
+			}
+			got, err := linkedinRecordedEmployerExclusions(c)
+			if err != nil || len(got) != len(tc.cfg) {
+				t.Fatalf("read back %v, %v", got, err)
+			}
+		})
+	}
 }
 
 // What LinkedIn reports about the campaign is checked before the write.

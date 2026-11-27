@@ -428,6 +428,12 @@ type CampaignResult struct {
 	// TargetCost is the automatic target (#674) this run created the campaign with, as the USD
 	// unitCost amount string it sent; set beside BidApplied, omitted when the create named none.
 	TargetCost string `json:"targetCost,omitempty"`
+	// EmployerExclusions are the configured employer exclusions this create merged into the
+	// targeting (#666), recorded so the targeting update lever re-merges the create-time list from
+	// service-owned data rather than from the caller-replaceable config snapshot. Non-nil (possibly
+	// empty) on every row the dispatcher persists since #666; nil on older rows, which the lever
+	// refuses because their list cannot be established. Set by the dispatcher, not CreateCampaign.
+	EmployerExclusions *[]string `json:"employerExclusions,omitempty"`
 	// ConversionsAssociated and ConversionsFailed split CampaignInput.Conversions (#552) by
 	// whether this run's Campaign Conversions PUT succeeded. Omitted when none were requested.
 	// A non-empty ConversionsFailed makes the dispatcher report the campaign created_degraded.
