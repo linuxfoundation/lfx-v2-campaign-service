@@ -3210,7 +3210,10 @@ type MonitorGoogleAdsAccountPayload struct {
 	// absent when it was not created or adopted through this service). Requires
 	// global_marketing_ops on the project (403 otherwise, 503 when the role cannot
 	// be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400
-	// otherwise).
+	// otherwise). Where account_id is optional (Google Ads, LinkedIn) and omitted,
+	// the account is still the one this project's campaigns were created under, so
+	// a project with none recorded gets an empty monitor; name account_id to read
+	// another.
 	Scope *string
 }
 
@@ -3244,7 +3247,10 @@ type MonitorLinkedinAdsAccountPayload struct {
 	// absent when it was not created or adopted through this service). Requires
 	// global_marketing_ops on the project (403 otherwise, 503 when the role cannot
 	// be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400
-	// otherwise).
+	// otherwise). Where account_id is optional (Google Ads, LinkedIn) and omitted,
+	// the account is still the one this project's campaigns were created under, so
+	// a project with none recorded gets an empty monitor; name account_id to read
+	// another.
 	Scope *string
 }
 
@@ -3265,7 +3271,10 @@ type MonitorMetaAdsAccountPayload struct {
 	// absent when it was not created or adopted through this service). Requires
 	// global_marketing_ops on the project (403 otherwise, 503 when the role cannot
 	// be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400
-	// otherwise).
+	// otherwise). Where account_id is optional (Google Ads, LinkedIn) and omitted,
+	// the account is still the one this project's campaigns were created under, so
+	// a project with none recorded gets an empty monitor; name account_id to read
+	// another.
 	Scope *string
 }
 
@@ -3301,7 +3310,10 @@ type MonitorRedditAdsAccountPayload struct {
 	// absent when it was not created or adopted through this service). Requires
 	// global_marketing_ops on the project (403 otherwise, 503 when the role cannot
 	// be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400
-	// otherwise).
+	// otherwise). Where account_id is optional (Google Ads, LinkedIn) and omitted,
+	// the account is still the one this project's campaigns were created under, so
+	// a project with none recorded gets an empty monitor; name account_id to read
+	// another.
 	Scope *string
 }
 
@@ -3323,7 +3335,10 @@ type MonitorTwitterAdsAccountPayload struct {
 	// absent when it was not created or adopted through this service). Requires
 	// global_marketing_ops on the project (403 otherwise, 503 when the role cannot
 	// be checked) and ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400
-	// otherwise).
+	// otherwise). Where account_id is optional (Google Ads, LinkedIn) and omitted,
+	// the account is still the one this project's campaigns were created under, so
+	// a project with none recorded gets an empty monitor; name account_id to read
+	// another.
 	Scope *string
 }
 

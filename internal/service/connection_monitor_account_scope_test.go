@@ -15,6 +15,9 @@ import (
 
 // The account monitors' scope=account read (#672): every campaign on the account, labeled with
 // the project that recorded it, for global_marketing_ops only and only while the flag is on.
+//
+// These tests inject the checker themselves. The container's newConnectionService wiring of
+// marketingOpsChecker is not covered here: without it the read fails closed (503), never open.
 
 func TestAdmitAccountWideMonitor(t *testing.T) {
 	scope := strPtr(monitorScopeAccount)
@@ -85,7 +88,16 @@ func TestAdmitAccountWideMonitor_ChecksProjectAndActor(t *testing.T) {
 // row naming its recording project (absent for one created outside LFX), and totals over all.
 func TestMonitorAccount_AccountWideReturnsEveryCampaignLabeled(t *testing.T) {
 	t.Setenv(constants.EnvAccountMonitorAccountScopeEnabled, "true")
-	for _, tc := range scopedLiveCases() {
+	cases := append(scopedLiveCases(), scopedMonitorCase{
+		// LinkedIn reaches monitorAccount through defaultMonitorAccountID, and its system row
+		// serves several foundations' accounts: the platform where this read matters most.
+		name: "linkedin", provider: model.ProviderLinkedInAds, account: "512345678",
+		live: []model.AccountCampaignMetrics{
+			{PlatformCampaignID: "c1", Name: "own", Status: "ACTIVE", BudgetDay: 50, Spend: 5, Impressions: 100, Clicks: 2},
+			{PlatformCampaignID: "c2", Name: "other foundation", Status: "ACTIVE"},
+		},
+	})
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := scopeRepo([]string{"c1"}, nil)
 			repo.recordedProjects = map[string]string{"c1": "p"}
@@ -97,23 +109,9 @@ func TestMonitorAccount_AccountWideReturnsEveryCampaignLabeled(t *testing.T) {
 			if err != nil {
 				t.Fatalf("account-wide read: %v", err)
 			}
-			if ids := campaignIDs(got); len(ids) != 2 {
-				t.Fatalf("campaigns = %v, want both c1 and c2", ids)
-			}
+			assertAccountWideLabels(t, got)
 			if got.Totals.CampaignCount != 2 {
 				t.Errorf("campaign_count = %d, want 2", got.Totals.CampaignCount)
-			}
-			for _, c := range got.Campaigns {
-				switch c.PlatformCampaignID {
-				case "c1":
-					if c.RecordedProjectID == nil || *c.RecordedProjectID != "p" {
-						t.Errorf("c1 recorded_project_id = %v, want p", c.RecordedProjectID)
-					}
-				case "c2":
-					if c.RecordedProjectID != nil {
-						t.Errorf("c2 recorded_project_id = %q, want absent (created outside LFX)", *c.RecordedProjectID)
-					}
-				}
 			}
 		})
 	}
@@ -179,8 +177,41 @@ func TestMonitorTwitter_AccountWide(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertAccountWideLabels(t, got)
+}
+
+// X's report-backed read fails on a failed label lookup too.
+func TestMonitorTwitter_AccountWideLabelFailureFails(t *testing.T) {
+	t.Setenv(constants.EnvAccountMonitorAccountScopeEnabled, "true")
+	reader, store := twitterScopeFixture()
+	repo := scopeRepo([]string{"c1"}, nil)
+	repo.recordedErr = errors.New("db down")
+	svc := twitterScopeService(reader, store, repo)
+	svc.SetMarketingOpsChecker(&fakeMarketingOps{allow: true})
+	if _, err := svc.MonitorTwitterAdsAccount(ctxWithActor(testActor), &conn.MonitorTwitterAdsAccountPayload{
+		ProjectID: "p", AccountID: "18ce54d4x5t", Days: 7, Scope: strPtr(monitorScopeAccount)}); err == nil {
+		t.Fatal("want an error")
+	}
+}
+
+// assertAccountWideLabels checks an account-wide response of the c1 (recorded for p) / c2
+// (created outside LFX) fixtures: both rows, c1 labeled p, c2 unlabeled.
+func assertAccountWideLabels(t *testing.T, got *conn.AccountMonitor) {
+	t.Helper()
 	if ids := campaignIDs(got); len(ids) != 2 {
-		t.Fatalf("campaigns = %v, want c1 and c2", ids)
+		t.Fatalf("campaigns = %v, want both c1 and c2", ids)
+	}
+	for _, c := range got.Campaigns {
+		switch c.PlatformCampaignID {
+		case "c1":
+			if c.RecordedProjectID == nil || *c.RecordedProjectID != "p" {
+				t.Errorf("c1 recorded_project_id = %v, want p", c.RecordedProjectID)
+			}
+		case "c2":
+			if c.RecordedProjectID != nil {
+				t.Errorf("c2 recorded_project_id = %q, want absent (created outside LFX)", *c.RecordedProjectID)
+			}
+		}
 	}
 }
 
@@ -192,6 +223,8 @@ func accountWideCall(t *testing.T, provider model.Provider, svc *ConnectionServi
 		return svc.MonitorGoogleAdsAccount(ctx, &conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: strPtr(account), Days: 30, Scope: scope})
 	case model.ProviderMetaAds:
 		return svc.MonitorMetaAdsAccount(ctx, &conn.MonitorMetaAdsAccountPayload{ProjectID: "p", AccountID: account, Days: 30, Scope: scope})
+	case model.ProviderLinkedInAds:
+		return svc.MonitorLinkedinAdsAccount(ctx, &conn.MonitorLinkedinAdsAccountPayload{ProjectID: "p", AccountID: strPtr(account), Days: 30, Scope: scope})
 	case model.ProviderRedditAds:
 		return svc.MonitorRedditAdsAccount(ctx, &conn.MonitorRedditAdsAccountPayload{ProjectID: "p", AccountID: account, Days: 30, Scope: scope})
 	}

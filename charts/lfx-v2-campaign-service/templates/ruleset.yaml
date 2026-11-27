@@ -153,7 +153,10 @@ spec:
           # On google-ads, meta-ads, reddit-ads and twitter-ads, whose single ad
           # account every foundation shares, the service itself returns only the
           # campaigns it recorded for that project (lfx-self-serve-ops#897), so a
-          # direct call sees no other foundation's campaigns either.
+          # direct call sees no other foundation's campaigns either — unless a
+          # global_marketing_ops caller asks for scope=account (#672) on a
+          # deployment with ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on; see the
+          # account-scope authorizers below.
           - path: /projects/:projectId/connection-google-ads/account-monitor
           - path: /projects/:projectId/connection-linkedin-ads
           - path: /projects/:projectId/connection-linkedin-ads/test
@@ -335,7 +338,7 @@ spec:
         # one entry with a fallback expression.
         #
         # The UUID regex below is defined once ($uuidRe) and referenced in all
-        # three if: guards so the slug/UUID branches provably stay exact
+        # every if: guard so the slug/UUID branches provably stay exact
         # negations of each other instead of three hand-maintained copies that
         # could drift apart.
         {{- $uuidRe := "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" }}
@@ -361,7 +364,9 @@ spec:
         # campaign_manager it needs global_marketing_ops (the LF marketing team;
         # campaign_manager also admits a foundation's executive director). Any
         # `scope` key on an /account-monitor path triggers it, whatever its value,
-        # so a value the service would refuse still cannot slip past here. The
+        # so a value the service would refuse still cannot slip past here (an
+        # empty `?scope=`, and a scope key on Microsoft's or HubSpot's monitor,
+        # which the service ignores, are held to it too: stricter, never looser). The
         # service checks the same relation itself, and refuses scope=account
         # (400) while ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED is off.
         {{- $accountScope := "Request.URL.Path.endsWith(\"/account-monitor\") && \"scope\" in Request.URL.Query()" }}

@@ -62,7 +62,9 @@ func monitorScopeAttr() {
 		"\"account\" returns every campaign on the account, whoever created it, each row naming the project it is "+
 		"recorded for (recorded_project_id, absent when it was not created or adopted through this service). "+
 		"Requires global_marketing_ops on the project (403 otherwise, 503 when the role cannot be checked) and "+
-		"ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400 otherwise).", func() {
+		"ACCOUNT_MONITOR_ACCOUNT_SCOPE_ENABLED on the deployment (400 otherwise). Where account_id is optional "+
+		"(Google Ads, LinkedIn) and omitted, the account is still the one this project's campaigns were created "+
+		"under, so a project with none recorded gets an empty monitor; name account_id to read another.", func() {
 		Enum("account")
 		Example("account")
 	})

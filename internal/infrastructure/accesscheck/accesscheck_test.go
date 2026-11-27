@@ -202,3 +202,19 @@ func TestProjectUID(t *testing.T) {
 		t.Errorf("nil requester err = %v, want ErrUnavailable", err)
 	}
 }
+
+// A UUID project id is checked as the object directly: the connection routes accept one, and
+// slug_to_uid would never resolve it (#672).
+func TestIsGlobalMarketingOps_UUIDSkipsSlugLookup(t *testing.T) {
+	f := &fakeRequester{replies: map[string]string{AccessCheckSubject: wantToken + "\ttrue"}}
+	ok, err := New(f).IsGlobalMarketingOps(context.Background(), testUID, "ada")
+	if err != nil || !ok {
+		t.Fatalf("IsGlobalMarketingOps(uuid) = %v, %v; want true, nil", ok, err)
+	}
+	if _, asked := f.sent[SlugToUIDSubject]; asked {
+		t.Errorf("a UUID project id was sent to %s", SlugToUIDSubject)
+	}
+	if f.sent[AccessCheckSubject] != wantToken {
+		t.Errorf("check = %q, want %q", f.sent[AccessCheckSubject], wantToken)
+	}
+}

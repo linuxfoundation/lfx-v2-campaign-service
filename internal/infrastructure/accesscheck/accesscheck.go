@@ -86,6 +86,10 @@ func New(r Requester) *Checker {
 // IsGlobalMarketingOps reports whether username holds global_marketing_ops on the project
 // whose slug is projectSlug. A false result is a denial answered twice in a row (see the
 // package comment for why a first false is re-checked); every error wraps ErrUnavailable.
+//
+// projectSlug may also be the project's UUID: the connection routes accept either form
+// (design projectIDAttr), and the gateway checks a UUID capture as the object directly. A
+// UUID is used as the UID without a slug_to_uid lookup, which would never resolve it.
 func (c *Checker) IsGlobalMarketingOps(ctx context.Context, projectSlug, username string) (bool, error) {
 	if c == nil || c.r == nil {
 		return false, fmt.Errorf("%w: no NATS connection", ErrUnavailable)
@@ -96,9 +100,12 @@ func (c *Checker) IsGlobalMarketingOps(ctx context.Context, projectSlug, usernam
 	if !validUsername(username) {
 		return false, fmt.Errorf("%w: principal is not a checkable username", ErrUnavailable)
 	}
-	uid, err := c.projectUID(ctx, projectSlug)
-	if err != nil {
-		return false, err
+	uid := projectSlug
+	if _, perr := uuid.Parse(projectSlug); perr != nil || len(projectSlug) != 36 {
+		var err error
+		if uid, err = c.projectUID(ctx, projectSlug); err != nil {
+			return false, err
+		}
 	}
 	token := "project:" + uid + "#" + RelationGlobalMarketingOps + "@user:" + username
 	ok, err := c.check(ctx, token)

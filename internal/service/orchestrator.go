@@ -3384,7 +3384,8 @@ func (o *Orchestrator) readAccountCampaignMetrics(ctx context.Context, projectID
 	// value reaches the response, and a dispatcher that forgot would otherwise publish whatever
 	// the platform sent.
 	read.Currency = model.NormalizeCurrencyCode(read.Currency)
-	// The upstream read is account-wide; only the project's own campaigns leave this service.
+	// The upstream read is account-wide; on a project-scoped read only the project's own
+	// campaigns leave this service. An account-wide read (#672) returns them all, labeled below.
 	// Filtered before the rule engine runs, so action items and totals describe the same rows.
 	if scoped {
 		scopeIDs, serr = o.revalidateAccountMonitorScope(ctx, projectID, platform, accountID, scopeIDs)
